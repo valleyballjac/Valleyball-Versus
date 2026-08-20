@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Valleyball — Puppet & Invisible Ball Controller</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; background: #0d1117;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  canvas { display: block; touch-action: none; }
+
+  .panel {
+    position: fixed; z-index: 10;
+    background: rgba(18, 20, 26, 0.80);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,0.09);
+    border-radius: 12px; color: #e6e6e6;
+    box-shadow: 0 8px 28px rgba(0,0,0,0.4);
+  }
+  #ui { top: 14px; left: 14px; padding: 13px 15px; width: 250px; }
+  #ui h1 { font-size: 13px; margin: 0 0 8px 0; font-weight: 600; letter-spacing: .2px; }
+  #ui p  { font-size: 11.5px; line-height: 1.65; color: #9aa2ae; margin: 0 0 10px 0; }
+  kbd {
+    background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.14);
+    border-bottom-width: 2px; border-radius: 4px; padding: 0 4px;
+    font-family: inherit; font-size: 10.5px; color: #dfe3e8;
+  }
+  .row { display: flex; gap: 7px; margin-bottom: 7px; }
+  button {
+    flex: 1; background: #1f6feb; border: none; color: #fff; font-size: 12.5px;
+    font-weight: 500; padding: 7px 9px; border-radius: 7px; cursor: pointer;
+    transition: background .15s ease; font-family: inherit;
+  }
+  button:hover { background: #3b82f6; }
+  button.secondary { background: rgba(255,255,255,0.08); }
+  button.secondary:hover { background: rgba(255,255,255,0.16); }
+  button.danger { background: rgba(248,81,73,0.18); color: #ff9d97; }
+  button.danger:hover { background: rgba(248,81,73,0.3); }
+
+  /* --- stamina bar -------------------------------------------------------
+     Bottom-centre, above the play area rather than beside it: a resource the
+     player has to watch while doing something else belongs in the same glance
+     as the character, not in a corner they have to look away to read.
+     `pointer-events: none` throughout — it must never eat a click meant for the
+     canvas, and a HUD that steals input is a bug that presents as "the controls
+     stopped working". */
+  #stamina {
+    position: fixed; z-index: 10; pointer-events: none;
+    bottom: 26px; left: 50%; transform: translateX(-50%);
+    width: 300px; text-align: center;
+  }
+  #stamina .label {
+    font-size: 9.5px; text-transform: uppercase; letter-spacing: .11em;
+    font-weight: 700; color: #6e7681; margin-bottom: 5px;
+    display: flex; justify-content: space-between; align-items: baseline;
+    transition: color .18s ease;
+  }
+  #stamina .label b { font-variant-numeric: tabular-nums; font-weight: 700; color: #8b949e; }
+  #staminaTrack {
+    height: 9px; border-radius: 5px; overflow: hidden;
+    background: rgba(10, 12, 16, 0.72);
+    border: 1px solid rgba(255,255,255,0.10);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.45), inset 0 1px 2px rgba(0,0,0,0.5);
+  }
+  #staminaFill {
+    display: block; height: 100%; width: 100%;
+    background: #4ecdc4; border-radius: 4px;
+    /* Width is NOT transitioned: it is written every render frame from the
+       simulated value, and a CSS transition on top of a per-frame write makes
+       the bar lag the thing it is reporting. Only the colour eases. */
+    transition: background-color .18s ease;
+  }
+  /* THE TICK MARKS ARE THE POINT OF THE WHOLE BAR. A percentage tells you
+     nothing about whether you can afford the thing you are about to press;
+     these sit at the dive cost and the slide reserve, so "can I still dive"
+     is answerable at a glance instead of by arithmetic. */
+  #stamina .ticks { position: relative; height: 0; }
+  #stamina .ticks i {
+    position: absolute; top: -10px; width: 1px; height: 9px;
+    background: rgba(255,255,255,0.34);
+  }
+  #stamina.low #staminaFill { background: #ffb14e; }
+  #stamina.spent #staminaFill { background: #ff9d97; }
+  #stamina.spent .label { color: #ff9d97; }
+  /* Exhausted: red, and PULSING, because a static red bar and a slowly
+     refilling red bar look identical in a still frame. The animation is what
+     says "this is a timed penalty, wait". */
+  #stamina.out #staminaFill { background: #f85149; animation: staminaPulse .7s ease-in-out infinite; }
+  #stamina.out .label { color: #ff9d97; }
+  #stamina.out .label b { color: #ff9d97; }
+  #stamina.denied #staminaTrack { border-color: rgba(248,81,73,0.85); }
+  @keyframes staminaPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.42; } }
+
+  /* --- model drop zone --- */
+  #model { top: 14px; left: 50%; transform: translateX(-50%); padding: 10px 16px; font-size: 12px; max-width: 460px; }
+  #model b { color: #ffe066; font-weight: 600; }
+  #model .hint { color: #8b949e; font-size: 11px; margin-top: 3px; }
+  #model input[type=file] { display: none; }
+  #model label {
+    display: inline-block; background: #1f6feb; color: #fff; font-size: 11.5px; font-weight: 500;
+    padding: 5px 11px; border-radius: 6px; cursor: pointer; margin-top: 7px;
+  }
+  #model label:hover { background: #3b82f6; }
+  #dropveil {
+    position: fixed; inset: 0; z-index: 50; display: none;
+    align-items: center; justify-content: center;
+    background: rgba(31,111,235,0.14); border: 3px dashed #1f6feb;
+    color: #fff; font-size: 18px; font-weight: 600; pointer-events: none;
+  }
+  #dropveil.on { display: flex; }
+
+  #loading {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    flex-direction: column; gap: 14px;
+    color: #9aa2ae; font-size: 13.5px; z-index: 30; background: #0d1117; text-align: center; padding: 24px;
+  }
+  #loading .err { color: #ff9d97; font-weight: 600; font-size: 15px; }
+  #loading .detail {
+    max-width: 640px; text-align: left; color: #c9d1d9; background: #161b22;
+    border: 1px solid #30363d; border-radius: 8px; padding: 12px 14px; font-size: 12.5px;
+    line-height: 1.55; white-space: pre-wrap; word-break: break-word;
+  }
+  #loading code { color: #7ee787; }
+  #toast {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(20px);
+    background: rgba(30,34,42,0.95); border: 1px solid rgba(255,255,255,0.12);
+    color: #e6e6e6; padding: 9px 15px; border-radius: 8px; font-size: 12px;
+    opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; z-index: 60; max-width: 70vw;
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .lil-gui { --width: 300px; z-index: 15 !important; }
+</style>
+</head>
+<body>
+
+<div id="loading"><div id="loadingMsg">Loading three.js + Rapier (WASM)…</div></div>
+
+<!-- ===========================================================================
+     BOOT DIAGNOSTICS
+     A CLASSIC script, deliberately not a module, and deliberately first. A
+     module whose imports 404 never executes a single line of its own body, so
+     any error handling written inside it cannot report its own failure. This
+     runs regardless.
+
+     Every previous failure of this page looked identical: a dark screen with
+     the loading overlay still up and nothing in the UI. Three quite different
+     things produce that — a CDN that did not answer, a WebGL context that could
+     not be created, and a WASM module that would not instantiate — and none of
+     them announced itself. The watchdog below is the important part: it does not
+     depend on catching anything, so it also covers the silent case, which is a
+     rejected top-level await.
+     ======================================================================== -->
+<script>
+window.__boot = { stage: 'loading libraries from unpkg', done: false, reported: false };
+
+window.__bootStage = function (s) { window.__boot.stage = s; };
+
+window.__bootFail = function (title, detail) {
+  if (window.__boot.reported || window.__boot.done) return;
+  window.__boot.reported = true;
+  var el = document.getElementById('loading');
+  if (!el) return;
+  el.innerHTML =
+    '<div class="err">' + title + '</div>' +
+    '<div class="detail">' + detail + '</div>' +
+    '<div>Full details are in the browser console (F12).</div>';
+};
+
+var esc = function (s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+};
+
+/* A SYNTAX ERROR in the module never reaches any handler below — the script is
+   rejected at parse time, so nothing in it ever runs and the error handlers it
+   would have installed do not exist either. The window 'error' event DOES fire
+   for it, though, and it is worth naming specially because "Unexpected token"
+   with a blank page is otherwise a mystery.
+
+   This page has shipped that bug once: an `import` left inside an inlined
+   module. The build now refuses to emit one, and the audit refuses to evaluate
+   one, but a diagnostic that explains the failure is worth more than a diagnostic
+   that only fires for failures we have already eliminated. */
+window.addEventListener('error', function (e) {
+  if (e.error instanceof SyntaxError || /SyntaxError|Unexpected token/.test(e.message || '')) {
+    window.__bootFail('The page could not be parsed',
+      esc(e.message || String(e.error)) +
+      '\n\nThis is a bug in the build, not in your setup — the file is malformed ' +
+      'and no browser will run it. Nothing you change locally will help.');
+  }
+}, true);
+
+/* file:// IS A UNIQUE ORIGIN. Opening this straight from Downloads means the
+   page has an opaque origin, and some browsers refuse module and WASM loads on
+   that basis alone. It usually works in Chrome because every dependency is an
+   absolute https URL, but when it does not, the error text is about security
+   origins and says nothing about what to do. So say it up front. */
+if (location.protocol === 'file:') {
+  console.info('[athlete] running from file:// — if libraries fail to load, serve '
+    + 'the folder instead:  python3 -m http.server 8000  (then open '
+    + 'http://localhost:8000/valleyball-character-controller.html)');
+  window.__fileOrigin = true;
+}
+
+// Resource errors (a failed import) fire on the capture phase only.
+window.addEventListener('error', function (e) {
+  if (e.target && e.target !== window && e.target.tagName) {
+    window.__bootFail('Could not load a library',
+      'The browser failed to fetch:\n\n  ' + esc(e.target.src || e.target.href || 'unknown') +
+      '\n\nThis page pulls three.js, lil-gui and Rapier from unpkg.com at run time. ' +
+      'Check your connection, and whether a proxy, extension or offline mode is blocking it.');
+    return;
+  }
+  window.__bootFail('Startup failed while ' + esc(window.__boot.stage),
+    esc((e.error && e.error.stack) || e.message || 'Unknown error'));
+}, true);
+
+window.addEventListener('unhandledrejection', function (e) {
+  var r = e.reason;
+  window.__bootFail('Startup failed while ' + esc(window.__boot.stage),
+    esc((r && r.stack) || (r && r.message) || r));
+});
+
+// The catch-all. Nothing has to throw for this to fire, which is the point:
+// a rejected top-level await in a module reports nowhere at all.
+setTimeout(function () {
+  if (window.__boot.done || window.__boot.reported) return;
+  var hints = [];
+  if (!window.WebGL2RenderingContext) hints.push('This browser reports no WebGL2 support.');
+  hints.push('Reached: ' + window.__boot.stage + '.');
+  hints.push('');
+  hints.push('Most likely causes, in order:');
+  if (window.__fileOrigin) {
+    hints.push('  0. This page was opened straight from disk (file://), which is a');
+    hints.push('     unique security origin. Serve the folder instead:');
+    hints.push('');
+    hints.push('       python3 -m http.server 8000');
+    hints.push('       → http://localhost:8000/valleyball-character-controller.html');
+    hints.push('');
+    hints.push('     (or:  npx serve .  )');
+  }
+  hints.push('  1. unpkg.com is unreachable — the three imports never resolved.');
+  hints.push('  2. WebGL is unavailable — check chrome://gpu, and that hardware');
+  hints.push('     acceleration is on in Settings.');
+  hints.push('  3. Rapier\'s WASM was blocked — a Content-Security-Policy without');
+  hints.push('     wasm-unsafe-eval will do this.');
+  hints.push('');
+  hints.push('The console (F12) will name whichever it was.');
+  window.__bootFail('Startup did not finish', hints.join('\n'));
+}, 15000);
+</script>
+<div id="toast"></div>
+
+<div id="model" class="panel" style="display:none;">
+  <div id="modelMsg"><b>Building the dummy…</b></div>
+  <div class="hint" id="modelHint">Primitives only — every shape you can see is a
+  Rapier rigid body. <b>Drop a <code>.glb</code> here</b> to drive the base pose
+  from authored clips.</div>
+</div>
+
+<div id="dropveil">Drop a .glb animation library</div>
+
+<div id="ui" class="panel" style="display:none;">
+  <h1>Puppet &amp; Invisible Ball</h1>
+  <p>
+    <kbd>WASD</kbd> move · <kbd>Shift</kbd> sprint · <kbd>C</kbd> slide ·
+    <kbd>L</kbd> dive · <kbd>Space</kbd> jump<br>
+    <kbd>Q</kbd>/<kbd>E</kbd> cycle camera · drag or <kbd>right stick</kbd> to
+    look around · wheel to zoom<br>
+    <kbd>J</kbd> volley (up) · <kbd>K</kbd> spike (down) · <kbd>B</kbd> serve ·
+    <kbd>R</kbd> respawn · <kbd>P</kbd> knock down<br>
+    Pad: <kbd>LT</kbd> sprint, <kbd>RT</kbd> slide, <kbd>A</kbd> jump,
+    <kbd>B</kbd> volley, <kbd>Y</kbd> spike, <kbd>X</kbd> dive,
+    <kbd>RB</kbd>/<kbd>LB</kbd> camera.<br>
+    <b>Spike higher = steeper.</b> On the ground it's nearly flat; at the top of
+    a jump it drives down.<br>
+    <b>Dive costs you.</b> It fires where the stick is pushing, not where you're
+    facing — then no steering, no swinging, a skid you ride out, and you end up
+    on the floor.<br>
+    <b>Don't stall a slide.</b> Lose your momentum while holding it and you go
+    down. Release it, or <kbd>Space</kbd> out, while you still have speed.<br>
+    <b>Show procedural dummy</b> in Debug view puts the physics primitives back
+    on screen — that is the real rig; the model is a skin over it.<br>
+    <b>Watch the bar.</b> Sprinting drains it, climbing taxes it, jumping,
+    diving and swinging cost a chunk. Walking is free. It refills slowly while
+    you move and properly only when you stand still — and an empty bar means the
+    button does nothing.
+  </p>
+  <div class="row">
+    <button id="knock">Knock down</button>
+  </div>
+  <div class="row">
+    <button id="serve" class="secondary">Serve ball</button>
+    <button id="dropBall" class="secondary">Drop in place</button>
+  </div>
+  <div class="row">
+    <button id="respawn" class="secondary">Respawn</button>
+  </div>
+</div>
+
+<!-- The stamina bar. Deliberately NOT inside #hud: the debug panel can be
+     hidden while the game is being played, and a resource the player must react
+     to is not debug information. -->
+<div id="stamina" style="display:none;">
+  <div class="label"><span>Stamina</span><b id="staminaNum">100</b></div>
+  <div id="staminaTrack"><i id="staminaFill"></i></div>
+  <div class="ticks" id="staminaTicks"></div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.165.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.165.0/examples/jsm/",
+    "lil-gui": "https://unpkg.com/lil-gui@0.21.0/dist/lil-gui.esm.js",
+    "@dimforge/rapier3d-compat": "https://unpkg.com/@dimforge/rapier3d-compat@0.20.0/dist/rapier.mjs"
+  }
+}
+</script>
+
+  <script type="module" src="./main.js"></script>
+</body>
+</html>
