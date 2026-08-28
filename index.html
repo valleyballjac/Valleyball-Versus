@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Valleyball — Step 1 · Sterile Foundation</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #000;
+        overflow: hidden;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        color: #cfe3f5;
+      }
+
+      /*
+       * The live view fills the window; main.js drives the drawing buffer from
+       * window size and device pixel ratio. The anchored capture pins its own
+       * output size for the duration of the read, so nothing here can leak into
+       * a comparison image.
+       */
+      #viewport {
+        display: block;
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+      }
+
+      #hud {
+        position: fixed;
+        top: 10px;
+        left: 12px;
+        padding: 10px 12px;
+        background: rgba(6, 10, 16, 0.72);
+        border: 1px solid rgba(120, 170, 210, 0.25);
+        border-radius: 6px;
+        font-size: 12px;
+        line-height: 1.55;
+        letter-spacing: 0.02em;
+        pointer-events: none;
+        white-space: pre;
+      }
+
+      #hud b {
+        display: inline-block;
+        width: 108px;
+        font-weight: 400;
+        color: #7d97ad;
+      }
+
+      #hud span {
+        color: #eaf4ff;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="viewport"></canvas>
+
+    <div id="hud"
+      ><b>tick</b><span id="hud-tick">0</span>
+<b>alpha</b><span id="hud-alpha">0.00</span>
+<b>steps/frame</b><span id="hud-steps">0</span>
+<b>frame time</b><span id="hud-frametime">0.00 ms</span>
+<b>display</b><span id="hud-displayhz">0.0 Hz</span>
+<b>drift</b><span id="hud-drift">0.0 ms</span>
+<b>speed</b><span id="hud-speed">0.00 m/s</span>
+<b>grounded</b><span id="hud-grounded">false</span>
+<b>weight</b><span id="hud-weight">1.00</span>
+<b>anim speed</b><span id="hud-animspeed">0.00</span>
+<b>idle/jog/spr</b><span id="hud-blend">1.00 0.00 0.00</span>
+<b>last impact</b><span id="hud-impact">—</span>
+<b>need/prog/up</b><span id="hud-standup">0.00 / 0.00 / 0.00</span></div
+    >
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
