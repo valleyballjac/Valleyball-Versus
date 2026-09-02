@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { TUNING } from '../config/tuning.js';
 import { applyClampedLinearDamping, applyClampedAngularDamping } from './damping.js';
+import { ARM_CHAIN_DAMPED, LEG_BODIES } from './autorig.js';
 
 /**
  * THE WORLD-SPACE PD TRACKER — and the one blend weight.
@@ -53,6 +54,10 @@ export function createTracker() {
      */
     weight: TUNING.tracking.startWeight,
     knockdownQueued: false,
+    /** Damping authority the queued knockdown retains. See queueKnockdown. */
+    knockdownTone: 0,
+    /** Live floor under the damping term while down. Never scales the springs. */
+    muscleTone: 0,
     /** Debug readouts, written here and read by the HUD. Never fed back in. */
     mountDistance: 0,
     warnedMount: false,
@@ -64,9 +69,49 @@ export function createTracker() {
   };
 }
 
-/** The "T" hook. Sets a flag; fixedUpdate consumes it. Nothing else writes
- *  weight except the recovery ramp. */
-export function queueKnockdown(tracker) {
+/**
+ * The knockdown hook. Sets a flag; fixedUpdate consumes it. Nothing else writes
+ * weight except the recovery ramp and the impact drain.
+ *
+ * MUSCLE TONE, and why it is a SECOND number rather than a floor on the first.
+ *
+ * The ask was: a dive crash should hand the body to the physics without it
+ * exploding — "retain stiffness until ready for the knockdown recovery". The
+ * obvious implementation is to drop the weight to 0.25 instead of 0. That was
+ * measured and it does not work, for a structural reason:
+ *
+ *     crash floor | minPelvisY | peak standUpNeed | reads as
+ *        0.00     |    0.131   |      0.853       | FULL COLLAPSE
+ *        0.10     |    0.585   |      0.368       | heavy stumble
+ *        0.25     |    0.857   |      0.087       | barely a wobble
+ *
+ * At 0.25 the character does not go down AT ALL, so the crash stops feeding the
+ * knockdown chain — no stand-up, nothing for the mount follower to do. The
+ * cause is that `weight` scales BOTH gains below: the springs by
+ * weight^limpness and the damping linearly. The damping is exactly what stops
+ * the limbs flailing apart, and it is also what holds the body off the floor.
+ * One number cannot ask for one without the other.
+ *
+ * So the crash sets TWO things. `weight` goes to 0 — springs fully off, the
+ * character genuinely falls. `muscleTone` is a floor under the DAMPING term
+ * only, so the limbs keep a quarter of their resistance and arrive as a body
+ * rather than as a shower of parts. Tone without control, which is what was
+ * actually asked for and what a weight floor cannot express.
+ *
+ * min(), not assignment, on the weight: a knockdown must never RAISE it, or a
+ * hit landing on an already-downed character would help it up.
+ *
+ * @param {object} tracker
+ * @param {number} [tone=0] damping authority to retain while down, 0..1
+ */
+export function queueKnockdown(tracker, tone = 0) {
+  // Two knockdowns queued before the next step is consumed — a dive crash and
+  // an impact on the same tick — take the HARSHER of the two, which for tone
+  // means the LIMPER. Reading the previous value only while a queue is already
+  // pending is what keeps a stale one from a consumed knockdown out of the next.
+  tracker.knockdownTone = tracker.knockdownQueued
+    ? Math.min(tracker.knockdownTone, tone)
+    : tone;
   tracker.knockdownQueued = true;
 }
 
@@ -120,20 +165,104 @@ export function applyImpacts(tracker, events, tick, dt) {
  * @param {object} motor READ ONLY, for the mount-distance guard
  * @param {number} dt the constant timestep
  */
-export function applyTracking(tracker, rig, animTarget, motor, dt) {
+/**
+ * ═══ SOLVER-SIDE DAMPING ON THE ARM CHAIN — THE ONE EXCEPTION TO LAW L3 ═══
+ *
+ * WHAT THE JITTER IS NOT. Every PD lever was measured against it and none of
+ * them move it. With the animation FROZEN so the target velocity is exactly
+ * zero, the hands still travel 0.094 m/s; dropping the extremity stiffness to
+ * 0.1 leaves it at 0.094; turning the hand's spring fully OFF leaves it at
+ * 0.094; turning EVERY spring in the ragdoll off leaves it at 0.094. Solver
+ * iterations 16 -> 128 leave it at 0.094, and CCD off leaves it at 0.101. The
+ * tracker is not causing this and cannot cure it: it is the arm hanging on its
+ * joints, and the solver never quite settling the chain.
+ *
+ * WHY RAPIER'S OWN DAMPING AND NOT THE CLAMPED HELPERS. The helpers run before
+ * world.step and damp the pre-step velocity relative to the target, so they
+ * cannot touch what the solver injects during the step — raising their gains
+ * fourfold moved the number under 3%. Rapier's damping is applied by the solver
+ * itself, each substep, against absolute velocity. It is the only thing in the
+ * box that reaches it. (And it does not crash this build; that claim in
+ * physics.js was stale and is corrected there.)
+ *
+ * WHY IT IS SPEED-GATED. Damping cannot tell the buzz from the arm swing, so a
+ * constant value buys a quieter idle by flattening the run:
+ *
+ *     constant   idle hands       walking arm swing
+ *     none       0.098 / 0.123    1.01 / 1.02
+ *     8 / 15     0.089 / 0.108    0.89 / 0.89
+ *     25 / 40    0.070 / 0.088    0.70 / 0.71
+ *
+ * But the buzz is an IDLE complaint and the cost is a WALKING one, and those
+ * never happen at the same time. Fading it out pays the cost only where there
+ * is nothing to spend it on, which is what lets the value at rest be nearly
+ * twenty times what a constant could afford:
+ *
+ *     gated 150   idle hands 0.029 / 0.035   walking arm swing 1.01 / 1.01
+ *
+ * That is 71% of the buzz gone with the run measurably untouched. The hands now
+ * move slightly LESS than the idle clip asks (0.036 / 0.066) rather than more,
+ * which is the right side of the trade for a complaint about standing still.
+ *
+ * @param {Map<string, object>} rig
+ * @param {object} motor READ ONLY
+ * @param {object} animTarget READ ONLY, for standUpNeed
+ */
+function applyArmDamping(rig, motor, animTarget) {
+  const fade = Math.max(1e-3, TUNING.ragdoll.armDampingFadeSpeed);
+  const v = motor.body.linvel();
+  // Two ways to not be standing still: moving, or on the floor. A downed
+  // athlete's arms should flop, and a get-up is a slow move the speed gate
+  // would not catch, so the recovery signal takes the damping off as well.
+  const moving = Math.min(1, Math.hypot(v.x, v.z) / fade);
+  const down = animTarget ? animTarget.standUpNeed : 0;
+  const still = (1 - moving) * (1 - down);
+
+  for (const key of ARM_CHAIN_DAMPED) {
+    const item = rig.get(key);
+    if (!item) continue;
+    item.body.setLinearDamping(TUNING.ragdoll.armLinearDamping * still);
+    item.body.setAngularDamping(TUNING.ragdoll.armAngularDamping * still);
+  }
+
+  // THE DIVE'S LEG PARACHUTE. Same mechanism, different reason: the legs are
+  // nearly boneless through a dive and would otherwise arrive at the floor with
+  // every bit of the forward momentum they left with. Faded by diveMix so it is
+  // present for exactly as long as the pose is, and zero at every other moment
+  // — a damped leg during a run is a leg that does not swing.
+  const dive = animTarget ? animTarget.diveMix : 0;
+  for (const key of LEG_BODIES) {
+    const item = rig.get(key);
+    if (!item) continue;
+    item.body.setLinearDamping(TUNING.ragdoll.diveLegLinearDamping * dive);
+    item.body.setAngularDamping(TUNING.ragdoll.diveLegAngularDamping * dive);
+  }
+}
+
+export function applyTracking(tracker, rig, animTarget, motor, dt, tumbling = false) {
   // Consume the knockdown first, so a press and its effect land on the same
   // tick regardless of when in the frame the key was struck.
   if (tracker.knockdownQueued) {
     tracker.knockdownQueued = false;
-    tracker.weight = 0;
+    // THE TONE IS THE FLOOR THE WEIGHT LANDS ON, not just the damping floor it
+    // has always been. A dive that hits the floor should go LOOSE, not boneless
+    // — the limbs tumble but the athlete is still faintly holding himself —
+    // and that is the difference between weight 0 and weight 0.2. Every other
+    // knockdown passes tone 0 and therefore lands on 0 exactly as before, so
+    // the T key, the slide penalty and impact-driven falls are untouched.
+    tracker.weight = tracker.knockdownTone;
+    tracker.muscleTone = tracker.knockdownTone;
   }
 
+  if (rig && motor) applyArmDamping(rig, motor, animTarget);
   if (rig && animTarget) applyGains(tracker, rig, animTarget, motor, dt);
 
   // Auto-recovery. A pure ramp: no threshold, no "is the character upright yet"
   // test, no state to leave. The stumble is what the physics does while this
   // number is climbing through the middle of its range.
-  tracker.weight = Math.min(1, Math.max(0, tracker.weight + TUNING.tracking.recoverPerSecond * dt));
+  if (!tumbling) {
+    tracker.weight = Math.min(1, Math.max(0, tracker.weight + TUNING.tracking.recoverPerSecond * dt));
+  }
 }
 
 function applyGains(tracker, rig, animTarget, motor, dt) {
@@ -169,8 +298,33 @@ function applyGains(tracker, rig, animTarget, motor, dt) {
   // hard at 0.3 and the knockdown reads as sluggish rather than boneless —
   // while the linear kd keeps the damping ratio rising as the character firms
   // up, so the middle of the range settles instead of oscillating.
-  const kpScale = Math.pow(weight, TUNING.tracking.limpness);
-  const kdScale = weight;
+  // THE STAND-UP'S OWN AUTHORITY, floored into the stiffness.
+  //
+  // weight^5 is what makes a knockdown read as boneless, and it does that job.
+  // But the get-up happens ENTIRELY inside the range where weight^5 is nothing:
+  // traced tick by tick through a plain knockdown, kpScale was 0.0000 for the
+  // first sixty ticks, 0.0024 at tick 60 and still only 0.10 at tick 126 — so
+  // for the first two seconds the stand-up take played on the ghost with a
+  // target pelvis 0.28 m above the body and no authority whatsoever to close
+  // the gap. The athlete lay there and then popped upright at the end when the
+  // springs finally arrived. That is "the stand-up animations are not playing",
+  // and it is not fixable in animtarget.js: the scrub and the blend share were
+  // already correct, measured, and had nothing to act through.
+  //
+  // Getting up is muscular effort, so the effort gets stiffness. need x
+  // progress is zero standing (need 0), zero the instant he goes down (progress
+  // rewinds to 0), and largest through the middle of the take — which is
+  // exactly the window that had none. It is the same idea as muscleTone one
+  // line down, applied to the spring instead of the damper.
+  const standEffort = animTarget.standUpNeed * animTarget.standUpProgress;
+  const kpScale = Math.max(
+    Math.pow(weight, TUNING.tracking.limpness),
+    standEffort * TUNING.standUp.authority,
+  );
+  // MUSCLE TONE floors the DAMPING and nothing else. Once the weight recovers
+  // past the tone this is just `weight` again, so it needs no decay of its own
+  // — it stops mattering the moment the character is stiffer than the floor.
+  const kdScale = Math.max(weight, tracker.muscleTone);
 
   for (const [key, item] of rig) {
     const target = animTarget.targets.get(key);
@@ -178,6 +332,32 @@ function applyGains(tracker, rig, animTarget, motor, dt) {
 
     const body = item.body;
     const mass = body.mass();
+
+    // PER-GROUP STIFFNESS, AND IT ONLY APPLIES WHILE HE IS LIMP.
+    //
+    // One multiplier on both PD terms, so a softer group is also a less damped
+    // one — a limb that is loose but heavily damped moves like it is
+    // underwater. A missing group reads as 1, so a new BONE_MAP entry behaves
+    // exactly as it did before this existed rather than silently going limp.
+    //
+    // The multiplier is LERPED TO 1 BY WEIGHT. At weight 1 every group is
+    // exactly 1.0 and nothing is softened at all, which is what a controlled
+    // slide needs: the athlete is holding a rigid pose on purpose and his legs
+    // should not be floppy while he does it. The softening is for a CRASH, and
+    // a crash is exactly the case where weight is low. At the dive's landing
+    // weight of 0.2 that leaves torso 1.0 against extremity 0.28 — a 3.6:1
+    // spread, which is the differential this exists for.
+    const group = TUNING.tracking.groupStiffness[item.group];
+    let groupScale = group === undefined ? 1 : group + (1 - group) * weight;
+
+    // THE DIVE'S DEAD LEGS. Six named bodies, not a group — `limb` and
+    // `extremity` also hold the arms and hands, and the superman pose is held
+    // BY the arms. Faded by diveMix so the legs let go over the same frames the
+    // pose arrives, and restored the same way when it lets go.
+    if (LEG_BODIES.has(key) && animTarget.diveMix > 0) {
+      const dead = TUNING.action.diveLegStiffness;
+      groupScale = groupScale + (dead - groupScale) * animTarget.diveMix;
+    }
 
     // THE INVERTED PENDULUM. The pelvis is the position servo that carries the
     // body; everything else is along for the ride and is held in place by the
@@ -212,9 +392,23 @@ function applyGains(tracker, rig, animTarget, motor, dt) {
       target.currPos.z - bodyPos.z,
     );
 
+    // THE SPRING IS SCALED BY MASS, and that `* mass` is the jitter fix.
+    //
+    // Without it the same position error produced the same IMPULSE on every
+    // body — so the same error moved a 0.762 kg hand fifteen times as fast as
+    // the 11.451 kg pelvis. The heavy bodies were tracking; the light ones were
+    // being flicked back and forth across their targets every step, which is
+    // the buzz on the hands and feet. Scaling by mass makes the gain an
+    // ACCELERATION, identical for every body, which is what a PD controller on
+    // a multibody rig is supposed to be — and note the clamp below was already
+    // mass-proportional, so the cap had the right instinct and the gain did
+    // not.
+    //
+    // linearKp is re-seeded to 700 to keep the pelvis exactly where it was:
+    // 700 * 11.451 = 8016, against the old flat 8000.
     _impulseVec
       .copy(_error)
-      .multiplyScalar(TUNING.tracking.linearKp * boost * kpScale * dt);
+      .multiplyScalar(TUNING.tracking.linearKp * mass * boost * kpScale * groupScale * dt);
 
     // The cap is on the IMPULSE, in units of the body's own mass, so a heavy
     // torso and a light hand are limited proportionally rather than the cap
@@ -231,7 +425,7 @@ function applyGains(tracker, rig, animTarget, motor, dt) {
     _relVel.subVectors(_preLinvel, target.vel);
     applyClampedLinearDamping(
       body,
-      _relVel.length() * TUNING.tracking.linearKd * boost * kdScale * dt,
+      _relVel.length() * TUNING.tracking.linearKd * boost * kdScale * groupScale * dt,
       _relVel,
       dt,
     );
@@ -257,7 +451,7 @@ function applyGains(tracker, rig, animTarget, motor, dt) {
 
       _impulseVec
         .copy(_axis)
-        .multiplyScalar(angle * TUNING.tracking.angularKp * kpScale * dt);
+        .multiplyScalar(angle * TUNING.tracking.angularKp * kpScale * groupScale * dt);
 
       const maxAngular = TUNING.tracking.maxAngularImpulse;
       if (_impulseVec.lengthSq() > maxAngular * maxAngular) _impulseVec.setLength(maxAngular);
@@ -272,7 +466,7 @@ function applyGains(tracker, rig, animTarget, motor, dt) {
     _relVel.subVectors(_preAngvel, target.angvel);
     applyClampedAngularDamping(
       body,
-      _relVel.length() * TUNING.tracking.angularKd * kdScale * dt,
+      _relVel.length() * TUNING.tracking.angularKd * kdScale * groupScale * dt,
       _relVel,
       dt,
     );

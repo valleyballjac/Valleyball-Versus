@@ -63,11 +63,11 @@ export const BONE_MAP = [
 
   { key: 'thighL',    bone: 'mixamorig:LeftUpLeg',    end: 'mixamorig:LeftLeg',            parent: 'pelvis',    shape: 'capsule', group: 'limb',      joint: 'spherical', axis: null,       limits: null },
   { key: 'calfL',     bone: 'mixamorig:LeftLeg',      end: 'mixamorig:LeftFoot',           parent: 'thighL',    shape: 'capsule', group: 'limb',      joint: 'revolute',  axis: [1, 0, 0],  limits: 'knee' },
-  { key: 'footL',     bone: 'mixamorig:LeftFoot',     end: 'mixamorig:LeftToeBase',        parent: 'calfL',     shape: 'capsule', group: 'extremity', joint: 'spherical', axis: null,       limits: null },
+  { key: 'footL',     bone: 'mixamorig:LeftFoot',     end: 'mixamorig:LeftToeBase',        parent: 'calfL',     shape: 'capsule', group: 'extremity', joint: 'universal', axis: [0, -1, 0], limits: null     },
 
   { key: 'thighR',    bone: 'mixamorig:RightUpLeg',   end: 'mixamorig:RightLeg',           parent: 'pelvis',    shape: 'capsule', group: 'limb',      joint: 'spherical', axis: null,       limits: null },
   { key: 'calfR',     bone: 'mixamorig:RightLeg',     end: 'mixamorig:RightFoot',          parent: 'thighR',    shape: 'capsule', group: 'limb',      joint: 'revolute',  axis: [1, 0, 0],  limits: 'knee' },
-  { key: 'footR',     bone: 'mixamorig:RightFoot',    end: 'mixamorig:RightToeBase',       parent: 'calfR',     shape: 'capsule', group: 'extremity', joint: 'spherical', axis: null,       limits: null },
+  { key: 'footR',     bone: 'mixamorig:RightFoot',    end: 'mixamorig:RightToeBase',       parent: 'calfR',     shape: 'capsule', group: 'extremity', joint: 'universal', axis: [0, -1, 0], limits: null     },
 ];
 
 /**
@@ -134,6 +134,25 @@ export function detachMotorFromRagdoll(motor) {
  * what "a small initial tumble" means.
  */
 const DENSITY_G_PER_CM3_TO_KG_PER_M3 = 1000;
+
+/**
+ * The bodies that get solver-side damping, applied per step in tracker.js.
+ * Hands and forearms are the ones that buzz; the upper arms are included
+ * because damping a chain only at its tip leaves the segment above it free to
+ * drive the tip from the other end.
+ */
+/**
+ * The six bodies that go limp while the dive pose is up. Deliberately NOT the
+ * `limb`/`extremity` groups, which also contain the arms and hands — the
+ * superman is held by the arms and would collapse with them.
+ */
+export const LEG_BODIES = new Set([
+  'thighL', 'thighR', 'calfL', 'calfR', 'footL', 'footR',
+]);
+
+export const ARM_CHAIN_DAMPED = new Set([
+  'upperArmL', 'upperArmR', 'foreArmL', 'foreArmR', 'handL', 'handR',
+]);
 
 /** Local axis a capsule body is built along. Rapier capsules are Y-aligned. */
 const BODY_AXIS = new THREE.Vector3(0, 1, 0);
@@ -418,6 +437,7 @@ function buildSegment(entry, byName, characterHeight, spawn) {
       .setCcdEnabled(true),
   );
 
+
   // A capsule shorter than it is wide is degenerate: Rapier will take it, and
   // the contact manifold it generates is garbage. The torso segments on this rig
   // are genuinely shorter than their radius, so this is the normal path for
@@ -430,6 +450,20 @@ function buildSegment(entry, byName, characterHeight, spawn) {
 
   desc.setDensity(TUNING.ragdoll.density[entry.group] * DENSITY_G_PER_CM3_TO_KG_PER_M3);
   desc.setCollisionGroups(RAGDOLL_GROUPS);
+  // Explicit rather than inherited. These ran on Rapier's defaults from Task 3
+  // until now; see the TUNING comments for why restitution was never the cause
+  // of the landing bounce and friction was the cause of the skid.
+  // RESTITUTION, per group. The torso gets a little bounce and everything else
+  // gets none: a rigid chest arriving on the floor at the end of a dive should
+  // rebound rather than stop dead, and that rebound is what whips the (now
+  // limp) legs down instead of letting them settle in a heap. A missing group
+  // falls back to the flat value, so a new BONE_MAP entry cannot silently
+  // become bouncy.
+  const groupRestitution = TUNING.ragdoll.restitutionByGroup[entry.group];
+  desc.setRestitution(
+    groupRestitution === undefined ? TUNING.ragdoll.restitution : groupRestitution,
+  );
+  desc.setFriction(TUNING.ragdoll.friction);
 
   const collider = world.createCollider(desc, body);
 
@@ -469,7 +503,34 @@ function buildJoint(entry, rig, byName, spawn) {
   const local2 = worldPointToBodyLocal(child.body, _anchor, _scratch).clone();
 
   let params;
-  if (entry.joint === 'revolute') {
+  if (entry.joint === 'universal') {
+    // A UNIVERSAL JOINT: two swings, no twist.
+    //
+    // The ankle was spherical and unlimited, and it used all three degrees of
+    // freedom — measured through a jump landing, 145 degrees from bind. A
+    // spherical joint CANNOT be limited in this build: setLimits does not exist
+    // on one, tested directly against 0.19.3, it throws.
+    //
+    // A revolute ankle fixes the twisting completely and costs far too much:
+    // one angular DOF cannot reach a foot pose the animation authored in three,
+    // and the measured foot placement error went from 5 mm to 12 cm. That is
+    // feet planted visibly in the wrong place on every stride.
+    //
+    // The generic joint is the middle: lock ONLY the rotation about the shin,
+    // which is the twist — the axis passed here is the limb's long axis at
+    // bind, and AngX in the mask is rotation about that axis (verified against
+    // this build: with axis +X, locking AngX blocks a torque about X and leaves
+    // the other two free). The foot keeps both swings and can still be placed;
+    // it can no longer spin about the leg, which is the snap.
+    _axis.fromArray(entry.axis).applyQuaternion(_spawnRotation).normalize();
+    const axis1 = worldDirToBodyLocal(parent.body, _axis, _scratch).clone();
+    const locked =
+      RAPIER.JointAxesMask.LinX |
+      RAPIER.JointAxesMask.LinY |
+      RAPIER.JointAxesMask.LinZ |
+      RAPIER.JointAxesMask.AngX;
+    params = RAPIER.JointData.generic(local1, local2, axis1, locked);
+  } else if (entry.joint === 'revolute') {
     // The authored axis is a world-space direction AT BIND. The bodies are at
     // spawn * bind, so the axis has to travel the same way before being read
     // into a body frame; otherwise a rig mounted with any yaw gets hinges
@@ -547,6 +608,10 @@ export function buildRagdoll(skeleton, characterRoot, spawnTransform) {
     rig.set(entry.key, {
       key: entry.key,
       entry,
+      // Lifted out of `entry` because the tracker reads it every step for the
+      // per-group stiffness, and a nested lookup there is easy to get wrong —
+      // it was, and the map silently did nothing for every body.
+      group: entry.group,
       body: segment.body,
       collider: segment.collider,
       bone,

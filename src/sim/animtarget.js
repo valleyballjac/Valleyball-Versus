@@ -7,7 +7,7 @@ import { BONE_MAP, resolveBoneByName } from './autorig.js';
  * THE ANIMATION TARGET.
  *
  * A second, invisible copy of the character that plays the LOCOMOTION BLEND
- * SPACE. It is never
+ * SPACE — now two-dimensional, plus an airborne overlay. It is never
  * rendered and never appears in a capture; its only product is, per fixed step,
  * a world-space target transform for each of the sixteen physics bodies. The
  * tracker then drives the real bodies toward those transforms with forces.
@@ -16,6 +16,18 @@ import { BONE_MAP, resolveBoneByName } from './autorig.js';
  * allowed to be a perfect, unphysical thing that never stumbles; the physics is
  * allowed to be a real thing that does. Nothing writes a pose onto a body, and
  * nothing writes a force onto the target.
+ *
+ * RULING GF-2.0 — THE SCOPE OF LAW 4, verbatim:
+ *
+ *   "Law 4 bans balance state machines. Mechanics-phase floats are legal and
+ *   precedented (jumpQueued, locomotionPhase, standUpProgress): an edge may
+ *   LATCH a float or start a monotone ratchet; no boolean of character state
+ *   may exist and nothing may branch on 'which state we are in'."
+ *
+ * Everything the committed jump adds below is on the legal side of that line.
+ * `jumpClipMix` is a float latched by an edge. `jumpPhase` is a monotone
+ * ratchet reset by that same edge. `airborneMix` is a continuous ease. Nothing
+ * asks which state the character is in, and there is no enum to ask about.
  *
  * DIRECTORY RULE (src/sim/): nothing here names a wall-clock or scheduler API.
  * LAW L6: the mixer is advanced by the CONSTANT dt from inside fixedUpdate and
@@ -43,18 +55,49 @@ const _rigidBasis = new THREE.Matrix4();
 const _prevInverse = new THREE.Quaternion();
 const _unitScale = new THREE.Vector3(1, 1, 1);
 const _mount = new THREE.Matrix4();
-const _targetWeights = { idle: 0, jog: 0, sprint: 0 };
 const _standQuat = new THREE.Quaternion();
 const _standAxis = new THREE.Vector3();
 const _mountPos = new THREE.Vector3();
 
 /** The literal that means "run the blend space" rather than pin a clip. */
 const AUTO = 'auto';
-/** Below this combined gait weight there is no cycle worth advancing. */
+/** Below this combined cycle weight there is no gait worth advancing. */
 const MIN_GAIT_WEIGHT = 1e-4;
+/** Guards the latch window's divide if the two speeds are set equal. */
+const MIN_LATCH_SPAN = 1e-3;
+/** Where the takeoff ratchet considers the character committed to the air. */
+const AIRBORNE_THRESHOLD = 0.5;
+/** Lateral speed below which local.x is noise and the strafe alarm stays quiet. */
+const STRAFE_ASSERT_SPEED = 1;
+/** How decisively one lateral node must lead before the alarm judges it. */
+const STRAFE_ASSERT_MARGIN = 0.05;
+/** The flail alarm's window: this airborne, this much locomotion is a bug. */
+const FLAIL_ASSERT_AIR = 0.95;
+const FLAIL_ASSERT_WEIGHT = 0.05;
+/** Above this action demand the flail alarm stands down — see flailViolation. */
+const FLAIL_ACTION_QUIET = 0.05;
+/** The ring has four nodes, so each owns a quarter turn. */
+const DIRECTION_SECTORS = 4;
+const SECTOR_ANGLE = TWO_PI / DIRECTION_SECTORS;
+/** Ring slots, in the order the angular tent walks them: forward, right, back,
+ *  left. The node table and the tent both index by these and must not diverge. */
+const DIR_F = 0;
+const DIR_R = 1;
+const DIR_B = 2;
+const DIR_L = 3;
+
+/** Scratch tents. Rebuilt every step; never read across steps. */
+const _gait = { idle: 0, walk: 0, run: 0, sprint: 0 };
+const _direction = [0, 0, 0, 0];
 
 /** Signed shortest way round from `from` to `to`, in (-PI, PI]. Same rule the
  *  retired passenger box used, moved here with the mount yaw it belonged to. */
+/** Folds an angle into (-PI, PI]. */
+function wrapAngle(a) {
+  const t = (a + Math.PI) % (2 * Math.PI);
+  return (t < 0 ? t + 2 * Math.PI : t) - Math.PI;
+}
+
 function shortestAngleDelta(from, to) {
   let delta = (to - from) % TWO_PI;
   if (delta > Math.PI) delta -= TWO_PI;
@@ -93,6 +136,61 @@ function decomposeRigid(matrix, outPosition, outQuaternion) {
   _rigidBasis.makeBasis(_basisX, _basisY, _basisZ);
   outQuaternion.setFromRotationMatrix(_rigidBasis);
 }
+
+/**
+ * WHICH TWO AXES OF THE HIPS' OWN FRAME ARE HORIZONTAL IN THE WORLD.
+ *
+ * L5 strips the horizontal root translation and keeps the vertical. That is a
+ * statement about the WORLD, and the Hips track is authored in the armature's
+ * frame, which is not the same frame: the exporter leaves a 90 degree X
+ * rotation on the armature root to take the rig from Z-up to Y-up, so the
+ * armature-local axis that points at the sky is Z, not Y.
+ *
+ * This was assumed rather than derived until the dive and slide arrived, and
+ * the assumption was wrong in the way that hurts: the strip was pinning the
+ * VERTICAL and keeping one horizontal axis. Measured on this asset, ghost hips
+ * drift from the mount over one playback, unstripped -> stripped:
+ *   Running Dive  4.367 -> 4.367 m     Slide Left     6.640 -> 6.640 m
+ *   Walk Forward  0.057 -> 0.040 m     Standing Jump  0.130 -> 0.091 m
+ * L5 was, in practice, not running. It went unnoticed for thirteen clips
+ * because all thirteen are in-place cycles whose largest drift is 0.32 m.
+ * With the axes derived, every one of the fifteen measures 0.0000 m.
+ *
+ * Deriving it costs one matrix at construction and cannot go stale, because a
+ * re-export that changes the armature's orientation changes this answer with
+ * it. The axis nearest world up is kept; the other two are pinned.
+ *
+ * @param {THREE.Object3D} hips
+ * @param {THREE.Matrix4} rootLocal the clone root's own local matrix
+ * @returns {{horizontal: [string, string], up: string}}
+ */
+function hipsAxisRoles(hips, rootLocal) {
+  const toWorld = new THREE.Matrix4().identity();
+  const chain = [];
+  for (let o = hips.parent; o; o = o.parent) chain.push(o);
+  // Root first, so each child's local composes on the right.
+  for (const o of chain.reverse()) {
+    toWorld.multiply(o.parent ? _axisScratch.compose(o.position, o.quaternion, o.scale) : rootLocal);
+  }
+  const names = ['x', 'y', 'z'];
+  const vertical = names.map((_, i) =>
+    Math.abs(
+      _axisDir.set(i === 0 ? 1 : 0, i === 1 ? 1 : 0, i === 2 ? 1 : 0)
+        .transformDirection(toWorld).y,
+    ),
+  );
+  let up = 0;
+  for (let i = 1; i < 3; i++) if (vertical[i] > vertical[up]) up = i;
+  return {
+    up: names[up],
+    horizontal: names.filter((_, i) => i !== up),
+  };
+}
+
+/** Scratch for hipsAxisRoles. Construction-time only. */
+const _axisScratch = new THREE.Matrix4();
+/** Scratch for hipsAxisRoles. Construction-time only. */
+const _axisDir = new THREE.Vector3();
 
 /**
  * Builds the invisible target rig.
@@ -142,28 +240,97 @@ export function createAnimTarget(characterRoot, clips, rig) {
     skeleton,
     clips,
     hips,
-    // LAW L5 — the bind-pose horizontal root translation, restored every step.
-    hipsBindX: hips.position.x,
-    hipsBindZ: hips.position.z,
+    // LAW L5 — the bind-pose HORIZONTAL root translation, restored every step.
+    // Which two components those are is derived from the armature, not assumed;
+    // see hipsAxisRoles. hipsUpAxis is the third and is never written.
+    hipsAxisA: null,
+    hipsAxisB: null,
+    hipsUpAxis: null,
+    hipsBindA: 0,
+    /** The bind vertical, and the scale needed to lower it by metres. Only the
+     *  dive writes this axis; see the drop at the L5 strip. */
+    hipsBindUp: 0,
+    hipsUnitsPerMetre: 100,
+    hipsBindB: 0,
     mixer: new THREE.AnimationMixer(root),
-    // The three blend nodes, all playing at all times.
+    // Every node, all playing at all times. Built by buildBlendNodes.
     nodes: null,
+    /** Unique cycle-node objects, for the one function that writes clip times. */
+    cycleNodes: null,
+    /** Every node in one flat list, for the override pin. */
+    allNodes: null,
+    /** The ring x direction CONTRIBUTIONS. Two of them (walkB, runB) point at
+     *  the same shared node; keeping them separate is what lets the stride sync
+     *  charge the back node's weight to the right ring's nominal speed. */
+    contributions: null,
     // The pinned single action when TUNING.anim.override is not 'auto'.
     overrideAction: null,
     overrideName: null,
-    /** Eased copy of the sphere's horizontal speed. Debug readout + blend input. */
+    /** Eased sphere velocity, in WORLD space. Smoothing the vector rather than
+     *  the scalar keeps the heading as steady as the speed. */
+    smoothedVelX: 0,
+    smoothedVelZ: 0,
+    /** |smoothedVel|. Debug readout + gait axis. */
     smoothedSpeed: 0,
-    /** Applied weights, eased toward the tent below. Read by the HUD. */
-    weights: { idle: 0, jog: 0, sprint: 0 },
-    /** ONE locomotion phase in [0,1), shared by jog and sprint. */
+    /** Velocity in the yaw frame. +Z forward, +X the character's RIGHT — see
+     *  the convention comment at the rotation site. HUD. */
+    localVelX: 0,
+    localVelZ: 0,
+    /** The two tents, kept for the HUD. gait sums to 1; direction sums to 1. */
+    gait: { idle: 1, walk: 0, run: 0, sprint: 0 },
+    direction: [1, 0, 0, 0],
+    /** Applied weights per CONTRIBUTION id, eased toward the 2D product. */
+    weights: null,
+    targetWeights: null,
+    /** ONE locomotion phase in [0,1), shared by every cycle node. */
     locomotionPhase: 0,
+    // THE COMMITTED JUMP, as three mechanics floats. See RULING GF-2.0.
+    /** Continuous ease toward grounded ? 0 : 1, asymmetric in and out. */
+    airborneMix: 0,
+    /** Monotone ratchet in [0,1]: where in the jump clip we are. */
+    jumpPhase: 0,
+    /** LATCHED at liftoff. 1 = the standing jump, 0 = the running one. */
+    jumpClipMix: 1,
+    // THE TWO ACTIONS. Continuous shares and continuous phases, set by main.js
+    // from its own mechanics accumulators — no state enum, nothing branches on
+    // which action is running.
+    slideMix: 0,
+    diveMix: 0,
+    slidePhase: 0,
+    divePhase: 0,
+    /** True when an action's clip was missing and the held-apex pose stands in.
+     *  Reported once at boot; not read per-step by anything. */
+    slideIsFallback: false,
+    diveIsFallback: false,
+    /** Where the yaw is easing toward — the camera's heading. HUD. */
     // THE STAND-UP, as two continuous signals and one scrub. No latch, no flag.
     standUpNeed: 0,
+    /** The physical pelvis-height measurement, 0..1 eased. Drives the mount
+     *  blend and main.js's follower gate; deliberately NOT the clip's scrub. */
+    pelvisDownness: 0,
+    /** tracker.weight, written by main.js before updateAnimTarget. The ghost
+     *  never reaches into the tracker; the number is handed to it. */
+    recoveryWeight: 1,
+    /** Last tick's recoveryWeight, so a collapse can be seen as a downward
+     *  step. Only a collapse lowers the weight — recovery only raises it. */
+    prevRecoveryWeight: 1,
+    /** The four override shares, written by updateAnimTarget and read by the
+     *  HUD and the weight audit. Never written anywhere else. */
+    shares: { stand: 0, action: 0, air: 0, loco: 0 },
     standUpProgress: 0,
     faceUpMix: 0,
-    standUpNodes: null,
     yaw: 0,
     targetYaw: 0,
+    /** The travel heading, HELD below facing.velocityFloor. NaN until the
+     *  athlete has moved once, so a slide begun from a standstill seeds off the
+     *  camera rather than pointing at world +Z. See advanceMountYaw. */
+    momentumYaw: NaN,
+    /** Stick magnitude, written by main.js. The ghost never reads input
+     *  directly; the number is handed to it, like recoveryWeight. */
+    steerInput: 0,
+    /** How much of the facing has drifted onto the travel heading because the
+     *  player let go. Eases in, drops to zero on any steering. */
+    coastMix: 0,
     targets: new Map(),
     bones: new Map(),
     seeded: false,
@@ -183,8 +350,53 @@ export function createAnimTarget(characterRoot, clips, rig) {
     });
   }
 
+  const roles = hipsAxisRoles(hips, bindRootLocal);
+  [state.hipsAxisA, state.hipsAxisB] = roles.horizontal;
+  state.hipsUpAxis = roles.up;
+  state.hipsBindA = hips.position[state.hipsAxisA];
+  state.hipsBindUp = hips.position[state.hipsUpAxis];
+  // Armature units per world metre. The exporter's 0.01 cm-to-m scale sits on
+  // the armature node, so a drop authored in metres has to be converted before
+  // it can be written into a bone's local translation.
+  const armScale = hips.parent && hips.parent.scale ? Math.abs(hips.parent.scale.x) : 0.01;
+  state.hipsUnitsPerMetre = armScale > 1e-6 ? 1 / armScale : 100;
+  state.hipsBindB = hips.position[state.hipsAxisB];
+  console.log(
+    `[animtarget] L5 root strip: armature-local ${state.hipsAxisA}/${state.hipsAxisB} ` +
+      `pinned as horizontal, ${state.hipsUpAxis} kept as vertical`,
+  );
+
   buildBlendNodes(state);
   return state;
+}
+
+/**
+ * Does every track in this clip address a bone that exists on the ghost?
+ *
+ * An AnimationClip carries track names of the form "<nodeName>.<property>".
+ * three resolves those against the mixer's root by SANITIZED name, which is the
+ * same colon-stripping the auto-rigger has to undo — GLTFLoader turns
+ * "mixamorig:Hips" into "mixamorigHips", so a clip authored against the raw
+ * Mixamo names and one authored against the loaded names must both resolve.
+ *
+ * Registering a clip whose tracks do NOT resolve is not a harmless no-op: the
+ * mixer binds what it can and silently leaves the rest, so the character plays
+ * a half-clip and the unbound bones fall back toward bind — a T-posed arm on an
+ * otherwise fine animation, with no error anywhere. Checking up front is what
+ * turns that into a log line naming the clip.
+ *
+ * @param {THREE.AnimationClip} clip
+ * @param {THREE.Skeleton} skeleton
+ * @returns {{ok: boolean, missing: string[]}}
+ */
+export function clipResolvesOnSkeleton(clip, skeleton) {
+  const missing = [];
+  for (const track of clip.tracks) {
+    const nodeName = track.name.split('.')[0];
+    if (!nodeName) continue;
+    if (!resolveBoneByName(skeleton, nodeName)) missing.push(nodeName);
+  }
+  return { ok: missing.length === 0, missing: [...new Set(missing)] };
 }
 
 /**
@@ -199,8 +411,8 @@ function findClip(state, name) {
 }
 
 /**
- * Builds the three blend actions. All three are played once, here, and never
- * stopped — the blend is entirely a matter of their weights.
+ * Builds every action in the blend space. All of them are played once, here,
+ * and never stopped — the blend is entirely a matter of their weights.
  *
  * WHY NOT crossFadeTo / fadeIn / fadeOut. Those schedule an interpolant against
  * the MIXER'S OWN accumulated time and mutate the action's weight from inside
@@ -209,17 +421,19 @@ function findClip(state, name) {
  * here, because a fade in flight is hidden state that no longer follows from the
  * tick alone, and the anchored capture stops being reproducible. The eased
  * weights computed below ARE the crossfade, they live in our state, and they are
- * a pure function of the sphere's speed history.
+ * a pure function of the sphere's velocity history.
  *
- * jog and sprint get timeScale 0 deliberately. Their times are driven from the
- * shared locomotion phase further down; leaving the mixer free to advance them
- * as well would mean two authorities on the same number, and the one that wrote
- * last would win by accident rather than by design.
+ * EVERY CYCLE CLIP AND EVERY JUMP CLIP GETS timeScale 0. Their times are driven
+ * from scrubs we own — the shared locomotion phase for the rings, the vertical
+ * velocity for the jump, the stand-up feedback loop for the stand-ups — and
+ * leaving the mixer free to advance them as well would mean two authorities on
+ * the same number, with the one that wrote last winning by accident. Idle is the
+ * single exception and free-runs: it has no cycle and no phase to keep.
  */
 function buildBlendNodes(state) {
-  const { idleClip, jogClip, sprintClip } = TUNING.anim.blend;
+  const rings = TUNING.blend2d;
 
-  const make = (name, timeScale) => {
+  const requireClip = (name) => {
     const clip = findClip(state, name);
     if (!clip) {
       throw new Error(
@@ -227,34 +441,175 @@ function buildBlendNodes(state) {
           state.clips.map((c) => c.name).join(', '),
       );
     }
+    return clip;
+  };
+
+  const make = (id, clip, timeScale, reversed = false) => {
     const action = state.mixer.clipAction(clip);
     action.reset();
-    action.time = 0;
     action.timeScale = timeScale;
     action.setEffectiveWeight(0);
     action.play();
-    return { action, duration: clip.duration, name: clip.name };
+    return { id, action, duration: clip.duration, name: clip.name, reversed };
   };
 
-  state.nodes = {
-    // Idle free-runs on the mixer: it is not part of the gait cycle and has no
-    // phase to keep.
-    idle: make(idleClip, 1),
-    jog: make(jogClip, 0),
-    sprint: make(sprintClip, 0),
+  const idle = make('idle', requireClip(TUNING.anim.blend.idleClip), 1);
+
+  const walkForward = requireClip(rings.walkClips.f);
+
+  // THE BACK NODE — a placeholder, and no longer reversed.
+  //
+  // There is no backpedal clip in the asset, so the back of both rings stands
+  // in with the walk's own forward clip. It used to play at (1 - phase), on the
+  // reasoning that a walk run backwards is a backpedal. Measured, that was the
+  // worse of the two wrongs: it is the ONLY node whose time runs against the
+  // shared locomotionPhase, so at phase p it sat at 1-p while every node it
+  // blends with sat at p. They agree only at 0.5 and are maximally opposed at
+  // the ends, and averaging two clips at opposite points of a gait cycle
+  // collapses the legs toward a straight-legged pose:
+  //
+  //                        reversed (old)          forward (now)
+  //     BACK-right(135)   corr -0.600, swing 0.068   corr +0.415, swing 0.121
+  //     astern   (180)    corr -0.360, swing 0.124   corr -0.428, swing 0.119
+  //     BACK-left (225)   corr -0.267, swing 0.202   corr -0.704, swing 0.194
+  //
+  // Swing amplitude at back-right nearly doubles and back-left's foot
+  // correlation improves 2.6x; the cost is that back-right's feet now move
+  // together rather than alternating. Better on three of four, and the
+  // remaining artefact is one clip looking wrong rather than the whole back
+  // half of the ring losing its legs.
+  //
+  // BOTH are compromises on a clip that does not exist. THE REAL FIX is a
+  // backpedal animation, and TUNING.blend2d.backClip is the seam for it: name a
+  // clip there — from character.glb or from the optional actions.glb — and it
+  // is used directly, played forward like every other node, with no code
+  // change. An empty string keeps this stand-in.
+  //
+  // The clip is CLONED because three's mixer caches one action per clip uuid:
+  // asking for a second action on 'Walk Forward' returns the walk ring's own
+  // forward action, and the two nodes would then fight over one time and one
+  // weight. A clone gets a fresh uuid and therefore a genuinely separate action.
+  const authoredBack = rings.backClip ? findClip(state, rings.backClip) : null;
+  let backClip;
+  if (authoredBack) {
+    backClip = authoredBack;
+  } else {
+    backClip = walkForward.clone();
+    backClip.name = `${walkForward.name} (stand-in for backpedal)`;
+  }
+  const back = make('back', backClip, 0, false);
+
+  const walk = {
+    f: make('walkF', walkForward, 0),
+    r: make('walkR', requireClip(rings.walkClips.r), 0),
+    b: back,
+    l: make('walkL', requireClip(rings.walkClips.l), 0),
   };
 
-  // The two stand-up clips join on the same terms as jog and sprint: timeScale
-  // 0, sampled from a scrub we own. Their scrub is standUpProgress.
-  state.standUpNodes = {
-    faceDown: make(TUNING.standUp.faceDownClip, 0),
-    faceUp: make(TUNING.standUp.faceUpClip, 0),
+  const run = {
+    f: make('runF', requireClip(rings.runClips.f), 0),
+    r: make('runR', requireClip(rings.runClips.r), 0),
+    b: back,
+    l: make('runL', requireClip(rings.runClips.l), 0),
   };
+
+  // The sprint ring is forward-only. See the CAP RULE in advanceBlend.
+  const sprint = { f: make('sprintF', requireClip(rings.sprintClip), 0) };
+
+  const jump = {
+    standing: make('jumpStanding', requireClip(TUNING.jump.standingClip), 0),
+    running: make('jumpRunning', requireClip(TUNING.jump.runningClip), 0),
+  };
+
+  // THE TWO ACTION NODES, with a fallback that costs nothing downstream.
+  //
+  // character.glb has no slide and no dive; actions.glb is optional and may not
+  // be there at all. Rather than branch on "is there a clip" at every site that
+  // touches an action, a missing clip becomes a node built on a CLONE of the
+  // standing jump, whose time is pinned at apexHold — the held airborne pose.
+  // Every share, every weight and every time write downstream is then identical
+  // whether the art has arrived or not, and the only thing that knows the
+  // difference is the boot log and the `isFallback` flag it reports from.
+  //
+  // The clone matters for the same reason the reversed back node needed one:
+  // three's mixer caches one action per clip uuid, so a fallback sharing the
+  // standing jump's clip would share its action, its time and its weight.
+  const makeAction = (id, wanted) => {
+    const clip = findClip(state, wanted);
+    if (clip) return { node: make(id, clip, 0), fallback: false };
+    const stand = requireClip(TUNING.jump.standingClip).clone();
+    stand.name = `${wanted} (fallback: held ${TUNING.jump.standingClip})`;
+    return { node: make(id, stand, 0), fallback: true };
+  };
+
+  const slideBuilt = makeAction('slide', TUNING.action.slideClip);
+  const diveBuilt = makeAction('dive', TUNING.action.diveClip);
+  const action = { slide: slideBuilt.node, dive: diveBuilt.node };
+  state.slideIsFallback = slideBuilt.fallback;
+  state.diveIsFallback = diveBuilt.fallback;
+
+  // The two stand-up clips join on the same terms: timeScale 0, sampled from a
+  // scrub we own. Their scrub is standUpProgress.
+  const standUp = {
+    faceDown: make('standDown', requireClip(TUNING.standUp.faceDownClip), 0),
+    faceUp: make('standUp', requireClip(TUNING.standUp.faceUpClip), 0),
+  };
+
+  state.nodes = { idle, walk, run, sprint, jump, standUp, action };
+
+  // THE CONTRIBUTION TABLE — one row per (ring, direction) cell. `nominalKey`
+  // names the ring's authored ground speed in TUNING.blend2d, which is what the
+  // stride sync divides by. walkB and runB deliberately share one node object
+  // and carry different nominals: a backpedal at run speed should turn the legs
+  // over faster than one at walk speed even though it is the same clip.
+  state.contributions = [
+    { id: 'walkF', node: walk.f, dir: DIR_F, ring: 'walk', nominalKey: 'walkSpeed' },
+    { id: 'walkR', node: walk.r, dir: DIR_R, ring: 'walk', nominalKey: 'walkSpeed' },
+    { id: 'walkB', node: walk.b, dir: DIR_B, ring: 'walk', nominalKey: 'walkSpeed' },
+    { id: 'walkL', node: walk.l, dir: DIR_L, ring: 'walk', nominalKey: 'walkSpeed' },
+    { id: 'runF', node: run.f, dir: DIR_F, ring: 'run', nominalKey: 'runSpeed' },
+    { id: 'runR', node: run.r, dir: DIR_R, ring: 'run', nominalKey: 'runSpeed' },
+    { id: 'runB', node: run.b, dir: DIR_B, ring: 'run', nominalKey: 'runSpeed' },
+    { id: 'runL', node: run.l, dir: DIR_L, ring: 'run', nominalKey: 'runSpeed' },
+    { id: 'sprintF', node: sprint.f, dir: DIR_F, ring: 'sprint', nominalKey: 'sprintSpeed' },
+  ];
+
+  // Distinct node objects only — `back` appears in two contributions and must
+  // have its time written once.
+  state.cycleNodes = [walk.f, walk.r, back, walk.l, run.f, run.r, run.l, sprint.f];
+  state.allNodes = [
+    idle,
+    ...state.cycleNodes,
+    jump.standing,
+    jump.running,
+    standUp.faceDown,
+    standUp.faceUp,
+    action.slide,
+    action.dive,
+  ];
+
+  state.weights = { idle: 0 };
+  state.targetWeights = { idle: 0 };
+  for (const c of state.contributions) {
+    state.weights[c.id] = 0;
+    state.targetWeights[c.id] = 0;
+  }
+
+  for (const [what, built] of [['slide', slideBuilt], ['dive', diveBuilt]]) {
+    if (built.fallback) {
+      console.warn(
+        `[animtarget] no "${what === 'slide' ? TUNING.action.slideClip : TUNING.action.diveClip}" ` +
+          `clip in the asset set — the ${what} falls back to the held airborne pose. ` +
+          `Mechanics are unaffected; drop the clip into public/models/actions.glb to replace it.`,
+      );
+    }
+  }
 
   console.log(
-    `[animtarget] blend space: ${state.nodes.idle.name} (${state.nodes.idle.duration.toFixed(2)}s) / ` +
-      `${state.nodes.jog.name} (${state.nodes.jog.duration.toFixed(2)}s) / ` +
-      `${state.nodes.sprint.name} (${state.nodes.sprint.duration.toFixed(2)}s)`,
+    `[animtarget] 2D blend space: ${state.contributions.length} ring nodes + idle, ` +
+      `${state.cycleNodes.length} distinct cycle clips ` +
+      `(back = "${back.name}", shared by the walk and run rings), ` +
+      `jump overlay ${jump.standing.name} / ${jump.running.name}`,
   );
 }
 
@@ -264,74 +619,186 @@ function ease(current, target, rate, dt) {
 }
 
 /**
- * The tent. Below jogSpeed the weight splits between idle and jog; between
- * jogSpeed and sprintSpeed it splits between jog and sprint; above sprintSpeed
- * sprint owns everything. The three always sum to 1.
+ * THE GAIT TENT — the speed axis, unchanged in shape from the 1D blend space
+ * and simply given a fourth stop. Below walkSpeed the weight splits between
+ * idle and walk, then walk/run, then run/sprint; above sprintSpeed the sprint
+ * ring owns everything. The four always sum to 1.
+ *
+ * Idle's speed is 0 implicitly: it is the bottom of the axis by definition, and
+ * a tunable "the speed at which standing still looks right" is not a real
+ * quantity.
  */
-function tentWeights(speed, out) {
-  const { idleSpeed, jogSpeed, sprintSpeed } = TUNING.anim.blend;
+function gaitWeights(speed, out) {
+  const { walkSpeed, runSpeed, sprintSpeed } = TUNING.blend2d;
 
-  if (speed <= idleSpeed) {
-    out.idle = 1; out.jog = 0; out.sprint = 0;
-  } else if (speed < jogSpeed) {
-    const t = (speed - idleSpeed) / (jogSpeed - idleSpeed);
-    out.idle = 1 - t; out.jog = t; out.sprint = 0;
+  out.idle = 0; out.walk = 0; out.run = 0; out.sprint = 0;
+
+  if (speed <= 0) {
+    out.idle = 1;
+  } else if (speed < walkSpeed) {
+    const t = speed / walkSpeed;
+    out.idle = 1 - t; out.walk = t;
+  } else if (speed < runSpeed) {
+    const t = (speed - walkSpeed) / (runSpeed - walkSpeed);
+    out.walk = 1 - t; out.run = t;
   } else if (speed < sprintSpeed) {
-    const t = (speed - jogSpeed) / (sprintSpeed - jogSpeed);
-    out.idle = 0; out.jog = 1 - t; out.sprint = t;
+    const t = (speed - runSpeed) / (sprintSpeed - runSpeed);
+    out.run = 1 - t; out.sprint = t;
   } else {
-    out.idle = 0; out.jog = 0; out.sprint = 1;
+    out.sprint = 1;
   }
   return out;
 }
 
 /**
+ * THE DIRECTION TENT — the angular axis. The same linear tent as the gait's,
+ * wrapped onto a circle: the four ring slots sit at 0, PI/2, PI and 3PI/2, the
+ * heading falls in one of four sectors, and the two slots bounding that sector
+ * split the weight between them. Sums to 1 for every angle.
+ *
+ * THE WRAP IS THE WHOLE POINT. The modulo below is what makes the L-to-F sector
+ * — the one that straddles the discontinuity in atan2 — behave exactly like the
+ * other three. Without it a character turning through dead ahead from the left
+ * would pass through a sector where no node has any weight, the pose would
+ * collapse toward the bind, and it would happen at only one heading, which is
+ * the kind of bug that gets blamed on the animation.
+ *
+ * @param {number} theta 0 = straight ahead, +PI/2 = the character's right
+ */
+function directionWeights(theta, out) {
+  let t = theta / SECTOR_ANGLE;
+  t = ((t % DIRECTION_SECTORS) + DIRECTION_SECTORS) % DIRECTION_SECTORS;
+
+  const slot = Math.floor(t);
+  const frac = t - slot;
+
+  out[0] = 0; out[1] = 0; out[2] = 0; out[3] = 0;
+  out[slot] = 1 - frac;
+  out[(slot + 1) % DIRECTION_SECTORS] = frac;
+  return out;
+}
+
+/**
+ * HOW MUCH OF THE POSE THE STAND-UP TAKE IS CLAIMING ON ITS OWN ACCOUNT.
+ *
+ * 1 while the take is mid-play, ramping to 0 across the last releaseBand of
+ * phase so the handback to standUpNeed is continuous rather than a step on the
+ * frame the clip ends. At rest progress sits at 1 and this is 0, so it costs
+ * nothing outside a get-up.
+ *
+ * It is a clamp on one float, not a phase of anything: nothing latches, nothing
+ * branches on which part of a get-up we are in, and a second knockdown re-enters
+ * it by the same arithmetic as the first (RULING GF-2.0).
+ *
+ * @param {object} state
+ * @returns {number} 0..1
+ */
+function standUpHold(state) {
+  const band = Math.max(1e-3, TUNING.standUp.releaseBand);
+  return Math.min(1, Math.max(0, (1 - state.standUpProgress) / band));
+}
+
+/**
  * THE STAND-UP, as two continuous signals and a self-closing feedback loop.
  *
- * There is no "am I down" boolean and nothing to enter or leave. Two numbers are
- * read off the pelvis body every step and everything follows from them:
+ * There is no "am I down" boolean and nothing to enter or leave. Three numbers
+ * are read every step and everything follows from them:
  *
- *   standUpNeed — how far the pelvis is below standing height, 0..1, eased.
- *   faceUpMix   — which way the pelvis is facing, 0..1, smoothed through a band
- *                 so that a body lying on its side does not flicker between the
- *                 two clips.
+ *   standUpNeed    — how much RECOVERY is outstanding, 0..1, eased. Driven by
+ *                    the tracker's weight, NOT by the pelvis. See the note on
+ *                    the deadlock below.
+ *   pelvisDownness — how far the pelvis is below standing height, 0..1, eased.
+ *                    The physical measurement. It no longer drives the clip;
+ *                    it drives the mount blend and main.js's follower gate,
+ *                    which are the two things that genuinely want to know
+ *                    where the body IS rather than how far along the recovery
+ *                    is.
+ *   faceUpMix      — which way the pelvis is facing, 0..1, smoothed through a
+ *                    band so a body lying on its side does not flicker between
+ *                    the two clips.
  *
- * THE FLOOR APPROXIMATION. Height is the pelvis's world y, not its height above
- * the surface beneath it. The bowl floor is y = 0 across the whole flat centre,
- * which is where a knocked-down character almost always ends up, and on the wall
- * the same formula reads slightly LOW — it says "more down than you are", which
- * errs toward standing up, which is the harmless direction. Sampling the true
- * arena height under the pelvis would mean a raycast per step to fix a case that
- * resolves itself.
+ * THE FLOOR APPROXIMATION IS GONE (Task 7). Height used to be the pelvis's raw
+ * world y, on the argument that the bowl floor is y = 0 across the flat centre
+ * where a knocked-down character almost always ends up. That argument was
+ * wrong about the case that mattered: ON THE BOWL WALL the pelvis is meters
+ * above y = 0 while lying flat on the slope, so standUpNeed read near ZERO for
+ * a character that was completely down. Measured — a sprint knockdown into the
+ * wall never once crossed 0.7, so the mount hold could not engage there and the
+ * character stood up beside its own sphere.
  *
- * THE FEEDBACK LOOP, which is the whole design and is deliberately circular:
+ * The height is now measured against the surface actually beneath the pelvis.
+ * main.js casts that ray (it already owns the environment-only filter) and
+ * hands the result in, so this file stays free of physics imports and the whole
+ * project pays for exactly one extra ray per step.
  *
- *   progress = max(progress + minRate * dt, 1 - standUpNeed)
+ * A NEGATIVE floorY means the caller had no hit and is telling us so; the old
+ * raw-y behaviour is the fallback, because a missing floor should degrade to
+ * the previous approximation rather than to nonsense.
  *
- * The ghost plays the stand-up clip slightly AHEAD of the body. The PD tracker
- * hauls the body up along the clip's arc; as the body rises, standUpNeed falls;
- * as need falls, `1 - need` pushes progress further along the clip; the clip
- * pulls the body higher still. The loop closes itself and the character stands.
+ * THE DEADLOCK, and why the clip is no longer driven by the pelvis.
  *
- * minRate is what stops it deadlocking. A body pinned under something, or simply
- * slow, would otherwise sit at progress 0 with need 1 forever, because progress
- * is driven by a rise that is not happening. The floor rate means the clip
- * always advances, so the ghost always reaches for the finished pose, and the
- * worst case is that the tracker keeps trying rather than that it stops.
+ * Every previous version of this scrub was some form of
+ *
+ *   progress = f(pelvis height)
+ *
+ * and every one of them was circular in the bad direction: the ghost's pose is
+ * what the tracker hauls the body toward, so a pose derived from where the body
+ * already is has nothing to pull with. The clip sat near the floor waiting for
+ * hips that were on the floor because the clip was holding them there. A lead
+ * term papered over it — the pose was allowed a fixed distance ahead of the
+ * body — but the anchor was still the body, so what actually stood the athlete
+ * up was the weight ramp restoring the joint springs, not the take. Which is
+ * exactly what "the stand-up animations are not playing" describes.
+ *
+ * THE RECOVERY IS THE CLOCK NOW. tracker.weight climbs on a pure ramp
+ * (recoverPerSecond, no thresholds, nothing to do with height), so it is a
+ * signal the clip can follow that the clip cannot influence. The circle is cut:
+ *
+ *   need     = 1 - weight, eased    (the blend share, so it crossfades)
+ *   ceiling  = min(1, weight * recoverGain)   (RAW, so the reset is an edge)
+ *   progress = min(ceiling, progress + minRate * dt)
+ *
+ * progress is a monotone forward ratchet at minRate — the take plays at its
+ * authored speed — and recoverGain is what lets it FINISH well before the
+ * weight does, so the pose is complete and waiting while the body catches up.
+ * At recoverPerSecond 0.3 and recoverGain 3 the ceiling clears 1 about 1.1 s
+ * into a 3.3 s recovery, and minRate 0.75 needs 1.33 s to walk the clip, so the
+ * ratchet is what binds and the clip runs at roughly the speed it was authored.
+ *
+ * The reset is the same clamp read backwards: a knockdown puts weight at 0, so
+ * the ceiling goes to 0 and carries progress to the front of the take. No edge,
+ * no latch, no boolean of character state (RULING GF-2.0).
  */
-function advanceStandUp(state, rig, dt) {
+function advanceStandUp(state, rig, floorY, dt) {
   const tuning = TUNING.standUp;
   const pelvis = rig && rig.get('pelvis');
 
   if (!pelvis) {
     state.standUpNeed = 0;
+    state.pelvisDownness = 0;
     state.standUpProgress = 0;
     return;
   }
 
-  const translation = pelvis.body.translation();
-  const rawNeed = Math.min(1, Math.max(0, 1 - translation.y / tuning.pelvisStandHeight));
+  // THE RECOVERY DEMAND, from the tracker's weight and nothing else. Written
+  // onto the ghost by main.js before this runs, for the same reason slideMix
+  // and diveMix are: main.js owns the mechanics, the ghost owns only how much
+  // of each pose to show.
+  const rawNeed = Math.min(1, Math.max(0, 1 - state.recoveryWeight));
   state.standUpNeed = ease(state.standUpNeed, rawNeed, tuning.ease, dt);
+
+  // THE PHYSICAL MEASUREMENT, kept because the mount blend below and the
+  // follower gate in main.js want where the body IS, not how far along the
+  // recovery has come. Keeping them separate is also what stops mount recovery
+  // from collapsing onto a single signal: its two conditions are meant to be
+  // independent, and "weight is low" and "weight is low" is one condition.
+  const translation = pelvis.body.translation();
+  const height = Number.isFinite(floorY) ? translation.y - floorY : translation.y;
+  // Normalised across the REACHABLE range, not against an implied zero the
+  // pelvis never gets to: flat on the floor it measures ~0.13 m.
+  const span = Math.max(1e-3, tuning.pelvisStandHeight - tuning.pelvisProneHeight);
+  const rawDown = Math.min(1, Math.max(0, (tuning.pelvisStandHeight - height) / span));
+  state.pelvisDownness = ease(state.pelvisDownness, rawDown, tuning.ease, dt);
 
   // Which way up. The pelvis body's local +Z against world up.
   const rotation = pelvis.body.rotation();
@@ -343,70 +810,169 @@ function advanceStandUp(state, rig, dt) {
   const rawMix = Math.min(1, Math.max(0, (faceUpness + band) / (2 * band)));
   state.faceUpMix = ease(state.faceUpMix, rawMix, tuning.ease, dt);
 
-  // THE SCRUB, in two directions, blended rather than branched.
+  // THE SCRUB. See the deadlock note above the function: the ceiling comes from
+  // the recovery, which the clip cannot influence, and the ratchet is what
+  // makes the take play at its authored speed rather than at the body's.
   //
-  //   advanced — the feedback loop: at least minRate, faster as the body rises.
-  //   retired  — rewinding toward the start of the clip.
+  // RAW weight, not the eased need. The ease exists so the SHARE crossfades
+  // instead of popping, and it is the wrong signal for the reset: the weight
+  // rebounds off zero at recoverPerSecond immediately, so an eased need chasing
+  // it never reached 1 and the ceiling never reached 0 — traced bottoming at
+  // 0.49, which started every get-up half way through the take. The reset wants
+  // the edge exactly as sharp as the knockdown that caused it.
+  // THE COLLAPSE EDGE, and why the ceiling alone is no longer enough.
   //
-  // A pure `max(progress + minRate*dt, 1 - need)` cannot rewind: standing
-  // upright makes `1 - need` equal 1 and pins progress there forever, so the
-  // SECOND knockdown would start at the end of the stand-up clip and the
-  // character would never get up again. Measured before this was fixed —
-  // progress sat oscillating at 0.98 with the character on its feet.
+  // The ceiling carries progress back to the front of the take when the weight
+  // goes to zero — which worked while every knockdown landed on zero. A dive
+  // now lands on crashMuscleTone instead, so the ceiling only falls to
+  // 0.2 * 1.2 = 0.24 and the get-up would start a quarter of the way in, every
+  // time, forever.
   //
-  // `k` is how far down the character is, measured against the same mountSlack
-  // the mount blend uses: 1 while down, 0 while standing. Blending the two
-  // candidates by it gives the advance when it is needed and the rewind when it
-  // is not, with no branch and nothing latched.
-  const advanced = Math.max(state.standUpProgress + tuning.minRate * dt, 1 - state.standUpNeed);
-  const retired = Math.max(0, state.standUpProgress - tuning.minRate * dt * 2);
-  const k = Math.min(1, state.standUpNeed / Math.max(1e-3, tuning.mountSlack));
+  // Only a collapse ever LOWERS the weight; the recovery ramp only raises it.
+  // So a downward step in one tick is a collapse by construction, whatever
+  // depth it falls to, and that is the edge the take should re-seed on. It is
+  // an edge starting a monotone ratchet from zero, which is the shape RULING
+  // GF-2.0 explicitly allows; nothing latches and nothing branches on which
+  // part of a get-up we are in.
+  if (state.recoveryWeight < state.prevRecoveryWeight - tuning.collapseDrop) {
+    state.standUpProgress = 0;
+  }
+  state.prevRecoveryWeight = state.recoveryWeight;
 
-  state.standUpProgress = Math.min(1, retired + (advanced - retired) * k);
+  const ceiling = Math.min(1, state.recoveryWeight * tuning.recoverGain);
+  state.standUpProgress = Math.min(ceiling, state.standUpProgress + tuning.minRate * dt);
 }
 
 /**
- * Advances the blend space one fixed step: speed in, weights and phase out.
+ * Advances the 2D blend space one fixed step: velocity in, node weights and
+ * phase out.
  *
- * THE SINGLE LOCOMOTION PHASE is the reason this is not just three weighted
- * actions. Jog and sprint are two recordings of the same gait at different
- * rates. Blended out of phase — left foot forward in one, right foot forward in
- * the other — they average to a pose with the legs together and straight, and
- * the PD tracker will chase that faithfully, so the character glides through the
- * crossfade with no legs. One phase drives both, so the same foot is forward in
- * both clips at every instant and the average is still a running pose.
+ * THE SINGLE LOCOMOTION PHASE is the reason this is not just nine weighted
+ * actions. Every ring clip is a recording of the same gait at a different speed
+ * or heading. Blended out of phase — left foot forward in one, right foot
+ * forward in another — they average to a pose with the legs together and
+ * straight, and the PD tracker will chase that faithfully, so the character
+ * glides through the crossfade with no legs. One phase drives all of them, so
+ * the same foot is forward in every clip at every instant and the average is
+ * still a running pose. That is what holds criterion 1's "phase-synced through
+ * every F/R/B/L crossfade" together.
+ *
+ * @param {number} yaw the mount yaw ALREADY advanced this step
  */
-function advanceBlend(state, motor, dt) {
+function advanceBlend(state, motor, yaw, dt) {
   const blend = TUNING.anim.blend;
 
-  // 1 — SPEED IN, eased. Read-only on the motor.
+  // 1 — VELOCITY IN, eased as a VECTOR. Read-only on the motor. Smoothing the
+  // vector rather than the scalar matters here in a way it did not in 1D: the
+  // direction tent reads the heading, and an unsmoothed heading on a rolling
+  // ball chatters through several sectors a second at walking pace.
   const linear = motor.body.linvel();
-  const raw = Math.hypot(linear.x, linear.z);
-  state.smoothedSpeed = ease(state.smoothedSpeed, raw, blend.speedSmoothing, dt);
+  state.smoothedVelX = ease(state.smoothedVelX, linear.x, blend.speedSmoothing, dt);
+  state.smoothedVelZ = ease(state.smoothedVelZ, linear.z, blend.speedSmoothing, dt);
+  state.smoothedSpeed = Math.hypot(state.smoothedVelX, state.smoothedVelZ);
 
-  // 2 — TARGET WEIGHTS.
-  tentWeights(state.smoothedSpeed, _targetWeights);
+  // 2 — INTO THE YAW FRAME.
+  //
+  // Convention: local.x > 0 = moving toward the character's RIGHT hand
+  //             local.z > 0 = moving FORWARD (the facing direction)
+  //
+  // THE SIGN, which was wrong until GF-3 and is the whole of Part 1. The mount
+  // is a rotation of `yaw` about world up, so world = Ry(yaw) * local and the
+  // inverse rotation is Ry(-yaw); that part was always right, and it puts the
+  // facing direction on +Z correctly. What it does NOT do is put the
+  // character's right hand on +X.
+  //
+  // In a right-handed, Y-up frame whose +Z is forward, the right hand is -X.
+  // Stand at the origin looking toward +Z with +Y up and you are facing out of
+  // the screen at the viewer; your right hand is then on the viewer's left,
+  // which is -X. So the raw inverse rotation hands back a frame with +X on the
+  // character's LEFT, and the negation below is what makes the axis mean what
+  // the convention above says it means.
+  //
+  // Measured before the fix: with the camera fixed and the stick pushed RIGHT,
+  // local.x read -5.02 and the LEFT-strafe node took weight 0.98. The node
+  // table's angles and the angular tent are correct and are NOT touched — the
+  // error was entirely here, in what "+X" was taken to mean.
+  const cos = Math.cos(yaw);
+  const sin = Math.sin(yaw);
+  state.localVelX = -(cos * state.smoothedVelX - sin * state.smoothedVelZ);
+  state.localVelZ = sin * state.smoothedVelX + cos * state.smoothedVelZ;
 
-  // 3 — APPLIED WEIGHTS, eased toward the target.
+  const theta = Math.atan2(state.localVelX, state.localVelZ);
+
+  // 3 — THE TWO TENTS.
+  const g = gaitWeights(state.smoothedSpeed, _gait);
+  const d = directionWeights(theta, _direction);
+  state.gait.idle = g.idle;
+  state.gait.walk = g.walk;
+  state.gait.run = g.run;
+  state.gait.sprint = g.sprint;
+  state.direction[0] = d[0];
+  state.direction[1] = d[1];
+  state.direction[2] = d[2];
+  state.direction[3] = d[3];
+
+  // 4 — NODE WEIGHT = GAIT x DIRECTION, with THE CAP RULE.
+  //
+  // The sprint ring has a forward node and nothing else, because the asset has
+  // no lateral sprint and faking one from a run strafe reads as a skid. So the
+  // sprint gait weight is only spent on the sprint node to the extent the player
+  // is actually going forward: the non-forward share, g.sprint * d[k] for every
+  // k that is not F, is REASSIGNED to the RUN ring's node in the same direction.
+  //
+  // Two things fall out of that, both wanted. The weights still sum to exactly
+  // 1, because nothing was dropped — it was moved. And a full-speed sideways
+  // input never requests a lateral sprint: it plays the run strafe, which is the
+  // fastest lateral clip that exists, and the character caps out there.
+  const target = state.targetWeights;
+  target.idle = g.idle;
+
+  for (const c of state.contributions) {
+    if (c.ring === 'sprint') {
+      target[c.id] = g.sprint * d[DIR_F];
+    } else if (c.ring === 'run') {
+      target[c.id] = g.run * d[c.dir] + (c.dir === DIR_F ? 0 : g.sprint * d[c.dir]);
+    } else {
+      target[c.id] = g.walk * d[c.dir];
+    }
+  }
+
+  // 5 — APPLIED WEIGHTS, eased toward the target. This is the crossfade, and it
+  // runs AFTER the 2D computation so that one ease covers both axes at once.
   const w = state.weights;
-  w.idle = ease(w.idle, _targetWeights.idle, blend.weightEase, dt);
-  w.jog = ease(w.jog, _targetWeights.jog, blend.weightEase, dt);
-  w.sprint = ease(w.sprint, _targetWeights.sprint, blend.weightEase, dt);
+  w.idle = ease(w.idle, target.idle, blend.weightEase, dt);
+  for (const c of state.contributions) {
+    w[c.id] = ease(w[c.id], target[c.id], blend.weightEase, dt);
+  }
 
-  // 4 — PHASE. Cycles per second is the weight-blended reciprocal duration over
-  // the two gait clips; idle has no cycle and is excluded. The gait weight is
-  // renormalised over jog+sprint so that at low speed, where idle owns most of
-  // the weight, the legs still turn over at the jog rate rather than crawling.
-  const gait = w.jog + w.sprint;
+  // 6 — PHASE. Cycles per second is the weight-blended reciprocal duration over
+  // every weighted CYCLE contribution — nine of them now, not two. Idle has no
+  // cycle and is excluded, and the weights are renormalised over the cycle
+  // contributions so that at low speed, where idle owns most of the total, the
+  // legs still turn over at the walk rate rather than crawling.
+  //
+  // Summing over CONTRIBUTIONS rather than over nodes is what lets the shared
+  // back node be charged to the walk ring's nominal in one term and the run
+  // ring's in another. Summing over nodes would have to pick one, and the
+  // backpedal's stride would then be wrong at one of the two speeds.
+  let cycleWeight = 0;
   let cyclesPerSecond = 0;
   let nominal = 0;
 
-  if (gait > MIN_GAIT_WEIGHT) {
-    const jogShare = w.jog / gait;
-    const sprintShare = w.sprint / gait;
-    cyclesPerSecond =
-      jogShare / state.nodes.jog.duration + sprintShare / state.nodes.sprint.duration;
-    nominal = jogShare * TUNING.anim.stride.jogNominal + sprintShare * TUNING.anim.stride.sprintNominal;
+  for (const c of state.contributions) {
+    const weight = w[c.id];
+    if (weight <= 0) continue;
+    cycleWeight += weight;
+    cyclesPerSecond += weight / c.node.duration;
+    nominal += weight * TUNING.blend2d[c.nominalKey];
+  }
+
+  if (cycleWeight > MIN_GAIT_WEIGHT) {
+    cyclesPerSecond /= cycleWeight;
+    nominal /= cycleWeight;
+  } else {
+    cyclesPerSecond = 0;
+    nominal = 0;
   }
 
   // STRIDE SYNC. Scale the turnover toward ground speed, clamped. With the root
@@ -424,8 +990,91 @@ function advanceBlend(state, motor, dt) {
 }
 
 /**
+ * THE COMMITTED JUMP — three mechanics floats, no character state.
+ *
+ * RULING GF-3.3, verbatim:
+ *
+ *   "The vertical-velocity scrub is removed. vy is noisy and non-monotone at
+ *   the apex and on grounded flicker; animation time never again derives from
+ *   it. Jump timing is tick-rate ratchets only."
+ *
+ * What that ruling costs and what it buys. It costs the property that the clip
+ * tracked the real arc, so a very high jump and a very low one now play the
+ * takeoff at the same rate. It buys a pose that cannot shiver: vy passes
+ * through zero at the apex with contact noise riding on it, and any clip time
+ * derived from it inherited that noise at exactly the moment the character is
+ * most visible. The hold below replaces the arc-tracking with something better
+ * suited to a jump anyway — one pose, held, for the whole airtime.
+ *
+ * The three floats, and why each is legal under RULING GF-2.0:
+ *
+ *   jumpClipMix — LATCHED by the liftoff edge from the horizontal speed at that
+ *                 instant, untouched until the next liftoff. The arc is decided
+ *                 the moment you leave the ground, so the pose should be too.
+ *   airborneMix — a continuous ease, asymmetric: fast in so the pose commits
+ *                 within a few ticks of leaving the ground, soft out so the
+ *                 landing is a blend rather than a cut.
+ *   jumpPhase   — a rate ratchet with a HOLD POINT. It rises to apexHold and
+ *                 stops there for the whole airtime; that held frame IS the
+ *                 airborne pose. On the ground it resumes to 1.0 through the
+ *                 landing frames and stops again. It never wraps and never
+ *                 exceeds 1.
+ *
+ * THE FALL WITH NO JUMP falls out of the arithmetic rather than needing a case.
+ * Roll off the lip and no liftoff has reset the phase, so it is sitting at the
+ * 1.0 the last landing left it at — and `min(phase + takeoffRate * dt,
+ * apexHold)` clamps that straight DOWN to apexHold on the first airborne step.
+ * The character enters the held airborne pose immediately, which is what a long
+ * fall should look like, with no flag tracking whether this airtime had a jump.
+ */
+function advanceAirborne(state, motor, liftoff, grounded, dt) {
+  const tuning = TUNING.jump;
+
+  // 1 — THE LATCH. Horizontal speed at THIS instant picks the clip for the
+  // whole flight. Below inPlaceBelow it is all standing jump, above runAbove
+  // all running jump, linear between.
+  if (liftoff) {
+    const linear = motor.body.linvel();
+    const speed = Math.hypot(linear.x, linear.z);
+    const span = Math.max(MIN_LATCH_SPAN, tuning.runAbove - tuning.inPlaceBelow);
+    const t = Math.min(1, Math.max(0, (speed - tuning.inPlaceBelow) / span));
+    state.jumpClipMix = 1 - t;
+    // The ratchet restarts here and only here, so a jump always opens on the
+    // clip's first frame however the last one ended.
+    state.jumpPhase = 0;
+  }
+
+  // 2 — THE OVERRIDE, eased asymmetrically. Selecting the rate by the target is
+  // not a branch on character state: it is the statement that rising and
+  // falling are different rates, which is what asymmetric easing means.
+  // The DEBOUNCED contact flag, not the raw ray. A single-tick graze against a
+  // wall in mid-flight used to pull this down by a quarter in one step.
+  const target = grounded ? 0 : 1;
+  const rate = target > state.airborneMix ? tuning.airEaseIn : tuning.airEaseOut;
+  state.airborneMix = ease(state.airborneMix, target, rate, dt);
+
+  // 3 — THE HOLD-POINT RATCHET.
+  //
+  // PRECEDENCE. The two rules overlap for the handful of ticks after touchdown
+  // where the feet are down but airborneMix has not yet eased below the
+  // threshold, and grounded is checked FIRST so the landing resumes on the
+  // grounded EDGE as specified rather than eight ticks later. Checked the other
+  // way round the landing frames would play under a weight that had already
+  // half-decayed, and the landing is the half of the jump most worth seeing.
+  //
+  // Neither branch is a character state: one is the motor's own contact
+  // measurement, the other a threshold on a continuous float.
+  if (grounded) {
+    state.jumpPhase = Math.min(state.jumpPhase + tuning.landRate * dt, 1);
+  } else if (state.airborneMix > AIRBORNE_THRESHOLD) {
+    state.jumpPhase = Math.min(state.jumpPhase + tuning.takeoffRate * dt, tuning.apexHold);
+  }
+}
+
+/**
  * Applies TUNING.anim.override. 'auto' means the blend space; anything else
- * pins that one clip at weight 1, which is the Task 4 single-clip behaviour.
+ * pins that one clip at weight 1, which is the Task 4 single-clip behaviour,
+ * kept for debugging and for the L5 creep test.
  */
 function applyOverride(state) {
   const wanted = TUNING.anim.override;
@@ -439,9 +1088,7 @@ function applyOverride(state) {
     state.overrideName = wanted;
 
     if (wanted !== AUTO) {
-      const node = [state.nodes.idle, state.nodes.jog, state.nodes.sprint].find(
-        (n) => n.name === wanted,
-      );
+      const node = state.allNodes.find((n) => n.name === wanted);
       if (node) {
         // One of the blend clips: pin it in place rather than making a second
         // action on the same clip.
@@ -454,7 +1101,6 @@ function applyOverride(state) {
         } else {
           state.overrideAction = state.mixer.clipAction(clip);
           state.overrideAction.reset();
-          state.overrideAction.time = 0;
           state.overrideAction.play();
         }
       }
@@ -463,8 +1109,8 @@ function applyOverride(state) {
 
   if (state.overrideName === AUTO) return false;
 
-  // Pinned: the named action owns all the weight, the rest own none.
-  for (const node of [state.nodes.idle, state.nodes.jog, state.nodes.sprint]) {
+  // Pinned: the named action owns all the weight, every other node owns none.
+  for (const node of state.allNodes) {
     node.action.setEffectiveWeight(node.action === state.overrideAction ? 1 : 0);
   }
   if (state.overrideAction) {
@@ -472,6 +1118,62 @@ function applyOverride(state) {
     state.overrideAction.timeScale = TUNING.anim.timeScale;
   }
   return true;
+}
+
+/**
+ * THE ONE FUNCTION THAT WRITES A CLIP TIME.
+ *
+ * Every action outside idle carries timeScale 0, so mixer.update does not
+ * advance any of them: it samples each at whatever time was last written here,
+ * and this write sets the time the NEXT sample will use. The pose therefore
+ * trails its scrub by exactly one fixed step, uniformly, for every clip — which
+ * is invisible and, more to the point, identical on every run.
+ *
+ * Called immediately AFTER mixer.update, deliberately. Writing the times before
+ * it instead would have the mixer advance from them and sample somewhere we did
+ * not choose, putting two authorities on one number. This way the scrubs are the
+ * only authority, and there is exactly one place to look for a clip whose time
+ * is wrong.
+ */
+function writeClipTimes(state) {
+  // THE RINGS — one phase, and the back node reads it backwards.
+  for (const node of state.cycleNodes) {
+    const phase = node.reversed ? 1 - state.locomotionPhase : state.locomotionPhase;
+    node.action.time = phase * node.duration;
+  }
+
+  // THE JUMP — the arc, mapped into the usable window of each clip.
+  const { clipStart, clipEnd } = TUNING.jump;
+  const fraction = clipStart + state.jumpPhase * (clipEnd - clipStart);
+  state.nodes.jump.standing.action.time = fraction * state.nodes.jump.standing.duration;
+  state.nodes.jump.running.action.time = fraction * state.nodes.jump.running.duration;
+
+  // THE ACTIONS. A real clip is scrubbed by the phase main.js derives from its
+  // own tick accumulator, mapped into the clip's usable window exactly as the
+  // jump is; a FALLBACK node is a clone of the standing jump and is pinned at
+  // apexHold, which is the held airborne pose the report promises.
+  const act = TUNING.action;
+  const slideFraction =
+    act.slideClipStart + state.slidePhase * (act.slideClipEnd - act.slideClipStart);
+  const diveFraction =
+    act.diveClipStart + state.divePhase * (act.diveClipEnd - act.diveClipStart);
+  state.nodes.action.slide.action.time = state.slideIsFallback
+    ? TUNING.jump.apexHold * state.nodes.action.slide.duration
+    : slideFraction * state.nodes.action.slide.duration;
+  state.nodes.action.dive.action.time = state.diveIsFallback
+    ? TUNING.jump.apexHold * state.nodes.action.dive.duration
+    : diveFraction * state.nodes.action.dive.duration;
+
+  // THE STAND-UPS — the feedback loop's progress, mapped into the live window
+  // of the take. Both Mixamo stand-ups open and close on a static hold, and
+  // scrubbing across them spent nearly half the get-up on a frozen pose.
+  const stand = TUNING.standUp;
+  const standFraction =
+    stand.clipStart + state.standUpProgress * (stand.clipEnd - stand.clipStart);
+  state.nodes.standUp.faceUp.action.time =
+    standFraction * state.nodes.standUp.faceUp.duration;
+  state.nodes.standUp.faceDown.action.time =
+    standFraction * state.nodes.standUp.faceDown.duration;
 }
 
 /** Where the target rig stands: sphere centre, dropped by the sphere radius so
@@ -483,16 +1185,102 @@ export function mountMatrix(motor, yaw, out) {
   return out.compose(_pos, _mountQuat, _unitScale);
 }
 
-/** The mount yaw the character should be facing, eased at the fixed rate. */
-export function advanceMountYaw(state, motor, dt) {
-  const linear = motor.body.linvel();
-  const speed = Math.hypot(linear.x, linear.z);
+/**
+ * THE MOUNT YAW — camera-locked in free roam, momentum-locked in an action.
+ *
+ * The camera's heading is the default: it is what lets a player strafe, and it
+ * is always well defined. Two things move the target onto the heading of the
+ * sphere's own velocity instead — a slide or a dive owning the pose, and
+ * COASTING with the stick released — below velocityFloor there
+ * is no heading to speak of, so the last one is HELD: a slide grinding to a
+ * halt must not swing to whatever direction the final centimetre per second
+ * happened to point.
+ *
+ * IT READS THE SMOOTHED VELOCITY, NOT THE RAW LINVEL. Contact jitter on a
+ * rolling ball is several tenths of a m/s in a random direction — the same
+ * noise anim.blend.speedSmoothing exists to absorb — and a heading taken off
+ * the raw vector chatters at low speed, which the PD tracker would then chase
+ * into the athlete's hips. The smoothed pair is one step old here, because yaw
+ * is settled before advanceBlend rewrites it; at 60 Hz that is 16 ms of lag on
+ * a number already eased at 6/s, and taking it in this order is what keeps the
+ * blend's velocity frame consistent with the facing it is measured against.
+ *
+ * WHICH OF THE TWO, AND WHY IT IS A BLEND RATHER THAN A BRANCH.
+ *
+ * Momentum facing costs the strafe. With facing tied to velocity the athlete is
+ * BY DEFINITION always running forward — local velocity is pure +Z whenever
+ * there is any — so the 2D blend space's strafe and backpedal nodes can never
+ * receive weight. Measured at full sprint with momentum facing everywhere: the
+ * direction tent read F = 1.00 for forward, strafe left, strafe right, backpedal
+ * AND diagonal, every one of them. Camera facing is what makes stick-left a
+ * genuine left strafe, and it is the right default for free roam.
+ *
+ * But a slide or a dive is not free roam. Steering is already dead through both
+ * — they are commitments — and an athlete sliding sideways while facing the
+ * camera is not sliding, he is being dragged. Those are exactly the moves whose
+ * facing should be the direction of travel.
+ *
+ * So the target is the ANGULAR LERP between the two, by how much of the pose an
+ * action currently owns. slideMix and diveMix already ease in and out at
+ * poseEase, so the facing changes hands over the same handful of frames the
+ * pose does; branching on `slideMix > 0` instead would swing the target from
+ * the camera to the travel heading in a single tick at the instant a slide
+ * begins, and the tracker would put that step straight into the athlete's hips.
+ * At mix 0 this is exactly cameraYaw and at mix 1 exactly the momentum heading,
+ * so nothing is approximated at either end.
+ *
+ * Still an EASE on top, not an assignment, for the same reason as before: a
+ * per-frame snap transmits every twitch straight into the pose.
+ *
+ * @param {object} state
+ * @param {number} cameraYaw the value latched in the input snapshot this frame
+ *        (LAW L6). Kept as the SEED for the very first step and for the held
+ *        case at spawn, when there is no velocity to take a heading from.
+ * @param {number} dt
+ */
+export function advanceMountYaw(state, cameraYaw, dt) {
+  const vx = state.smoothedVelX;
+  const vz = state.smoothedVelZ;
+  const speed = Math.hypot(vx, vz);
 
-  if (speed > TUNING.visual.turnSpeedThreshold) {
-    state.targetYaw = Math.atan2(linear.x, linear.z);
+  // Hold, do not snap. momentumYaw simply is not rewritten below the floor, so
+  // a slide that runs out of speed keeps the heading it had rather than
+  // swinging to wherever the last centimetre per second happened to point.
+  if (speed >= TUNING.facing.velocityFloor) {
+    state.momentumYaw = Math.atan2(vx, vz);
+  } else if (!Number.isFinite(state.momentumYaw)) {
+    state.momentumYaw = cameraYaw;
   }
 
-  const blend = 1 - Math.exp(-TUNING.visual.turnLerpSpeed * dt);
+  // COASTING. Steering is what makes camera facing worth having; with the stick
+  // released there is nothing to strafe relative to, and an athlete carried
+  // down a slope by gravity while still square to the camera walks backwards
+  // down it. So with no input and real speed the facing eases onto the travel
+  // heading, and any touch of the stick takes it straight back.
+  //
+  // The ramp is one-sided ON PURPOSE. Easing in over coastEase is what stops a
+  // momentary release mid-strafe from starting a turn; dropping to zero the
+  // instant the stick moves is what makes steering feel immediate. The yaw
+  // itself is still eased at facing.ease, so even the instant drop reaches the
+  // athlete as a turn rather than a snap.
+  const steering = state.steerInput > TUNING.facing.steerDeadzone;
+  const fast = speed > TUNING.facing.coastSpeed;
+  state.coastMix = steering || !fast
+    ? (steering ? 0 : ease(state.coastMix, 0, TUNING.facing.coastEase, dt))
+    : ease(state.coastMix, 1, TUNING.facing.coastEase, dt);
+
+  // Camera by default, travel while an action owns the pose or while coasting,
+  // and the angular lerp between them across the frames either is changing.
+  const actionMix = Math.min(1, state.slideMix + state.diveMix);
+  const travelMix = Math.max(actionMix, state.coastMix);
+  // Wrapped, because cameraYaw + delta can leave (-PI, PI] and a target angle
+  // outside that range is a trap for anything that reads it without going
+  // through shortestAngleDelta — a HUD, or the next person to use it.
+  state.targetYaw = wrapAngle(
+    cameraYaw + shortestAngleDelta(cameraYaw, state.momentumYaw) * travelMix,
+  );
+
+  const blend = 1 - Math.exp(-TUNING.facing.ease * dt);
   state.yaw += shortestAngleDelta(state.yaw, state.targetYaw) * blend;
   return state.yaw;
 }
@@ -506,73 +1294,195 @@ export function advanceMountYaw(state, motor, dt) {
  * @param {Map<string, object>} rig the RigMap, for its captured bind matrices
  * @param {number} dt the constant timestep
  */
-export function updateAnimTarget(state, motor, rig, dt) {
+export function updateAnimTarget(state, motor, rig, cameraYaw, liftoff, floorY, grounded, dt) {
   if (!state) return;
 
-  // Speed in, weights and phase out. Pure function of sim state and the tick.
-  advanceBlend(state, motor, dt);
-  advanceStandUp(state, rig, dt);
+  // YAW FIRST. The 2D blend reads velocity IN THE YAW FRAME, so the facing has
+  // to be settled for this step before the direction tent can be evaluated
+  // against it. Yaw itself depends only on velocity and the stick, never on the
+  // blend, so there is no circularity to break — only an order to get right.
+  const yaw = advanceMountYaw(state, cameraYaw, dt);
+
+  // Velocity in, weights and phase out. Pure functions of sim state and input.
+  advanceBlend(state, motor, yaw, dt);
+  advanceAirborne(state, motor, liftoff, grounded, dt);
+  advanceStandUp(state, rig, floorY, dt);
 
   const pinned = applyOverride(state);
   if (!pinned) {
-    // THE OVERLAY TAKES ITS WEIGHT FROM THE LOCOMOTION GROUP, so the four
-    // actions still sum to 1. There is no separate "stand-up mode" competing
-    // with locomotion — standUpNeed is simply how much of the total pose is the
-    // stand-up clip, and it is a continuous number.
-    const locomotion = 1 - state.standUpNeed;
+    // THE OVERLAYS TAKE THEIR SHARE FROM THE LOCOMOTION GROUP, so everything
+    // playing still sums to 1. There is no "stand-up mode" or "jump mode"
+    // competing with locomotion — each overlay is simply how much of the total
+    // pose it is, and both are continuous numbers.
+    //
+    // ORDER: STAND-UP TAKES ITS SHARE FIRST, then the airborne overlay takes
+    // its share of WHAT IS LEFT, and locomotion keeps the remainder. The order
+    // only matters when both are non-zero, which is a character knocked down in
+    // mid-air, and stand-up winning is the right call there: a body that is
+    // limp and falling should read as limp, and the jump overlay's flight pose
+    // is a controlled, braced one. Reverse the order and the airborne clip
+    // would mask the collapse right at the moment the collapse is the news.
+    // ═══ OVERRIDE PRECEDENCE, in one place ═══
+    //
+    //     slide/dive  >  standUp  >  airborne  >  locomotion
+    //
+    // Each override takes its share of WHAT IS LEFT after the ones above it,
+    // so the shares multiply out in that order and still sum to exactly 1 — the
+    // weight audit asserts this every second. Reading down: a committed slide
+    // or dive is a pose the player ASKED for and outranks everything, including
+    // the stand-up (see the note above the arithmetic — standUpNeed is a
+    // height measurement and reads a deliberate slide as a fall); a character
+    // being put on the floor outranks the airborne pose; and the airborne
+    // override outranks locomotion, which is the flail fix — at airborneMix
+    // near 1 the 2D blend contributes essentially nothing and the PD tracker
+    // chases the jump pose alone.
+    //
+    // Slide and dive share one tier and cannot both be high: a slide needs
+    // grounded and a dive clears the cooldown before it fires. They are summed
+    // rather than nested so neither is arbitrarily senior to the other, and the
+    // sum is clamped because two half-active actions must not exceed the tier.
+    // THE ACTION TIER IS NOW SENIOR TO THE STAND-UP, swapped from the other
+    // order. standUpNeed is a pelvis-height measurement and cannot tell a fall
+    // from a deliberate low pose: a held slide puts the pelvis at 0.25 m, which
+    // read as need 0.39, so 39% of the blend was a stand-up while the athlete
+    // was sliding on purpose with full weight. Nothing was wrong with the
+    // measurement — the tier order was asking it a question it cannot answer.
+    //
+    // Safe in the other direction because both action mixes are bounded and
+    // decay on their own: slideMix follows slideTime, which ends on release or
+    // stopSpeed, and diveMix follows a latch the cooldown bounds. Neither can
+    // sit high over a real knockdown and hold the stand-up out, and as either
+    // decays the stand-up takes the tier back continuously.
+    const actionDemand = Math.min(1, state.slideMix + state.diveMix);
+    const actionShare = actionDemand;
+    const afterAction = 1 - actionDemand;
+
+    // THE STAND-UP'S DEMAND IS NOT JUST standUpNeed ANY MORE.
+    //
+    // need is 1 - weight, so it was the RECOVERY RAMP deciding how much of the
+    // take to show — while the take's scrub runs on its own clock. The two
+    // finish seconds apart: measured, progress hit 1.000 while need was still
+    // 0.60, which left the get-up sharing the pose with a walk cycle the whole
+    // way through and put 40% of a locomotion pose on an athlete lying on the
+    // floor. Taking the max with a term that is 1 while the take is playing
+    // gives the clip the pose outright until it has actually finished, then
+    // hands back to need for the tail.
+    const standDemand = Math.max(state.standUpNeed, standUpHold(state));
+    const standShare = afterAction * standDemand;
+    const afterStand = afterAction * (1 - standDemand);
+
+    const airShare = afterStand * state.airborneMix;
+    const locomotion = afterStand * (1 - state.airborneMix);
+
+    // PUBLISHED, because this arithmetic had three copies — here, weightAudit,
+    // and the HUD row in main.js — and the HUD's copy was still on the old tier
+    // order after the swap, reporting a slide as 62% stand-up when the mixer
+    // was giving it 0%. A duplicated formula that disagrees with the mixer is
+    // worse than no readout: it sends you looking for a bug in the blend. One
+    // computation, two readers.
+    state.shares.stand = standShare;
+    state.shares.action = actionShare;
+    state.shares.air = airShare;
+    state.shares.loco = locomotion;
 
     state.nodes.idle.action.setEffectiveWeight(state.weights.idle * locomotion);
-    state.nodes.jog.action.setEffectiveWeight(state.weights.jog * locomotion);
-    state.nodes.sprint.action.setEffectiveWeight(state.weights.sprint * locomotion);
     state.nodes.idle.action.timeScale = TUNING.anim.timeScale;
 
-    state.standUpNodes.faceUp.action.setEffectiveWeight(state.standUpNeed * state.faceUpMix);
-    state.standUpNodes.faceDown.action.setEffectiveWeight(state.standUpNeed * (1 - state.faceUpMix));
-  } else {
-    state.standUpNodes.faceUp.action.setEffectiveWeight(0);
-    state.standUpNodes.faceDown.action.setEffectiveWeight(0);
+    // Ring weights are accumulated per NODE before they are applied, because
+    // the back node is fed by two contributions and setEffectiveWeight is a
+    // write, not an add — applying them one at a time would silently drop the
+    // walk ring's backpedal share whenever the run ring's was written second.
+    for (const node of state.cycleNodes) node.pendingWeight = 0;
+    for (const c of state.contributions) c.node.pendingWeight += state.weights[c.id];
+    for (const node of state.cycleNodes) {
+      node.action.setEffectiveWeight(node.pendingWeight * locomotion);
+    }
+
+    // The LATCHED mix, not a live one: 1 is the standing jump, 0 the running.
+    state.nodes.jump.standing.action.setEffectiveWeight(airShare * state.jumpClipMix);
+    state.nodes.jump.running.action.setEffectiveWeight(airShare * (1 - state.jumpClipMix));
+
+    state.nodes.standUp.faceUp.action.setEffectiveWeight(standShare * state.faceUpMix);
+    state.nodes.standUp.faceDown.action.setEffectiveWeight(standShare * (1 - state.faceUpMix));
+
+    // Split the action tier between the two by their raw demand.
+    const actionTotal = state.slideMix + state.diveMix;
+    const slidePart = actionTotal > 0 ? state.slideMix / actionTotal : 0;
+    state.nodes.action.slide.action.setEffectiveWeight(actionShare * slidePart);
+    state.nodes.action.dive.action.setEffectiveWeight(actionShare * (1 - slidePart));
   }
 
   // THE ONE MIXER ADVANCE IN THE PROJECT. Constant dt, inside fixedUpdate,
   // exactly once per step. Idle needs it — that action free-runs.
   state.mixer.update(dt);
 
-  // JOG AND SPRINT TIMES ARE OVERWRITTEN AFTER THE UPDATE, DELIBERATELY.
-  //
-  // Both carry timeScale 0, so mixer.update does not advance them; it samples
-  // them at whatever time was last written here, and this write sets the time
-  // the NEXT sample will use. The pose therefore trails the phase by exactly one
-  // fixed step, uniformly, for both clips — which is invisible and, more to the
-  // point, identical on every run.
-  //
-  // Writing the times BEFORE the update instead would have the mixer advance
-  // from them and sample somewhere we did not choose, putting two authorities on
-  // one number. This way the phase is the only authority.
-  if (!pinned) {
-    state.nodes.jog.action.time = state.locomotionPhase * state.nodes.jog.duration;
-    state.nodes.sprint.action.time = state.locomotionPhase * state.nodes.sprint.duration;
-    // Same mechanism, different scrub: the stand-up clips are sampled at the
-    // progress the feedback loop above produced.
-    state.standUpNodes.faceUp.action.time =
-      state.standUpProgress * state.standUpNodes.faceUp.duration;
-    state.standUpNodes.faceDown.action.time =
-      state.standUpProgress * state.standUpNodes.faceDown.duration;
-  }
+  // Every clip time in the project is written here, once, immediately after the
+  // update. See writeClipTimes for why after and not before.
+  if (!pinned) writeClipTimes(state);
 
-  // LAW L5 — NO ROOT MOTION. Mixamo bakes forward travel into the Hips track;
-  // played back as authored, the target would walk out from under the sphere and
-  // the tracker would drag the character with it, which is locomotion coming
-  // from the animation instead of from input. The horizontal components go back
-  // to bind every step. The animated Y is KEPT: that is the vertical bob of the
-  // gait, it averages to nothing, and without it the walk looks glued down.
-  state.hips.position.x = state.hipsBindX;
-  state.hips.position.z = state.hipsBindZ;
+  // LAW L5 — NO ROOT MOTION. Mixamo bakes travel into the Hips track; played
+  // back as authored, the target would walk out from under the sphere and the
+  // tracker would drag the character with it, which is locomotion coming from
+  // the animation instead of from input. The two HORIZONTAL components go back
+  // to bind every step. The vertical is KEPT: on the cycles that is the bob of
+  // the gait, which averages to nothing and without which the walk looks glued
+  // down; on the one-shots it is the authored body height, which is the whole
+  // shape of a dive, a slide and a stand-up.
+  //
+  // The axis names come from hipsAxisRoles, because "horizontal" is a fact
+  // about the armature's orientation and this rig is Z-up inside a Y-up root.
+  state.hips.position[state.hipsAxisA] = state.hipsBindA;
+  state.hips.position[state.hipsAxisB] = state.hipsBindB;
+
+  // THE DIVE'S HIP DROP — the vertical axis, and ONLY during a dive.
+  //
+  // The float is not what it looks like. The take's own vertical is within 8 cm
+  // of bind across the dive window (measured: the hips' local up ran -91.8 to
+  // -102.0 against a bind of -99.8), so pinning this axis to bind — the obvious
+  // reading of "strip the Y" — moves the athlete by almost nothing. What holds
+  // him up is that bind height IS standing height: the ghost asks for a pelvis
+  // 1.02 m above the floor while the athlete is horizontal, so a horizontal
+  // athlete is suspended at hip height. There is no phase of "Running Dive"
+  // that fixes it either — its hips only descend as it rolls, and that roll is
+  // the scorpion. So the vertical is not stripped, it is LOWERED, faded by
+  // diveMix so the drop arrives and leaves with the pose. The mount still
+  // carries the arc, so the athlete flies exactly as far as the sphere's
+  // impulse throws him — just at the height a diving body is at.
+  //
+  // THE SLIDE IS NOT TOUCHED, AND MUST NOT BE. "Slide Left" authors its own
+  // descent — measured, it carries the hips from -90 to -25 in armature units
+  // and puts the ghost's pelvis at 0.278 m with the body 4 mm behind, which is
+  // a hip on the ground and not a hover. A slide-side drop was tried and
+  // REVERTED: lowering the hips raises pelvisDownness, which the mount blend
+  // below reads as "he has fallen over", so past mountSlack the ghost's
+  // horizontal position eases off the sphere and onto the pelvis body. That is
+  // what "slid sideways out of the sphere" was. The vertical and the mount are
+  // coupled through that measurement, and the slide is the case where the
+  // coupling bites. The (1 - slideMix) factor is what keeps them apart: the two
+  // mixes are independent floats and diveMix takes 18 ticks to decay, so a
+  // slide beginning inside that window would otherwise inherit a drop authored
+  // for a different pose.
+  //
+  // THE SIGN. hipsBindUp is NEGATIVE on this armature — the bind is -99.8 for a
+  // pelvis that stands at 0.998 m, because the exporter's +90 degree X rotation
+  // makes armature-local -Z the way up. So a drop toward the floor is ADDED,
+  // not subtracted, and a positive tunable always means "lower".
+  //
+  // It is an OFFSET, not an assignment. Writing `hipsBindUp + drop` would
+  // REPLACE whatever the take authored on this axis; that is harmless for the
+  // dive, whose window sits within 8 cm of bind, and it is exactly what made a
+  // 0.10 m slide drop move the pelvis UP to 0.921 m. Adding is the form that
+  // cannot destroy a take, so adding is the form that stays.
+  const diveOnly = state.diveMix * (1 - Math.min(1, state.slideMix));
+  if (diveOnly > 0) {
+    state.hips.position[state.hipsUpAxis] +=
+      TUNING.action.diveHipDrop * diveOnly * state.hipsUnitsPerMetre;
+  }
 
   // mount ∘ armature-local. With the clone root at mount * bindRootLocal, a
   // bone standing in bind pose has targetBoneWorld = mount * bindBoneWorld, so
   // the formula below collapses to targetBodyWorld = mount * bindBodyWorld —
   // exactly where autorig placed that body when it spawned at the same mount.
-  const yaw = advanceMountYaw(state, motor, dt);
   mountMatrix(motor, yaw, _mount);
 
   // A DOWNED ATHLETE GETS UP WHERE HE FELL. Past mountSlack the ghost's
@@ -584,10 +1494,12 @@ export function updateAnimTarget(state, motor, rig, dt) {
   // Horizontal only. The vertical stays sphere-derived, which is what puts the
   // finished stand-up back on the mount.
   const pelvis = rig && rig.get('pelvis');
-  if (pelvis && state.standUpNeed > TUNING.standUp.mountSlack) {
+  // pelvisDownness, not standUpNeed: this is about where the body physically
+  // is, which is the question the mount is asking.
+  if (pelvis && state.pelvisDownness > TUNING.standUp.mountSlack) {
     const blend = Math.min(
       1,
-      (state.standUpNeed - TUNING.standUp.mountSlack) / (1 - TUNING.standUp.mountSlack),
+      (state.pelvisDownness - TUNING.standUp.mountSlack) / (1 - TUNING.standUp.mountSlack),
     );
     const body = pelvis.body.translation();
     const e = _mount.elements;
@@ -649,6 +1561,117 @@ export function updateAnimTarget(state, motor, rig, dt) {
   }
 
   state.seeded = true;
+}
+
+/**
+ * THE STRAFE-SIGN ALARM (criterion GF-3.1).
+ *
+ * A sign error in the yaw rotation is invisible in every number except the one
+ * nobody prints: the character strafes, the legs are phase-synced, the weights
+ * sum to 1, and the wrong clip plays. It cost a whole task to notice. This
+ * makes the next one loud.
+ *
+ * Only meaningful once there is real lateral motion, hence the 1 m/s gate —
+ * below that local.x is noise and either node winning is fine.
+ *
+ * IT READS THE TARGET WEIGHTS, NOT THE APPLIED ONES. The applied weights are
+ * eased at weightEase and therefore LAG local.x, which is instantaneous; swing
+ * the camera fast enough and the lagging weights legitimately disagree with the
+ * heading for a few ticks. Measured: one false alarm during a fast azimuth
+ * sweep, R 0.109 against L 0.047 while local.x had already crossed to -1.16.
+ * The targets are the tent product for THIS tick, so comparing against them
+ * tests the arithmetic a sign regression would actually break, rather than
+ * testing whether the crossfade has caught up yet.
+ *
+ * @returns {string | null} a description of the violation, or null
+ */
+export function strafeSignViolation(state) {
+  if (!state || !state.targetWeights) return null;
+  if (Math.abs(state.localVelX) <= STRAFE_ASSERT_SPEED) return null;
+
+  // The lateral contributions, summed across both rings.
+  const right = state.targetWeights.walkR + state.targetWeights.runR;
+  const left = state.targetWeights.walkL + state.targetWeights.runL;
+  if (Math.abs(right - left) < STRAFE_ASSERT_MARGIN) return null;
+
+  const movingRight = state.localVelX > 0;
+  const rightWins = right > left;
+  if (movingRight === rightWins) return null;
+
+  return (
+    `local.x ${state.localVelX.toFixed(2)} (moving ${movingRight ? 'RIGHT' : 'LEFT'}) ` +
+    `but the ${rightWins ? 'RIGHT' : 'LEFT'} strafe node is heavier ` +
+    `(R ${right.toFixed(3)} / L ${left.toFixed(3)})`
+  );
+}
+
+/**
+ * THE FLAIL ALARM (criterion GF-3.3). While the airborne override is at full
+ * strength the locomotion group must be silent; if it is not, the jump is being
+ * driven by the run blend and the arms windmill.
+ *
+ * THE GATE IS 0.95, NOT THE SPECIFIED 0.9, AND IT HAS TO BE. The locomotion
+ * group's share is (1 - airborneMix) by construction, so at airborneMix exactly
+ * 0.9 the share is 0.1 — already double the 0.05 limit, with nothing wrong.
+ * Seeded at 0.9 the alarm fires on the way through that band on EVERY jump:
+ * measured, four times per running jump before this was corrected. The two
+ * numbers as given are unsatisfiable together, so the gate moves to where
+ * (1 - mix) is under the limit and the check means what it was meant to mean —
+ * that locomotion is silent when it should be, rather than that the arithmetic
+ * exists.
+ *
+ * @returns {number | null} the offending locomotion weight, or null
+ */
+export function flailViolation(state) {
+  if (!state || state.airborneMix <= FLAIL_ASSERT_AIR) return null;
+  // A slide or dive legitimately takes the tier ABOVE airborne, which leaves
+  // the airborne share small while airborneMix is high. That is the precedence
+  // working, not a flail, so the alarm stands down while an action is active.
+  if (state.slideMix + state.diveMix > FLAIL_ACTION_QUIET) return null;
+  let locomotion = state.nodes.idle.action.getEffectiveWeight();
+  for (const node of state.cycleNodes) locomotion += node.action.getEffectiveWeight();
+  return locomotion > FLAIL_ASSERT_WEIGHT ? locomotion : null;
+}
+
+/**
+ * CRITERION GF-2.5 — the weight audit.
+ *
+ * Three numbers, and it matters which one is the invariant.
+ *
+ *   shares  — standShare + actionShare + airShare + locomotion. EXACTLY 1 by
+ *             construction,
+ *             always, in every regime. This is the real invariant: it is the
+ *             partition that decides how much of the pose each group owns, and
+ *             a group silently losing or double-counting its share shows up as
+ *             a pose drifting toward bind and as nothing else.
+ *   targets — the 2D blend's own tent product, idle plus all nine ring
+ *             contributions. Also exactly 1, for the same kind of reason.
+ *   applied — what the mixer is actually playing. This one is NOT always 1 and
+ *             must not be asserted as though it were: every node's weight is
+ *             eased toward its target independently, so during any transition —
+ *             including the first second after a spawn, when they all start at
+ *             zero — the sum lags below 1 and then converges. Asserting on it
+ *             produced a false failure on the very first tick of the very first
+ *             boot after this was written, which is a good argument for
+ *             measuring the thing you actually mean.
+ *
+ * @returns {{shares: number, targets: number, applied: number}}
+ */
+export function weightAudit(state) {
+  if (!state) return { shares: 1, targets: 1, applied: 1 };
+
+  // Read, not recomputed. The audit's job is to catch the APPLIED weights
+  // drifting from the shares the blend intended; recomputing the shares here
+  // would only ever check this function against itself.
+  const { stand: standShare, action: actionShare, air: airShare, loco: locomotion } = state.shares;
+
+  let targets = state.targetWeights.idle;
+  for (const c of state.contributions) targets += state.targetWeights[c.id];
+
+  let applied = 0;
+  for (const node of state.allNodes) applied += node.action.getEffectiveWeight();
+
+  return { shares: standShare + actionShare + airShare + locomotion, targets, applied };
 }
 
 /**

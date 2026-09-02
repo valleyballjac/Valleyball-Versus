@@ -9,11 +9,50 @@ import { TUNING } from '../config/tuning.js';
  * so the rule is checkable with a single grep. The simulation cannot perceive
  * real time. If it needs a clock, the clock is `tick`.
  *
- * LAW L3: Rapier's built-in damping setters are never called, anywhere, and
- * their names appear nowhere in this codebase so the ban greps clean. Explicit
- * damping crashes the Rapier WASM build. All resistance is applied as clamped
- * impulses — see applyClampedDamping in motor.js, the single implementation.
+ * LAW L3: all resistance is applied as clamped impulses — see
+ * applyClampedDamping in motor.js and the two helpers in damping.js, which are
+ * the implementations. Rapier's own damping setters are not used for any of it.
+ *
+ * ONE LISTED EXCEPTION, and one correction. The exception is the arm chain's
+ * solver damping, applied per step in tracker.js: the clamped helpers run
+ * before world.step and damp the pre-step velocity relative to the target, so
+ * they cannot touch chatter the solver injects during the step — measured,
+ * raising their gains
+ * fourfold moved it under 3%. That site names the setters, so the ban no longer
+ * greps to zero; it greps to two lines in one function, both commented.
+ *
+ * The correction: this file used to claim explicit damping CRASHES the WASM
+ * build. Tested directly against @dimforge/rapier3d-compat 0.19.3 — it does
+ * not. setLinearDamping and setAngularDamping apply cleanly, and a ball dropped
+ * with damping 2.0 reaches -5.9 m/s where free fall reaches -24.0. The reason
+ * to keep resistance in one clamped implementation stands on its own; it never
+ * needed the crash claim, and the claim was wrong.
  */
+
+/**
+ * THE COLLISION GROUP LAYOUT, in one place.
+ *
+ *   0x0001  environment — the arena's trimesh. Stamped on in main.js, because
+ *           arena.js is frozen; Rapier's default membership is every bit set,
+ *           which is fine for contacts but useless as a ray filter.
+ *   0x0002  ragdoll     — the sixteen character bodies (autorig.js).
+ *   0x0004  motor       — the sphere (autorig.js, detachMotorFromRagdoll).
+ *
+ * ENVIRONMENT_RAY_GROUPS is an interaction-groups word whose FILTER half is
+ * environment-only, so a ray cast with it can hit the arena and nothing else.
+ * Every non-contact ray in the project uses it: the camera's obstruction ray,
+ * mount recovery's floor probe, and the motor's ground fan.
+ *
+ * WHY NOT filterExcludeRigidBody. That argument takes ONE body. The character
+ * is sixteen, so excluding it that way is impossible — and without the filter
+ * a downward ray from the sphere hits the character's own calf, which is what
+ * left motor.grounded stuck true from a standing rest.
+ *
+ * It lives here rather than in main.js because motor.js needs it too and
+ * motor.js cannot import main.js — main.js imports motor.js.
+ */
+export const ENVIRONMENT_MEMBERSHIP = 0x0001;
+export const ENVIRONMENT_RAY_GROUPS = (0xffff << 16) | ENVIRONMENT_MEMBERSHIP;
 
 /**
  * LAW 6 fixes this. It is deliberately NOT a TUNING knob, for the same reason

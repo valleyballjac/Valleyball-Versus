@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { TUNING } from '../config/tuning.js';
 import { Interpolated } from '../core/Interpolated.js';
-import { RAPIER, getWorld } from './physics.js';
+import { RAPIER, getWorld, ENVIRONMENT_RAY_GROUPS } from './physics.js';
 
 /**
  * The Sphere Motor.
@@ -129,7 +129,16 @@ function castGroundFan(body, radius) {
     _rayOrigin.y = origin.y;
     _rayOrigin.z = origin.z + offsetZ;
 
-    const hit = world.castRay(_ray, reach, true, undefined, undefined, undefined, body);
+    // THE FILTER IS LOAD-BEARING (ruling, delegated). Unfiltered, this ray
+    // leaves the sphere and immediately hits the character's own calf — the
+    // ragdoll straddles the sphere — so `grounded` read TRUE from a standing
+    // rest with the sphere at y = 1.61, well clear of the floor. Excluding
+    // `body` is not enough: that argument takes one rigid body and the
+    // character is sixteen. Filtering to the environment layer is the only
+    // form of the exclusion that can express "the arena, and nothing else".
+    const hit = world.castRay(
+      _ray, reach, true, undefined, ENVIRONMENT_RAY_GROUPS, undefined, body,
+    );
 
     // Distance, not mere existence. Written as an explicit comparison so that a
     // hit whose distance cannot be read fails closed rather than reading as
@@ -177,6 +186,10 @@ export function createMotor() {
     interpolated: new Interpolated(mesh),
     radius,
     grounded: false,
+    // MECHANICS state, not character state (L4): the tick a jump last fired, so
+    // the cooldown can be measured against the canonical clock. -Infinity means
+    // "never", so the first jump of a run always fires.
+    lastJumpTick: -Infinity,
     appliedFriction: friction,
     appliedRestitution: restitution,
   };
@@ -209,8 +222,16 @@ function syncSurfaceTuning(motor) {
  * @param {number} [driveScale=1] RULING 6.1 — driveScale attenuates input
  *        authority as the character loses tracking. It scales torque, never
  *        velocity (L1).
+ * @param {number} [tick=0] the canonical clock, for the jump cooldown. L6 —
+ *        the cooldown is counted in ticks, never in milliseconds.
+ * @param {number} [resistanceScale=1] GF-1 Part 4A — multiplies the REQUESTED
+ *        braking and rolling-resistance impulses. It does not introduce a
+ *        damping mechanism: both impulses still go through the one L3 clamp
+ *        below, which caps them at a full cancellation of the spin, so however
+ *        large this grows it can only stop the ball sooner and can never
+ *        reverse it.
  */
-export function updateMotor(motor, input, jumpQueued, dt, driveScale = 1) {
+export function updateMotor(motor, input, jumpQueued, dt, driveScale = 1, tick = 0, resistanceScale = 1) {
   const body = motor.body;
 
   // addForce accumulates until reset, so the fall force from the previous step
@@ -233,10 +254,23 @@ export function updateMotor(motor, input, jumpQueued, dt, driveScale = 1) {
     const angular = body.angvel();
     const alongAxis = angular.x * _axis.x + angular.y * _axis.y + angular.z * _axis.z;
 
-    // The governor STARVES the motor rather than clamping the velocity: once the
-    // spin along the drive axis is already at the ceiling, this step simply adds
-    // no torque. Nothing ever writes a velocity.
-    if (alongAxis < TUNING.motor.maxAngularSpeed) {
+    // THE GOVERNOR NOW HAS TWO CEILINGS. Sprint held gives the full
+    // maxAngularSpeed; sprint released gives the spin that rolls at run speed,
+    // which for a ball rolling without slipping is simply v / r.
+    //
+    // The MECHANISM is unchanged and that is the point: the governor STARVES
+    // the motor rather than clamping the velocity. Once the spin along the
+    // drive axis is already at the ceiling, this step simply adds no torque.
+    // Nothing here ever writes a velocity, and releasing sprint at full speed
+    // therefore does NOT snap the character back to run speed — the existing
+    // rolling resistance decays the surplus over a second or so, which is what
+    // a runner easing off actually looks like. That decay is intended, not an
+    // omission.
+    const effectiveMax = input.sprintHeld
+      ? TUNING.motor.maxAngularSpeed
+      : TUNING.blend2d.runSpeed / TUNING.motor.radius;
+
+    if (alongAxis < effectiveMax) {
       const control = motor.grounded ? 1 : TUNING.motor.airControlMultiplier;
       const magnitude = TUNING.motor.driveTorque * inputMagnitude * control * driveScale * dt;
 
@@ -247,14 +281,22 @@ export function updateMotor(motor, input, jumpQueued, dt, driveScale = 1) {
     }
   }
 
-  // 3 — RESISTANCE. Both sites go through the one clamp.
+  // 3 — RESISTANCE. Both sites go through the one clamp, and resistanceScale
+  // multiplies the REQUESTED impulse on the way in — no second mechanism, no
+  // banned setter, and the clamp still bounds the result.
   if (motor.grounded && inputMagnitude <= MIN_INPUT) {
-    applyClampedDamping(body, TUNING.motor.brakeTorque * dt, dt);
+    applyClampedDamping(body, TUNING.motor.brakeTorque * resistanceScale * dt, dt);
   }
-  applyClampedDamping(body, TUNING.motor.rollingResistance * dt, dt);
+  applyClampedDamping(body, TUNING.motor.rollingResistance * resistanceScale * dt, dt);
 
-  // 4 — JUMP
-  if (jumpQueued && motor.grounded) {
+  // 4 — JUMP, with a cooldown counted in TICKS (L6).
+  //
+  // jumpQueued has already been consumed by the caller whether or not the jump
+  // fires here. That is deliberate: buffering the press until the cooldown
+  // expires would make a jump happen at a moment the player did not ask for
+  // one, which reads as input lag rather than as a cooldown.
+  if (jumpQueued && motor.grounded && tick - motor.lastJumpTick >= TUNING.jump.cooldownTicks) {
+    motor.lastJumpTick = tick;
     _impulse.x = 0;
     _impulse.y = TUNING.jump.impulse;
     _impulse.z = 0;
@@ -271,6 +313,29 @@ export function updateMotor(motor, input, jumpQueued, dt, driveScale = 1) {
     _impulse.z = 0;
     body.addForce(_impulse, true);
   }
+}
+
+/**
+ * THE DIVE IMPULSE — the one addition to this file in Task 7.
+ *
+ * An input-driven force, exactly like the jump above it and legal on the same
+ * grounds (LAW L1 bans writing velocity or position during play; applying an
+ * impulse is what the motor is for). The two magnitudes are ABSOLUTE impulses
+ * in N·s, not accelerations — the same convention as TUNING.jump.impulse, and
+ * deliberately not scaled by mass, so that changing the ball's density changes
+ * how far a dive carries exactly as it changes how high a jump goes.
+ *
+ * The caller owns the direction, the cooldown and the crash. This applies one
+ * impulse and knows nothing else.
+ *
+ * @param {ReturnType<typeof createMotor>} motor
+ * @param {THREE.Vector3} direction horizontal, already normalised by the caller
+ */
+export function applyDiveImpulse(motor, direction) {
+  _impulse.x = direction.x * TUNING.action.diveImpulseForward;
+  _impulse.y = TUNING.action.diveImpulseUp;
+  _impulse.z = direction.z * TUNING.action.diveImpulseForward;
+  motor.body.applyImpulse(_impulse, true);
 }
 
 /**

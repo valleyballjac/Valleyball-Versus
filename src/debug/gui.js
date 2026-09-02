@@ -83,6 +83,7 @@ export function createGui({
   motor.add(TUNING.motor, 'groundRayCount', 0, 24, 1);
   motor.add(TUNING.motor, 'groundedEpsilon', 0, 1, 0.01);
   motor.add(TUNING.motor, 'stickDeadzone', 0, 0.6, 0.01);
+  motor.add(TUNING.motor, 'downedDragBoost', 0, 200, 1);
 
   // The ragdoll is derived once per R-spawn, exactly as the arena is built once
   // at boot. Nothing here rebuilds a live rig, so every control is marked
@@ -110,22 +111,40 @@ export function createGui({
   anim.add(TUNING.anim, 'override', ['auto', ...clipNames]);
   anim.add(TUNING.anim, 'timeScale', 0, 3, 0.05);
 
-  const blend = anim.addFolder('blend');
+  const blend = anim.addFolder('blend (idle + easing)');
   locked(blend.add(TUNING.anim.blend, 'idleClip'), 'reload');
-  locked(blend.add(TUNING.anim.blend, 'jogClip'), 'reload');
-  locked(blend.add(TUNING.anim.blend, 'sprintClip'), 'reload');
-  blend.add(TUNING.anim.blend, 'idleSpeed', 0, 5, 0.1);
-  blend.add(TUNING.anim.blend, 'jogSpeed', 0.5, 15, 0.1);
-  blend.add(TUNING.anim.blend, 'sprintSpeed', 1, 25, 0.1);
   blend.add(TUNING.anim.blend, 'speedSmoothing', 0.5, 30, 0.5);
   blend.add(TUNING.anim.blend, 'weightEase', 0.5, 30, 0.5);
 
   const stride = anim.addFolder('stride');
   stride.add(TUNING.anim.stride, 'enabled');
-  stride.add(TUNING.anim.stride, 'jogNominal', 0.5, 15, 0.1);
-  stride.add(TUNING.anim.stride, 'sprintNominal', 1, 25, 0.1);
+  // The per-ring nominal speed is the ring's own blend2d speed — see tuning.js.
   stride.add(TUNING.anim.stride, 'min', 0.1, 1, 0.05);
   stride.add(TUNING.anim.stride, 'max', 1, 4, 0.05);
+
+  // THE 2D BLEND SPACE. The three ring speeds are live; the clip names are read
+  // once when the actions are built, which happens on every R-spawn.
+  const blend2d = gui.addFolder('blend2d');
+  blend2d.add(TUNING.blend2d, 'walkSpeed', 0.2, 10, 0.1);
+  blend2d.add(TUNING.blend2d, 'runSpeed', 0.5, 18, 0.1);
+  blend2d.add(TUNING.blend2d, 'sprintSpeed', 1, 25, 0.1);
+  for (const ring of ['walkClips', 'runClips']) {
+    const folder = blend2d.addFolder(ring);
+    for (const slot of Object.keys(TUNING.blend2d[ring])) {
+      locked(folder.add(TUNING.blend2d[ring], slot), 'next R');
+    }
+  }
+  locked(blend2d.add(TUNING.blend2d, 'sprintClip'), 'next R');
+
+  const facing = gui.addFolder('facing');
+  facing.add(TUNING.facing, 'ease', 0.5, 40, 0.5);
+
+  const impact = gui.addFolder('impact');
+  impact.add(TUNING.impact, 'forceThreshold', 0, 80000, 100);
+  impact.add(TUNING.impact, 'scale', 0, 0.01, 0.0001);
+  impact.add(TUNING.impact, 'dragOnset', 0.01, 1, 0.01);
+  impact.add(TUNING.impact, 'mountRecoverBelow', 0, 0.5, 0.01);
+  impact.add(TUNING.impact, 'mountSnapEpsilon', 0.01, 2, 0.01);
 
   const tracking = gui.addFolder('tracking');
   // LAW L4 — the weight is simulation state with exactly two writers (the
@@ -148,20 +167,35 @@ export function createGui({
   const jump = gui.addFolder('jump');
   jump.add(TUNING.jump, 'impulse', 0, 30, 0.1);
   jump.add(TUNING.jump, 'fallGravityMultiplier', 1, 6, 0.05);
+  jump.add(TUNING.jump, 'airEaseIn', 0.5, 60, 0.5);
+  jump.add(TUNING.jump, 'airEaseOut', 0.5, 40, 0.5);
+  jump.add(TUNING.jump, 'inPlaceBelow', 0, 8, 0.1);
+  jump.add(TUNING.jump, 'runAbove', 0.1, 12, 0.1);
+  jump.add(TUNING.jump, 'landRate', 0.1, 10, 0.05).name('landRate (landing tail)');
+  jump.add(TUNING.jump, 'cooldownTicks', 0, 180, 1).name('cooldownTicks (60 = 1 s)');
+  jump.add(TUNING.jump, 'takeoffRate', 0.1, 8, 0.05).name('takeoffRate (to the hold)');
+  jump.add(TUNING.jump, 'apexHold', 0, 1, 0.01).name('apexHold (the held frame)');
+  jump.add(TUNING.jump, 'clipStart', 0, 1, 0.01);
+  jump.add(TUNING.jump, 'clipEnd', 0, 1, 0.01);
+  locked(jump.add(TUNING.jump, 'standingClip'), 'next R');
+  locked(jump.add(TUNING.jump, 'runningClip'), 'next R');
 
   const visual = gui.addFolder('visual');
-  visual.add(TUNING.visual, 'turnLerpSpeed', 0.5, 40, 0.5);
-  visual.add(TUNING.visual, 'turnSpeedThreshold', 0, 3, 0.01);
   locked(visual.add(TUNING.visual, 'boxWidth'), 'reload');
   locked(visual.add(TUNING.visual, 'boxHeight'), 'reload');
   locked(visual.add(TUNING.visual, 'boxDepth'), 'reload');
 
-  const cameraFolder = gui.addFolder('camera');
-  cameraFolder.add(TUNING.camera, 'x', -60, 60, 0.5).onChange(onCameraChange);
-  cameraFolder.add(TUNING.camera, 'y', 1, 80, 0.5).onChange(onCameraChange);
-  cameraFolder.add(TUNING.camera, 'z', -60, 60, 0.5).onChange(onCameraChange);
+  const cameraFolder = gui.addFolder('camera (spring arm)');
   cameraFolder.add(TUNING.camera, 'fov', 20, 110, 1).onChange(onCameraChange);
-  cameraFolder.add(TUNING.camera, 'follow');
+  cameraFolder.add(TUNING.camera, 'radius', 2, 30, 0.1);
+  cameraFolder.add(TUNING.camera, 'targetHeight', 0, 4, 0.05);
+  cameraFolder.add(TUNING.camera, 'orbitSpeed', 0, 10, 0.1);
+  cameraFolder.add(TUNING.camera, 'mousePixelsPerRadian', 50, 2000, 10);
+  cameraFolder.add(TUNING.camera, 'minPitch', -1.5, 1.5, 0.01);
+  cameraFolder.add(TUNING.camera, 'maxPitch', 0, 1.55, 0.01);
+  cameraFolder.add(TUNING.camera, 'collisionMargin', 0, 3, 0.05);
+  cameraFolder.add(TUNING.camera, 'minDistance', 0.5, 12, 0.1);
+  cameraFolder.add(TUNING.camera, 'restoreEase', 0.2, 20, 0.1);
 
   const actions = {
     async copyTuningJson() {
