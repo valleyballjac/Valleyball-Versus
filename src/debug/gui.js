@@ -1,5 +1,6 @@
 import GUI from 'lil-gui';
 import { TUNING, resetTuning, tuningJson } from '../config/tuning.js';
+import { activeArenaType, activeArenaPreset } from '../sim/arena.js';
 
 /**
  * The tuning panel.
@@ -24,6 +25,7 @@ function locked(controller, why) {
  * @param {object} handlers
  * @param {(visible: boolean) => void} handlers.onShowHudChange
  * @param {(visible: boolean) => void} handlers.onShowSphereWireframeChange
+ * @param {(visible: boolean) => void} handlers.onShowBallWireframeChange
  * @param {() => void} handlers.onCameraChange
  * @param {() => void} handlers.onRagdollVisibilityChange
  * @param {string[]} handlers.clipNames the loaded gltf.animations names
@@ -33,6 +35,7 @@ function locked(controller, why) {
 export function createGui({
   onShowHudChange,
   onShowSphereWireframeChange,
+  onShowBallWireframeChange,
   onCameraChange,
   onRagdollVisibilityChange,
   clipNames = [],
@@ -51,22 +54,77 @@ export function createGui({
   debug.add(TUNING.debug, 'showRagdollColliders').onChange(onRagdollVisibilityChange);
   debug.add(TUNING.debug, 'showCharacterMesh').onChange(onRagdollVisibilityChange);
   debug.add(TUNING.debug, 'showSphereWireframe').onChange(onShowSphereWireframeChange);
+  debug.add(TUNING.debug, 'showBallWireframe').onChange(onShowBallWireframeChange);
 
   const physics = gui.addFolder('physics');
   physics.add(TUNING.physics, 'gravityY', -60, -1, 0.5);
 
   const arena = gui.addFolder('arena');
   // The bowl geometry and its trimesh collider are built once at boot.
-  locked(arena.add(TUNING.arena, 'floorRadius'), 'reload');
-  locked(arena.add(TUNING.arena, 'rimRadius'), 'reload');
-  locked(arena.add(TUNING.arena, 'rimHeight'), 'reload');
-  locked(arena.add(TUNING.arena, 'profilePoints'), 'reload');
-  locked(arena.add(TUNING.arena, 'latheSegments'), 'reload');
-  locked(arena.add(TUNING.arena, 'wallCurvePower'), 'reload');
-  locked(arena.add(TUNING.arena, 'lipInset'), 'reload');
-  locked(arena.add(TUNING.arena, 'lipHeight'), 'reload');
-  locked(arena.add(TUNING.arena, 'lipPoints'), 'reload');
-  arena.add(TUNING.arena, 'killPlaneY', -200, 20, 0.5);
+  // WHICH ARENA IS RUNNING, and it is display-only on purpose. The selection is
+  // read once at boot: the geometry, the colliders and every spawn point are
+  // built from it, so a live toggle here would report a world that is not the
+  // one on screen. Switch with ?arena=court / ?arena=bowl and reload.
+  locked(arena.add({ active: activeArenaType() }, 'active'), 'reload, ?arena=');
+  locked(arena.add(TUNING.arena, 'type'), 'reload');
+  locked(arena.add(TUNING.arena, 'modelUrl'), 'reload');
+
+  // The kill plane belongs to the ACTIVE preset, so that is the one exposed —
+  // editing the other arena's number from here would look live and do nothing.
+  const preset = activeArenaPreset();
+  arena.add(preset, 'killPlaneY', -200, 20, 0.5);
+
+  // Where the three balls drop in THIS arena, matched to TUNING.balls by index.
+  const spawns = arena.addFolder('ball spawns (reload)');
+  preset.ballSpawns.forEach((point, index) => {
+    const which = spawns.addFolder(`${index}: ${TUNING.balls[index] ? TUNING.balls[index].label : index}`);
+    locked(which.add(point, 'x'), 'reload');
+    locked(which.add(point, 'y'), 'reload');
+    locked(which.add(point, 'z'), 'reload');
+    which.close();
+  });
+  spawns.close();
+
+  const athlete = arena.addFolder('athlete spawn (reload)');
+  locked(athlete.add(preset.spawn, 'x'), 'reload');
+  locked(athlete.add(preset.spawn, 'y'), 'reload');
+  locked(athlete.add(preset.spawn, 'z'), 'reload');
+  athlete.close();
+
+  const bowl = arena.addFolder('bowl geometry (reload)');
+  for (const key of [
+    'floorRadius', 'rimRadius', 'rimHeight', 'profilePoints',
+    'latheSegments', 'wallCurvePower', 'lipInset', 'lipHeight', 'lipPoints',
+  ]) {
+    locked(bowl.add(TUNING.arena.bowl, key), 'reload');
+  }
+  bowl.close();
+
+  // THE BALL FIXTURE — one folder for the shared settings, then one per ball,
+  // built by walking TUNING.balls rather than by hand. Add a fourth ball to the
+  // array and its folder appears; there is no second list here to forget to
+  // update.
+  //
+  // Radius, density and the spawn point are reload-only for the same reason the
+  // motor's are: the collider is sized once at boot and the body is placed once.
+  // Friction, restitution and the drag gains are live. The restitution COMBINE
+  // RULE is deliberately absent — it is Max in code and not a feel number.
+  const ballCommon = gui.addFolder('ball (shared)');
+  locked(ballCommon.add(TUNING.ball, 'eventThreshold'), 'reload');
+  locked(ballCommon.add(TUNING.ball, 'captureSpawnTick'), 'reload');
+
+  for (const spec of TUNING.balls) {
+    const folder = gui.addFolder(`ball: ${spec.label}`);
+    locked(folder.add(spec, 'radius'), 'reload');
+    locked(folder.add(spec, 'density'), 'reload');
+    folder.add(spec, 'friction', 0, 4, 0.05);
+    folder.add(spec, 'restitution', 0, 1, 0.01);
+    folder.add(spec, 'linearDrag', 0, 0.5, 0.005);
+    folder.add(spec, 'angularDrag', 0, 2, 0.01);
+    // No spawn here: where a ball drops belongs to the ARENA, not the ball, and
+    // it is exposed under the arena folder with the preset it came from.
+    folder.close();
+  }
 
   const motor = gui.addFolder('motor');
   // radius and density size the ball collider at construction.

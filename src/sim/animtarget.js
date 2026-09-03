@@ -259,9 +259,10 @@ export function createAnimTarget(characterRoot, clips, rig) {
     cycleNodes: null,
     /** Every node in one flat list, for the override pin. */
     allNodes: null,
-    /** The ring x direction CONTRIBUTIONS. Two of them (walkB, runB) point at
-     *  the same shared node; keeping them separate is what lets the stride sync
-     *  charge the back node's weight to the right ring's nominal speed. */
+    /** The ring x direction CONTRIBUTIONS — one row per (ring, direction)
+     *  cell. walkB and runB now point at SEPARATE nodes with separate clips;
+     *  they are still separate rows because each is charged to its own ring's
+     *  nominal speed by the stride sync. */
     contributions: null,
     // The pinned single action when TUNING.anim.override is not 'auto'.
     overrideAction: null,
@@ -457,16 +458,21 @@ function buildBlendNodes(state) {
 
   const walkForward = requireClip(rings.walkClips.f);
 
-  // THE BACK NODE — a placeholder, and no longer reversed.
+  // THE TWO BACK NODES — one per ring, each playing its ring's own clip.
   //
-  // There is no backpedal clip in the asset, so the back of both rings stands
-  // in with the walk's own forward clip. It used to play at (1 - phase), on the
-  // reasoning that a walk run backwards is a backpedal. Measured, that was the
-  // worse of the two wrongs: it is the ONLY node whose time runs against the
-  // shared locomotionPhase, so at phase p it sat at 1-p while every node it
-  // blends with sat at p. They agree only at 0.5 and are maximally opposed at
-  // the ends, and averaging two clips at opposite points of a gait cycle
-  // collapses the legs toward a straight-legged pose:
+  // THE PLACEHOLDER ERA IS OVER. The measured table below is kept anyway,
+  // because it is the standing reason the FALLBACK a few lines down is played
+  // forward rather than reversed, and that reason must not be rediscovered.
+  //
+  // Through Phase 2 the asset had no backpedal clip at all, so the back of both
+  // rings stood in with the walk's own forward clip, and that stand-in used to
+  // play at (1 - phase) on the reasoning that a walk run backwards is a
+  // backpedal. Measured, that was the worse of the two wrongs: it is the ONLY
+  // node whose time would run against the shared locomotionPhase, so at phase p
+  // it sat at 1-p while every node it blends with sat at p. They agree only at
+  // 0.5 and are maximally opposed at the ends, and averaging two clips at
+  // opposite points of a gait cycle collapses the legs toward a straight-legged
+  // pose:
   //
   //                        reversed (old)          forward (now)
   //     BACK-right(135)   corr -0.600, swing 0.068   corr +0.415, swing 0.121
@@ -474,42 +480,43 @@ function buildBlendNodes(state) {
   //     BACK-left (225)   corr -0.267, swing 0.202   corr -0.704, swing 0.194
   //
   // Swing amplitude at back-right nearly doubles and back-left's foot
-  // correlation improves 2.6x; the cost is that back-right's feet now move
-  // together rather than alternating. Better on three of four, and the
-  // remaining artefact is one clip looking wrong rather than the whole back
-  // half of the ring losing its legs.
+  // correlation improves 2.6x; the cost is that back-right's feet move together
+  // rather than alternating. Better on three of four.
   //
-  // BOTH are compromises on a clip that does not exist. THE REAL FIX is a
-  // backpedal animation, and TUNING.blend2d.backClip is the seam for it: name a
-  // clip there — from character.glb or from the optional actions.glb — and it
-  // is used directly, played forward like every other node, with no code
-  // change. An empty string keeps this stand-in.
+  // G1 retired that stand-in by naming "Walk Backwards", but it built ONE node
+  // and handed the same object to both rings, so backing up at run speed was a
+  // walk cadence stretched to fit. Each ring now names its own clip and gets its
+  // own node.
   //
-  // The clip is CLONED because three's mixer caches one action per clip uuid:
-  // asking for a second action on 'Walk Forward' returns the walk ring's own
-  // forward action, and the two nodes would then fight over one time and one
-  // weight. A clone gets a fresh uuid and therefore a genuinely separate action.
-  const authoredBack = rings.backClip ? findClip(state, rings.backClip) : null;
-  let backClip;
-  if (authoredBack) {
-    backClip = authoredBack;
-  } else {
-    backClip = walkForward.clone();
-    backClip.name = `${walkForward.name} (stand-in for backpedal)`;
-  }
-  const back = make('back', backClip, 0, false);
+  // THE TWO NODES MUST BE DISTINCT OBJECTS, and so must their clips. three's
+  // mixer caches one action per clip uuid: two nodes built on the same clip get
+  // the same action, and therefore one time and one weight between them. That is
+  // precisely what the stride sync's two nominals exist to avoid — walkB and
+  // runB are charged to walkSpeed and runSpeed so the same gait turns over
+  // faster at run speed — and it silently cannot work if the two nodes are one
+  // action. It is also why the fallback CLONES rather than reusing walkForward.
+  const makeBack = (id, ring, wanted) => {
+    const clip = wanted ? findClip(state, wanted) : null;
+    if (clip) return { node: make(id, clip, 0, false), fallback: false };
+    const stand = walkForward.clone();
+    stand.name = `${walkForward.name} (stand-in for ${ring} backpedal)`;
+    return { node: make(id, stand, 0, false), fallback: true };
+  };
+
+  const walkBack = makeBack('walkB', 'walk', rings.walkClips.b);
+  const runBack = makeBack('runB', 'run', rings.runClips.b);
 
   const walk = {
     f: make('walkF', walkForward, 0),
     r: make('walkR', requireClip(rings.walkClips.r), 0),
-    b: back,
+    b: walkBack.node,
     l: make('walkL', requireClip(rings.walkClips.l), 0),
   };
 
   const run = {
     f: make('runF', requireClip(rings.runClips.f), 0),
     r: make('runR', requireClip(rings.runClips.r), 0),
-    b: back,
+    b: runBack.node,
     l: make('runL', requireClip(rings.runClips.l), 0),
   };
 
@@ -559,9 +566,14 @@ function buildBlendNodes(state) {
 
   // THE CONTRIBUTION TABLE — one row per (ring, direction) cell. `nominalKey`
   // names the ring's authored ground speed in TUNING.blend2d, which is what the
-  // stride sync divides by. walkB and runB deliberately share one node object
-  // and carry different nominals: a backpedal at run speed should turn the legs
-  // over faster than one at walk speed even though it is the same clip.
+  // stride sync divides by.
+  //
+  // walkB and runB were two rows over ONE node while the rings shared a back
+  // clip: separate rows, separate nominals, so the same backpedal turned its
+  // legs over faster at run speed. They now point at separate nodes playing
+  // separate clips ("Walk Backwards" and "Jog Backwards"), and the two nominals
+  // matter for the same reason as ever — each clip is scrubbed against the speed
+  // its ring was authored at. The shape of this table did not change.
   state.contributions = [
     { id: 'walkF', node: walk.f, dir: DIR_F, ring: 'walk', nominalKey: 'walkSpeed' },
     { id: 'walkR', node: walk.r, dir: DIR_R, ring: 'walk', nominalKey: 'walkSpeed' },
@@ -574,9 +586,15 @@ function buildBlendNodes(state) {
     { id: 'sprintF', node: sprint.f, dir: DIR_F, ring: 'sprint', nominalKey: 'sprintSpeed' },
   ];
 
-  // Distinct node objects only — `back` appears in two contributions and must
-  // have its time written once.
-  state.cycleNodes = [walk.f, walk.r, back, walk.l, run.f, run.r, run.l, sprint.f];
+  // Every cycle node, and they are now all distinct: the walk and run rings own
+  // separate back nodes, so this is nine objects rather than the eight it was
+  // when one shared `back` stood in both rings. writeClipTimes iterates this
+  // list and needs no change — it never knew how many there were.
+  state.cycleNodes = [
+    walk.f, walk.r, walk.b, walk.l,
+    run.f, run.r, run.b, run.l,
+    sprint.f,
+  ];
   state.allNodes = [
     idle,
     ...state.cycleNodes,
@@ -605,10 +623,12 @@ function buildBlendNodes(state) {
     }
   }
 
+  const standIn = (built) => (built.fallback ? ' [STAND-IN]' : '');
   console.log(
     `[animtarget] 2D blend space: ${state.contributions.length} ring nodes + idle, ` +
-      `${state.cycleNodes.length} distinct cycle clips ` +
-      `(back = "${back.name}", shared by the walk and run rings), ` +
+      `${state.cycleNodes.length} distinct cycle nodes ` +
+      `(walk back = "${walk.b.name}"${standIn(walkBack)}, ` +
+      `run back = "${run.b.name}"${standIn(runBack)}), ` +
       `jump overlay ${jump.standing.name} / ${jump.running.name}`,
   );
 }
@@ -1136,7 +1156,9 @@ function applyOverride(state) {
  * is wrong.
  */
 function writeClipTimes(state) {
-  // THE RINGS — one phase, and the back node reads it backwards.
+  // THE RINGS — one phase, read forwards by every node. The back nodes used to
+  // read it backwards; see the measured table at their construction for why they
+  // no longer do.
   for (const node of state.cycleNodes) {
     const phase = node.reversed ? 1 - state.locomotionPhase : state.locomotionPhase;
     node.action.time = phase * node.duration;

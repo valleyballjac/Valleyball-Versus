@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { TUNING } from '../config/tuning.js';
 import { Interpolated } from '../core/Interpolated.js';
-import { RAPIER, getWorld } from './physics.js';
+import { RAPIER, getWorld, RAGDOLL_GROUPS, MOTOR_GROUPS } from './physics.js';
 
 /**
  * The Auto-Rigger.
@@ -82,20 +82,12 @@ const HEIGHT_TOP_BONE = 'mixamorig:HeadTop_End';
  * but never with each other — self-collision at these joint limits produces a
  * shivering knot rather than a flop.
  *
- * Rapier packs interaction groups as (membership << 16) | filter. The ragdoll is
- * the sole member of bit 1 and filters out bit 1, so ragdoll-vs-ragdoll fails
- * the test in both directions while ragdoll-vs-default still passes.
+ * THE WORDS THEMSELVES NOW LIVE IN physics.js, which is the single source for
+ * every group bit. They were defined here while this file was the only one that
+ * needed them; the ball needs them too, and two files each declaring 0x0004
+ * from memory is exactly how a filter drifts. Nothing about the ragdoll's or
+ * the sphere's membership changed in the move.
  */
-const RAGDOLL_MEMBERSHIP = 0x0002;
-const MOTOR_MEMBERSHIP = 0x0004;
-
-/** Ragdoll collides with the world but with neither itself nor the sphere. */
-const RAGDOLL_FILTER = 0xffff & ~RAGDOLL_MEMBERSHIP & ~MOTOR_MEMBERSHIP;
-/** Sphere collides with the world but not with the ragdoll. */
-const MOTOR_FILTER = 0xffff & ~RAGDOLL_MEMBERSHIP;
-
-const RAGDOLL_GROUPS = (RAGDOLL_MEMBERSHIP << 16) | RAGDOLL_FILTER;
-const MOTOR_GROUPS = (MOTOR_MEMBERSHIP << 16) | MOTOR_FILTER;
 
 /**
  * Takes the sphere out of the ragdoll's collision set.
@@ -692,4 +684,3 @@ export function destroyRagdoll(state) {
   state.rig.clear();
 }
 
-export { RAGDOLL_GROUPS };

@@ -5,9 +5,12 @@ import { TUNING } from './config/tuning.js';
 import { Loop } from './core/Loop.js';
 import {
   initPhysics, stepPhysics, getWorld, drainContactForces, RAPIER,
-  ENVIRONMENT_MEMBERSHIP, ENVIRONMENT_RAY_GROUPS,
+  ENVIRONMENT_RAY_GROUPS, logCollisionMatrix,
 } from './sim/physics.js';
-import { createArena } from './sim/arena.js';
+import { createArena, activeArenaType, activeArenaPreset } from './sim/arena.js';
+import {
+  createBall, resetBall, applyBallResistance, noteBallContact, syncBallSnapshot, ballProbe,
+} from './sim/ball.js';
 import {
   createMotor, updateMotor, syncMotorSnapshot, horizontalSpeed, applyDiveImpulse,
 } from './sim/motor.js';
@@ -22,7 +25,9 @@ import {
   clipResolvesOnSkeleton,
 } from './sim/animtarget.js';
 import { createTracker, applyTracking, applyImpacts, queueKnockdown } from './sim/tracker.js';
-import { buildRagdoll, destroyRagdoll, detachMotorFromRagdoll, BONE_MAP } from './sim/autorig.js';
+import {
+  buildRagdoll, destroyRagdoll, detachMotorFromRagdoll, BONE_MAP, resolveBoneByName,
+} from './sim/autorig.js';
 import {
   createRagdollVisuals,
   disposeRagdollVisuals,
@@ -33,7 +38,9 @@ import {
   applyRagdollVisibility,
 } from './sim/ragdoll.js';
 import { applyClampedLinearDamping } from './sim/damping.js';
-import { input, initInput, sampleInput, consumeJump, consumeDive } from './input.js';
+import {
+  input, initInput, sampleInput, consumeJump, consumeDive, consumeBallReset,
+} from './input.js';
 import { createGui } from './debug/gui.js';
 import { initCapture } from './debug/capture.js';
 
@@ -51,10 +58,10 @@ const MAX_LIVE_PIXEL_RATIO = 2;
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 
 /**
- * The collision group layout now lives in sim/physics.js, because the motor's
- * ground fan needs the same filter word and motor.js cannot import this file.
- * The arena's membership is still stamped on HERE — arena.js is frozen — which
- * is why the membership constant is imported rather than just the ray word.
+ * The collision group layout lives in sim/physics.js, because the motor's ground
+ * fan needs the same filter word and motor.js cannot import this file. The
+ * arena stamps its own membership now that arena.js is no longer frozen, so this
+ * file imports only the RAY word it casts with.
  */
 
 /** Reused ray + scratch for the two environment probes. Allocation-free. */
@@ -125,16 +132,41 @@ const DIVE_INPUT_DEADZONE = 0.3;
 /**
  * Served straight out of public/. Not a tunable: it is the asset's identity.
  *
- * YBOT15Animations.glb REPLACED character.glb as the character asset. It is not
- * a different character: skeleton node names, skin joint list, inverse bind
- * matrices, mesh geometry, materials and the scene graph are byte-identical to
- * character.glb, as are all 13 clips it already carried. It adds exactly two —
- * "Running Dive" and "Slide Left" — which is why the switch is safe: the
- * auto-rigger derives every collider from the bind pose, and a bind pose that
- * cannot move cannot move the colliders. character.glb is kept on disk as the
- * predecessor; nothing loads it.
+ * YBOT30Animations.glb REPLACES YBOT15Animations.glb as the character asset,
+ * which in turn replaced character.glb. It is not a different character, and
+ * this is not a re-rig. Parsed accessor-for-accessor against its predecessor,
+ * the skin joint list (65 joints, "mixamorig:" prefix, Hips root, same order),
+ * every joint's local translation / rotation / scale, all 65 inverse bind
+ * matrices, both SkinnedMeshes — Alpha_Joints and Alpha_Surface, POSITION,
+ * NORMAL, UV, JOINTS_0, WEIGHTS_0 and indices — and the armature root
+ * "Master Actor" (+90 degrees X, scale 0.01) are BYTE-IDENTICAL: max absolute
+ * difference 0.0 on every accessor. Same exporter, Khronos glTF Blender I/O.
+ *
+ * That is why the switch is safe, and it is the same reason the last one was:
+ * the auto-rigger derives every collider from the bind pose, and a bind pose
+ * that cannot move cannot move the colliders. BONE_MAP needs no edit, the
+ * masses and capsule radii cannot have moved, and the L5 axis derivation
+ * answers the same question about the same armature.
+ *
+ * THE 15 CLIPS ALREADY SHIPPING ARE BYTE-IDENTICAL TOO, under the same names,
+ * so every measured clip window in TUNING — jump.clipStart/End, standUp's
+ * window, action.diveClipStart/End, the slide window — stays valid without
+ * re-measurement.
+ *
+ * IT ADDS EXACTLY FIFTEEN CLIPS: Walk Backwards, Jog Backwards, Stop Walking,
+ * Backwards Right Move, Backwards Left Move, Idle Kick Right, Idle Kick Left,
+ * Idle Low Kick Left, Idle Low Kick Right, Bash Hit Right, Bash Hit Left,
+ * Running Jump Kick Right, Idle Two Hand Volley, Standing Spike Left and
+ * Standing Spike Right. Two of them are registered: "Walk Backwards" on the
+ * walk ring and "Jog Backwards" on the run ring, named in TUNING.blend2d's
+ * per-ring node tables, which together retire the backpedal placeholder. The
+ * other thirteen are present, listed by the clip inventory logged in
+ * loadCharacter, and referenced by nothing.
+ *
+ * YBOT15Animations.glb and character.glb are both kept on disk as predecessors.
+ * Nothing loads either one.
  */
-const CHARACTER_URL = '/models/YBOT15Animations.glb';
+const CHARACTER_URL = '/models/YBOT30Animations.glb';
 /** OPTIONAL. Absent today; extra clips beyond the character asset go here. */
 const ACTIONS_URL = '/models/actions.glb';
 
@@ -252,6 +284,17 @@ const renderer = new THREE.WebGLRenderer({
   preserveDrawingBuffer: true,
 });
 
+// SHADOWS, for depth. A ball in flight over a curved floor is impossible to
+// place by eye without one — height and distance look identical from a chase
+// camera, which is exactly the judgement a player has to make to get under it.
+//
+// Deterministic: a shadow map is a function of the same transforms the colour
+// pass reads, so two runs at the same tick produce the same map and the anchored
+// pair still compares. It costs a second depth pass over the casters, which is
+// why the caster list is kept to the ball rather than switched on scene-wide.
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
 // ---------------------------------------------------------------------------
 // Scene
 // ---------------------------------------------------------------------------
@@ -263,6 +306,22 @@ scene.add(new THREE.AxesHelper(2));
 
 const keyLight = new THREE.DirectionalLight(0xffffff, 2.4);
 keyLight.position.set(8, 14, 10);
+// The shadow camera is an orthographic box in LIGHT space and has to contain
+// everything that should cast. Sized to the bowl's floor radius with margin: at
+// 2048 over 80 m that is about 4 cm per texel, which resolves a 40 cm ball
+// cleanly. normalBias rather than a large depth bias, because a sphere's
+// grazing angles are where acne shows and normalBias is the term that fixes it
+// without detaching the shadow from the ball at contact.
+keyLight.castShadow = true;
+keyLight.shadow.mapSize.set(2048, 2048);
+keyLight.shadow.camera.left = -40;
+keyLight.shadow.camera.right = 40;
+keyLight.shadow.camera.top = 40;
+keyLight.shadow.camera.bottom = -40;
+keyLight.shadow.camera.near = 0.5;
+keyLight.shadow.camera.far = 120;
+keyLight.shadow.bias = -0.0005;
+keyLight.shadow.normalBias = 0.02;
 scene.add(keyLight);
 scene.add(new THREE.AmbientLight(0x8fb4d6, 0.55));
 
@@ -338,11 +397,15 @@ const hudWeight = document.getElementById('hud-weight');
 const hudAnimSpeed = document.getElementById('hud-animspeed');
 const hudBlend = document.getElementById('hud-blend');
 const hudDirection = document.getElementById('hud-direction');
+const hudBackNode = document.getElementById('hud-backnode');
 const hudLocalVel = document.getElementById('hud-localvel');
 const hudSprint = document.getElementById('hud-sprint');
 const hudAirborne = document.getElementById('hud-airborne');
 const hudImpact = document.getElementById('hud-impact');
 const hudStandUp = document.getElementById('hud-standup');
+const hudBall = document.getElementById('hud-ball');
+const hudBallTouch = document.getElementById('hud-balltouch');
+const hudBallPeak = document.getElementById('hud-ballpeak');
 const hudDrag = document.getElementById('hud-drag');
 const hudLoco = document.getElementById('hud-loco');
 const hudArm = document.getElementById('hud-arm');
@@ -373,6 +436,19 @@ function updateHud() {
     : '—';
   hudDirection.textContent = animTarget
     ? animTarget.direction.map((d) => d.toFixed(2)).join(' ')
+    : '—';
+  // THE TWO BACK NODES, BY NAME. The row above gives the direction tent's B
+  // weight, which is the same number whatever clip a back node happens to hold —
+  // so on its own it cannot tell an authored backpedal from the forward-walk
+  // stand-in, nor the walk ring's clip from the run ring's. Each ring now owns
+  // its own back node, so each is printed with the weight that charges it:
+  // walk first, then run. Both names are READ off the nodes the ring
+  // construction built (Lesson 22) — nothing here reconstructs which clip
+  // TUNING asked for, which is the whole point, because a fallback would make
+  // those two answers differ and only the node knows the truth.
+  hudBackNode.textContent = animTarget
+    ? `${animTarget.weights.walkB.toFixed(2)} ${animTarget.nodes.walk.b.name} / ` +
+      `${animTarget.weights.runB.toFixed(2)} ${animTarget.nodes.run.b.name}`
     : '—';
   // Velocity in the character's OWN frame: +Z is where it is pointing, +X its
   // right. This is the number to watch while checking a strafe — a pure strafe
@@ -428,6 +504,45 @@ function updateHud() {
   hudStandUp.textContent = animTarget
     ? `${animTarget.standUpNeed.toFixed(2)} / ${animTarget.standUpProgress.toFixed(2)} / ${animTarget.pelvisDownness.toFixed(2)}`
     : '—';
+
+  // THE BALL ROWS, read through the ball's own probe (LESSON 22 — the readout
+  // reads; it does not keep a second copy of the arithmetic). `h` is the
+  // distance from the ball's CENTRE down to the arena, so a ball at rest on
+  // flat floor reads its own radius rather than zero — which is what makes
+  // "0.00 / 0.105" a meaningful thing to see in a capture.
+  if (ball) {
+    const b = ballProbe(ball);
+    hudBall.textContent = `${b.label}  ${b.speed.toFixed(2)} m/s / ${
+      Number.isFinite(b.heightAboveFloor) ? b.heightAboveFloor.toFixed(3) : '—'
+    } m`;
+    // Ticks, not seconds: the HUD may not name a wall clock any more than the
+    // simulation may.
+    // The MOST RECENT touch across all three, so a hit on any ball shows up
+    // rather than only the primary's.
+    let latest = null;
+    for (const other of balls) {
+      if (other.lastTouchKey && (!latest || other.lastTouchTick > latest.lastTouchTick)) {
+        latest = other;
+      }
+    }
+    hudBallTouch.textContent = latest
+      ? `${latest.id}:${latest.lastTouchKey} @${latest.lastTouchTick} ${latest.lastTouchForce.toFixed(1)} N`
+      : '—';
+    // The right-hand number is the spec's evidence and must read 0 forever. It
+    // is the total ACROSS ALL THREE balls, not the primary's: one sphere
+    // ploughing through one ball is the failure, whichever ball it is.
+    let motorContacts = 0;
+    let peakAcross = 0;
+    for (const other of balls) {
+      motorContacts += other.motorContactCount;
+      if (other.peakTouchForce > peakAcross) peakAcross = other.peakTouchForce;
+    }
+    hudBallPeak.textContent = `${peakAcross.toFixed(1)} N / ${motorContacts}`;
+  } else {
+    hudBall.textContent = '—';
+    hudBallTouch.textContent = '—';
+    hudBallPeak.textContent = '—';
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -438,6 +553,41 @@ let motor = null;
 
 /** The invisible clip-playing rig, and the PD tracker that chases it. */
 let animTarget = null;
+
+/**
+ * THE BALL FIXTURE. Three of them, created at boot in TUNING.balls order,
+ * never destroyed, never pooled.
+ *
+ * `ball` is balls[1] — the 1 m medium — and exists so the HUD and the probe
+ * have one primary to report without three copies of every row. It is an ALIAS,
+ * not a special case: nothing in the simulation treats it differently, and
+ * every per-step call below iterates the array.
+ */
+let balls = [];
+let ball = null;
+/** collider handle -> ball, so the drain callback can name which one was hit. */
+const ballByHandle = new Map();
+
+/**
+ * THE ACTIVE ARENA'S PRESET, resolved once at boot and read everywhere after.
+ *
+ * Everything that differs between the bowl and the court — where the athlete
+ * lands, where the balls drop, how far down "out of the world" is — comes from
+ * here rather than from a branch on the arena's name. Nothing in the simulation
+ * asks "am I on the court"; it asks the preset for a number.
+ */
+let arenaPreset = null;
+
+/**
+ * The tick `?captureTick=N` armed, or null in a normal run.
+ *
+ * READ from initCapture's own return value rather than re-parsed from the URL,
+ * so there is one authority on whether a run is armed and it is the capture
+ * module. The ragdoll's spawn seam lives inside capture.js and calls back into
+ * main.js; the ball cannot get a second callback without editing capture.js,
+ * which is frozen — so it reads the armed tick here and gates on it itself.
+ */
+let armedCaptureTick = null;
 const tracker = createTracker();
 
 /** gltf.animations, kept so the GUI can offer the clip list. */
@@ -541,6 +691,14 @@ function spawnRagdoll() {
   updateAnimTarget(animTarget, motor, ragdoll.rig, input.cameraYaw, false, NaN, true, loop.fixedDt);
   resetAnimTarget(animTarget);
 
+  // ONCE PER SESSION, not once per respawn. The answer is a property of the
+  // asset and the armature, neither of which R can change, and thirty lines on
+  // every press of R would bury the log the readout exists to be read from.
+  if (!l5ResidualLogged) {
+    l5ResidualLogged = true;
+    logL5Residuals(animTarget);
+  }
+
   const counts = worldCounts();
   console.log(
     `[ragdoll] spawned. world now ${counts.bodies} bodies / ${counts.colliders} colliders / ` +
@@ -578,6 +736,8 @@ function restoreBindPose() {
  *   1. respawn        — creates bodies/colliders/joints; must precede any read
  *                       of the rig.
  *   2. watchdog       — SPAWN EVENT. Reads body positions only.
+ *   2b. ball reset    — SPAWN EVENT. Serve, armed-run seed, or the ball's own
+ *                       kill-plane watchdog. Same slot, same rules.
  *   3. mount recovery — SPAWN EVENT. Must run BEFORE the ghost updates, so the
  *                       ghost's mount and its mountSlack easing see the snapped
  *                       sphere on the SAME step. Run after, and the ghost spends
@@ -587,13 +747,16 @@ function restoreBindPose() {
  *   5. jump consume   — clears the queued press whether or not it fires.
  *   6. saveRagdollPrevious — curr -> prev BEFORE anything moves.
  *   7. updateMotor    — applies drive/brake/jump forces; may set lastJumpTick.
+ *   7b. ball resistance — clamped air drag and spin decay, before the step so
+ *                       it lands in the same one.
  *   8. liftoff edge   — read from lastJumpTick CHANGING across step 7.
  *   9. updateAnimTarget — the ghost, which consumes that edge and the latched
  *                       camera yaw.
  *  10. applyTracking  — PD forces toward the ghost.
  *  11. stepPhysics    — the ONE world step; every force above lands in it.
  *  12. impacts        — drained from the step just taken, spent on this tick.
- *  13. snapshots      — curr rewritten AFTER the world moved.
+ *                       Ball contacts are RECORDED here and spent on nothing.
+ *  13. snapshots      — curr rewritten AFTER the world moved, motor then ball.
  *
  * @param {number} dt
  * @param {number} tick
@@ -615,6 +778,12 @@ function fixedUpdate(dt, tick) {
   // setTranslation/setLinvel outside construction, it is unreachable from input,
   // and it must never grow conditions that fire during normal play.
   //
+  // THE CENSUS IS FOUR PLAY-CODE SITES NOW, not three: the R-spawn, this
+  // watchdog, the mount follower below, and resetBall in sim/ball.js. The
+  // ball's is the same class as the other three — a spawn event consumed on a
+  // tick boundary, never reachable from gameplay — which is why it was allowed
+  // to join the family rather than being written inline here.
+  //
   // It reads only body positions and the tick, so it is deterministic by
   // construction: the same run reaches the same y at the same tick and respawns
   // on the same tick. It lives here, beside the rest of the spawn plumbing,
@@ -624,8 +793,11 @@ function fixedUpdate(dt, tick) {
     const pelvis = ragdoll && ragdoll.rig.get('pelvis');
     const pelvisY = pelvis ? pelvis.body.translation().y : Infinity;
 
-    if (motorY < TUNING.arena.killPlaneY || pelvisY < TUNING.arena.killPlaneY) {
-      _respawnPoint.set(0, TUNING.motor.spawnY, 0);
+    // The kill plane and the landing point both come from the active preset —
+    // the court's basin is far deeper than the bowl's, so a shared number would
+    // either fire during normal play on one or never fire on the other.
+    if (motorY < arenaPreset.killPlaneY || pelvisY < arenaPreset.killPlaneY) {
+      _respawnPoint.set(arenaPreset.spawn.x, arenaPreset.spawn.y, arenaPreset.spawn.z);
 
       motor.body.setTranslation({ x: _respawnPoint.x, y: _respawnPoint.y, z: _respawnPoint.z }, true);
       motor.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
@@ -638,6 +810,42 @@ function fixedUpdate(dt, tick) {
       // mount the sphere has already been moved to.
       respawnRequested = true;
       console.log(`[watchdog] out of bounds — respawned at tick ${tick}`);
+    }
+  }
+
+  // ═══ THE BALL'S SPAWN EVENT ═══
+  //
+  // The fourth and last member of the sanctioned family, and the same shape as
+  // the other three: it teleports a body, so it lives here in fixedUpdate at the
+  // spawn-event slot and is unreachable from anywhere else. Three ways in, all
+  // of them events rather than states:
+  //
+  //   the serve      — B / Start, edge-triggered and consumed exactly once
+  //   the armed run  — a capture run resets the ball on a fixed tick so it is
+  //                    in the anchored image, which is why it can be compared
+  //   the watchdog   — the same kill plane the athlete has; a ball that left
+  //                    the world does not come back on its own
+  //
+  // consumeBallReset() is deliberately FIRST in the disjunction so it runs on
+  // every step whether or not the other two are true. A queued press that
+  // survives into a later tick is a press that serves twice.
+  //
+  // WITH THREE BALLS the serve and the armed-run seed are still ALL-OR-NOTHING —
+  // one press puts the whole fixture back — while the watchdog stays per-ball,
+  // because one ball leaving the world is not a reason to gather up the other
+  // two mid-play.
+  //
+  // consumeBallReset() runs FIRST and unconditionally, so a queued press cannot
+  // survive into a later tick and serve twice.
+  const serveQueued = consumeBallReset();
+  const armedBallSpawn = armedCaptureTick !== null && tick === TUNING.ball.captureSpawnTick;
+  for (const b of balls) {
+    const belowWorld = b.body.translation().y < arenaPreset.killPlaneY;
+    if (serveQueued || armedBallSpawn || belowWorld) {
+      resetBall(b, tick);
+      if (belowWorld && !serveQueued && !armedBallSpawn) {
+        console.log(`[ball:${b.id}] out of bounds — reset at tick ${tick}`);
+      }
     }
   }
 
@@ -1068,6 +1276,11 @@ function fixedUpdate(dt, tick) {
     resistanceScale * actionResistance,
   );
 
+  // Air drag and spin decay, beside the motor's own resistance and for the same
+  // reason: every force must land in the ONE stepPhysics() below. LAW 3 — the
+  // gains go through the clamped helpers, never through a Rapier damping setter.
+  for (const b of balls) applyBallResistance(b, dt);
+
   // The two action poses, eased at one rate. main.js owns the mechanics; the
   // ghost owns only how much of the pose each one is.
   if (animTarget) {
@@ -1136,6 +1349,30 @@ function fixedUpdate(dt, tick) {
   if (ragdoll) {
     impactEvents.length = 0;
     drainContactForces((handle1, handle2, totalForce) => {
+      // A NOTE ON THE `if (ragdoll)` THIS SITS INSIDE: for the handful of ticks
+      // between boot and the first spawn there is no ragdoll, so the queue is
+      // not drained and any ball contact in that window is discarded with it.
+      // That window contains only ball-vs-arena contacts, which this branch
+      // ignores anyway, and the alternative is restructuring fixedUpdate around
+      // the ball — which the fence forbids and the fixture does not need.
+      //
+      // THE BALL'S CONTACTS ARE RECORDED AND NEVER SPENT (LESSON 15). A ball
+      // event is instrumentation in G2: it names the limb, stamps the tick and
+      // keeps the peak force, and it does NOT enter impactEvents, so it can
+      // never cost the athlete tracking weight. Mapping force to weight is a
+      // calibration decision and the numbers to calibrate against are what this
+      // step is collecting.
+      // Which ball, if either handle is one. A ball-vs-ball contact resolves to
+      // the first handle's ball and finds no rig key on the second, so it is
+      // recorded as "not a limb touch" and correctly changes nothing.
+      const hitBall = ballByHandle.get(handle1) || ballByHandle.get(handle2);
+      if (hitBall) {
+        const other = handle1 === hitBall.collider.handle ? handle2 : handle1;
+        const limb = impactByHandle.get(other);
+        noteBallContact(hitBall, other, limb && limb.key, motor.collider.handle, totalForce, tick);
+        return;
+      }
+
       // The sphere is not in the ragdoll's collision set at all (Task 4.1), so
       // the permanent mount contact cannot appear here — measured across four
       // calibration regimes, zero ragdoll-vs-sphere events. No exclusion needed.
@@ -1146,11 +1383,37 @@ function fixedUpdate(dt, tick) {
   }
 
   syncMotorSnapshot(motor);
+  // Same slot, same contract: body -> curr, AFTER the world moved.
+  for (const b of balls) syncBallSnapshot(b);
   snapshotRagdoll(ragdoll);
 
   // Once a second. A non-finite transform propagates through the joint graph in
   // a few steps and then the character disappears with no other symptom, so the
   // first body to go bad is worth naming.
+  if (balls.length && tick % TUNING.loop.fixedHz === 0) {
+    for (const b of balls) {
+    // THE SPEC, ASSERTED. The sphere is filtered out of the ball's interaction
+    // word, so this counter can only leave zero if that filter has been broken —
+    // at which point the athlete is knocking the ball with an invisible
+    // half-metre sphere centred on his hips instead of with his shins, which is
+    // the exact failure the designer's spec exists to prevent. console.error
+    // rather than a warning, because the determinism script fails the pair on
+    // an error and this must not be able to ship quietly.
+      if (b.motorContactCount !== 0) {
+        console.error(
+          `[ball:${b.id}] motorContactCount is ${b.motorContactCount} at tick ${tick} — the ` +
+            `sphere is colliding with the ball. MOTOR_GROUPS / BALL_GROUPS filtering is broken.`,
+        );
+      }
+
+      const bt = b.body.translation();
+      const bv = b.body.linvel();
+      if (!Number.isFinite(bt.x + bt.y + bt.z + bv.x + bv.y + bv.z)) {
+        console.error(`[ball:${b.id}] non-finite transform or velocity at tick ${tick}`);
+      }
+    }
+  }
+
   if (ragdoll && tick % TUNING.loop.fixedHz === 0) {
     const bad = findNonFinite(ragdoll);
     if (bad) console.error(`[ragdoll] non-finite transform on "${bad}" at tick ${tick}`);
@@ -1276,6 +1539,14 @@ function updateSpringArm() {
  */
 function render(alpha) {
   if (motor) motor.interpolated.apply(alpha);
+  // THE BALL'S VISUAL. Missing until now, and the omission was invisible in
+  // every automated capture: captureAnchored walks loop.interpolated and applies
+  // alpha to EVERY registered entry, so the anchored PNGs placed the ball
+  // correctly while this render path left mesh.position frozen at the spawn
+  // point for the whole of interactive play. The body fell, bounced and rolled;
+  // the picture did not. Registering an Interpolated is only half the contract —
+  // the render pass has to apply it, and nothing enforces that.
+  for (let i = 0; i < balls.length; i += 1) balls[i].interpolated.apply(alpha);
   syncRagdollPose(ragdoll, alpha);
   updateSpringArm();
   renderer.render(scene, camera);
@@ -1324,6 +1595,226 @@ async function loadCharacter() {
     `[character] loaded ${CHARACTER_URL}: ${characterSkeleton.bones.length} joints, ` +
       `${gltf.animations.length} clips present and untouched in this task`,
   );
+
+  logClipInventory();
+}
+
+/**
+ * EVERY CLIP-NAME FIELD IN TUNING, READ OUT OF TUNING.
+ *
+ * Lesson 22 — a readout READS, it never recomputes. Retyping the registered
+ * names into the inventory below would produce a table that goes on agreeing
+ * with itself after somebody edits TUNING, which is worse than having no table
+ * at all. Every field is reached by walking the same objects the blend space
+ * walks: TUNING.anim.blend.idleClip, every string in TUNING.blend2d including
+ * the per-direction ring tables, and every key ending in "Clip" on TUNING.jump,
+ * TUNING.standUp and TUNING.action. Add a clip field to any of those and it
+ * appears here without this function being touched.
+ *
+ * Keyed by LOWERCASED clip name, because findClip in animtarget.js resolves
+ * case-insensitively and a readout that is stricter than the resolver would
+ * report a registered clip as unreferenced.
+ *
+ * @returns {Map<string, {name: string, paths: string[]}>} lowercased clip name
+ *          -> the name as TUNING actually spells it, and the fields naming it
+ */
+function tuningClipFields() {
+  const fields = new Map();
+  const add = (path, value) => {
+    if (typeof value !== 'string' || value === '') return;
+    const key = value.toLowerCase();
+    const entry = fields.get(key);
+    // The authored spelling is kept, not the lowercased key: the warning at the
+    // bottom of the inventory quotes this back at whoever has to go and find the
+    // field, and "crash" does not appear in tuning.js — 'Crash' does.
+    if (entry) entry.paths.push(path);
+    else fields.set(key, { name: value, paths: [path] });
+  };
+
+  add('anim.blend.idleClip', TUNING.anim.blend.idleClip);
+
+  for (const [key, value] of Object.entries(TUNING.blend2d)) {
+    if (typeof value === 'string') {
+      add(`blend2d.${key}`, value);
+    } else if (value && typeof value === 'object') {
+      for (const [dir, name] of Object.entries(value)) add(`blend2d.${key}.${dir}`, name);
+    }
+  }
+
+  for (const group of ['jump', 'standUp', 'action']) {
+    for (const [key, value] of Object.entries(TUNING[group])) {
+      if (key.endsWith('Clip')) add(`${group}.${key}`, value);
+    }
+  }
+
+  return fields;
+}
+
+/** The L5 residual readout is a load-time proof, not a per-respawn one. */
+let l5ResidualLogged = false;
+
+/**
+ * LAW L5 — THE PER-CLIP ROOT-MOTION RESIDUAL, MEASURED FOR EVERY CLIP.
+ *
+ * The strip in animtarget.js pins the two ARMATURE-LOCAL axes that are
+ * world-horizontal back to their bind values on every step and keeps the third.
+ * WHICH two those are is derived at construction from the armature itself
+ * (hipsAxisRoles) and published on the target state. This reads those axes off
+ * the state rather than assuming them, so a re-export that reorients the
+ * armature moves the readout WITH the strip instead of against it — which is
+ * the whole reason the derivation exists. Lesson 22 again: readouts read.
+ *
+ * For every clip in the asset set it walks the Hips position track and reports
+ * two numbers, both in world metres, both the largest value reached over the
+ * clip, both measured from the bind hips:
+ *
+ *   UNSTRIPPED — how far the hips travel horizontally AS AUTHORED. This is the
+ *     number that says "this clip carries root motion", and several of the new
+ *     clips carry metres of it: Running Jump Kick Right and the two spikes walk
+ *     the athlete across the court if nothing removes it.
+ *   STRIPPED — the same measurement with the strip's own two axes pinned to
+ *     bind. This is what the ghost actually does, and IT MUST READ 0.0000 m.
+ *
+ * A non-zero stripped residual means the derived axes do not cover the axes the
+ * clip animates: the strip would be pinning the wrong pair and the ghost would
+ * walk out from under the sphere, which is locomotion coming from the animation
+ * instead of from input. That is a stop condition and a report, not something
+ * to patch here — the strip is not this file's to edit.
+ *
+ * Nothing in here touches the target. The tracks are sampled straight out of
+ * the clips, the mixer is never advanced, no bone is written, and the world
+ * matrix is only read. Running it changes no simulation state.
+ */
+function logL5Residuals(target) {
+  const hips = target.hips;
+  if (!hips.parent) {
+    console.warn('[L5] the ghost hips have no parent — residual not measured');
+    return;
+  }
+  // Composed by updateAnimTarget immediately above this call: mount * armature.
+  // The mount is a yaw and a translation, so it cannot change a horizontal
+  // length, and both points below go through the same matrix anyway.
+  const toWorld = hips.parent.matrixWorld;
+
+  const axisA = target.hipsAxisA;
+  const axisB = target.hipsAxisB;
+  const axisUp = target.hipsUpAxis;
+
+  // The bind hips, rebuilt from the three published components rather than read
+  // off the live bone — the bone has been posed by the update call above.
+  const bindLocal = new THREE.Vector3();
+  bindLocal[axisA] = target.hipsBindA;
+  bindLocal[axisB] = target.hipsBindB;
+  bindLocal[axisUp] = target.hipsBindUp;
+  const bindWorld = bindLocal.clone().applyMatrix4(toWorld);
+
+  const sample = new THREE.Vector3();
+  const world = new THREE.Vector3();
+  const horizontal = () => Math.hypot(world.x - bindWorld.x, world.z - bindWorld.z);
+
+  console.log(
+    `[L5] root-motion residual, per clip. Armature-local ${axisA}/${axisB} pinned as ` +
+      `horizontal, ${axisUp} kept as vertical. STRIPPED MUST READ 0.0000 m on every clip.`,
+  );
+
+  // Resolved the same way every other bone lookup in the project is, so a
+  // sanitized "mixamorigHips" and a raw "mixamorig:Hips" both land — memoised
+  // because resolveBoneByName reindexes the skeleton on every call and thirty
+  // clips of 195 tracks would ask it the same question thousands of times.
+  const isHipsNode = new Map();
+  const nodeIsHips = (nodeName) => {
+    let answer = isHipsNode.get(nodeName);
+    if (answer === undefined) {
+      answer = resolveBoneByName(target.skeleton, nodeName) === hips;
+      isHipsNode.set(nodeName, answer);
+    }
+    return answer;
+  };
+
+  const width = Math.max(4, ...target.clips.map((clip) => clip.name.length));
+  for (const clip of target.clips) {
+    let track = null;
+    for (const candidate of clip.tracks) {
+      const dot = candidate.name.lastIndexOf('.');
+      if (dot < 0 || candidate.name.slice(dot + 1) !== 'position') continue;
+      if (!nodeIsHips(candidate.name.slice(0, dot))) continue;
+      track = candidate;
+      break;
+    }
+
+    if (!track) {
+      console.log(`[L5] ${clip.name.padEnd(width)}  no hips position track — nothing to strip`);
+      continue;
+    }
+
+    let unstripped = 0;
+    let stripped = 0;
+    for (let i = 0; i + 2 < track.values.length; i += 3) {
+      sample.set(track.values[i], track.values[i + 1], track.values[i + 2]);
+      world.copy(sample).applyMatrix4(toWorld);
+      unstripped = Math.max(unstripped, horizontal());
+      sample[axisA] = bindLocal[axisA];
+      sample[axisB] = bindLocal[axisB];
+      world.copy(sample).applyMatrix4(toWorld);
+      stripped = Math.max(stripped, horizontal());
+    }
+
+    console.log(
+      `[L5] ${clip.name.padEnd(width)}  unstripped ${unstripped.toFixed(4).padStart(8)} m   ` +
+        `stripped ${stripped.toFixed(4).padStart(8)} m`,
+    );
+  }
+}
+
+/**
+ * THE CLIP INVENTORY — every clip in the asset set, once, at load.
+ *
+ * Informational, and deliberately so. AN UNREFERENCED CLIP IS NOT AN ERROR: the
+ * 30-animation asset ships the whole strike and transition inventory long
+ * before anything registers any of it, so a readout that treated "present but
+ * unused" as a fault would cry wolf for the rest of the phase.
+ *
+ * What it is actually for is the mirror question — a TUNING field naming a clip
+ * the asset does NOT have. That case is silent at runtime by design: the back
+ * node falls back to the forward walk and the action nodes fall back to a held
+ * airborne pose rather than throwing, which is the right behaviour and also the
+ * reason a typo in a clip name can survive a play session unnoticed. Those are
+ * warned about by name below.
+ */
+function logClipInventory() {
+  const fields = tuningClipFields();
+  const rows = characterClips.map((clip) => ({
+    name: clip.name,
+    duration: clip.duration,
+    tracks: clip.tracks.length,
+    referencedBy: (fields.get(clip.name.toLowerCase()) || { paths: [] }).paths,
+  }));
+
+  const width = Math.max(4, ...rows.map((row) => row.name.length));
+  console.log(
+    `[clips] ${'clip'.padEnd(width)}  ${'dur (s)'.padStart(7)}  ${'tracks'.padStart(6)}  referenced by`,
+  );
+  for (const row of rows) {
+    console.log(
+      `[clips] ${row.name.padEnd(width)}  ${row.duration.toFixed(3).padStart(7)}  ` +
+        `${String(row.tracks).padStart(6)}  ${row.referencedBy.join(', ') || '—'}`,
+    );
+  }
+
+  const referenced = rows.filter((row) => row.referencedBy.length).length;
+  console.log(
+    `[clips] ${rows.length} clips in the asset set: ${referenced} referenced by a TUNING ` +
+      `clip-name field, ${rows.length - referenced} unreferenced (not an error).`,
+  );
+
+  const present = new Set(rows.map((row) => row.name.toLowerCase()));
+  for (const [key, entry] of fields) {
+    if (present.has(key)) continue;
+    console.warn(
+      `[clips] TUNING names "${entry.name}" at ${entry.paths.join(', ')} and the asset set ` +
+        `has no such clip. That field falls back rather than throwing, so it is silent at runtime.`,
+    );
+  }
 }
 
 /**
@@ -1375,15 +1866,36 @@ async function loadActionClips() {
 async function boot() {
   await initPhysics(loop.fixedDt);
 
-  const arena = createArena();
-  scene.add(arena.group);
-  // arena.js is frozen, so the environment's membership is stamped here, on the
-  // collider it returns. Its FILTER half stays 0xffff, so every contact pair it
-  // had before it had a group it still has — this changes what rays can select,
-  // not what collides. See the layout comment above.
-  arena.collider.setCollisionGroups((ENVIRONMENT_MEMBERSHIP << 16) | 0xffff);
+  // AWAITED — the court is a GLB and the loop must not start on an empty world.
+  // arena.js now owns adding the group, stamping ENVIRONMENT_GROUPS on its own
+  // colliders and setting receiveShadow, all of which used to be done from here
+  // with a comment explaining that arena.js was frozen. It is not any more, so
+  // the stamps have moved next to the things they describe.
+  arenaPreset = activeArenaPreset();
+  console.log(`[arena] active type "${activeArenaType()}"`);
+  const arena = await createArena(scene);
+
+  // The words are derived in physics.js and the table is computed from them, so
+  // the "no" in the motor/ball cell is evidence rather than a caption.
+  logCollisionMatrix();
 
   motor = createMotor();
+  // THE ATHLETE'S LANDING POINT, from the active preset.
+  //
+  // CONSTRUCTION, not gameplay: this runs in boot, before loop.start(), on a
+  // body nothing has stepped yet. motor.js authors its own spawn from
+  // TUNING.motor.spawnY and motor.js is frozen, so the arena's choice is applied
+  // here instead. It does NOT join the play-code setTranslation census for the
+  // same reason the RigidBodyDesc builders do not: it cannot be reached once the
+  // loop is running.
+  motor.body.setTranslation(
+    { x: arenaPreset.spawn.x, y: arenaPreset.spawn.y, z: arenaPreset.spawn.z },
+    true,
+  );
+  motor.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+  motor.interpolated.reset(
+    _respawnPoint.set(arenaPreset.spawn.x, arenaPreset.spawn.y, arenaPreset.spawn.z),
+  );
   // Construction-time, next to the collider it edits: the character rides the
   // sphere through tracking forces, not through contact, and its legs straddle
   // the ball by construction. See detachMotorFromRagdoll.
@@ -1392,6 +1904,44 @@ async function boot() {
   motor.mesh.visible = TUNING.debug.showSphereWireframe;
 
   loop.register(motor.interpolated);
+
+  // THE BALL joins the interpolation registry on exactly the terms the sphere
+  // does — one Interpolated, registered once, snapshotted after the world step.
+  // The before/after count is logged because "did the ball actually get
+  // registered" is otherwise invisible until something renders at the wrong
+  // alpha and nobody can say when it started.
+  const registryBefore = loop.interpolated.length;
+  // BUILT ONE AT A TIME, IN ARRAY ORDER, and awaited — both halves matter for
+  // LAW 6.
+  //
+  // Awaited, because the optional skin must resolve before the loop starts: a
+  // texture landing on a different frame in each run would make an anchored pair
+  // differ over a picture rather than over the simulation.
+  //
+  // Sequential rather than Promise.all, because Rapier hands out body handles in
+  // creation order and the solver walks bodies in handle order. With Promise.all
+  // the three constructors interleave at their await points, and the creation
+  // order would then depend on how fast a texture fetch resolved — which is not
+  // a thing the simulation may depend on. A for-of loop makes the order a
+  // property of the code instead of a property of the network.
+  for (let i = 0; i < TUNING.balls.length; i += 1) {
+    const spec = TUNING.balls[i];
+    // The spawn comes from the ARENA, matched by index; everything else is the
+    // ball's own. A preset with fewer spawns than balls falls back to the ball
+    // defaults rather than stacking them all on one point.
+    const spawn = arenaPreset.ballSpawns[i];
+    const built = await createBall(scene, spawn ? { ...spec, spawn } : spec);
+    balls.push(built);
+    ballByHandle.set(built.collider.handle, built);
+    loop.register(built.interpolated);
+  }
+  // The 1 m ball is the primary the HUD reports; see the declaration.
+  ball = balls[1] || balls[0] || null;
+  console.log(
+    `[ball] ${balls.length} balls (${balls.map((b) => b.id).join(', ')}); ` +
+      `interpolation registry ${registryBefore} -> ${loop.interpolated.length}; ` +
+      `HUD primary "${ball ? ball.label : 'none'}"`,
+  );
 
   initInput(canvas);
   // Sampled once per rendered frame, before that frame's steps drain, so every
@@ -1424,7 +1974,7 @@ async function boot() {
 
   installRespawnHotkey();
 
-  initCapture({
+  armedCaptureTick = initCapture({
     renderer,
     scene,
     camera,
@@ -1474,6 +2024,11 @@ async function boot() {
     const mv = motor.body.linvel();
     return {
       tick: loop.tick,
+      // READ from the ball bodies; recomputes nothing the simulation knows.
+      // `ball` is the primary (the 1 m medium); `balls` is all three, in the
+      // order TUNING.balls authored them.
+      ball: ball ? ballProbe(ball) : null,
+      balls: balls.map(ballProbe),
       pelvis: { x: pt.x, y: pt.y, z: pt.z, speed: Math.hypot(pv.x, pv.z) },
       motor: { x: mt.x, y: mt.y, z: mt.z, speed: Math.hypot(mv.x, mv.z) },
       weight: tracker.weight,
@@ -1629,6 +2184,9 @@ async function boot() {
     onShowSphereWireframeChange: (visible) => {
       motor.mesh.visible = visible;
     },
+    onShowBallWireframeChange: (wireframe) => {
+      for (const b of balls) b.mesh.material.wireframe = wireframe;
+    },
     onCameraChange: applyCameraTuning,
     onRagdollVisibilityChange: () => applyRagdollVisibility(ragdoll, characterRoot),
     clipNames: characterClips.map((clip) => clip.name),
@@ -1637,10 +2195,8 @@ async function boot() {
 
   setHudVisible(TUNING.debug.showHud);
 
-  console.log(
-    `[arena] bowl built: ${arena.triangleCount} collider triangles ` +
-      `(${arena.degenerateCount} degenerate lathe-pole triangles removed)`,
-  );
+  // The arena logs its own construction now — one line for the bowl, three for
+  // the court — because only arena.js knows which one it built.
 
   loop.start();
 }

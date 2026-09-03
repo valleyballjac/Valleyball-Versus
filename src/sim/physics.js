@@ -30,18 +30,31 @@ import { TUNING } from '../config/tuning.js';
  */
 
 /**
- * THE COLLISION GROUP LAYOUT, in one place.
+ * THE COLLISION GROUP LAYOUT — THE SINGLE SOURCE.
+ *
+ * This block used to be documentation while the constants lived in autorig.js,
+ * which meant the description and the truth were two files apart and only one
+ * of them was checked by the compiler. They are the same thing now: autorig.js
+ * imports the words from here, main.js stamps the arena with one from here, and
+ * ball.js takes its own from here. Nothing defines a group bit anywhere else.
  *
  *   0x0001  environment — the arena's trimesh. Stamped on in main.js, because
  *           arena.js is frozen; Rapier's default membership is every bit set,
  *           which is fine for contacts but useless as a ray filter.
  *   0x0002  ragdoll     — the sixteen character bodies (autorig.js).
- *   0x0004  motor       — the sphere (autorig.js, detachMotorFromRagdoll).
+ *   0x0004  motor       — the sphere (detachMotorFromRagdoll).
+ *   0x0008  ball        — the one ball (ball.js).
  *
- * ENVIRONMENT_RAY_GROUPS is an interaction-groups word whose FILTER half is
- * environment-only, so a ray cast with it can hit the arena and nothing else.
- * Every non-contact ray in the project uses it: the camera's obstruction ray,
- * mount recovery's floor probe, and the motor's ground fan.
+ * Rapier packs an interaction word as (membership << 16) | filter, and two
+ * colliders interact only if EACH one's membership passes the OTHER's filter.
+ * Both directions must agree, which is why every exclusion below is stated from
+ * both sides rather than trusted to one.
+ *
+ * ENVIRONMENT_RAY_GROUPS is the odd one out: its FILTER half is
+ * environment-only, so a ray cast with it hits the arena and nothing else.
+ * Every non-contact ray in the project uses it — the camera's obstruction ray,
+ * mount recovery's floor probe, the motor's ground fan, and now the ball's
+ * height probe.
  *
  * WHY NOT filterExcludeRigidBody. That argument takes ONE body. The character
  * is sixteen, so excluding it that way is impossible — and without the filter
@@ -51,8 +64,73 @@ import { TUNING } from '../config/tuning.js';
  * It lives here rather than in main.js because motor.js needs it too and
  * motor.js cannot import main.js — main.js imports motor.js.
  */
-export const ENVIRONMENT_MEMBERSHIP = 0x0001;
+export const GROUP_ENVIRONMENT = 0x0001;
+export const GROUP_RAGDOLL = 0x0002;
+export const GROUP_MOTOR = 0x0004;
+export const GROUP_BALL = 0x0008;
+
+/** Every bit that exists. The filter half is 16 bits wide. */
+const ALL_GROUPS = 0xffff;
+
+/**
+ * Kept as an alias because motor.js is frozen and imports this name. It is the
+ * environment MEMBERSHIP bit, not an interaction word — see ENVIRONMENT_GROUPS.
+ */
+export const ENVIRONMENT_MEMBERSHIP = GROUP_ENVIRONMENT;
+
+/** The arena: member of environment, collides with everything. */
+export const ENVIRONMENT_GROUPS = (GROUP_ENVIRONMENT << 16) | ALL_GROUPS;
+
+/** Limbs hit the world and the BALL; never themselves, never the sphere. */
+export const RAGDOLL_GROUPS =
+  (GROUP_RAGDOLL << 16) | (ALL_GROUPS & ~GROUP_RAGDOLL & ~GROUP_MOTOR);
+
+/**
+ * The sphere hits the world only. Excluding the BALL is THE DESIGNER'S SPEC and
+ * not an optimisation: a player who runs through the ball with their shins must
+ * knock it with their shins, not with an invisible half-metre sphere centred on
+ * their hips. Remove ~GROUP_BALL and the athlete becomes a bulldozer.
+ */
+export const MOTOR_GROUPS =
+  (GROUP_MOTOR << 16) | (ALL_GROUPS & ~GROUP_RAGDOLL & ~GROUP_BALL);
+
+/** The ball hits the world and the limbs, and passes through the sphere. */
+export const BALL_GROUPS = (GROUP_BALL << 16) | (ALL_GROUPS & ~GROUP_MOTOR);
+
 export const ENVIRONMENT_RAY_GROUPS = (0xffff << 16) | ENVIRONMENT_MEMBERSHIP;
+
+/**
+ * THE MATRIX, COMPUTED FROM THE WORDS ABOVE — never typed out by hand.
+ *
+ * A hand-written table is a second copy of the answer that starts agreeing with
+ * the first and quietly stops. This derives each cell from the two words with
+ * Rapier's own rule, so if a filter is edited the log changes with it. That is
+ * the whole point: the motor/ball cell reading "no" is the evidence for the
+ * spec, and it has to be evidence rather than a caption.
+ */
+export function logCollisionMatrix() {
+  const rows = [
+    ['environment', ENVIRONMENT_GROUPS],
+    ['ragdoll', RAGDOLL_GROUPS],
+    ['motor', MOTOR_GROUPS],
+    ['ball', BALL_GROUPS],
+  ];
+  const interacts = (a, b) =>
+    ((a >>> 16) & (b & 0xffff)) !== 0 && ((b >>> 16) & (a & 0xffff)) !== 0;
+
+  const width = Math.max(...rows.map(([name]) => name.length));
+  console.log(
+    `[groups] ${''.padEnd(width)}  ${rows.map(([name]) => name.padStart(11)).join('')}`,
+  );
+  for (const [nameA, wordA] of rows) {
+    const cells = rows.map(([, wordB]) => (interacts(wordA, wordB) ? 'YES' : 'no').padStart(11));
+    console.log(`[groups] ${nameA.padEnd(width)}  ${cells.join('')}`);
+  }
+  console.log(
+    '[groups] motor x ball must read "no" — the sphere ignores the ball by design; ' +
+      'the limbs are what touch it.',
+  );
+}
 
 /**
  * LAW 6 fixes this. It is deliberately NOT a TUNING knob, for the same reason

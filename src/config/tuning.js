@@ -25,6 +25,7 @@ const DEFAULTS = {
     showSphereWireframe: true,
     showRagdollColliders: true,
     showCharacterMesh: true,
+    showBallWireframe: false,
   },
 
   // -12, not -20. The user tested this live through the GUI and reported the
@@ -32,26 +33,126 @@ const DEFAULTS = {
   // still shipped -20 and every fresh load undid the finding.
   physics: { gravityY: -12 },
 
-  // All construction-time: the bowl geometry and its trimesh collider are built
-  // once at boot from these, and the collider is not rebuilt on the fly.
+  // THE TWO ARENAS. All construction-time: whichever one is selected is built
+  // once at boot and never rebuilt on the fly.
   arena: {
-    floorRadius: 30,
-    rimRadius: 48,
-    rimHeight: 8,
-    // Points across the flat floor and up the wall. The lip adds lipPoints on
-    // top of these, so the profile is profilePoints + lipPoints long.
-    profilePoints: 40,
-    latheSegments: 96,
-    wallCurvePower: 2,
-    // THE LIP. Past the rim the profile turns back INWARD and keeps climbing,
-    // so a ball arriving with real speed meets an overhang instead of a launch
-    // ramp. Inset is how far in it curls, height how far up.
-    lipInset: 3,
-    lipHeight: 2,
-    lipPoints: 6,
-    // The watchdog floor. Anything below this has left the world.
-    killPlaneY: -10,
+    // 'court' | 'bowl'. Read ONCE at boot and overridable per run with the
+    // query parameter ?arena=bowl — same reasoning as ?captureTick, which is
+    // that harness configuration must not require editing saved tuning state.
+    type: 'court',
+    modelUrl: '/models/arena.glb',
+
+    // THE AUTHORED COURT. A 50 x 120 m valley basin: the inner field rises from
+    // the centre out to the ends, streams flank it, and two goal hoops face
+    // across the court width at z = +/-40. There is no net.
+    court: {
+      // The centre circle. The athlete lands here and can run either way.
+      spawn: { x: 0, y: 1.5, z: 0 },
+      // Below the lowest basin. The authored glass barriers are 1-2 triangle
+      // placeholders with open lower corners, so a ball CAN leave through them
+      // near the top corners — the kill plane is the real boundary contract
+      // until G5 authors proper boundary volumes.
+      killPlaneY: -15,
+      ballSpawns: [
+        { x: -3.0, y: 3.5, z: 1.5 },
+        { x: 0.0, y: 4.5, z: 3.0 },
+        { x: 3.0, y: 5.5, z: 1.5 },
+      ],
+    },
+
+    // THE TEST RIG, preserved exactly. Every determinism pair measured to date
+    // was measured on these numbers; they are the baseline and they do not move
+    // because the court arrived.
+    bowl: {
+      floorRadius: 30,
+      rimRadius: 48,
+      rimHeight: 8,
+      // Points across the flat floor and up the wall. The lip adds lipPoints on
+      // top of these, so the profile is profilePoints + lipPoints long.
+      profilePoints: 40,
+      latheSegments: 96,
+      wallCurvePower: 2,
+      // THE LIP. Past the rim the profile turns back INWARD and keeps climbing,
+      // so a ball arriving with real speed meets an overhang instead of a launch
+      // ramp. Inset is how far in it curls, height how far up.
+      lipInset: 3,
+      lipHeight: 2,
+      lipPoints: 6,
+      // The watchdog floor. Anything below this has left the world.
+      killPlaneY: -10,
+      spawn: { x: 0, y: 3.0, z: 0 },
+      ballSpawns: [
+        { x: -3.5, y: 3.5, z: 2.0 },
+        { x: 0.0, y: 4.5, z: 3.5 },
+        { x: 4.0, y: 5.5, z: 2.0 },
+      ],
+    },
   },
+
+  // SETTINGS SHARED BY EVERY BALL. Not per-spec, because neither is a property
+  // of any one ball: the threshold is about what the instrumentation should
+  // bother reporting, and the capture tick is harness timing.
+  ball: {
+    eventThreshold: 5,    // N — below this a contact raises no event at all
+    captureSpawnTick: 30, // reset on the tick the ragdoll spawns in an armed run
+  },
+
+  // THE BALL FIXTURE — three sizes at once, to judge scale and collision feel
+  // against each other rather than one at a time from memory.
+  //
+  // SPAWN POSITIONS ARE NOT HERE. They belong to the ARENA, not to the ball:
+  // the same three balls drop into two differently shaped worlds, and a spawn
+  // that suits the bowl's flat floor is not the one that suits the court's
+  // centre circle. TUNING.arena.<type>.ballSpawns supplies them, matched to this
+  // array by index.
+  //
+  // ORDER IS LOAD-BEARING (LAW 6). Bodies are created in this order, Rapier
+  // hands out handles in creation order, and the solver walks them in handle
+  // order — so reordering this array changes the simulation. Append, do not
+  // shuffle.
+  //
+  // The densities fall with size on purpose. Held at the dodgeball's
+  // 0.025 g/cm3 a 1.5 m ball would mass 44 kg and would not be a ball the
+  // athlete plays with, it would be a wall that rolls. These are authored from
+  // the mass wanted, backwards: density = mass / ((4/3) pi r^3) / 1000.
+  balls: [
+    {
+      id: 'small',
+      label: 'Small (0.4m)',
+      radius: 0.20,
+      density: 0.025,     // -> 0.838 kg
+      friction: 0.8,
+      restitution: 0.88,
+      linearDrag: 0.015,
+      angularDrag: 0.04,
+      colorA: 0xd32f2f,   // crimson
+      colorB: 0xf5f5f5,   // white
+    },
+    {
+      id: 'medium',
+      label: 'Medium (1.0m)',
+      radius: 0.50,
+      density: 0.0042,    // -> 2.199 kg
+      friction: 0.8,
+      restitution: 0.88,
+      linearDrag: 0.012,
+      angularDrag: 0.03,
+      colorA: 0x1976d2,   // blue
+      colorB: 0xfbc02d,   // yellow
+    },
+    {
+      id: 'large',
+      label: 'Large (1.5m Exercise Ball)',
+      radius: 0.75,
+      density: 0.0022,    // -> 3.888 kg
+      friction: 0.85,
+      restitution: 0.85,
+      linearDrag: 0.01,
+      angularDrag: 0.02,
+      colorA: 0x7b1fa2,   // purple
+      colorB: 0xb0bec5,   // silver
+    },
+  ],
 
   motor: {
     // Construction-time: radius and density size the ball collider.
@@ -368,19 +469,33 @@ const DEFAULTS = {
     // order — the angular tent reads it as four equal sectors starting at
     // forward and going clockwise (toward +X, i.e. the character's right).
     //
-    // B is deliberately absent. There is no backpedal clip in the asset, so the
-    // back node is the WALK ring's own forward clip scrubbed backwards, shared
-    // by both rings. Placeholder until a backpedal clip is authored; replace by
-    // editing this table only.
-    walkClips: { f: 'Walk Forward', r: 'Walk Strafe Right', l: 'Walk Strafe Left' },
-    // THE BACKPEDAL SEAM. Empty means "no backpedal clip exists" and the back
-    // node stands in with the forward walk — see animtarget.js for the measured
-    // reason it is played FORWARD rather than reversed. Name a clip here (from
-    // character.glb or the optional actions.glb) and it is used directly, with
-    // no code change. This is the one-line fix when the new character model
-    // with the fuller animation set arrives.
-    backClip: '',
-    runClips: { f: 'Running Forward', r: 'Strafe Run Right', l: 'Strafe Run Left' },
+    // B IS A FIRST-CLASS SLOT ON BOTH RINGS, and each ring owns its own clip.
+    //
+    // It was not always. Through Phase 2 there was no backpedal clip in the
+    // asset at all and the back of BOTH rings stood in with the walk ring's own
+    // forward clip; G1 named "Walk Backwards" in one shared seam, which retired
+    // the stand-in but still handed a single node object to both rings, so
+    // backing up at run speed was a walk cadence stretched to fit. Both of those
+    // were compromises on clips that did not exist. They do now.
+    //
+    // WALK BACK — "Walk Backwards": 1.22 s, loops with 0 degrees of closure
+    // error, zero travel to strip, the same 1.05-1.2 s cadence as "Walk Forward".
+    // RUN BACK — "Jog Backwards": 0.73 s, authored at run cadence against
+    // "Running Forward" at 0.72 s. It carries 1.20 m of travel; LAW L5 removes
+    // it, measured at 0.0000 m residual.
+    //
+    // AN EMPTY STRING IN EITHER `b` SLOT still means "this ring has no backpedal
+    // clip", and that ring alone falls back to a clone of the walk ring's
+    // forward clip played FORWARD — not reversed. The measurement behind that
+    // choice lives in the comment at the fallback in animtarget.js and stays
+    // there as the record; it is why a reversed stand-in is never coming back.
+    // The two rings fall back independently: emptying one does not touch the
+    // other.
+    //
+    // Ring order is F, R, B, L. The tent reads it as four equal sectors, so the
+    // key order in these tables is cosmetic but kept honest to that reading.
+    walkClips: { f: 'Walk Forward',    r: 'Walk Strafe Right', b: 'Walk Backwards', l: 'Walk Strafe Left' },
+    runClips:  { f: 'Running Forward', r: 'Strafe Run Right',  b: 'Jog Backwards',  l: 'Strafe Run Left' },
     // The sprint ring has a forward node and nothing else — there is no lateral
     // sprint clip and inventing one by stretching a run strafe would read as a
     // skid. See the CAP RULE in animtarget.js for where the missing weight goes.

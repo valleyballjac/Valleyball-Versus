@@ -32,6 +32,9 @@ const KEYMAP = {
   sprint: { pad: 6, keys: ['ShiftLeft', 'ShiftRight'] },
   slide: { pad: 7, keys: ['KeyC'] },
   dive: { pad: 2, keys: ['KeyQ'] },
+  // Button 9 is Start in the standard mapping. Resetting the ball is a spawn
+  // event, not a verb, so it sits on a menu button rather than a face button.
+  ballReset: { pad: 9, keys: ['KeyB'] },
 };
 
 /** Is this pad button down, by either report? */
@@ -81,6 +84,10 @@ export const input = {
   slideHeld: false,
   /** Edge-triggered and consumed, exactly like jumpQueued. */
   diveQueued: false,
+  /** Edge-triggered and consumed, exactly like diveQueued. The ball's reset is
+   *  a SPAWN EVENT, so the flag is all input is allowed to do — fixedUpdate
+   *  owns the teleport. */
+  ballResetQueued: false,
   moveWorld: new THREE.Vector3(),
   lookX: 0,
   lookY: 0,
@@ -95,6 +102,7 @@ export const input = {
 const heldKeys = new Set();
 let padJumpWasDown = false;
 let padDiveWasDown = false;
+let padBallResetWasDown = false;
 let installed = false;
 
 /**
@@ -150,6 +158,7 @@ function onKeyDown(event) {
   // Edge-triggered: auto-repeat must not re-queue a jump or a dive.
   if (event.code === 'Space' && !event.repeat) input.jumpQueued = true;
   if (KEYMAP.dive.keys.includes(event.code) && !event.repeat) input.diveQueued = true;
+  if (KEYMAP.ballReset.keys.includes(event.code) && !event.repeat) input.ballResetQueued = true;
 }
 
 function onKeyUp(event) {
@@ -258,6 +267,11 @@ export function sampleInput(camera) {
     const diveDown = padDown(pad, KEYMAP.dive.pad);
     if (diveDown && !padDiveWasDown) input.diveQueued = true;
     padDiveWasDown = diveDown;
+
+    // Same edge treatment, same reason: a held Start must serve once.
+    const ballResetDown = padDown(pad, KEYMAP.ballReset.pad);
+    if (ballResetDown && !padBallResetWasDown) input.ballResetQueued = true;
+    padBallResetWasDown = ballResetDown;
   }
 
   // Diagonals must not be faster than cardinals.
@@ -333,5 +347,18 @@ export function consumeJump() {
 export function consumeDive() {
   const queued = input.diveQueued;
   input.diveQueued = false;
+  return queued;
+}
+
+/**
+ * Reads and clears the queued ball reset. Same contract as consumeDive: called
+ * once per fixed step, whether or not it fires, so a press cannot survive into
+ * a later tick and serve twice.
+ *
+ * @returns {boolean}
+ */
+export function consumeBallReset() {
+  const queued = input.ballResetQueued;
+  input.ballResetQueued = false;
   return queued;
 }
