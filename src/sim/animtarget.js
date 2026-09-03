@@ -91,7 +91,7 @@ const _gait = { idle: 0, walk: 0, run: 0, sprint: 0 };
 const _direction = [0, 0, 0, 0];
 
 /** Signed shortest way round from `from` to `to`, in (-PI, PI]. Same rule the
- *  retired passenger box used, moved here with the mount yaw it belonged to. */
+ *  retired rider box used, moved here with the mount yaw it belonged to. */
 /** Folds an angle into (-PI, PI]. */
 function wrapAngle(a) {
   const t = (a + Math.PI) % (2 * Math.PI);
@@ -530,8 +530,9 @@ function buildBlendNodes(state) {
 
   // THE TWO ACTION NODES, with a fallback that costs nothing downstream.
   //
-  // character.glb has no slide and no dive; actions.glb is optional and may not
-  // be there at all. Rather than branch on "is there a clip" at every site that
+  // The original character asset had no slide and no dive; actions.glb is
+  // optional and may not be there at all. Rather than branch on "is there a
+  // clip" at every site that
   // touches an action, a missing clip becomes a node built on a CLONE of the
   // standing jump, whose time is pinned at apexHold — the held airborne pose.
   // Every share, every weight and every time write downstream is then identical
@@ -1308,6 +1309,42 @@ export function advanceMountYaw(state, cameraYaw, dt) {
 }
 
 /**
+ * COPIES THE MECHANICS' SIX NUMBERS ONTO THE GHOST. The only door they come in
+ * through.
+ *
+ * WHY THIS FUNCTION EXISTS (G3.5). main.js used to assign these fields by name,
+ * from three different places inside fixedUpdate, spread over two hundred
+ * lines — `animTarget.recoveryWeight = ...`, `animTarget.slidePhase = ...` and
+ * so on. That is a write channel with no signature: nothing declared it,
+ * nothing type-checked it, and the only way to find out what main.js was
+ * allowed to poke was to grep for the pattern and hope the grep was right. The
+ * fields and their semantics are unchanged. What changed is that they arrive as
+ * an argument and land here, so the ghost's input surface is a list you can
+ * read in one screen.
+ *
+ * THE ORDER IS THE ORDER THEY WERE POKED IN, kept deliberately even though
+ * these are six independent assignments to six independent fields. If a later
+ * change makes one of them read another, the order it needs is already the one
+ * that is here.
+ *
+ * `inputs` is null for the handful of ticks before the first spawn, and on the
+ * seeding call `spawnRagdoll` makes against a freshly built state — which is
+ * exactly when the old code's `if (animTarget)` guard did nothing either.
+ *
+ * @param {object} state
+ * @param {object|null|undefined} inputs
+ */
+function readGhostInputs(state, inputs) {
+  if (!inputs) return;
+  state.recoveryWeight = inputs.recoveryWeight;
+  state.steerInput = inputs.steerInput;
+  state.slideMix = inputs.slideMix;
+  state.diveMix = inputs.diveMix;
+  state.slidePhase = inputs.slidePhase;
+  state.divePhase = inputs.divePhase;
+}
+
+/**
  * One fixed step of the target: advance the clip, strip the root motion, plant
  * the rig on the sphere, and derive a world target transform per body.
  *
@@ -1315,9 +1352,16 @@ export function advanceMountYaw(state, cameraYaw, dt) {
  * @param {object} motor the sphere motor (READ ONLY — nothing here touches it)
  * @param {Map<string, object>} rig the RigMap, for its captured bind matrices
  * @param {number} dt the constant timestep
+ * @param {object|null} [inputs] the mechanics' handoff — see readGhostInputs
  */
-export function updateAnimTarget(state, motor, rig, cameraYaw, liftoff, floorY, grounded, dt) {
+export function updateAnimTarget(
+  state, motor, rig, cameraYaw, liftoff, floorY, grounded, dt, inputs,
+) {
   if (!state) return;
+
+  // THE MECHANICS' HANDOFF, FIRST AND IN ONE PLACE. Everything below reads
+  // these six fields; nothing below writes them.
+  readGhostInputs(state, inputs);
 
   // YAW FIRST. The 2D blend reads velocity IN THE YAW FRAME, so the facing has
   // to be settled for this step before the direction tent can be evaluated

@@ -168,6 +168,11 @@ export function applyImpacts(tracker, events, tick, dt) {
 /**
  * ═══ SOLVER-SIDE DAMPING ON THE ARM CHAIN — THE ONE EXCEPTION TO LAW L3 ═══
  *
+ * THE EXCEPTION IS THIS FUNCTION AND NOTHING ELSE: one function, two sites (the
+ * arm chain, and the dive's leg parachute below it), four setter calls. IT MAY
+ * NOT GROW BY A LINE. Anything else in the project that wants resistance goes
+ * through the clamped helpers in damping.js.
+ *
  * WHAT THE JITTER IS NOT. Every PD lever was measured against it and none of
  * them move it. With the animation FROZEN so the target velocity is exactly
  * zero, the hands still travel 0.094 m/s; dropping the extremity stiffness to

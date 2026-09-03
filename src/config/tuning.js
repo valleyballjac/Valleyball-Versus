@@ -577,7 +577,7 @@ const DEFAULTS = {
 
     // THE USABLE WINDOW OF EACH ACTION CLIP, same idea as jump.clipStart/End.
     //
-    // Measured on YBOT15Animations.glb, hips height in world metres with the
+    // Measured on the fifteen-clip predecessor asset, hips height in world metres with the
     // L5 strip applied, sampled across the clip:
     //   Slide Left    0.900 -> 0.255 (sliding) -> 0.987 (back on his feet)
     //   Running Dive  0.909 -> 1.046 (the leap) -> 0.281 at 0.85 -> -0.740

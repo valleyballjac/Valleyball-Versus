@@ -13,13 +13,17 @@ import { TUNING } from '../config/tuning.js';
  * applyClampedDamping in motor.js and the two helpers in damping.js, which are
  * the implementations. Rapier's own damping setters are not used for any of it.
  *
- * ONE LISTED EXCEPTION, and one correction. The exception is the arm chain's
- * solver damping, applied per step in tracker.js: the clamped helpers run
- * before world.step and damp the pre-step velocity relative to the target, so
- * they cannot touch chatter the solver injects during the step — measured,
- * raising their gains
- * fourfold moved it under 3%. That site names the setters, so the ban no longer
- * greps to zero; it greps to two lines in one function, both commented.
+ * ONE LISTED EXCEPTION, and one correction. The exception is `applyArmDamping`
+ * in tracker.js — ONE FUNCTION, TWO SITES, FOUR SETTER CALLS, AND IT MAY NOT
+ * GROW BY A LINE. The clamped helpers run before world.step and damp the
+ * pre-step velocity relative to the target, so they cannot touch chatter the
+ * solver injects during the step — measured, raising their gains fourfold moved
+ * it under 3%. The two sites are the arm chain and the dive's leg parachute;
+ * the second arrived with the dive work and this wording was corrected in G3.5
+ * to say so, because it had said "two lines" while the census greps to four.
+ *
+ * The ban therefore greps to four lines in one function, all commented, all in
+ * tracker.js. A hit anywhere else in src/ is a violation.
  *
  * The correction: this file used to claim explicit damping CRASHES the WASM
  * build. Tested directly against @dimforge/rapier3d-compat 0.19.3 — it does
