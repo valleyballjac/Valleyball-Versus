@@ -3,12 +3,13 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Valleyball — Iteration 2: deterministic fixed-step foundation plus the Rapier sphere motor and bowl arena.",
+  "description": "Valleyball \u2014 Iteration 2: deterministic fixed-step foundation plus the Rapier sphere motor and bowl arena.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "determinism": "node scripts/determinism.mjs"
+    "determinism": "node scripts/determinism.mjs",
+    "scenario": "node scripts/scenario.mjs"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "0.19.3",

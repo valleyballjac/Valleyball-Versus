@@ -35,6 +35,14 @@ const KEYMAP = {
   // Button 9 is Start in the standard mapping. Resetting the ball is a spawn
   // event, not a verb, so it sits on a menu button rather than a face button.
   ballReset: { pad: 9, keys: ['KeyB'] },
+  // THE TWO STRIKES (G4). East and North in the standard mapping, which is the
+  // schema of record; the keyboard letters are the designer's choice.
+  //
+  // `KeyR` WAS THE RESPAWN HOTKEY and the spike took it. The respawn moved to
+  // Backspace rather than one key sideways: a debug teleport should not be one
+  // slip of a finger away from a spike.
+  volley: { pad: 1, keys: ['KeyE'] },
+  spike: { pad: 3, keys: ['KeyR'] },
 };
 
 /** Is this pad button down, by either report? */
@@ -88,6 +96,10 @@ export const input = {
    *  a SPAWN EVENT, so the flag is all input is allowed to do — fixedUpdate
    *  owns the teleport. */
   ballResetQueued: false,
+  /** The two strikes. Edge-triggered and consumed exactly like diveQueued — a
+   *  strike is a press, not a hold, and a held button must not re-fire one. */
+  volleyQueued: false,
+  spikeQueued: false,
   moveWorld: new THREE.Vector3(),
   lookX: 0,
   lookY: 0,
@@ -103,6 +115,8 @@ const heldKeys = new Set();
 let padJumpWasDown = false;
 let padDiveWasDown = false;
 let padBallResetWasDown = false;
+let padVolleyWasDown = false;
+let padSpikeWasDown = false;
 let installed = false;
 
 /**
@@ -159,6 +173,8 @@ function onKeyDown(event) {
   if (event.code === 'Space' && !event.repeat) input.jumpQueued = true;
   if (KEYMAP.dive.keys.includes(event.code) && !event.repeat) input.diveQueued = true;
   if (KEYMAP.ballReset.keys.includes(event.code) && !event.repeat) input.ballResetQueued = true;
+  if (KEYMAP.volley.keys.includes(event.code) && !event.repeat) input.volleyQueued = true;
+  if (KEYMAP.spike.keys.includes(event.code) && !event.repeat) input.spikeQueued = true;
 }
 
 function onKeyUp(event) {
@@ -272,6 +288,17 @@ export function sampleInput(camera) {
     const ballResetDown = padDown(pad, KEYMAP.ballReset.pad);
     if (ballResetDown && !padBallResetWasDown) input.ballResetQueued = true;
     padBallResetWasDown = ballResetDown;
+
+    // Same edge treatment again, and for the same reason: a held face button
+    // must swing once. The press-cooldown in mechanics/strikes.js is a separate
+    // thing — it bounds how fast a player can spam DISTINCT presses.
+    const volleyDown = padDown(pad, KEYMAP.volley.pad);
+    if (volleyDown && !padVolleyWasDown) input.volleyQueued = true;
+    padVolleyWasDown = volleyDown;
+
+    const spikeDown = padDown(pad, KEYMAP.spike.pad);
+    if (spikeDown && !padSpikeWasDown) input.spikeQueued = true;
+    padSpikeWasDown = spikeDown;
   }
 
   // Diagonals must not be faster than cardinals.
@@ -360,5 +387,25 @@ export function consumeDive() {
 export function consumeBallReset() {
   const queued = input.ballResetQueued;
   input.ballResetQueued = false;
+  return queued;
+}
+
+/**
+ * Reads and clears the queued volley. Same contract as consumeDive.
+ * @returns {boolean}
+ */
+export function consumeVolley() {
+  const queued = input.volleyQueued;
+  input.volleyQueued = false;
+  return queued;
+}
+
+/**
+ * Reads and clears the queued spike. Same contract as consumeDive.
+ * @returns {boolean}
+ */
+export function consumeSpike() {
+  const queued = input.spikeQueued;
+  input.spikeQueued = false;
   return queued;
 }
