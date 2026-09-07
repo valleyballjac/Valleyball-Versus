@@ -40,7 +40,7 @@ const DEFAULTS = {
     // query parameter ?arena=bowl — same reasoning as ?captureTick, which is
     // that harness configuration must not require editing saved tuning state.
     type: 'court',
-    modelUrl: '/models/arena.glb',
+    modelUrl: import.meta.env.BASE_URL + 'models/arena.glb',
 
     // THE AUTHORED COURT. A 50 x 120 m valley basin: the inner field rises from
     // the centre out to the ends, streams flank it, and two goal hoops face

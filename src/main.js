@@ -36,10 +36,15 @@ import {
   applyRagdollVisibility,
 } from './sim/ragdoll.js';
 import { applyClampedLinearDamping } from './sim/damping.js';
-import { input, initInput, sampleInput, consumeJump, consumeDive } from './input.js';
+import {
+  input, initInput, sampleInput, consumeJump, consumeDive, consumeVolley, consumeSpike,
+} from './input.js';
 import { createWatchdogState, runWatchdog } from './mechanics/watchdog.js';
 import { createMountFollowerState, runMountFollower } from './mechanics/mountFollower.js';
 import { createActionState, runActions } from './mechanics/actions.js';
+import {
+  createStrikeState, runStrikes, resolveStrikeContact, strikeProbe,
+} from './mechanics/strikes.js';
 import { createGui } from './debug/gui.js';
 import { initCapture } from './debug/capture.js';
 
@@ -138,9 +143,9 @@ const WEIGHT_SUM_TOLERANCE = 1e-3;
  * on two comment lines in this block, deliberately: it is the only record of
  * where the asset came from, and no code path names it.
  */
-const CHARACTER_URL = '/models/character.glb';
+const CHARACTER_URL = import.meta.env.BASE_URL + 'models/character.glb';
 /** OPTIONAL. Absent today; extra clips beyond the character asset go here. */
-const ACTIONS_URL = '/models/actions.glb';
+const ACTIONS_URL = import.meta.env.BASE_URL + 'models/actions.glb';
 
 /** Scratch for the mount transform. Built fresh on every spawn. */
 const _mount = new THREE.Matrix4();
@@ -184,6 +189,7 @@ let knockdownRequested = false;
 const watchdogState = createWatchdogState();
 const mountFollowerState = createMountFollowerState();
 const actionState = createActionState();
+const strikeState = createStrikeState();
 
 /** Extra clips from the optional actions.glb, empty if it is not there. */
 let actionClips = [];
@@ -227,7 +233,11 @@ function isHotkey(event, code) {
  */
 function installRespawnHotkey() {
   window.addEventListener('keydown', (event) => {
-    if (isHotkey(event, 'KeyR')) requestRagdollSpawn();
+    // BACKSPACE, NOT R (G4). `R` became the spike, and a debug teleport should
+    // not be one slip of a finger away from a gameplay verb. The hotkey moved
+    // rather than the strike, because the strike is the thing a player's hand
+    // has to find without looking.
+    if (isHotkey(event, 'Backspace')) requestRagdollSpawn();
     // "T" — THE KNOCKDOWN. The only writer of the blend weight besides the
     // recovery ramp. It queues a flag; fixedUpdate consumes it, so the weight
     // is never written from outside the fixed step.
@@ -371,6 +381,9 @@ const hudStandUp = document.getElementById('hud-standup');
 const hudBall = document.getElementById('hud-ball');
 const hudBallTouch = document.getElementById('hud-balltouch');
 const hudBallPeak = document.getElementById('hud-ballpeak');
+const hudStrike = document.getElementById('hud-strike');
+const hudStrikeHit = document.getElementById('hud-strikehit');
+const hudStrikeRate = document.getElementById('hud-strikerate');
 const hudDrag = document.getElementById('hud-drag');
 const hudLoco = document.getElementById('hud-loco');
 const hudArm = document.getElementById('hud-arm');
@@ -509,6 +522,27 @@ function updateHud() {
     hudBallTouch.textContent = '—';
     hudBallPeak.textContent = '—';
   }
+
+  // THE STRIKE ROWS, read through the strike's own probe (LESSON 22 — the
+  // readout reads). `w` is the window: ticks since the press, and whether that
+  // number is inside the row's open/close. It is the one number that explains a
+  // whiff, because a whiff is always either "too early", "too late", or "the
+  // hand never got there".
+  const st = strikeProbe(strikeState);
+  const row = st.kind === 'spike' ? TUNING.strike.spike : TUNING.strike.volley;
+  const since = loop.tick - st.lastStrikeTick;
+  const open = Number.isFinite(since) && since >= row.windowOpen && since <= row.windowClose;
+  hudStrike.textContent = st.lastStrikeTick === -Infinity
+    ? '—'
+    : `${st.kind}${st.kind === 'spike' ? (st.side >= 0 ? ' R' : ' L') : ''} ` +
+      `ph ${st.phase.toFixed(2)} mix ${st.mix.toFixed(2)} ` +
+      `w ${Number.isFinite(since) ? since : '—'}${open ? ' OPEN' : ''}`;
+  hudStrikeHit.textContent = st.lastContactKey
+    ? `${st.lastContactKey} @${st.lastContactTick} q ${st.lastContactQuality.toFixed(2)} ` +
+      `${st.lastContactForce.toFixed(0)} N -> ${st.lastLaunchSpeed.toFixed(1)} m/s`
+    : '—';
+  hudStrikeRate.textContent = `${st.resolvedCount} / ${st.whiffCount}` +
+    (Number.isFinite(st.hitRate) ? `  (${(st.hitRate * 100).toFixed(0)}%)` : '');
 }
 
 // ---------------------------------------------------------------------------
@@ -778,6 +812,34 @@ function applyLimpBrake(dt) {
   }
 }
 
+// ONE OBJECT, ONE HANDOFF (G3.5). main.js used to poke the ghost's fields by
+// name from three places inside fixedUpdate — a write channel with no signature
+// and nothing to grep for. Same fields, same semantics, SAME ORDER; they travel
+// as an argument now and `readGhostInputs` is where they land. G4 appends four
+// more after the six, and the order below is the order they are read in.
+function buildGhostInputs(actions, strikes) {
+  return {
+    // THE RECOVERY CLOCK, handed over the same way slideMix is. The ghost drives
+    // the stand-up take off this and not off the pelvis: a scrub anchored to the
+    // body cannot haul the body, because the body only moves by being hauled
+    // toward the scrub. See advanceStandUp.
+    recoveryWeight: tracker.weight,
+    // Stick magnitude, for the coasting facing check. Handed over rather than
+    // read, so the ghost still touches no input of its own.
+    steerInput: Math.hypot(input.moveWorld.x, input.moveWorld.z),
+    slideMix: actions.slideMix,
+    diveMix: actions.diveMix,
+    slidePhase: actions.slidePhase,
+    divePhase: actions.divePhase,
+    // The strike's share and scrub, plus the two recorded values that pick
+    // which of its three clips carries the share.
+    strikeMix: strikes.strikeMix,
+    strikePhase: strikes.strikePhase,
+    strikeKind: strikes.strikeKind,
+    strikeSide: strikes.strikeSide,
+  };
+}
+
 // THE RECOVERY RAMP IS HELD OFF for two reasons, and they go in through the
 // same door because the tracker only has one. A limp body still sliding fast
 // has not finished falling; and a dive has just been paid for, and the stun
@@ -817,6 +879,13 @@ function drainImpacts(tick, dt) {
         const other = handle1 === hitBall.collider.handle ? handle2 : handle1;
         const limb = impactByHandle.get(other);
         noteBallContact(hitBall, other, limb && limb.key, motor.collider.handle, totalForce, tick);
+        // AND THE STRIKE GETS ITS LOOK AT THE SAME CONTACT. noteBallContact
+        // records that something touched the ball; this asks whether that touch
+        // was INTENT — a qualifying limb, inside an open window — and if it was,
+        // puts one impulse on the ball. Most contacts are not, and it returns
+        // without doing anything, which is the diving dig and every incidental
+        // knock continuing to work exactly as G2 left them.
+        resolveStrikeContact(strikeState, hitBall, limb && limb.key, totalForce, tick);
         return;
       }
 
@@ -1001,9 +1070,16 @@ function fixedUpdate(dt, tick) {
   const jumpQueued = consumeJump();
   const diveQueued = consumeDive();
 
-  // 5b — THE ACTION STATES.
+  // 5b — THE ACTION STATES, and the strikes beside them. The two strike presses
+  // are consumed in the argument list: still once per step, still cleared
+  // whether or not they fire, and the consume sits where the value is used.
   const actions = runActions({
-    state: actionState, motor, input, tracker, ragdoll, ghost: animTarget, diveQueued, tick, dt,
+    state: actionState, motor, input, tracker, ragdoll, ghost: animTarget,
+    diveQueued, jumpQueued, tick, dt,
+  });
+  const strikes = runStrikes({
+    state: strikeState, input, motor, ghost: animTarget, balls, tick, dt,
+    volleyQueued: consumeVolley(), spikeQueued: consumeSpike(),
   });
 
   // 6 — THE BRACKET OPENS. See the contract above.
@@ -1024,7 +1100,9 @@ function fixedUpdate(dt, tick) {
   updateMotor(
     motor,
     input,
-    jumpQueued,
+    // THE JUMP THE ACTIONS ALLOW, not the raw press: a slide swallows it and a
+    // dive locks it out. Identical to jumpQueued whenever neither is running.
+    actions.allowJump,
     dt,
     actions.actionCommitted ? 0 : driveScale,
     tick,
@@ -1038,26 +1116,7 @@ function fixedUpdate(dt, tick) {
 
   // 8 — THE LIFTOFF EDGE, and the ghost's inputs for this step.
   const liftoff = motor.lastJumpTick !== jumpTickBefore;
-  // ONE OBJECT, ONE HANDOFF (G3.5). main.js used to poke six fields onto the
-  // ghost by name from three places in this function — a write channel with no
-  // signature and nothing to grep for. Same fields, same semantics, same order;
-  // they travel as an argument now and `readGhostInputs` is where they land.
-  const ghostInputs = animTarget
-    ? {
-        // THE RECOVERY CLOCK, handed over the same way slideMix is. The ghost
-        // drives the stand-up take off this and not off the pelvis: a scrub
-        // anchored to the body cannot haul the body, because the body only moves
-        // by being hauled toward the scrub. See advanceStandUp.
-        recoveryWeight: tracker.weight,
-        // Stick magnitude, for the coasting facing check. Handed over rather
-        // than read, so the ghost still touches no input of its own.
-        steerInput: Math.hypot(input.moveWorld.x, input.moveWorld.z),
-        slideMix: actions.slideMix,
-        diveMix: actions.diveMix,
-        slidePhase: actions.slidePhase,
-        divePhase: actions.divePhase,
-      }
-    : null;
+  const ghostInputs = animTarget ? buildGhostInputs(actions, strikes) : null;
 
   // 9 — THE GHOST.
   if (ragdoll) {
@@ -1672,6 +1731,9 @@ async function boot() {
       // `ball` is the primary (the 1 m medium); `balls` is all three, in the
       // order TUNING.balls authored them.
       ball: ball ? ballProbe(ball) : null,
+      // READ from the strike state; the quality is the number the resolver
+      // computed, never a second evaluation of the curve (LESSON 22).
+      strike: strikeProbe(strikeState),
       balls: balls.map(ballProbe),
       pelvis: { x: pt.x, y: pt.y, z: pt.z, speed: Math.hypot(pv.x, pv.z) },
       motor: { x: mt.x, y: mt.y, z: mt.z, speed: Math.hypot(mv.x, mv.z) },
