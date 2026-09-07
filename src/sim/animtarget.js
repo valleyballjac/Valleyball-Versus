@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import { TUNING } from '../config/tuning.js';
-import { BONE_MAP, resolveBoneByName } from './autorig.js';
+import { BONE_MAP, resolveBoneByName, rigSuffixForBodySide } from './autorig.js';
 
 /**
  * THE ANIMATION TARGET.
@@ -299,10 +299,23 @@ export function createAnimTarget(characterRoot, clips, rig) {
     diveMix: 0,
     slidePhase: 0,
     divePhase: 0,
+    // THE STRIKES join on exactly those terms (G4). A continuous share and a
+    // continuous phase set by mechanics/strikes.js, plus two RECORDED values
+    // that pick which clip carries the share — a row index and a side, never a
+    // state anything branches on.
+    strikeMix: 0,
+    strikePhase: 0,
+    strikeKind: 0,
+    strikeSide: 1,
     /** True when an action's clip was missing and the held-apex pose stands in.
      *  Reported once at boot; not read per-step by anything. */
     slideIsFallback: false,
     diveIsFallback: false,
+    volleyIsFallback: false,
+    spikeLIsFallback: false,
+    spikeRIsFallback: false,
+    kickLIsFallback: false,
+    kickRIsFallback: false,
     /** Where the yaw is easing toward — the camera's heading. HUD. */
     // THE STAND-UP, as two continuous signals and one scrub. No latch, no flag.
     standUpNeed: 0,
@@ -552,9 +565,41 @@ function buildBlendNodes(state) {
 
   const slideBuilt = makeAction('slide', TUNING.action.slideClip);
   const diveBuilt = makeAction('dive', TUNING.action.diveClip);
-  const action = { slide: slideBuilt.node, dive: diveBuilt.node };
+  // THE THREE STRIKE NODES, built on the same terms and through the same
+  // fallback. Three rather than two because the spike is authored L and R as
+  // genuinely different takes — measured channel-by-channel against each other
+  // before they were both registered, unlike Bash Hit, whose Left is a
+  // byte-duplicate of its Right and which is therefore not in the project.
+  // `strikeSide` picks which of the two carries the share; both are scrubbed by
+  // the one phase, so nothing has to know which is playing.
+  const volleyBuilt = makeAction('volley', TUNING.strike.volley.clip);
+  const spikeLBuilt = makeAction('spikeL', TUNING.strike.spike.clipLeft);
+  const spikeRBuilt = makeAction('spikeR', TUNING.strike.spike.clipRight);
+  // AND THE TWO KICK NODES (G4.1 §5), on exactly the same terms. Measured, the
+  // two low-kick takes are one performance and its mirror — the residual
+  // between them is 0.054 rad and all of it is in a thumb joint, against 1.56
+  // rad at the up-leg for the spike pair, which really are two takes. Both
+  // sides are still registered, because the ROW is what needs two clips; what
+  // the mirror finding buys is that one set of timing numbers serves both, so
+  // there is no `sweetTickL`.
+  const kickLBuilt = makeAction('kickL', TUNING.strike.kick.clipLeft);
+  const kickRBuilt = makeAction('kickR', TUNING.strike.kick.clipRight);
+  const action = {
+    slide: slideBuilt.node,
+    dive: diveBuilt.node,
+    volley: volleyBuilt.node,
+    spikeL: spikeLBuilt.node,
+    spikeR: spikeRBuilt.node,
+    kickL: kickLBuilt.node,
+    kickR: kickRBuilt.node,
+  };
   state.slideIsFallback = slideBuilt.fallback;
   state.diveIsFallback = diveBuilt.fallback;
+  state.volleyIsFallback = volleyBuilt.fallback;
+  state.spikeLIsFallback = spikeLBuilt.fallback;
+  state.spikeRIsFallback = spikeRBuilt.fallback;
+  state.kickLIsFallback = kickLBuilt.fallback;
+  state.kickRIsFallback = kickRBuilt.fallback;
 
   // The two stand-up clips join on the same terms: timeScale 0, sampled from a
   // scrub we own. Their scrub is standUpProgress.
@@ -605,6 +650,11 @@ function buildBlendNodes(state) {
     standUp.faceUp,
     action.slide,
     action.dive,
+    action.volley,
+    action.spikeL,
+    action.spikeR,
+    action.kickL,
+    action.kickR,
   ];
 
   state.weights = { idle: 0 };
@@ -614,12 +664,31 @@ function buildBlendNodes(state) {
     state.targetWeights[c.id] = 0;
   }
 
-  for (const [what, built] of [['slide', slideBuilt], ['dive', diveBuilt]]) {
+  // EVERY ACTION NODE SAYS SO WHEN IT IS STANDING IN, not just the two that did.
+  //
+  // The list used to name the slide and the dive, which were the only action
+  // nodes when it was written; G4 added three strike nodes and G4.1 adds two
+  // more, and none of them was covered. A missing kick clip would have fallen
+  // back to the held airborne pose in silence — the athlete pressing East at a
+  // ball on the floor and freezing mid-air, with the mechanic working perfectly
+  // and nothing in the console. That is exactly the class of silent failure
+  // RULING §9.2 was made about, so the list is now a table beside the nodes it
+  // describes rather than two names written from memory.
+  const actionClips = [
+    ['slide', TUNING.action.slideClip, slideBuilt],
+    ['dive', TUNING.action.diveClip, diveBuilt],
+    ['volley', TUNING.strike.volley.clip, volleyBuilt],
+    ['spike (left)', TUNING.strike.spike.clipLeft, spikeLBuilt],
+    ['spike (right)', TUNING.strike.spike.clipRight, spikeRBuilt],
+    ['kick (left)', TUNING.strike.kick.clipLeft, kickLBuilt],
+    ['kick (right)', TUNING.strike.kick.clipRight, kickRBuilt],
+  ];
+  for (const [what, wanted, built] of actionClips) {
     if (built.fallback) {
       console.warn(
-        `[animtarget] no "${what === 'slide' ? TUNING.action.slideClip : TUNING.action.diveClip}" ` +
-          `clip in the asset set — the ${what} falls back to the held airborne pose. ` +
-          `Mechanics are unaffected; drop the clip into public/models/actions.glb to replace it.`,
+        `[animtarget] no "${wanted}" clip in the asset set — the ${what} falls back ` +
+          'to the held airborne pose. Mechanics are unaffected; drop the clip into ' +
+          'the character asset to replace it.',
       );
     }
   }
@@ -1187,6 +1256,41 @@ function writeClipTimes(state) {
     ? TUNING.jump.apexHold * state.nodes.action.dive.duration
     : diveFraction * state.nodes.action.dive.duration;
 
+  // THE STRIKES, on the same terms. Both rows are scrubbed every step whichever
+  // one is playing: the phase is shared, the windows are not, and writing only
+  // the selected row would leave the other holding the frame it was abandoned
+  // on for the next strike to blend out of.
+  //
+  // The volley's window is doing real work at BOTH ends — measured, the frames
+  // outside [0.055, 0.995] of that clip are the bind T-pose, so a scrub across
+  // the whole clip would open and close every dig on a star jump.
+  const str = TUNING.strike;
+  const volleyFraction =
+    str.volley.clipStart + state.strikePhase * (str.volley.clipEnd - str.volley.clipStart);
+  const spikeFraction =
+    str.spike.clipStart + state.strikePhase * (str.spike.clipEnd - str.spike.clipStart);
+  state.nodes.action.volley.action.time = state.volleyIsFallback
+    ? TUNING.jump.apexHold * state.nodes.action.volley.duration
+    : volleyFraction * state.nodes.action.volley.duration;
+  state.nodes.action.spikeL.action.time = state.spikeLIsFallback
+    ? TUNING.jump.apexHold * state.nodes.action.spikeL.duration
+    : spikeFraction * state.nodes.action.spikeL.duration;
+  state.nodes.action.spikeR.action.time = state.spikeRIsFallback
+    ? TUNING.jump.apexHold * state.nodes.action.spikeR.duration
+    : spikeFraction * state.nodes.action.spikeR.duration;
+  // The kick's window is the WHOLE clip — measured, `Idle Low Kick L/R` has no
+  // bind frames at either end and both ends sit in the same idle stance, so
+  // [0.00, 1.00] is the honest span and not a shortcut. The volley's window is
+  // doing real work; this one is authored open because the asset earned it.
+  const kickFraction =
+    str.kick.clipStart + state.strikePhase * (str.kick.clipEnd - str.kick.clipStart);
+  state.nodes.action.kickL.action.time = state.kickLIsFallback
+    ? TUNING.jump.apexHold * state.nodes.action.kickL.duration
+    : kickFraction * state.nodes.action.kickL.duration;
+  state.nodes.action.kickR.action.time = state.kickRIsFallback
+    ? TUNING.jump.apexHold * state.nodes.action.kickR.duration
+    : kickFraction * state.nodes.action.kickR.duration;
+
   // THE STAND-UPS — the feedback loop's progress, mapped into the live window
   // of the take. Both Mixamo stand-ups open and close on a static hold, and
   // scrubbing across them spent nearly half the get-up on a frozen pose.
@@ -1342,6 +1446,10 @@ function readGhostInputs(state, inputs) {
   state.diveMix = inputs.diveMix;
   state.slidePhase = inputs.slidePhase;
   state.divePhase = inputs.divePhase;
+  state.strikeMix = inputs.strikeMix;
+  state.strikePhase = inputs.strikePhase;
+  state.strikeKind = inputs.strikeKind;
+  state.strikeSide = inputs.strikeSide;
 }
 
 /**
@@ -1419,7 +1527,7 @@ export function updateAnimTarget(
     // stopSpeed, and diveMix follows a latch the cooldown bounds. Neither can
     // sit high over a real knockdown and hold the stand-up out, and as either
     // decays the stand-up takes the tier back continuously.
-    const actionDemand = Math.min(1, state.slideMix + state.diveMix);
+    const actionDemand = Math.min(1, state.slideMix + state.diveMix + state.strikeMix);
     const actionShare = actionDemand;
     const afterAction = 1 - actionDemand;
 
@@ -1471,11 +1579,47 @@ export function updateAnimTarget(
     state.nodes.standUp.faceUp.action.setEffectiveWeight(standShare * state.faceUpMix);
     state.nodes.standUp.faceDown.action.setEffectiveWeight(standShare * (1 - state.faceUpMix));
 
-    // Split the action tier between the two by their raw demand.
-    const actionTotal = state.slideMix + state.diveMix;
+    // Split the action tier between the THREE by their raw demand.
+    //
+    // The dive's share used to be written as `1 - slidePart`, which is the same
+    // number while there are two of them and the wrong one the moment there are
+    // three. Every part is now explicit and they sum to 1 by construction.
+    const actionTotal = state.slideMix + state.diveMix + state.strikeMix;
     const slidePart = actionTotal > 0 ? state.slideMix / actionTotal : 0;
+    const divePart = actionTotal > 0 ? state.diveMix / actionTotal : 0;
+    const strikePart = actionTotal > 0 ? state.strikeMix / actionTotal : 0;
     state.nodes.action.slide.action.setEffectiveWeight(actionShare * slidePart);
-    state.nodes.action.dive.action.setEffectiveWeight(actionShare * (1 - slidePart));
+    state.nodes.action.dive.action.setEffectiveWeight(actionShare * divePart);
+
+    // THE STRIKE'S SHARE GOES TO EXACTLY ONE OF ITS FIVE NODES. The kind picks
+    // the row — volley, spike or kick — the recorded side picks which of a
+    // sided row's two takes, and every other node is written to zero rather
+    // than left holding the last strike's weight.
+    //
+    // WRITTEN AS FIVE EXPLICIT TESTS, none of them phrased as "not the others".
+    // The three-way action split above carries the same note for the same
+    // reason: `divePart` used to be `1 - slidePart`, which was the right number
+    // for two members and the wrong one the moment a third arrived. This
+    // selection went from three nodes to five in one step, and a
+    // `spiking ? … : volley` shape would have silently sent every kick's share
+    // to the volley clip. The kind is compared to a value; nothing is inferred
+    // from the absence of another.
+    const spiking = state.strikeKind === 2;
+    const kicking = state.strikeKind === 3;
+    const volleying = state.strikeKind === 1;
+    // THE RECORDED SIDE IS A SIDE OF THE BODY; THE NODES ARE NAMED AFTER THE
+    // ASSET'S BONES, AND THIS ASSET'S NAMES ARE MIRRORED. Translating between
+    // the two is not `strikeSide >= 0` — that is what made every strike swing
+    // the wrong limb while the side maths was correct at every step. See
+    // SIDE_NAMES_MIRRORED in autorig.js, which owns every bone name and now
+    // owns the fact that they are handed the other way round.
+    const useRNode = rigSuffixForBodySide(state.strikeSide) === 'R';
+    const strikeShare = actionShare * strikePart;
+    state.nodes.action.volley.action.setEffectiveWeight(volleying ? strikeShare : 0);
+    state.nodes.action.spikeR.action.setEffectiveWeight(spiking && useRNode ? strikeShare : 0);
+    state.nodes.action.spikeL.action.setEffectiveWeight(spiking && !useRNode ? strikeShare : 0);
+    state.nodes.action.kickR.action.setEffectiveWeight(kicking && useRNode ? strikeShare : 0);
+    state.nodes.action.kickL.action.setEffectiveWeight(kicking && !useRNode ? strikeShare : 0);
   }
 
   // THE ONE MIXER ADVANCE IN THE PROJECT. Constant dt, inside fixedUpdate,
@@ -1690,10 +1834,12 @@ export function strafeSignViolation(state) {
  */
 export function flailViolation(state) {
   if (!state || state.airborneMix <= FLAIL_ASSERT_AIR) return null;
-  // A slide or dive legitimately takes the tier ABOVE airborne, which leaves
-  // the airborne share small while airborneMix is high. That is the precedence
-  // working, not a flail, so the alarm stands down while an action is active.
-  if (state.slideMix + state.diveMix > FLAIL_ACTION_QUIET) return null;
+  // A slide, a dive OR A STRIKE legitimately takes the tier ABOVE airborne,
+  // which leaves the airborne share small while airborneMix is high. That is the
+  // precedence working, not a flail, so the alarm stands down while an action is
+  // active. The jump spike is the sport, so this had to include the strike or
+  // the best shot in the game would have raised an alarm every time.
+  if (state.slideMix + state.diveMix + state.strikeMix > FLAIL_ACTION_QUIET) return null;
   let locomotion = state.nodes.idle.action.getEffectiveWeight();
   for (const node of state.cycleNodes) locomotion += node.action.getEffectiveWeight();
   return locomotion > FLAIL_ASSERT_WEIGHT ? locomotion : null;

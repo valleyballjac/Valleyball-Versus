@@ -44,7 +44,8 @@ export function createWatchdogState() {
  * @param {object} args.arenaPreset the ACTIVE arena's preset — spawn and kill plane
  * @param {number|null} args.armedCaptureTick the tick `?captureTick=N` armed, or null
  * @param {number} args.tick
- * @returns {boolean} true if the athlete must be respawned on THIS tick
+ * @returns {boolean} true if the athlete must be respawned — consumed at the
+ *   top of the NEXT tick, where fixedUpdate's step 1 sits
  */
 export function runWatchdog({ state, motor, ragdoll, balls, arenaPreset, armedCaptureTick, tick }) {
   // The caller's `respawnRequested` flag, returned rather than assigned, because
@@ -93,8 +94,17 @@ export function runWatchdog({ state, motor, ragdoll, balls, arenaPreset, armedCa
       // for one frame on its way back to the middle.
       motor.interpolated.reset(state.respawnPoint);
 
-      // Consumed just below, on THIS tick, so the character is rebuilt at the
-      // mount the sphere has already been moved to.
+      // CONSUMED AT THE TOP OF THE NEXT TICK, not this one.
+      //
+      // This comment used to say "just below, on THIS tick", and it had said so
+      // since Phase 2. It was never true: `fixedUpdate` consumes the respawn
+      // flag at step 1, ABOVE the watchdog, so a flag raised here waits a step.
+      // Corrected in G4's Deliverable 0 — the comment moved, the behaviour did
+      // not, because a one-tick delay on an out-of-bounds respawn is invisible
+      // and changing it would move the determinism anchor for no gain.
+      //
+      // The sphere has already been placed, so the rebuild still happens at the
+      // mount it was moved to; only the tick it happens on differs.
       respawn = true;
       console.log(`[watchdog] out of bounds — respawned at tick ${tick}`);
     }

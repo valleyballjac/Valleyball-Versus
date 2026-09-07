@@ -78,6 +78,67 @@ export const BONE_MAP = [
 const HEIGHT_TOP_BONE = 'mixamorig:HeadTop_End';
 
 /**
+ * ═══ THIS ASSET'S "Left" IS THE ATHLETE'S RIGHT ═══
+ *
+ * The character faces +Z and the bone named `mixamorig:LeftHand` sits at
+ * x = +0.7378 — the +X side. For anyone facing +Z in a Y-up right-handed space,
+ * `up × forward = (1, 0, 0)`, so +X IS their right (face north, east is on your
+ * right). The bones named Left are therefore on the body's RIGHT, and the ones
+ * named Right on its LEFT. The clips inherit it: `Standing Spike Left` and
+ * `Idle Low Kick Left` both drive the `Left`-named bones, so they swing the
+ * limb the player sees on the athlete's right.
+ *
+ * MEASURED TWICE, ANATOMICALLY, so the facing does not rest on a convention:
+ *   - `LeftToeBase - LeftFoot` = (0.027, 0, 1.000). Toes are in front of ankles.
+ *   - Both thumbs sit at z +0.009 against pinkies at z -0.109. Mixamo's T-pose
+ *     is palms-down — the thumb-to-pinky spread lying along Z confirms it — and
+ *     palms-down with the arms out puts BOTH thumbs forward.
+ * Both say forward is +Z, independently of any bone's name.
+ *
+ * FOUND BY: the designer reporting that strikes played the wrong side, with the
+ * side maths verified correct at every step. The geometry said "ball on the
+ * right", the recorded side said +1, and +1 selected the clip named Right,
+ * which swings the limb on the left.
+ *
+ * THE TRAP THIS LEAVES, and why the two helpers below both exist rather than
+ * one flip at the clip: `sideAgreement` maps a contact's rig key back to a side.
+ * Flipping only the clip selection would leave that mapping using the asset's
+ * naming, so a chosen +1 and a contacting `footR` would agree with each other
+ * and disagree with the screen — a metric reporting 100% while the animation is
+ * visibly backwards. Both directions of the translation go through here.
+ *
+ * If the asset is ever re-exported unmirrored, this is the one line to change,
+ * and the readouts below will say so.
+ */
+export const SIDE_NAMES_MIRRORED = true;
+
+/**
+ * A body side (+1 right, -1 left) → the rig/clip suffix that limb is named with.
+ *
+ * @param {number} side +1 the athlete's right, -1 his left
+ * @returns {'L'|'R'}
+ */
+export function rigSuffixForBodySide(side) {
+  const wantRight = side >= 0;
+  return (SIDE_NAMES_MIRRORED ? !wantRight : wantRight) ? 'R' : 'L';
+}
+
+/**
+ * A rig key (`handL`, `footR`, …) → the side of the BODY that limb is on.
+ *
+ * The inverse of `rigSuffixForBodySide`, and the reason it is a named function
+ * rather than `key.endsWith('L') ? -1 : 1` at the call site.
+ *
+ * @param {string} key
+ * @returns {number} +1 the athlete's right, -1 his left
+ */
+export function bodySideForRigKey(key) {
+  const namedRight = key.endsWith('R');
+  const onRight = SIDE_NAMES_MIRRORED ? !namedRight : namedRight;
+  return onRight ? 1 : -1;
+}
+
+/**
  * Ragdoll colliders share one interaction group so they collide with the world
  * but never with each other — self-collision at these joint limits produces a
  * shivering knot rather than a flop.
