@@ -169,7 +169,7 @@ const DEFAULTS = {
     // flat ground, and cutting it is what makes flat-ground momentum expensive
     // to build without capping what gravity can give you down a slope — a
     // velocity cap would do the opposite, so the acceleration is what moves.
-    driveTorque: 3.0,
+    driveTorque: 4.0,
     // 12 rad/s = 6.0 m/s. LOWERED from 25, and this is the lever that actually
     // delivers the heaviness — cutting driveTorque alone did not, because at
     // 3.0 the motor still had enough authority to climb all the way to the old
@@ -193,7 +193,7 @@ const DEFAULTS = {
     // the floor and oscillating up the far side. At 1.0 the brake is 1.36
     // m/s^2, gravity wins on every part of the wall, and the ball still comes
     // to a dead stop on the flat floor in under 2 s from 5 m/s.
-    brakeTorque: 1.0,
+    brakeTorque: 2.0,
     // 0.5 — a slight raise from 0.4, and deliberately no more.
     //
     // Resistance turned out NOT to be a heaviness lever: the governor sets the
@@ -225,7 +225,7 @@ const DEFAULTS = {
 
   jump: {
     impulse: 7.0,
-    fallGravityMultiplier: 2.5,
+    fallGravityMultiplier: 2.0,
 
     // THE AIRBORNE OVERRIDE. Asymmetric on purpose: a jump leaves the ground
     // in a couple of frames and the pose has to commit that fast, but a landing
@@ -273,7 +273,7 @@ const DEFAULTS = {
     // takeoffRate carries the clip from its first frame to the hold point in
     // apexHold / takeoffRate = 0.31 s, about the time a jump takes to leave the
     // ground and open out.
-    takeoffRate: 1.8,
+    takeoffRate: 2.5,
     // WHERE THE POSE HOLDS. The clip stops here for the whole airtime, and that
     // held frame IS the airborne pose — a jump is one shape held, not a
     // sequence played at whatever rate the arc happens to imply. Just past the
@@ -283,7 +283,7 @@ const DEFAULTS = {
     // Rate from the hold point through the landing frames to 1.0 once the feet
     // are down: 0.45 of the clip in 0.18 s. Fast enough not to outlast
     // airEaseOut, slow enough to be seen.
-    landRate: 2.5,
+    landRate: 2.0,
   },
 
   // REACTIVE RAGDOLLING. Contact forces on the character's own colliders push
@@ -875,7 +875,7 @@ const DEFAULTS = {
   // must be moved together to stay honest.
   strike: {
     pressCooldownTicks: 20,   // a new press inside this many ticks is ignored
-    qualityPerfectTicks: 3,   // |error| <= this -> quality 1.0
+    qualityPerfectTicks: 4,   // |error| <= this -> quality 1.0
     qualityZeroTicks: 12,     // |error| >= this -> quality floor
     qualityFloor: 0.35,       // a mistimed contact still leaves at 35% speed
     aimStickWeight: 0.6,      // 0 = aim is pure facing, 1 = pure stick heading
