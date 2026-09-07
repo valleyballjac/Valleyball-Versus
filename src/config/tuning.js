@@ -22,9 +22,9 @@ const DEFAULTS = {
 
   debug: {
     showHud: true,
-    showSphereWireframe: true,
+    showSphereWireframe: false,
     showRagdollColliders: true,
-    showCharacterMesh: true,
+    showCharacterMesh: false,
     showBallWireframe: false,
   },
 
@@ -93,7 +93,10 @@ const DEFAULTS = {
   // of any one ball: the threshold is about what the instrumentation should
   // bother reporting, and the capture tick is harness timing.
   ball: {
-    eventThreshold: 5,    // N — below this a contact raises no event at all
+    // N — below this Rapier raises no contact event AT ALL, so the strike
+    // resolver never sees the touch even though the collision still happens.
+    // Lowered from 5 so a soft contact on a falling ball can resolve.
+    eventThreshold: 1.0,
     captureSpawnTick: 30, // reset on the tick the ragdoll spawns in an armed run
   },
 
@@ -852,6 +855,138 @@ const DEFAULTS = {
 
     // 1/s. How fast an action's pose takes its share of the blend.
     poseEase: 10.0,
+  },
+
+  // ═══ THE STRIKES ═══ (G4)
+  //
+  // One table, two rows, one mechanism. A strike is a pose ratchet, a tick
+  // window, and an impulse on the BALL — never on the athlete (LAW 1).
+  //
+  // THE WINDOWS ARE MEASURED, NOT GUESSED. Both clips were forward-kinematicked
+  // out of the GLB and the striking hand tracked through them; the numbers below
+  // are where that hand actually meets a ball, at 1x playback. The measurement
+  // and its method are in the G4 report. Re-measure if the clips are ever
+  // re-exported — `sweetTick` is a fact about the animation, not a feel knob.
+  //
+  // `climbRate` IS the feel knob. It is authored at 1x, which is the animator's
+  // own timing, and it is live: raise it and the strike is snappier, at the cost
+  // of the telegraph a defender reads. Raising it does NOT move `sweetTick`,
+  // which is a separate slider, so a snappier strike lands earlier and the two
+  // must be moved together to stay honest.
+  strike: {
+    pressCooldownTicks: 20,   // a new press inside this many ticks is ignored
+    qualityPerfectTicks: 3,   // |error| <= this -> quality 1.0
+    qualityZeroTicks: 12,     // |error| >= this -> quality floor
+    qualityFloor: 0.35,       // a mistimed contact still leaves at 35% speed
+    aimStickWeight: 0.6,      // 0 = aim is pure facing, 1 = pure stick heading
+    mixEase: 10.0,            // action-tier share ease, same rate as poseEase
+
+    // ═══ THE EAST BUTTON IS CONTEXTUAL ═══ (G4.1 §5)
+    //
+    // One button, two rows. The ball's CENTRE height relative to the pelvis at
+    // the moment of the press decides whether East swings a volley or plants a
+    // kick — the answer to the G4 finding that both strikes are overhead
+    // actions and a ball at rest on the floor is unreachable by either.
+    //
+    // This is a recorded value from a continuous query at an edge, the same
+    // class of thing as `lastStrikeSide` (LAW 4 / GF-2.0). There is no kick
+    // mode and no second latch: the kind selects a ROW.
+    kickBelowHips: -0.10,     // m — ball centre below the pelvis by more than
+                              // this and East is a kick. DESIGNER RULING Sep 6:
+                              // a resting ball of ANY size is a kick. Measured
+                              // resting centres relative to a 0.967 m pelvis:
+                              // small -0.77, medium -0.47, large -0.22 — all
+                              // decisive at -0.10, all outside the band below.
+    kickHysteresis: 0.05,     // m — a press within this of the threshold
+                              // repeats the LAST kind chosen, so a bobbing ball
+                              // cannot flip kinds between two presses.
+    contextRadius: 4.0,       // m — no ball nearer than this and East is a
+                              // volley: the athlete swings at air, which is a
+                              // whiff, which is data.
+
+    // ═══ SIDE SELECTION, SHARED BY EVERY SIDED ROW ═══ (G4.1 §5b)
+    //
+    // Predictive, not a snapshot. G4 sampled the ball's local x at the press,
+    // and a ball crossing the chest is on the other side by `sweetTick` — 14 to
+    // 42 ticks later, depending on the row. It is still ONE recorded value
+    // decided ONCE at the press; only the query got better.
+    sideDeadzone: 0.20,       // m — |projected localX| under this is "centred",
+                              // and the stick decides, then the last side.
+    sideProjectClamp: 6.0,    // m — BOTH projected displacements are clamped by
+                              // this, ball and athlete alike. A spike-speed ball
+                              // must not project across the court, and a
+                              // sprinting athlete must not be assumed to cover
+                              // 2.8 m. `sideAgreement` is the number that says
+                              // whether this ever wants to be per-body.
+    volley: {
+      clip: 'Idle Two Hand Volley',   // reload
+      // MEASURED: frames outside [0.055, 0.995] are the bind T-pose, so 0.10
+      // and 0.95 clear it at both ends. The G1 audit named the head; the tail
+      // is the same and had not been recorded.
+      clipStart: 0.10, clipEnd: 0.95,     // reload
+      // RETUNED to the forward-push contact frame at clip fraction 0.65 —
+      // chest/head height, hand still driving upward at ~4.3 m/s.
+      //
+      // It was 0.900 / [20, 28, 38], the argmax of hand HEIGHT (f 0.865, 0.784 m
+      // above the hips). That is the top of the arc, where the hand has stopped:
+      // measured rise is 0.13 m per 5% of clip through f 0.45-0.60 and 0.01 m per
+      // 5% at f 0.80-0.85. Contact there is a stationary hand meeting a falling
+      // ball — a small force, a fully overhead target, and 0.433 m of reach
+      // against 0.548 m earlier. In play it was hard to land and did not score.
+      holdPoint: 0.65,
+      windowOpen: 12, sweetTick: 20, windowClose: 30,
+      climbRate: 1.93,        // phase/s; 0.900 in 28 ticks = 1x
+      completeRate: 1.93,     // the follow-through, also 1x
+      launchSpeed: 14.0,      // m/s on a perfect contact, mass-normalised
+      elevationDeg: 55,       // above horizontal
+      bodies: ['handL', 'handR', 'foreArmL', 'foreArmR'],
+    },
+    spike: {
+      clipLeft: 'Standing Spike Left', clipRight: 'Standing Spike Right',  // reload
+      clipStart: 0.05, clipEnd: 0.90,     // reload
+      // MEASURED: the hand peaks 0.814 m above the hips at fraction 0.485, then
+      // swings down and OUT — furthest reach 0.857 m at 0.595, fastest 10.47 m/s
+      // at 0.615. Contact is the reach peak, phase 0.641, 42 ticks at 1x.
+      holdPoint: 0.641,
+      windowOpen: 30, sweetTick: 42, windowClose: 54,
+      climbRate: 0.92,        // phase/s; 0.641 in 42 ticks = 1x
+      completeRate: 0.92,
+      launchSpeed: 22.0,
+      elevationDeg: -18,      // below horizontal — down into the valley
+      bodies: ['handL', 'handR', 'foreArmL', 'foreArmR'],
+    },
+    kick: {
+      clipLeft: 'Idle Low Kick Left', clipRight: 'Idle Low Kick Right',  // reload
+      // MEASURED (G4.1 §4). 0.5833 s = 35 ticks. NO bind-pose frames at either
+      // end — both ends sit in the same idle stance and the clip loops cleanly
+      // out of and back into it, so unlike the volley there is nothing to trim.
+      // Assume nothing: the volley has one at the head only, not both.
+      clipStart: 0.00, clipEnd: 1.00,     // reload
+      // MEASURED: tick 14 of 35 — foot 0.255 m above the floor, 0.583 m forward
+      // of the pelvis, moving 5.21 m/s of which 4.21 m/s is forward.
+      //
+      // WHY 14 SERVES ALL THREE BALLS. The contact frame depends on ball size,
+      // because it is where the foot meets a ball at that centre height: tick
+      // 12 for the small, 16 for the medium and the large. sweetTick 14 puts
+      // every one of them at |error| 2, inside qualityPerfectTicks, so all
+      // three land at full quality off one number. That is a property of the
+      // asset, measured — not a compromise between them.
+      //
+      // The contact rule is where the limb is MOVING, not where it has stopped:
+      // the literal furthest reach is tick 20, where the foot has reversed at
+      // -0.41 m/s, and authoring there would have reproduced the G4 volley bug
+      // exactly. See scripts/measure_clips.mjs, which is the tool of record.
+      holdPoint: 0.400,
+      windowOpen: 8, sweetTick: 14, windowClose: 17,
+      climbRate: 1.71,        // phase/s; 0.400 in 14 ticks = 1x
+      completeRate: 1.71,
+      launchSpeed: 10.0,      // m/s — a kick lofts a ball back up to hand height
+                              // for the next touch. It does not spike it.
+      elevationDeg: 50,       // above horizontal
+      // THE LEGS. `calf` and `foot` are the rig keys that exist; there is no
+      // shin in BONE_MAP, and naming one would silently never match.
+      bodies: ['footL', 'footR', 'calfL', 'calfR'],
+    },
   },
 
   // World-space PD tracking. Every one of these is live.
