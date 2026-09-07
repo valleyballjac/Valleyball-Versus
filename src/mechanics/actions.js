@@ -53,8 +53,6 @@ import { queueKnockdown } from '../sim/tracker.js';
  */
 const DIVE_INPUT_DEADZONE = 0.3;
 
-let knockdownRequested = false;
-
 /**
  * THE TWO ACTIONS, as mechanics accumulators and latches (RULING GF-2.0).
  *
@@ -62,6 +60,9 @@ let knockdownRequested = false;
  * we in": they are a tick counter, a latch and a recorded tick, of exactly the
  * same class as jumpQueued and motor.lastJumpTick. Both actions resolve into
  * the ONE blend weight through queueKnockdown — there is no second way to be
+ * knocked down and no separate recovery path for either.
+ */
+
 /**
  * The action clocks and latches for ONE athlete.
  *
@@ -75,6 +76,25 @@ export function createActionState() {
   return {
     /** Ticks since the current slide began; 0 means no slide is running. */
     slideTime: 0,
+    /**
+     * THE RE-ENTRY LOCKOUT. Latched when a slide ends while the trigger is STILL
+     * DOWN; cleared only when the trigger comes up.
+     *
+     * IT DESCRIBES THE BUTTON, NOT THE ATHLETE, and that is what keeps it on the
+     * right side of LAW 4. It is the same class of thing as `padJumpWasDown` in
+     * input.js and `prevGrounded` two lines below: an edge-tracker for a signal
+     * that has no edges of its own once it is held. Nothing branches on it to
+     * decide what the character is doing — it only answers "has this press
+     * already been spent".
+     *
+     * WITHOUT IT the cancel does not hold. `startingSlide` is evaluated every
+     * step, so a cancelled slide re-enters on the very next tick while the
+     * trigger is down and the athlete is still above minSlideSpeed — which was
+     * measured, not guessed: the first version of the jump-cancel only appeared
+     * to work because 34 ticks of slide resistance had already dropped him under
+     * the 4.0 m/s gate before the jump landed.
+     */
+    slideNeedsRelease: false,
     /** True between a dive firing and its crash. Consumed by the grounded edge. */
     divePending: false,
     /** Ticks of the last dive, for the cooldown. -Infinity means "never". */
@@ -99,12 +119,16 @@ export function createActionState() {
  * @param {object|null} args.ragdoll READ for the pelvis's own speed
  * @param {object|null} args.ghost the anim target; READ for the four accumulators, never written
  * @param {boolean} args.diveQueued the consumed dive press, consumed by the caller
+ * @param {boolean} args.jumpQueued the consumed jump press — READ ONLY here, and
+ *   passed on unchanged to updateMotor, which is what actually fires the jump
  * @param {number} args.tick
  * @param {number} args.dt
  * @returns {object} what fixedUpdate hands on: the two scales updateMotor takes,
  *   the stun flag the recovery ramp reads, and the four ghost inputs
  */
-export function runActions({ state, motor, input, tracker, ragdoll, ghost, diveQueued, tick, dt }) {
+export function runActions({
+  state, motor, input, tracker, ragdoll, ghost, diveQueued, jumpQueued, tick, dt,
+}) {
   // Raised by the launch edge, consumed by the dive ratchet at the bottom. A
   // local, so it cannot survive the step — which is what the `if (animTarget)`
   // guard on the old inline poke amounted to.
@@ -125,8 +149,54 @@ export function runActions({ state, motor, input, tracker, ragdoll, ghost, diveQ
   // and bleeds speed through the same L3-clamped helper as every other braking
   // impulse. Nothing new damps anything.
   const speedNow = horizontalSpeed(motor);
+
+  // ═══ THE JUMP AGAINST THE TWO COMMITMENTS ═══
+  //
+  // A jump does not compose with a slide or a dive; it RESOLVES against them,
+  // and which way it resolves is different for each:
+  //
+  //   sliding  — the slide ends and the jump is SWALLOWED. He comes back up onto
+  //              his feet carrying the speed the slide built, and does not leave
+  //              the ground. The slide's exit is the point, not a launch.
+  //   diving   — the jump does nothing at all. A dive is a committed arc and a
+  //              belly skid is its price; being able to hop out of either would
+  //              make the commitment free.
+  //   neither  — untouched. `allowJump` is `jumpQueued`, and `updateMotor` sees
+  //              exactly what it always saw.
+  //
+  // NOTHING WRITES VELOCITY HERE (LAW 1). "Returns to his feet carrying the
+  // momentum" is not something this has to perform — the sphere already holds
+  // the speed, and ending the slide is what stops slideResistance multiplying
+  // the braking and hands driveScale back. The mechanic is the removal of two
+  // multipliers, not an impulse.
+  //
+  // `allowJump` IS NOT A STATE (LAW 4). It is a local computed from a press and
+  // two clocks, consumed by `updateMotor` on the same tick and gone. Nothing
+  // stores it, nothing branches on it a step later.
+  // THE LOCKOUT CLEARS ON RELEASE AND NOWHERE ELSE. First, so a release and a
+  // press on the same tick — which a gamepad cannot produce but a keyboard
+  // repeat can — resolves as a release.
+  if (!input.slideHeld) state.slideNeedsRelease = false;
+
+  let allowJump = jumpQueued;
+  if (jumpQueued) {
+    if (state.slideTime > 0) {
+      state.slideTime = 0;              // cancel the slide back onto his feet
+      state.slideNeedsRelease = true;   // and it stays cancelled until he lets go
+      allowJump = false;                // swallow the jump — he does not launch
+    } else if (state.divePending) {
+      allowJump = false;                // no jumping out of a dive or its skid
+    }
+  }
+
+  // A SLIDE IS A PRESS, NOT A HELD STATE. `slideNeedsRelease` is what makes that
+  // true: every way a slide can end while the trigger is down sets it, and only
+  // lifting the trigger clears it, so one pull of the trigger buys exactly one
+  // slide. `!jumpQueued` is gone from this test because it was doing the
+  // lockout's job for exactly one tick and doing it badly.
   const startingSlide =
     state.slideTime === 0 &&
+    !state.slideNeedsRelease &&
     input.slideHeld &&
     motor.grounded &&
     speedNow > TUNING.action.minSlideSpeed;
@@ -164,11 +234,20 @@ export function runActions({ state, motor, input, tracker, ragdoll, ghost, diveQ
       // avoid by letting go. Releasing above knockdownSpeed always costs
       // nothing, at any point past minSlideTicks.
       state.slideTime = 0;
+      state.slideNeedsRelease = true;
       queueKnockdown(tracker);
     } else if (speedNow < TUNING.action.stopSpeed) {
       // SLID TO A STOP WITH THE BUTTON ALREADY RELEASED (inside the commitment
       // window, or the frame after a release). Ends the slide and nothing else.
+      //
+      // THE LOCKOUT IS SET HERE TOO, and it costs nothing when the trigger is
+      // already up: the release clause at the top of this function clears it on
+      // the same tick it would be read. It matters only for the case the comment
+      // above calls "inside the commitment window" — trigger still down, speed
+      // spent — where without it the athlete would chatter into a new slide the
+      // instant he crept back over minSlideSpeed.
       state.slideTime = 0;
+      state.slideNeedsRelease = true;
     }
   }
   const sliding = state.slideTime > 0;
@@ -356,6 +435,8 @@ export function runActions({ state, motor, input, tracker, ragdoll, ghost, diveQ
   const diveStunned = tick < state.diveStunUntil;
 
   return {
+    /** The jump the motor may actually fire — swallowed by a slide, locked by a dive. */
+    allowJump,
     sliding,
     diveSkidding,
     diveStunned,

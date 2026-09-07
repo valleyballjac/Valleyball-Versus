@@ -238,6 +238,42 @@ export function createGui({
   locked(jump.add(TUNING.jump, 'standingClip'), 'next R');
   locked(jump.add(TUNING.jump, 'runningClip'), 'next R');
 
+  // THE STRIKES. Clip names and windows are reload-or-next-R; everything else
+  // is live, because the whole point of authoring the windows at 1x was to give
+  // the designer a slider to move AFTER feeling 1x rather than a number decided
+  // in a prompt.
+  //
+  // `sweetTick` and `climbRate` are the pair that must move together: climbRate
+  // decides when the hand actually arrives, sweetTick decides when the game
+  // thinks it arrived, and changing one without the other makes a perfectly
+  // timed strike score badly. Both are here, adjacent, for that reason.
+  const strike = gui.addFolder('strike');
+  strike.add(TUNING.strike, 'pressCooldownTicks', 0, 120, 1);
+  strike.add(TUNING.strike, 'qualityPerfectTicks', 0, 20, 1);
+  strike.add(TUNING.strike, 'qualityZeroTicks', 1, 60, 1);
+  strike.add(TUNING.strike, 'qualityFloor', 0, 1, 0.01);
+  strike.add(TUNING.strike, 'aimStickWeight', 0, 1, 0.05);
+  strike.add(TUNING.strike, 'mixEase', 0.5, 40, 0.5);
+  for (const kind of ['volley', 'spike']) {
+    const row = TUNING.strike[kind];
+    const folder = strike.addFolder(kind);
+    folder.add(row, 'launchSpeed', 0, 60, 0.5);
+    folder.add(row, 'elevationDeg', -80, 80, 1);
+    folder.add(row, 'climbRate', 0.05, 8, 0.01).name('climbRate (1x as authored)');
+    folder.add(row, 'completeRate', 0.05, 8, 0.01);
+    folder.add(row, 'holdPoint', 0, 1, 0.001);
+    folder.add(row, 'sweetTick', 0, 120, 1).name('sweetTick (MEASURED)');
+    folder.add(row, 'windowOpen', 0, 120, 1);
+    folder.add(row, 'windowClose', 0, 180, 1);
+    locked(folder.add(row, 'clipStart'), 'next R');
+    locked(folder.add(row, 'clipEnd'), 'next R');
+    if (kind === 'volley') locked(folder.add(row, 'clip'), 'next R');
+    else {
+      locked(folder.add(row, 'clipLeft'), 'next R');
+      locked(folder.add(row, 'clipRight'), 'next R');
+    }
+  }
+
   const visual = gui.addFolder('visual');
   locked(visual.add(TUNING.visual, 'boxWidth'), 'reload');
   locked(visual.add(TUNING.visual, 'boxHeight'), 'reload');

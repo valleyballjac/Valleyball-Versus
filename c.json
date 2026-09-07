@@ -1,0 +1,407 @@
+{
+  "loop": {
+    "fixedHz": 60,
+    "maxFrameTime": 0.25
+  },
+  "debug": {
+    "showHud": true,
+    "showSphereWireframe": false,
+    "showRagdollColliders": true,
+    "showCharacterMesh": false,
+    "showBallWireframe": false
+  },
+  "physics": {
+    "gravityY": -12
+  },
+  "arena": {
+    "type": "court",
+    "modelUrl": "/models/arena.glb",
+    "court": {
+      "spawn": {
+        "x": 0,
+        "y": 1.5,
+        "z": 0
+      },
+      "killPlaneY": -15,
+      "ballSpawns": [
+        {
+          "x": -3,
+          "y": 3.5,
+          "z": 1.5
+        },
+        {
+          "x": 0,
+          "y": 4.5,
+          "z": 3
+        },
+        {
+          "x": 3,
+          "y": 5.5,
+          "z": 1.5
+        }
+      ]
+    },
+    "bowl": {
+      "floorRadius": 30,
+      "rimRadius": 48,
+      "rimHeight": 8,
+      "profilePoints": 40,
+      "latheSegments": 96,
+      "wallCurvePower": 2,
+      "lipInset": 3,
+      "lipHeight": 2,
+      "lipPoints": 6,
+      "killPlaneY": -10,
+      "spawn": {
+        "x": 0,
+        "y": 3,
+        "z": 0
+      },
+      "ballSpawns": [
+        {
+          "x": -3.5,
+          "y": 3.5,
+          "z": 2
+        },
+        {
+          "x": 0,
+          "y": 4.5,
+          "z": 3.5
+        },
+        {
+          "x": 4,
+          "y": 5.5,
+          "z": 2
+        }
+      ]
+    }
+  },
+  "ball": {
+    "eventThreshold": 1,
+    "captureSpawnTick": 30
+  },
+  "balls": [
+    {
+      "id": "small",
+      "label": "Small (0.4m)",
+      "radius": 0.2,
+      "density": 0.025,
+      "friction": 0.8,
+      "restitution": 0.88,
+      "linearDrag": 0.015,
+      "angularDrag": 0.04,
+      "colorA": 13840175,
+      "colorB": 16119285
+    },
+    {
+      "id": "medium",
+      "label": "Medium (1.0m)",
+      "radius": 0.5,
+      "density": 0.0042,
+      "friction": 0.8,
+      "restitution": 0.88,
+      "linearDrag": 0.012,
+      "angularDrag": 0.03,
+      "colorA": 1668818,
+      "colorB": 16498733
+    },
+    {
+      "id": "large",
+      "label": "Large (1.5m Exercise Ball)",
+      "radius": 0.75,
+      "density": 0.0022,
+      "friction": 0.85,
+      "restitution": 0.85,
+      "linearDrag": 0.01,
+      "angularDrag": 0.02,
+      "colorA": 8069026,
+      "colorB": 11583173
+    }
+  ],
+  "motor": {
+    "radius": 0.5,
+    "density": 2,
+    "spawnY": 3,
+    "friction": 1,
+    "restitution": 0,
+    "driveTorque": 3,
+    "maxAngularSpeed": 12,
+    "brakeTorque": 1,
+    "rollingResistance": 0.5,
+    "airControlMultiplier": 0.15,
+    "groundRayCount": 8,
+    "groundedEpsilon": 0.15,
+    "stickDeadzone": 0.15,
+    "downedDragBoost": 40
+  },
+  "jump": {
+    "impulse": 7,
+    "fallGravityMultiplier": 2.5,
+    "airEaseIn": 18,
+    "airEaseOut": 5,
+    "inPlaceBelow": 1.5,
+    "runAbove": 4,
+    "standingClip": "Standing Jump",
+    "runningClip": "Jump Running",
+    "clipStart": 0.15,
+    "clipEnd": 0.85,
+    "cooldownTicks": 90,
+    "groundedDebounceTicks": 3,
+    "takeoffRate": 1.8,
+    "apexHold": 0.55,
+    "landRate": 2.5
+  },
+  "impact": {
+    "eventThreshold": 500,
+    "forceThreshold": 32000,
+    "scale": 0.001,
+    "multiplier": {
+      "head": 2,
+      "torso": 1,
+      "limb": 0.7,
+      "extremity": 0.4
+    },
+    "hudHoldTicks": 120,
+    "dragOnset": 0.5,
+    "mountSnapEpsilon": 0.05,
+    "mountFollowRate": 9,
+    "mountFollowSpeed": 12,
+    "mountRecoverBelow": 0.5
+  },
+  "standUp": {
+    "pelvisStandHeight": 0.95,
+    "pelvisProneHeight": 0.13,
+    "ease": 6,
+    "minRate": 0.75,
+    "recoverGain": 1.2,
+    "authority": 1,
+    "collapseDrop": 0.5,
+    "releaseBand": 0.25,
+    "clipStart": 0.14,
+    "clipEnd": 0.7,
+    "faceBlendBand": 0.2,
+    "mountSlack": 0.15,
+    "faceDownClip": "Stand Up Face Down",
+    "faceUpClip": "Stand Up Face Up"
+  },
+  "blend2d": {
+    "walkSpeed": 2,
+    "runSpeed": 4.5,
+    "sprintSpeed": 6,
+    "walkClips": {
+      "f": "Walk Forward",
+      "r": "Walk Strafe Right",
+      "b": "Walk Backwards",
+      "l": "Walk Strafe Left"
+    },
+    "runClips": {
+      "f": "Running Forward",
+      "r": "Strafe Run Right",
+      "b": "Jog Backwards",
+      "l": "Strafe Run Left"
+    },
+    "sprintClip": "Running Sprint"
+  },
+  "facing": {
+    "ease": 12,
+    "velocityFloor": 0.6,
+    "steerDeadzone": 0.1,
+    "coastSpeed": 0.5,
+    "coastEase": 3
+  },
+  "anim": {
+    "timeScale": 1,
+    "override": "auto",
+    "blend": {
+      "idleClip": "At Rest",
+      "speedSmoothing": 6,
+      "weightEase": 8
+    },
+    "stride": {
+      "enabled": true,
+      "min": 0.6,
+      "max": 1.6
+    }
+  },
+  "action": {
+    "slideClip": "Slide Left",
+    "diveClip": "Running Dive",
+    "slideClipStart": 0,
+    "slideClipEnd": 1,
+    "diveClipStart": 0.45,
+    "diveClipEnd": 0.52,
+    "diveHoldPhase": 0.25,
+    "diveTakeoffRate": 3,
+    "diveLandRate": 0.75,
+    "diveLatchMinTicks": 6,
+    "minSlideSpeed": 4,
+    "minSlideTicks": 15,
+    "knockdownSpeed": 1,
+    "diveResistance": 6.5,
+    "diveHipDrop": 0.65,
+    "diveStunTicks": 60,
+    "diveLegStiffness": 0.1,
+    "slideHoldPhase": 0.3,
+    "slideEntryRate": 3,
+    "slideExitRate": 0.65,
+    "slideResistance": 4.5,
+    "slideSlopeRef": 1.2,
+    "slideSlopeMin": 0.35,
+    "slideSlopeMax": 1.8,
+    "stopSpeed": 0.2,
+    "crashMuscleTone": 0.2,
+    "crashClip": "Crash",
+    "diveImpulseForward": 4.5,
+    "diveImpulseUp": 2.4,
+    "diveCooldownTicks": 150,
+    "poseEase": 10
+  },
+  "strike": {
+    "pressCooldownTicks": 20,
+    "qualityPerfectTicks": 3,
+    "qualityZeroTicks": 12,
+    "qualityFloor": 0.35,
+    "aimStickWeight": 0.6,
+    "mixEase": 10,
+    "kickBelowHips": -0.1,
+    "kickHysteresis": 0.05,
+    "contextRadius": 4,
+    "sideDeadzone": 0.2,
+    "sideProjectClamp": 6,
+    "volley": {
+      "clip": "Idle Two Hand Volley",
+      "clipStart": 0.1,
+      "clipEnd": 0.95,
+      "holdPoint": 0.65,
+      "windowOpen": 12,
+      "sweetTick": 20,
+      "windowClose": 30,
+      "climbRate": 1.93,
+      "completeRate": 1.93,
+      "launchSpeed": 14,
+      "elevationDeg": 55,
+      "bodies": [
+        "handL",
+        "handR",
+        "foreArmL",
+        "foreArmR"
+      ]
+    },
+    "spike": {
+      "clipLeft": "Standing Spike Left",
+      "clipRight": "Standing Spike Right",
+      "clipStart": 0.05,
+      "clipEnd": 0.9,
+      "holdPoint": 0.641,
+      "windowOpen": 30,
+      "sweetTick": 42,
+      "windowClose": 54,
+      "climbRate": 0.92,
+      "completeRate": 0.92,
+      "launchSpeed": 22,
+      "elevationDeg": -18,
+      "bodies": [
+        "handL",
+        "handR",
+        "foreArmL",
+        "foreArmR"
+      ]
+    },
+    "kick": {
+      "clipLeft": "Idle Low Kick Left",
+      "clipRight": "Idle Low Kick Right",
+      "clipStart": 0,
+      "clipEnd": 1,
+      "holdPoint": 0.4,
+      "windowOpen": 8,
+      "sweetTick": 14,
+      "windowClose": 17,
+      "climbRate": 1.71,
+      "completeRate": 1.71,
+      "launchSpeed": 10,
+      "elevationDeg": 50,
+      "bodies": [
+        "footL",
+        "footR",
+        "calfL",
+        "calfR"
+      ]
+    }
+  },
+  "tracking": {
+    "startWeight": 1,
+    "linearKp": 700,
+    "linearKd": 400,
+    "angularKp": 200,
+    "angularKd": 40,
+    "pelvisBoost": 3,
+    "groupStiffness": {
+      "torso": 1,
+      "head": 0.8,
+      "limb": 0.3,
+      "extremity": 0.1
+    },
+    "limpness": 5,
+    "maxLinearImpulse": 0.25,
+    "maxAngularImpulse": 0.01,
+    "recoverPerSecond": 0.3,
+    "maxMountDistance": 0.5
+  },
+  "ragdoll": {
+    "spawnHeight": 6,
+    "tumbleImpulse": 0.5,
+    "captureSpawnTick": 30,
+    "density": {
+      "torso": 1.2,
+      "limb": 1,
+      "head": 0.9,
+      "extremity": 0.8
+    },
+    "radiusRatio": {
+      "torso": 0.075,
+      "limb": 0.032,
+      "head": 0.062,
+      "extremity": 0.024
+    },
+    "lengthFit": 0.9,
+    "limits": {
+      "knee": [
+        0,
+        2.4
+      ],
+      "elbow": [
+        0,
+        2.6
+      ]
+    },
+    "restitution": 0,
+    "restitutionByGroup": {
+      "torso": 0.3
+    },
+    "friction": 0.9,
+    "armLinearDamping": 150,
+    "armAngularDamping": 150,
+    "armDampingFadeSpeed": 1.5,
+    "diveLegLinearDamping": 4,
+    "diveLegAngularDamping": 8,
+    "limpBrakeBelow": 0.1,
+    "limpBrake": 6
+  },
+  "visual": {
+    "boxWidth": 0.8,
+    "boxHeight": 1.8,
+    "boxDepth": 0.8
+  },
+  "camera": {
+    "fov": 52,
+    "radius": 8,
+    "targetHeight": 1.2,
+    "orbitSpeed": 2.5,
+    "mousePixelsPerRadian": 400,
+    "minPitch": 0.1,
+    "maxPitch": 1.35,
+    "collisionMargin": 0.3,
+    "minDistance": 1.5,
+    "restoreEase": 4
+  }
+}
