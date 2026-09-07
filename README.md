@@ -1,5 +1,5 @@
 # Valleyball Demo
- 
+
 Welcome to the Valleyball Alpha! This is an early technical test of the movement and strike mechanics.
  
 ## Controls
