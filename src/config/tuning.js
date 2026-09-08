@@ -1053,7 +1053,7 @@ const DEFAULTS = {
     // 0.0784 m walking — and the walking limbs still follow the ghost at a
     // ratio of 0.99 to 1.02. Do not take the cap below about 0.2: at 0.10 the
     // jitter only reaches 0.112 and the tracking error is nineteen times worse.
-    maxLinearImpulse: 0.25,
+    maxLinearImpulse: 0.4,
     // Seeded 0.35 — the single most damaging seed in the set. This cap is NOT
     // scaled by inertia, and these bodies span 2.25e-3 (a hand) to 7.9e-2 (the
     // pelvis) kg·m². At 0.35 one step could spin the pelvis at 4.4 rad/s and a

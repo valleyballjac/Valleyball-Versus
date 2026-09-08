@@ -242,7 +242,7 @@ export function toTrimeshArrays(geometry) {
  * So the cost of "obviously scenery" was a hole under the spawn point. Anything
  * added here in future gets the same grid run over it first.
  */
-const RENDER_ONLY_PREFIXES = [];
+const RENDER_ONLY_PREFIXES = ['Key', 'Scoring Circle', 'CenterCircle', 'Mound', 'Pick'];
 
 /**
  * Names as the ARTIST wrote them, recovered from what the loader produced.

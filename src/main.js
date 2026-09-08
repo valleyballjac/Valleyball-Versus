@@ -541,7 +541,8 @@ function updateHud() {
     ? `${st.lastContactKey} @${st.lastContactTick} q ${st.lastContactQuality.toFixed(2)} ` +
       `${st.lastContactForce.toFixed(0)} N -> ${st.lastLaunchSpeed.toFixed(1)} m/s`
     : '—';
-  hudStrikeRate.textContent = `${st.resolvedCount} / ${st.whiffCount}` +
+  const attempts = st.resolvedCount + st.whiffCount;
+  hudStrikeRate.textContent = `${st.resolvedCount} / ${attempts}` +
     (Number.isFinite(st.hitRate) ? `  (${(st.hitRate * 100).toFixed(0)}%)` : '');
 }
 
@@ -1078,7 +1079,7 @@ function fixedUpdate(dt, tick) {
     diveQueued, jumpQueued, tick, dt,
   });
   const strikes = runStrikes({
-    state: strikeState, input, motor, ghost: animTarget, balls, tick, dt,
+    state: strikeState, input, motor, ghost: animTarget, ragdoll, balls, tick, dt,
     volleyQueued: consumeVolley(), spikeQueued: consumeSpike(),
   });
 

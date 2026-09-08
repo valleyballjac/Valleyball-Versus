@@ -538,6 +538,7 @@ function chooseSide(state, row, input, motor, ghost, balls, dt) {
  * @param {object} args.input the latched input snapshot
  * @param {object} args.motor READ ONLY, for the spike's side
  * @param {object|null} args.ghost the anim target, READ for facing yaw
+ * @param {object|null} args.ragdoll the active physics ragdoll, READ for hitbox extension
  * @param {object[]} args.balls READ ONLY, for the spike's side
  * @param {boolean} args.volleyQueued the consumed press, consumed by the caller
  * @param {boolean} args.spikeQueued
@@ -545,7 +546,7 @@ function chooseSide(state, row, input, motor, ghost, balls, dt) {
  * @param {number} args.dt
  * @returns {object} the four numbers the ghost is handed
  */
-export function runStrikes({ state, input, motor, ghost, balls, volleyQueued, spikeQueued, tick, dt }) {
+export function runStrikes({ state, input, motor, ghost, ragdoll, balls, volleyQueued, spikeQueued, tick, dt }) {
   const strike = TUNING.strike;
   const since = tick - state.lastStrikeTick;
 
@@ -624,6 +625,37 @@ export function runStrikes({ state, input, motor, ghost, balls, volleyQueued, sp
     const ceiling = holding ? row.holdPoint : 1;
     const rate = holding ? row.climbRate : row.completeRate;
     state.strikePhase = Math.min(ceiling, state.strikePhase + rate * dt);
+    
+    // ═══ HITBOX EXTENSION ═══
+    // Check for near-misses during the open window and resolve them as hits.
+    // The extension distance peaks at the sweet spot using the quality curve.
+    if (ragdoll && !resolvedThisStrike && elapsed >= row.windowOpen && elapsed <= row.windowClose) {
+      const q = quality(Math.abs(elapsed - row.sweetTick));
+      const extension = 0.45 * q; // Add up to 45cm of reach at the perfect sweet spot
+      
+      for (let i = 0; i < balls.length; i++) {
+        const ball = balls[i];
+        if (!ball.body) continue;
+        const bPos = ball.body.translation();
+        
+        for (const limbKey of row.bodies) {
+          // A strike only checks the limb corresponding to its chosen side
+          if (isSided(row) && !limbKey.endsWith(state.lastStrikeSide)) continue;
+          
+          const limbItem = ragdoll.rig.get(limbKey);
+          if (!limbItem) continue;
+          
+          const lPos = limbItem.body.translation();
+          const dist = Math.hypot(bPos.x - lPos.x, bPos.y - lPos.y, bPos.z - lPos.z);
+          
+          if (dist < ball.radius + 0.15 + extension) {
+            resolveStrikeContact(state, ball, limbKey, 0, tick);
+            break;
+          }
+        }
+        if (state.lastResolvedStrikeTick === state.lastStrikeTick) break;
+      }
+    }
   }
 
   // ═══ THE SHARE ═══
