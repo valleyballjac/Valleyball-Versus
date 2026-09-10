@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Valleyball — Step 1 · Sterile Foundation</title>
+    <title>Valleyball Versus — Practice Mode</title>
     <style>
       html,
       body {
@@ -54,8 +54,107 @@
       #hud span {
         color: #eaf4ff;
       }
+
+      #controls-card {
+        position: fixed;
+        bottom: 16px;
+        left: 16px;
+        padding: 10px 14px 12px;
+        background: rgba(6, 10, 16, 0.78);
+        border: 1px solid rgba(120, 170, 210, 0.25);
+        border-radius: 8px;
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        font-size: 11px;
+        line-height: 1.6;
+        pointer-events: none;
+        user-select: none;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+        z-index: 10;
+        min-width: 380px;
+      }
+
+      .card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 8px;
+        padding-bottom: 6px;
+        border-bottom: 1px solid rgba(120, 170, 210, 0.18);
+      }
+
+      .card-title {
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        color: #f2f8ff;
+        font-size: 11px;
+      }
+
+      .card-tag {
+        font-size: 9px;
+        font-weight: 600;
+        padding: 1px 6px;
+        border-radius: 3px;
+        background: rgba(217, 4, 41, 0.22);
+        color: #ff6b81;
+        border: 1px solid rgba(217, 4, 41, 0.45);
+        letter-spacing: 0.06em;
+      }
+
+      .card-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-top: 3px;
+      }
+
+      .row-label {
+        font-weight: 600;
+        color: #7d97ad;
+        font-size: 10px;
+        letter-spacing: 0.05em;
+        width: 62px;
+        flex-shrink: 0;
+      }
+
+      .row-val {
+        color: #eaf4ff;
+        text-align: right;
+        font-size: 11px;
+      }
+
+      kbd {
+        display: inline-block;
+        padding: 1px 5px;
+        font-family: inherit;
+        font-size: 10px;
+        font-weight: 600;
+        line-height: 1.2;
+        color: #ffffff;
+        background: rgba(255, 255, 255, 0.12);
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        border-radius: 4px;
+        box-shadow: 0 1px 0 rgba(0, 0, 0, 0.3);
+        margin: 0 1px;
+      }
+
+      kbd.pad {
+        background: rgba(37, 99, 235, 0.28);
+        border: 1px solid rgba(96, 165, 250, 0.48);
+        color: #93c5fd;
+        font-weight: 700;
+      }
+
+      .dim {
+        color: #556c80;
+      }
+
+      .sep {
+        color: #43586b;
+        margin: 0 3px;
+      }
     </style>
-    <script type="module" crossorigin src="/Valleyball-Versus/assets/index-CBJHzopw.js"></script>
+    <script type="module" crossorigin src="/Valleyball-Versus/assets/index-BXloiELP.js"></script>
   </head>
   <body>
     <canvas id="viewport"></canvas>
@@ -89,8 +188,40 @@
 <b>ball peak/motor</b><span id="hud-ballpeak">—</span>
 <b>strike</b><span id="hud-strike">—</span>
 <b>strike hit</b><span id="hud-strikehit">—</span>
-<b>hit/whiff</b><span id="hud-strikerate">—</span></div
-    >
+<b>hit/whiff</b><span id="hud-strikerate">—</span>
+<b>match</b><span id="hud-score">—</span>
+<b>camera</b><span id="hud-cammode">CHASE [Tab / D-Pad]</span></div>
+
+    <div id="controls-card">
+      <div class="card-header">
+        <span class="card-title">VALLEYBALL</span>
+        <span class="card-tag">KEYBOARD & CONTROLLER</span>
+      </div>
+      <div class="card-row">
+        <span class="row-label">MOVE / LOOK</span>
+        <span class="row-val"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> <span class="dim">/</span> <kbd class="pad">LS</kbd> <span class="sep">·</span> Mouse <span class="dim">/</span> <kbd class="pad">RS</kbd></span>
+      </div>
+      <div class="card-row">
+        <span class="row-label">SPRINT / SLIDE</span>
+        <span class="row-val"><kbd>Shift</kbd> <span class="dim">/</span> <kbd class="pad">RT</kbd> Sprint <span class="sep">·</span> <kbd>C</kbd> <span class="dim">/</span> <kbd class="pad">LT</kbd> Slide</span>
+      </div>
+      <div class="card-row">
+        <span class="row-label">ACTIONS</span>
+        <span class="row-val"><kbd>Space</kbd> <span class="dim">/</span> <kbd class="pad">A</kbd> Jump <span class="sep">·</span> <kbd>Q</kbd> <span class="dim">/</span> <kbd class="pad">X</kbd> Dive</span>
+      </div>
+      <div class="card-row">
+        <span class="row-label">STRIKES</span>
+        <span class="row-val"><kbd>E</kbd> <span class="dim">/</span> <kbd class="pad">B</kbd> Volley / Kick <span class="sep">·</span> <kbd>R</kbd> <span class="dim">/</span> <kbd class="pad">Y</kbd> Spike</span>
+      </div>
+      <div class="card-row">
+        <span class="row-label">STYLE</span>
+        <span class="row-val"><kbd>J</kbd> Jersey (Home/Away) <span class="sep">·</span> <kbd>K</kbd> Silhouette</span>
+      </div>
+      <div class="card-row">
+        <span class="row-label">OTHER</span>
+        <span class="row-val"><kbd>Tab</kbd> <span class="dim">/</span> <kbd class="pad">D-Pad</kbd> Cam <span class="sep">·</span> <kbd>B</kbd> <span class="dim">/</span> <kbd class="pad">Start</kbd> Balls <span class="sep">·</span> <kbd>H</kbd> HUD</span>
+      </div>
+    </div>
 
   </body>
 </html>
