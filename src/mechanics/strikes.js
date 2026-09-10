@@ -68,7 +68,7 @@ const KIND_SPIKE = 2;
 const KIND_KICK = 3;
 
 /** The name of a kind, for the logs and the probe. A lookup, not a branch. */
-const KIND_NAME = { 0: '\u2014', 1: 'volley', 2: 'spike', 3: 'kick' };
+export const KIND_NAME = { 0: '—', 1: 'volley', 2: 'spike', 3: 'kick' };
 
 /** Scratch for the impulse, so a strike allocates nothing. */
 const _impulse = { x: 0, y: 0, z: 0 };
@@ -171,6 +171,13 @@ export function createStrikeState() {
      */
     sidedResolved: 0,
     sidedMatched: 0,
+    /**
+     * How many resolved strikes came from the PROXIMITY ASSIST rather than a
+     * contact Rapier reported. Counted separately and shown separately so the
+     * hit rate never flatters itself: a session that is 90% assisted is a
+     * session whose windows want retuning, and that has to be visible.
+     */
+    assistedResolvedCount: 0,
     /** One-shot guard for the climbRate check. Per athlete, never a module flag. */
     ratesChecked: false,
   };
@@ -662,7 +669,7 @@ export function runStrikes({ state, input, motor, ghost, balls, volleyQueued, sp
  * @param {number} tick
  * @returns {boolean} true if this contact became a strike
  */
-export function resolveStrikeContact(state, ball, rigKey, force, tick) {
+export function resolveStrikeContact(state, ball, rigKey, force, tick, isAssist = false) {
   const row = rowFor(state.lastStrikeKind);
   const elapsed = tick - state.lastStrikeTick;
   const windowOpen = !!row && elapsed >= row.windowOpen && elapsed <= row.windowClose;
@@ -707,11 +714,34 @@ export function resolveStrikeContact(state, ball, rigKey, force, tick) {
   // dividing it back out at the point of authoring is how "this shot leaves at
   // 14 m/s" survives the three-ball fixture and whatever G5 picks per round.
   const speed = row.launchSpeed * q;
+
+  // ═══ TARGET MAGNETISM ═══
+  //
+  // The aim latched at the press, bent toward the centre of the goal the ball
+  // is NOT in front of. It is a nudge on a shot the player already committed
+  // to — it cannot turn a whiff into a hit, and at aimMagnetism 0 the value is
+  // bit-for-bit the latched aim, so the knob is a true no-op at zero.
+  //
+  // THE YAW CONVENTION IS THE PROJECT'S, and it has to be: yaw here means
+  // direction = (sin yaw, cos yaw), so the bearing from the ball to the target
+  // is atan2(dx, dz) — NOT atan2(dz, dx) with a quarter turn taken off, which
+  // is the same angle rotated by pi and would aim every assisted shot at the
+  // striker's own goal.
+  let effectiveYaw = state.lastAimYaw;
+  if (TUNING.strike.aimMagnetism > 0) {
+    const ballPos = ball.body.translation();
+    const targetZ = ballPos.z > 0 ? -40.0 : 40.0;
+    const targetYaw = Math.atan2(0 - ballPos.x, targetZ - ballPos.z);
+    effectiveYaw = wrapAngle(
+      effectiveYaw + wrapAngle(targetYaw - effectiveYaw) * TUNING.strike.aimMagnetism,
+    );
+  }
+
   const elevation = row.elevationDeg * DEG2RAD;
   const horizontal = Math.cos(elevation);
-  const dirX = Math.sin(state.lastAimYaw) * horizontal;
+  const dirX = Math.sin(effectiveYaw) * horizontal;
   const dirY = Math.sin(elevation);
-  const dirZ = Math.cos(state.lastAimYaw) * horizontal;
+  const dirZ = Math.cos(effectiveYaw) * horizontal;
 
   const magnitude = ball.body.mass() * speed;
   _impulse.x = dirX * magnitude;
@@ -731,6 +761,7 @@ export function resolveStrikeContact(state, ball, rigKey, force, tick) {
   state.lastLaunch.z = dirZ * speed;
   state.lastLaunchSpeed = speed;
   state.resolvedCount += 1;
+  if (isAssist) state.assistedResolvedCount += 1;
 
   // ═══ SIDE AGREEMENT ═══ (§5b)
   //
@@ -763,10 +794,66 @@ export function resolveStrikeContact(state, ball, rigKey, force, tick) {
     `[strike] ${KIND_NAME[state.lastStrikeKind]} ` +
       `q ${q.toFixed(3)} (err ${Math.abs(elapsed - row.sweetTick)} ticks) ` +
       `${rigKey} ${force.toFixed(1)} N -> ${speed.toFixed(2)} m/s ` +
-      `ball:${ball.id} mass ${ball.body.mass().toFixed(3)} kg` +
+      `ball:${ball.id} mass ${ball.body.mass().toFixed(3)} kg${isAssist ? ' ASSISTED' : ''}` +
       `${agreement} tick ${tick}`,
   );
   return true;
+}
+
+/**
+ * SWEET-SPOT PROXIMITY ASSIST. STEP 12, right after the impact drain.
+ *
+ * Rapier resolves a strike only when a limb collider actually touches the ball.
+ * At the sweet tick a near miss of a few centimetres looks to the player like a
+ * clean swing that the game ignored, and that reads as a broken game rather
+ * than as a bad shot. This closes the gap: inside a narrow band around the
+ * sweet tick, a qualifying limb within `assistRadius` of the ball's SURFACE
+ * resolves as if it had touched.
+ *
+ * IT DOES NOT WIDEN THE WINDOW. Every gate the real resolver applies still
+ * applies — the row's window, the one-impulse-per-strike latch, the qualifying
+ * bodies — and this adds one more of its own, `assistWindowTicks`, so the
+ * forgiveness lives only where the swing was already well timed. A late or
+ * early swing is still a whiff, which is what keeps timing worth learning.
+ *
+ * THE FORCE IT REPORTS IS FABRICATED, and it is worth saying plainly: there was
+ * no contact, so there is no contact force. It hands the resolver a nominal
+ * value so the strike can resolve at all. LESSON 15's twenty force samples must
+ * therefore be filtered to real contacts before a force floor is set from them
+ * — an assisted strike's newtons are not a measurement of anything.
+ *
+ * @param {ReturnType<typeof createStrikeState>} state
+ * @param {object} ragdoll the rig, READ ONLY
+ * @param {object[]} balls READ ONLY
+ * @param {number} tick
+ * @returns {boolean} true if a proximity contact became a strike
+ */
+export function checkStrikeAssist(state, ragdoll, balls, tick) {
+  if (!ragdoll || !balls || balls.length === 0) return false;
+  const row = rowFor(state.lastStrikeKind);
+  if (!row) return false;
+  const elapsed = tick - state.lastStrikeTick;
+  const windowOpen = elapsed >= row.windowOpen && elapsed <= row.windowClose;
+  if (!windowOpen) return false;
+  if (state.lastResolvedStrikeTick === state.lastStrikeTick) return false;
+  // Only active within the sweet-spot band.
+  if (Math.abs(elapsed - row.sweetTick) > TUNING.strike.assistWindowTicks) return false;
+
+  for (const ball of balls) {
+    const ballPos = ball.body.translation();
+    const ballRadius = ball.radius || 0.5;
+    const thresholdDist = ballRadius + TUNING.strike.assistRadius;
+    for (const rigKey of row.bodies) {
+      const item = ragdoll.rig.get(rigKey);
+      if (!item) continue;
+      const limbPos = item.body.translation();
+      const dist = Math.hypot(limbPos.x - ballPos.x, limbPos.y - ballPos.y, limbPos.z - ballPos.z);
+      if (dist <= thresholdDist) {
+        return resolveStrikeContact(state, ball, rigKey, 50.0, tick, true);
+      }
+    }
+  }
+  return false;
 }
 
 /**
@@ -781,6 +868,8 @@ export function resolveStrikeContact(state, ball, rigKey, force, tick) {
 export function strikeProbe(state) {
   const attempts = state.resolvedCount + state.whiffCount;
   return {
+    /** Swings taken: hits plus whiffs. The HUD's denominator. */
+    attempts,
     kind: KIND_NAME[state.lastStrikeKind],
     /** What East chose last time it was pressed — the contextual split, read. */
     eastKind: KIND_NAME[state.lastEastKind],
@@ -806,6 +895,8 @@ export function strikeProbe(state) {
       z: +state.lastLaunch.z.toFixed(6),
     },
     resolvedCount: state.resolvedCount,
+    /** Of those, how many the proximity assist rescued. LESSON 22 — a read. */
+    assistedCount: state.assistedResolvedCount || 0,
     whiffCount: state.whiffCount,
     /** The §6.6 number: what fraction of swings connected. NaN before any. */
     hitRate: attempts > 0 ? +(state.resolvedCount / attempts).toFixed(3) : NaN,

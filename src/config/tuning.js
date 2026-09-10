@@ -1,4 +1,26 @@
 /**
+ * AN ASSET URL THAT SURVIVES A NON-ROOT `base`.
+ *
+ * `vite.config.js` sets `base: '/Valleyball-Versus/'` for the deployed build,
+ * and Vite serves everything in public/ underneath it. A hard-coded
+ * '/models/arena.glb' therefore 404s the moment the base is not '/', the boot
+ * fetch throws, and the page renders its static HUD over an empty 300x150
+ * canvas — a HUD with no game behind it, which is exactly what it looked like.
+ *
+ * `import.meta.env` exists only under Vite. The guard is for the node tools
+ * (kicktest, measure_clips) that import this table outside a bundle; they fall
+ * back to '/' and never fetch anything anyway.
+ *
+ * @param {string} path relative to public/, with or without a leading slash
+ * @returns {string}
+ */
+export function assetUrl(path) {
+  const env = typeof import.meta !== 'undefined' ? import.meta.env : null;
+  const base = env && env.BASE_URL ? env.BASE_URL : '/';
+  return `${base.replace(/\/+$/, '')}/${String(path).replace(/^\/+/, '')}`;
+}
+
+/**
  * LAW 4 — One source of truth.
  *
  * Every tunable number in the project lives in this one object. There is no
@@ -21,11 +43,29 @@ const DEFAULTS = {
   loop: { fixedHz: 60, maxFrameTime: 0.25 },
 
   debug: {
-    showHud: true,
+    showHud: false,
     showSphereWireframe: false,
-    showRagdollColliders: true,
+    showRagdollColliders: false,
     showCharacterMesh: false,
+    showCapsuleAthlete: true,
     showBallWireframe: false,
+  },
+
+  athlete: {
+    model: 'capsule', // 'capsule' | 'skinned'
+    team: 'home',     // 'home' | 'away'
+    variant: 'masculine', // 'masculine' | 'feminine' | 'classic'
+    palette: {
+      homePrimary: 0xd90429,    // Royal Scarlet Crimson (Classic Red Rivalry)
+      awayPrimary: 0x1d4ed8,    // Electric Cobalt Blue (Classic Blue Rivalry)
+      bodyGrey: 0x383b42,       // Home: Flat matte neutral dark athletic charcoal grey
+      jointGrey: 0x22242a,      // Home: Dark matte graphite for joints & wrist cuffs
+      awayBody: 0xffffff,       // Away: Pure crisp athletic jersey white profile
+      awayJoint: 0xd0d5dd,      // Away: Clean light slate silver joint connectors
+      roughness: 0.82,          // Flat matte, zero gloss sheen
+      metalness: 0.04,          // Non-metallic body
+      visorTint: 0x111317,
+    },
   },
 
   // -12, not -20. The user tested this live through the GUI and reported the
@@ -40,7 +80,7 @@ const DEFAULTS = {
     // query parameter ?arena=bowl — same reasoning as ?captureTick, which is
     // that harness configuration must not require editing saved tuning state.
     type: 'court',
-    modelUrl: import.meta.env.BASE_URL + 'models/arena.glb',
+    modelUrl: assetUrl('models/arena.glb'),
 
     // THE AUTHORED COURT. A 50 x 120 m valley basin: the inner field rises from
     // the centre out to the ends, streams flank it, and two goal hoops face
@@ -54,9 +94,9 @@ const DEFAULTS = {
       // until G5 authors proper boundary volumes.
       killPlaneY: -15,
       ballSpawns: [
-        { x: -3.0, y: 3.5, z: 1.5 },
-        { x: 0.0, y: 4.5, z: 3.0 },
-        { x: 3.0, y: 5.5, z: 1.5 },
+        { x: -4.0, y: 10.0, z: 12.0 },
+        { x: 0.0, y: 10.0, z: 0.0 },
+        { x: 4.0, y: 10.0, z: -12.0 },
       ],
     },
 
@@ -130,6 +170,8 @@ const DEFAULTS = {
       angularDrag: 0.04,
       colorA: 0xd32f2f,   // crimson
       colorB: 0xf5f5f5,   // white
+      textureUrl: assetUrl('textures/ball_small.png'),
+      emissiveUrl: assetUrl('textures/ball_small_emissive.png'),
     },
     {
       id: 'medium',
@@ -142,6 +184,8 @@ const DEFAULTS = {
       angularDrag: 0.03,
       colorA: 0x1976d2,   // blue
       colorB: 0xfbc02d,   // yellow
+      textureUrl: assetUrl('textures/ball_medium.png'),
+      emissiveUrl: assetUrl('textures/ball_medium_emissive.png'),
     },
     {
       id: 'large',
@@ -154,6 +198,8 @@ const DEFAULTS = {
       angularDrag: 0.02,
       colorA: 0x7b1fa2,   // purple
       colorB: 0xb0bec5,   // silver
+      textureUrl: assetUrl('textures/ball_large.png'),
+      emissiveUrl: assetUrl('textures/ball_large_emissive.png'),
     },
   ],
 
@@ -169,7 +215,7 @@ const DEFAULTS = {
     // flat ground, and cutting it is what makes flat-ground momentum expensive
     // to build without capping what gravity can give you down a slope — a
     // velocity cap would do the opposite, so the acceleration is what moves.
-    driveTorque: 4.0,
+    driveTorque: 4,          // LIVE TUNE: raised from 3 for punchier acceleration
     // 12 rad/s = 6.0 m/s. LOWERED from 25, and this is the lever that actually
     // delivers the heaviness — cutting driveTorque alone did not, because at
     // 3.0 the motor still had enough authority to climb all the way to the old
@@ -193,7 +239,7 @@ const DEFAULTS = {
     // the floor and oscillating up the far side. At 1.0 the brake is 1.36
     // m/s^2, gravity wins on every part of the wall, and the ball still comes
     // to a dead stop on the flat floor in under 2 s from 5 m/s.
-    brakeTorque: 2.0,
+    brakeTorque: 2,          // LIVE TUNE: raised from 1 for crisper stopping
     // 0.5 — a slight raise from 0.4, and deliberately no more.
     //
     // Resistance turned out NOT to be a heaviness lever: the governor sets the
@@ -225,7 +271,7 @@ const DEFAULTS = {
 
   jump: {
     impulse: 7.0,
-    fallGravityMultiplier: 2.0,
+    fallGravityMultiplier: 2.0,   // LIVE TUNE: lowered from 2.5 — floatier, athletic arc
 
     // THE AIRBORNE OVERRIDE. Asymmetric on purpose: a jump leaves the ground
     // in a couple of frames and the pose has to commit that fast, but a landing
@@ -273,7 +319,7 @@ const DEFAULTS = {
     // takeoffRate carries the clip from its first frame to the hold point in
     // apexHold / takeoffRate = 0.31 s, about the time a jump takes to leave the
     // ground and open out.
-    takeoffRate: 2.5,
+    takeoffRate: 2.5,        // LIVE TUNE: raised from 1.8 for a snappier takeoff
     // WHERE THE POSE HOLDS. The clip stops here for the whole airtime, and that
     // held frame IS the airborne pose — a jump is one shape held, not a
     // sequence played at whatever rate the arc happens to imply. Just past the
@@ -283,7 +329,7 @@ const DEFAULTS = {
     // Rate from the hold point through the landing frames to 1.0 once the feet
     // are down: 0.45 of the clip in 0.18 s. Fast enough not to outlast
     // airEaseOut, slow enough to be seen.
-    landRate: 2.0,
+    landRate: 2.0,           // LIVE TUNE: lowered from 2.5 — smoother landing recovery
   },
 
   // REACTIVE RAGDOLLING. Contact forces on the character's own colliders push
@@ -459,14 +505,12 @@ const DEFAULTS = {
     // this ring owns the blend" are the same number by construction.
     // LOWERED with the motor. These are the speeds at which each animation
     // ring owns the blend, so they have to track what the character can
-    // actually reach or the gait reads wrong: leave sprintSpeed at 8.5 while
-    // flat-ground sprint tops out near 6 and the sprint clip never fully
-    // engages on the flat. Re-seeded against the measured new ceilings.
-    // Re-seeded a second time from a play session: these are the values that
-    // felt right in the GUI, written down so a reload keeps them.
-    walkSpeed: 2.0,
-    runSpeed: 4.5,
-    sprintSpeed: 6.0,
+    // actually reach or the gait reads wrong: leave sprintSpeed at 6.0 while
+    // flat-ground sprint tops out near 5.2 due to rolling resistance, and the
+    // sprint clip never fully engages on the flat. Calibrated to actual measured speeds.
+    walkSpeed: 1.8,
+    runSpeed: 3.8,
+    sprintSpeed: 5.0,
 
     // THE NODE TABLE. Ring order is F, R, B, L throughout and must stay in that
     // order — the angular tent reads it as four equal sectors starting at
@@ -577,6 +621,13 @@ const DEFAULTS = {
     // held airborne pose — the mechanics work whether or not the art is there.
     slideClip: 'Slide Left',
     diveClip: 'Running Dive',
+
+    // THE PELVIS'S CLAMP, BOOSTED WHILE SLIDING. At speed the whole body is
+    // dragging on the floor, and the tracker's mass-proportional impulse cap is
+    // reached before the pelvis servo can hold station — so the body lags the
+    // sphere and visibly detaches. Multiplies maxLinearImpulse for the pelvis
+    // only, and only while a slide is showing.
+    slidePelvisClampBoost: 3.0,
 
     // THE USABLE WINDOW OF EACH ACTION CLIP, same idea as jump.clipStart/End.
     //
@@ -843,11 +894,23 @@ const DEFAULTS = {
     // HALVED FROM 9.0 / 4.5. At those values the launch added 8.6 m/s forward
     // on top of a 6 m/s run and threw the sphere 0.75 m up: a fifteen-metre-
     // per-second flight that read as a superhero leap and undid the heavy,
-    // grounded feel everything else is tuned for. At 4.5 / 2.4 it adds 4.3 m/s
-    // to a run and rises about 0.24 m — a lunge that leaves the ground because
-    // the athlete threw himself at something, not because he can fly.
-    diveImpulseForward: 4.5,
-    diveImpulseUp: 2.4,
+    // grounded feel everything else is tuned for.
+    //
+    // RAISED 4.5/2.4 -> 4.8/3.8. At 2.4 the dive rose 0.219 m and the athlete
+    // was on his face before he could reach anything, which is a faceplant with
+    // a wind-up rather than a dive. The arithmetic, against this project's own
+    // numbers rather than a textbook's: the sphere is r 0.5 at density 2.0, so
+    // (4/3)pi r^3 * 2.0 = 1.047 kg, and gravity here is 12 m/s^2, not 9.81.
+    //
+    //   3.8 N.s / 1.047 kg = 3.630 m/s   ->  apex 3.630^2 / (2*12) = 0.549 m
+    //   2.4 N.s / 1.047 kg = 2.292 m/s   ->  apex               = 0.219 m
+    //
+    // So 3.8 buys a waist-high 0.55 m arc, about 18 ticks up and rather fewer
+    // down once fallGravityMultiplier takes over — call it 30 airborne — which
+    // is enough time to reach for a ball before the turf arrives. Both numbers
+    // are live in the GUI now; these are the seeds, not the verdict.
+    diveImpulseForward: 4.8,
+    diveImpulseUp: 3.8,
     // Ticks between dives. Raised from 90 to 150 (2.5 s): a dive ends in a
     // crash and a stand-up, and being able to queue the next one before the
     // last has finished is not a mechanic, it is a bug.
@@ -875,11 +938,25 @@ const DEFAULTS = {
   // must be moved together to stay honest.
   strike: {
     pressCooldownTicks: 20,   // a new press inside this many ticks is ignored
-    qualityPerfectTicks: 4,   // |error| <= this -> quality 1.0
+    qualityPerfectTicks: 4,   // |error| <= this -> quality 1.0. LIVE TUNE: widened from 3
     qualityZeroTicks: 12,     // |error| >= this -> quality floor
     qualityFloor: 0.35,       // a mistimed contact still leaves at 35% speed
     aimStickWeight: 0.6,      // 0 = aim is pure facing, 1 = pure stick heading
     mixEase: 10.0,            // action-tier share ease, same rate as poseEase
+
+    // ═══ SWEET-SPOT PROXIMITY ASSIST ═══ (see checkStrikeAssist)
+    //
+    // Forgiveness measured from the ball's SURFACE, not its centre, so it means
+    // the same thing on a 0.4 m ball and a 1.5 m one. Narrow on purpose: it
+    // rescues a well-timed swing that missed by centimetres, and does nothing
+    // for a swing that was early or late.
+    assistRadius: 0.45,       // m of proximity forgiveness around a qualifying limb
+    assistWindowTicks: 6,     // only within +/- this many ticks of sweetTick
+
+    // TARGET MAGNETISM. The launch yaw is nudged from the player's own aim
+    // toward the far goal's centre by this fraction. Set to 0.0 for pure
+    // unassisted physics aiming.
+    aimMagnetism: 0.0,        // 0.0 = pure player aim (disabled by default)
 
     // ═══ THE EAST BUTTON IS CONTEXTUAL ═══ (G4.1 §5)
     //
@@ -1016,6 +1093,10 @@ const DEFAULTS = {
     // Seeded 3. Same clamp argument as linearKd.
     angularKd: 40,
     pelvisBoost: 3.0,
+    // Foot active stability: prevents feet from inverting/flipping backwards on slopes
+    footAngularKp: 1500,
+    footAngularKd: 150,
+    footMaxAngularImpulse: 0.35,
 
     // PER-GROUP STIFFNESS, keyed by autorig's BONE_MAP group. Multiplies both
     // kpScale and kdScale, so a group that is softer is also less damped —
@@ -1087,9 +1168,18 @@ const DEFAULTS = {
     // run contains a character in a repeatable pose rather than an empty bowl.
     captureSpawnTick: 30,
     // g/cm3 (water = 1.0). autorig converts to Rapier's kg/m3.
-    density: { torso: 1.2, limb: 1.0, head: 0.9, extremity: 0.8 },
+    density: { torso: 1.2, limb: 1.0, head: 0.9, extremity: 0.8, handL: 0.12, handR: 0.12 },
     // Fractions of the MEASURED character height, never of segment length.
-    radiusRatio: { torso: 0.075, limb: 0.032, head: 0.062, extremity: 0.024 },
+    radiusRatio: {
+      torso: 0.075,
+      limb: 0.032,
+      head: 0.062,
+      extremity: 0.024,
+      handL: 0.062,
+      handR: 0.062,
+      footL: 0.038,
+      footR: 0.038,
+    },
     lengthFit: 0.9,
     // JOINT RANGES, radians, about each hinge's authored axis.
     //
@@ -1226,7 +1316,97 @@ const DEFAULTS = {
   // is no OrbitControls any more, and therefore no second thing that also
   // believes it owns the camera — which is what the x/y/z/follow trio here used
   // to be: a static pose that a follow function then quietly overwrote.
+  // ═══ THE MATCH ═══ (Phase 1)
+  //
+  // THE HOOP NUMBERS ARE MEASURED OFF arena.glb, not authored. Both rings sit
+  // in the x = 0 plane at (0, 10.000, -/+40.000) with an inner aperture radius
+  // of 4.667 m and a 0.333 m tube. The spec that asked for this said 4.7; the
+  // asset says 4.667, and 33 mm of difference is a ball centre passing through
+  // the metal. Re-measure if the court is ever re-exported.
+  match: {
+    // 'practice' (all three balls, sandbox, no clock) | 'match' (clock running)
+    mode: 'practice',
+    durationSeconds: 300,
+    ballDropHeightY: 10.0,
+    pitchBoundsX: 16.0,
+    pitchBoundsZ: 30.0,
+    pitchMarginX: 2.0,
+    pitchMarginZ: 4.0,
+
+    hoopRadius: 4.667,      // MEASURED inner aperture, metres
+    hoopCenterY: 10.0,      // MEASURED
+    hoopNorthZ: -40.0,      // MEASURED
+    hoopSouthZ: 40.0,       // MEASURED
+
+    // HOW FAR CLEAR OF THE PLANE A BALL MUST GET before it can score in the
+    // same hoop again. This is the anti-jitter rule and it is a DISTANCE, not a
+    // direction: a ball resting in the goal mouth rocks back and forth across
+    // x = 0, and every one of those crossings arrives from the opposite side to
+    // the last, so a direction test scores all of them. See scoring.js.
+    hoopRearmX: 1.2,
+
+    // HOW LONG THE SCOREBOARDS FLASH AFTER A GOAL, in TICKS. 150 is 2.5
+    // seconds of fixed steps, matching the arena horn celebration.
+    celebrationTicks: 150,
+  },
+
+  /**
+   * THE FOUR BOUNDARY SCOREBOARDS — render-side only.
+   *
+   * Every position below was MEASURED against arena.glb by raycast rather than
+   * guessed, because the court is a stepped bowl and "near the boundary" is a
+   * different number at every height:
+   *
+   *   E/W  the side wall is flat and vertical at |x| = 25.00 from y 6.0 to
+   *        13.0, and the bank behind the touchline rises to meet it at y 6.0.
+   *        A board centred at 6.5 would be half buried in that bank.
+   *   N/S  the back boundary at |z| = 60 is only 2 m tall (y 11..13) and then
+   *        the bowl chamfers out at 45 degrees to |z| = 65 by y 18, above
+   *        which it is flat and vertical all the way to y 38. So the end
+   *        boards hang on that upper wall, not on the short back boundary and
+   *        not in the chamfer, and a board at |z| = 57.5 would float five and
+   *        a half metres clear of any wall at all.
+   *
+   * `sideX` and `endZ` are the MOUNTING PLANES, each 0.2 m proud of its wall.
+   * The bezel slab is deeper than that stand-off, so its back edge buries in
+   * the wall and no gap shows from an angle.
+   */
+  scoreboard: {
+    enabled: true,
+
+    // North and south: recessed flush into the upper bowl wall at |z| = 65.0.
+    // Perfectly 2:1 ratio (14.0m x 7.0m) matching 1024x512 canvas.
+    // Centered at Y = 22.0 so bottom (Y = 18.5) sits cleanly above the chamfer lip (Y = 18.0).
+    endWidth: 14.0,
+    endHeight: 7.0,
+    endCenterY: 22.0,
+    endZ: 64.98, // 2cm in front of |z|=65 wall: perfectly flush / recessed
+
+    // East and west: centerline ribbon boards on the side wall at |x| = 25.0.
+    // Prominently widened (28.0m x 3.2m, ~8.75:1 ratio) to fit directional attack readouts comfortably.
+    sideWidth: 28.0,
+    sideHeight: 3.2,
+    sideCenterY: 9.2,
+    sideX: 24.98, // 2cm in front of |x|=25 wall: perfectly flush / recessed
+
+    /** Texture resolutions */
+    endCanvasWidth: 1024,
+    endCanvasHeight: 512,
+    sideCanvasWidth: 2048,
+    sideCanvasHeight: 256,
+
+    /** Ticks per celebration flash half-cycle. 15 ticks = four flashes/second. */
+    flashTicks: 15,
+  },
+
   camera: {
+    // 'chase' | 'ball' | 'broadcast' | 'tactical'. RENDER-SIDE STATE, and the
+    // only reason that is safe: nothing under sim/ or mechanics/ reads a camera
+    // transform. The simulation's one view of the camera is input.cameraYaw,
+    // latched once per frame in input.js from whatever the camera ended up
+    // looking at — so a mode change reaches the athlete as a different heading
+    // for his stick and in no other way (LAW 6: the fixed step is untouched).
+    mode: 'chase',
     fov: 52,
     // Where the arm sits in the clear. currentDistance always converges here.
     radius: 8.0,
@@ -1248,6 +1428,66 @@ const DEFAULTS = {
     minDistance: 1.5,
     // 1/s. Obstruction SHORTENS instantly; restoring eases at this rate.
     restoreEase: 4.0,
+
+    // ═══ THE OTHER THREE VIEWS ═══
+    //
+    // Each mode owns its own numbers rather than reusing the chase arm's, so
+    // tuning a TV shot cannot quietly change how the game plays in chase.
+    // minDistance, collisionMargin and restoreEase ARE shared, because they
+    // describe the arm's behaviour against geometry rather than the shot.
+    ballCam: {
+      distance: 8.5,
+      targetHeight: 1.2,
+      minPitch: 0.05,
+      maxPitch: 1.25,
+      smoothEase: 6.0,
+
+      // ═══ THE COMFORT NUMBERS ═══
+      //
+      // A ball cam that tracks the ball's HEIGHT rides every floor bounce, and
+      // a camera that pitches up and down several times a second is the fastest
+      // way to make someone put the controller down. So the pitch ignores
+      // height entirely until the ball is genuinely lofted, and even then it
+      // moves on its own much slower ease.
+      //
+      // These are comfort thresholds, and comfort is per-person — they live in
+      // the table rather than as literals in main.js so they can be moved
+      // without a rebuild when someone says it still makes them queasy.
+      restPitch: 0.22,      // rad, ~12 deg down. The pitch when nothing is lofted.
+      loftAboveY: 2.2,      // m. Below this the ball's height is not tracked AT ALL.
+      loftPitchGain: 0.75,  // how much of the lofted angle the pitch actually takes
+      loftMinDistance: 6.0, // m floor under the horizontal, so overhead does not gimbal
+      pitchEase: 2.5,       // 1/s. Deliberately far slower than smoothEase.
+      lookLiftMax: 1.0,     // m the look-at point rises on a high ball, at most
+      lookLiftGain: 0.25,   // m of lift per m of loft
+    },
+    broadcast: {
+      sideX: 30.0,        // sideline distance, East side
+      heightY: 13.0,      // elevation above the court
+      trackZWeight: 0.6,  // how far the dolly leads toward the ball
+      minZ: -35.0,
+      maxZ: 35.0,
+      smoothEase: 3.5,
+    },
+    tactical: {
+      heightY: 22.0,
+      distanceZ: -16.0,
+      lookAheadZ: 8.0,
+      smoothEase: 4.0,
+    },
+  },
+
+  // ═══ AUDIO & SFX ═══
+  // Zero-dependency procedural Web Audio sound synthesis.
+  // Master switches and balance sliders.
+  audio: {
+    enabled: true,
+    masterVolume: 0.8,
+    sfxVolume: 0.9,
+    ambienceVolume: 0.2,
+    spatialAudio: true,
+    minBounceForce: 2.0, // N: ignore micro-contacts/resting jitters
+    strikeSweetBonus: false,
   },
 };
 

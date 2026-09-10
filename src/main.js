@@ -1,15 +1,15 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-import { TUNING } from './config/tuning.js';
+import { TUNING, assetUrl } from './config/tuning.js';
 import { Loop } from './core/Loop.js';
 import {
   initPhysics, stepPhysics, getWorld, drainContactForces, RAPIER,
   ENVIRONMENT_RAY_GROUPS, logCollisionMatrix,
 } from './sim/physics.js';
-import { createArena, activeArenaType, activeArenaPreset } from './sim/arena.js';
+import { createArena, activeArenaType, activeArenaPreset, getArenaColliderType } from './sim/arena.js';
 import {
-  createBall, applyBallResistance, noteBallContact, syncBallSnapshot, ballProbe,
+  createBall, getCourtBallDropSpawn, applyBallResistance, noteBallContact, syncBallSnapshot, ballProbe,
 } from './sim/ball.js';
 import { createMotor, updateMotor, syncMotorSnapshot, horizontalSpeed } from './sim/motor.js';
 import {
@@ -34,17 +34,23 @@ import {
   syncRagdollPose,
   findNonFinite,
   applyRagdollVisibility,
+  updateAthletePalette,
 } from './sim/ragdoll.js';
 import { applyClampedLinearDamping } from './sim/damping.js';
 import {
   input, initInput, sampleInput, consumeJump, consumeDive, consumeVolley, consumeSpike,
+  consumeCameraCycle,
 } from './input.js';
 import { createWatchdogState, runWatchdog } from './mechanics/watchdog.js';
 import { createMountFollowerState, runMountFollower } from './mechanics/mountFollower.js';
 import { createActionState, runActions } from './mechanics/actions.js';
 import {
-  createStrikeState, runStrikes, resolveStrikeContact, strikeProbe,
+  createStrikeState, runStrikes, resolveStrikeContact, strikeProbe, checkStrikeAssist,
+  KIND_NAME,
 } from './mechanics/strikes.js';
+import { createMatchState, updateScoring, matchProbe } from './mechanics/scoring.js';
+import { createScoreboards, updateScoreboards } from './visuals/scoreboards.js';
+import { soundManager } from './audio/soundManager.js';
 import { createGui } from './debug/gui.js';
 import { initCapture } from './debug/capture.js';
 
@@ -84,6 +90,9 @@ const _rayDir = { x: 0, y: 0, z: 0 };
 
 /** Consecutive ticks the ground fan has reported contact. Mechanics counter. */
 let groundedRun = 0;
+/** Previous grounded state, for landing sound detection. */
+let wasGrounded = true;
+let lastFootstepSlot = -1;
 /** Scratch for the limp brake's relative velocity. */
 const _limpVel = new THREE.Vector3();
 /** Slack on the weight-sum assertion, for the easings' floating-point residue. */
@@ -143,9 +152,9 @@ const WEIGHT_SUM_TOLERANCE = 1e-3;
  * on two comment lines in this block, deliberately: it is the only record of
  * where the asset came from, and no code path names it.
  */
-const CHARACTER_URL = import.meta.env.BASE_URL + 'models/character.glb';
+const CHARACTER_URL = assetUrl('models/character.glb');
 /** OPTIONAL. Absent today; extra clips beyond the character asset go here. */
-const ACTIONS_URL = import.meta.env.BASE_URL + 'models/actions.glb';
+const ACTIONS_URL = assetUrl('models/actions.glb');
 
 /** Scratch for the mount transform. Built fresh on every spawn. */
 const _mount = new THREE.Matrix4();
@@ -242,6 +251,29 @@ function installRespawnHotkey() {
     // recovery ramp. It queues a flag; fixedUpdate consumes it, so the weight
     // is never written from outside the fixed step.
     if (isHotkey(event, 'KeyT')) knockdownRequested = true;
+    // "H" — TOGGLE DEVELOPER TELEMETRY HUD
+    if (isHotkey(event, 'KeyH')) {
+      TUNING.debug.showHud = !TUNING.debug.showHud;
+      setHudVisible(TUNING.debug.showHud);
+    }
+    // "J" — TOGGLE TEAM JERSEY (Home <-> Away)
+    if (isHotkey(event, 'KeyJ')) {
+      TUNING.athlete.team = TUNING.athlete.team === 'home' ? 'away' : 'home';
+      updateAthletePalette(ragdoll);
+      if (guiInstance) {
+        guiInstance.controllersRecursive().forEach((c) => c.updateDisplay());
+      }
+    }
+    // "K" — CYCLE SILHOUETTE VARIANT (masculine -> feminine -> classic)
+    if (isHotkey(event, 'KeyK')) {
+      const variants = ['masculine', 'feminine', 'classic'];
+      const nextIdx = (variants.indexOf(TUNING.athlete.variant) + 1) % variants.length;
+      TUNING.athlete.variant = variants[nextIdx];
+      updateAthletePalette(ragdoll);
+      if (guiInstance) {
+        guiInstance.controllersRecursive().forEach((c) => c.updateDisplay());
+      }
+    }
   });
 }
 
@@ -277,28 +309,38 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0a0d12);
 
-scene.add(new THREE.AxesHelper(2));
+// scene.add(new THREE.AxesHelper(2));
 
-const keyLight = new THREE.DirectionalLight(0xffffff, 2.4);
-keyLight.position.set(8, 14, 10);
-// The shadow camera is an orthographic box in LIGHT space and has to contain
-// everything that should cast. Sized to the bowl's floor radius with margin: at
-// 2048 over 80 m that is about 4 cm per texel, which resolves a 40 cm ball
-// cleanly. normalBias rather than a large depth bias, because a sphere's
-// grazing angles are where acne shows and normalBias is the term that fixes it
-// without detaching the shadow from the ball at contact.
-keyLight.castShadow = true;
-keyLight.shadow.mapSize.set(2048, 2048);
-keyLight.shadow.camera.left = -40;
-keyLight.shadow.camera.right = 40;
-keyLight.shadow.camera.top = 40;
-keyLight.shadow.camera.bottom = -40;
-keyLight.shadow.camera.near = 0.5;
-keyLight.shadow.camera.far = 120;
-keyLight.shadow.bias = -0.0005;
-keyLight.shadow.normalBias = 0.02;
-scene.add(keyLight);
-scene.add(new THREE.AmbientLight(0x8fb4d6, 0.55));
+// 4-CORNER STADIUM FLOODLIGHT RIG
+// 4 high towers positioned outside the court corners aimed down at the arena.
+// Produces 4 soft, distinct shadows fanning out under the ball and athlete,
+// converging at ground contact to give clear depth and spatial cues.
+const stadiumTowers = [
+  { name: 'NE', pos: [32, 28, -50], intensity: 0.85 },
+  { name: 'NW', pos: [-32, 28, -50], intensity: 0.85 },
+  { name: 'SE', pos: [32, 28, 50], intensity: 0.85 },
+  { name: 'SW', pos: [-32, 28, 50], intensity: 0.85 }
+];
+
+const stadiumLights = [];
+for (const tower of stadiumTowers) {
+  const light = new THREE.DirectionalLight(0xffffff, tower.intensity);
+  light.position.set(...tower.pos);
+  light.castShadow = true;
+  light.shadow.mapSize.set(1024, 1024);
+  light.shadow.camera.left = -45;
+  light.shadow.camera.right = 45;
+  light.shadow.camera.top = 45;
+  light.shadow.camera.bottom = -45;
+  light.shadow.camera.near = 1.0;
+  light.shadow.camera.far = 130;
+  light.shadow.bias = -0.0005;
+  light.shadow.normalBias = 0.02;
+  scene.add(light);
+  stadiumLights.push(light);
+}
+
+scene.add(new THREE.AmbientLight(0x8fb4d6, 0.45));
 
 // Static three-quarter view. The camera is explicitly NOT simulation state and
 // is NOT interpolated. There is no follow logic in this task.
@@ -330,6 +372,20 @@ const cameraRig = {
 const _camTarget = new THREE.Vector3();
 const _camOffset = new THREE.Vector3();
 const _camDir = new THREE.Vector3();
+/** Where a fixed-shot mode wants the camera. Scratch: these run every frame. */
+const _camDesired = new THREE.Vector3();
+
+/**
+ * THE VIEWS, in cycle order. One array so the hotkey, the pad and the GUI
+ * dropdown cannot disagree about what comes next.
+ */
+const CAMERA_MODES = ['chase', 'ball', 'broadcast', 'tactical'];
+
+function cycleCameraMode() {
+  const current = CAMERA_MODES.indexOf(TUNING.camera.mode);
+  TUNING.camera.mode = CAMERA_MODES[(current + 1) % CAMERA_MODES.length];
+  console.log(`[camera] mode -> ${TUNING.camera.mode}`);
+}
 
 /** Applied at boot and from the GUI. Never from the render pass. */
 function applyCameraTuning() {
@@ -384,6 +440,8 @@ const hudBallPeak = document.getElementById('hud-ballpeak');
 const hudStrike = document.getElementById('hud-strike');
 const hudStrikeHit = document.getElementById('hud-strikehit');
 const hudStrikeRate = document.getElementById('hud-strikerate');
+const hudCamMode = document.getElementById('hud-cammode');
+const hudScore = document.getElementById('hud-score');
 const hudDrag = document.getElementById('hud-drag');
 const hudLoco = document.getElementById('hud-loco');
 const hudArm = document.getElementById('hud-arm');
@@ -395,7 +453,11 @@ function setHudVisible(visible) {
   hud.style.display = visible ? '' : 'none';
 }
 
-function updateHud() {
+/**
+ * @param {object|null} match this frame's matchProbe snapshot, or null before
+ *   the match state exists.
+ */
+function updateHud(match) {
   if (!TUNING.debug.showHud) return;
 
   hudTick.textContent = String(loop.tick);
@@ -529,7 +591,9 @@ function updateHud() {
   // whiff, because a whiff is always either "too early", "too late", or "the
   // hand never got there".
   const st = strikeProbe(strikeState);
-  const row = st.kind === 'spike' ? TUNING.strike.spike : TUNING.strike.volley;
+  const row = st.kind === 'spike'
+    ? TUNING.strike.spike
+    : (st.kind === 'kick' ? TUNING.strike.kick : TUNING.strike.volley);
   const since = loop.tick - st.lastStrikeTick;
   const open = Number.isFinite(since) && since >= row.windowOpen && since <= row.windowClose;
   hudStrike.textContent = st.lastStrikeTick === -Infinity
@@ -541,8 +605,33 @@ function updateHud() {
     ? `${st.lastContactKey} @${st.lastContactTick} q ${st.lastContactQuality.toFixed(2)} ` +
       `${st.lastContactForce.toFixed(0)} N -> ${st.lastLaunchSpeed.toFixed(1)} m/s`
     : '—';
-  hudStrikeRate.textContent = `${st.resolvedCount} / ${st.whiffCount}` +
+  // HITS / SWINGS, not hits / misses. The old readout put two disjoint counts
+  // side by side and read as a fraction, so a perfect swing showed "1 / 0".
+  const attempts = st.attempts || (st.resolvedCount + st.whiffCount);
+  // ASSISTED HITS ARE SHOWN, NOT FOLDED IN. A hit rate that hides how much of
+  // itself the assist paid for is a number that cannot be tuned against.
+  const assisted = st.assistedCount || 0;
+  const assistTag = assisted > 0 ? ` (${assisted} assisted)` : '';
+  hudStrikeRate.textContent = `${st.resolvedCount}${assistTag} / ${attempts}` +
     (Number.isFinite(st.hitRate) ? `  (${(st.hitRate * 100).toFixed(0)}%)` : '');
+
+  // Guarded rather than assumed: the span is new, and a stale index.html should
+  // cost the mode readout and nothing else.
+  if (hudCamMode) hudCamMode.textContent = `${TUNING.camera.mode.toUpperCase()} [Tab / D-Pad]`;
+
+  // THE FLOATING SCORE LINE STAYS, and stays exactly as gated as it already
+  // was. setHudVisible() hides the whole #hud block, so switching the HUD off
+  // for a clean diegetic view already takes this line with it — there is
+  // nothing to remove, and removing it would cost the debug readout its clock.
+  if (hudScore && match) {
+    const m = match;
+    const mins = Math.floor(m.ticksRemaining / 3600);
+    const secs = Math.floor((m.ticksRemaining % 3600) / 60);
+    const clock = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    hudScore.textContent =
+      `${m.scoreHome} - ${m.scoreAway}  ->goal ${m.targetGoal}  ` +
+      `${m.mode === 'match' ? clock : 'practice'}${m.matchOver ? '  FULL TIME' : ''}`;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -564,6 +653,14 @@ let animTarget = null;
  * every per-step call below iterates the array.
  */
 let balls = [];
+/** The match: score, target end and clock. Created in boot, one per session. */
+let matchState = null;
+/**
+ * THE FOUR BOUNDARY SCOREBOARDS. Render-side only: no body, no collider, no
+ * entry in loop.interpolated. Built in boot after the arena, so its measured
+ * wall positions are already on screen when the boards mount to them.
+ */
+let scoreboards = null;
 let ball = null;
 /** collider handle -> ball, so the drain callback can name which one was hit. */
 const ballByHandle = new Map();
@@ -599,6 +696,9 @@ let characterSkeleton = null;
 
 /** The live ragdoll, or null. Rebuilt wholesale on every spawn. */
 let ragdoll = null;
+
+/** The lil-gui instance, for live display sync. */
+let guiInstance = null;
 
 /**
  * Set by the "R" key and by the capture seam; consumed at the top of the next
@@ -680,7 +780,7 @@ function spawnRagdoll() {
   impactByHandle.clear();
   for (const [key, item] of ragdoll.rig) {
     item.collider.setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS);
-    item.collider.setContactForceEventThreshold(TUNING.impact.eventThreshold);
+    item.collider.setContactForceEventThreshold(1.0);
     impactByHandle.set(item.collider.handle, { key, group: groupByKey.get(key) });
   }
 
@@ -837,6 +937,18 @@ function buildGhostInputs(actions, strikes) {
     strikePhase: strikes.strikePhase,
     strikeKind: strikes.strikeKind,
     strikeSide: strikes.strikeSide,
+    // IS THE CAMERA BEHIND HIM? The ghost needs to know, because "face the
+    // camera when you stop" is right under a chase shot and turns the athlete
+    // to face the stands under a sideline one. It comes through HERE rather
+    // than sim/ reading TUNING.camera, for the same reason everything else
+    // does: the fixed step may not read render state.
+    //
+    // LISTED POSITIVELY, so a mode added later and forgotten gets the fixed-shot
+    // behaviour — facing its own travel heading, which is wrong in no camera —
+    // rather than silently inheriting camera-relative facing, which is wrong in
+    // every camera but these two.
+    facingFollowsCamera:
+      TUNING.camera.mode === 'chase' || TUNING.camera.mode === 'ball',
   };
 }
 
@@ -885,7 +997,51 @@ function drainImpacts(tick, dt) {
         // puts one impulse on the ball. Most contacts are not, and it returns
         // without doing anything, which is the diving dig and every incidental
         // knock continuing to work exactly as G2 left them.
-        resolveStrikeContact(strikeState, hitBall, limb && limb.key, totalForce, tick);
+        const didStrike = resolveStrikeContact(strikeState, hitBall, limb && limb.key, totalForce, tick);
+        const ballPos = hitBall.body.translation();
+        if (didStrike) {
+          const kind = KIND_NAME[strikeState.lastStrikeKind] || 'volley';
+          soundManager.playStrike(kind, strikeState.lastContactQuality, strikeState.lastLaunchSpeed, ballPos, hitBall.radius || 0.5);
+        } else if (limb || other === motor.collider.handle) {
+          // Ball made incidental contact with the player's body or limbs outside a strike
+          const vel = hitBall.body.linvel();
+          const speed = Math.hypot(vel.x, vel.y, vel.z);
+          soundManager.playPlayerBallImpact(speed, ballPos, hitBall.radius || 0.5);
+        } else {
+          // Ball bounced against the environment (boundary wall, goal hoop, or court floor)
+          const vel = hitBall.body.linvel();
+          const speed = Math.hypot(vel.x, vel.y, vel.z);
+          const arenaType = getArenaColliderType(other);
+
+          if (arenaType === 'goal') {
+            // Ball physically collided with the goal hoop frame / rim
+            soundManager.playHoopClank(speed, ballPos);
+          } else if (arenaType === 'boundary' && ballPos.y >= 13.0) {
+            // Ball hit upper boundary wall / acrylic glass backboard (y >= 13.0)
+            soundManager.playGlassImpact(speed, ballPos);
+          } else {
+            // Court surface / purple corner steps (y < 13.0) / river bounce
+            const wasInAir = (tick - (hitBall._lastGroundTick || 0)) > 10;
+            hitBall._lastGroundTick = tick;
+
+            // A true bounce requires meaningful vertical impact velocity, or landing from flight.
+            // Continuous surface rolling has |vy| < 0.40 and must NEVER trigger pitter-patter impact taps.
+            const vyAbs = Math.abs(vel.y);
+            const isBounceImpact = (wasInAir && (vyAbs > 0.35 || speed > 1.2)) || vyAbs >= 0.60;
+
+            if (isBounceImpact && (tick - (hitBall._lastBounceTick || 0)) > 8) {
+              hitBall._lastBounceTick = tick;
+              const isRiver = Math.abs(ballPos.x) < 2.5;
+              const bounceSpeed = Math.max(vyAbs, speed * 0.45);
+              soundManager.playBallBounce(
+                hitBall.radius || 0.5,
+                bounceSpeed,
+                isRiver ? 'river' : 'court',
+                ballPos,
+              );
+            }
+          }
+        }
         return;
       }
 
@@ -893,7 +1049,29 @@ function drainImpacts(tick, dt) {
       // the permanent mount contact cannot appear here — measured across four
       // calibration regimes, zero ragdoll-vs-sphere events. No exclusion needed.
       const hit = impactByHandle.get(handle1) || impactByHandle.get(handle2);
-      if (hit) impactEvents.push({ key: hit.key, group: hit.group, force: totalForce });
+      if (hit) {
+        // WHILE SLIDING, THE FLOOR IS NOT AN ACCIDENT. A slide drags the hip and
+        // the trailing leg along the ground for its whole length, and every one
+        // of those scrapes was arriving here as an impact and costing tracking
+        // weight — so the harder the slide, the more the athlete went limp
+        // doing the thing he was told to do. Ground contact during a deliberate
+        // slide is intentional movement, and intentional movement does not cost
+        // authority.
+        //
+        // A TICK COMPARISON, NOT A FLAG: slideTime is the slide's own clock, so
+        // this reads the same recorded number startingSlide writes and nothing
+        // new is stored anywhere.
+        //
+        // WHAT THIS ALSO SUPPRESSES, said plainly: it drops EVERY non-ball
+        // impact while the clock runs, not only floor scrapes. Sliding into the
+        // bowl rim at speed no longer knocks the athlete down. That is the
+        // designer's call as written; if a wall hit should still count, the
+        // discriminator is the contact's own normal, not the slide clock.
+        const isSliding = actionState && actionState.slideTime > 0;
+        if (!isSliding && totalForce >= TUNING.impact.eventThreshold) {
+          impactEvents.push({ key: hit.key, group: hit.group, force: totalForce });
+        }
+      }
     });
     applyImpacts(tracker, impactEvents, tick, dt);
   }
@@ -1116,6 +1294,36 @@ function fixedUpdate(dt, tick) {
 
   // 8 — THE LIFTOFF EDGE, and the ghost's inputs for this step.
   const liftoff = motor.lastJumpTick !== jumpTickBefore;
+  if (liftoff) {
+    soundManager.playAthleteAction('jump', motor.body.translation());
+  }
+  if (motor.grounded && !wasGrounded) {
+    const vy = motor.body.linvel().y;
+    if (vy < -0.4) {
+      soundManager.playAthleteAction('land', motor.body.translation());
+    }
+  }
+  wasGrounded = motor.grounded;
+
+  if (actions.actionCommitted && actionState && actionState.slideTime === 1) {
+    soundManager.playAthleteAction('slide', motor.body.translation());
+  }
+
+  // ATHLETIC COURT FOOTSTEPS (Locomotion on court floor)
+  const motorVel = motor.body.linvel();
+  const speedH = Math.hypot(motorVel.x, motorVel.z);
+
+  if (motor.grounded && !liftoff && (!actionState || actionState.slideTime === 0)) {
+    // Rhythmic court footsteps during locomotion
+    if (animTarget && speedH > 1.2) {
+      const currentSlot = animTarget.locomotionPhase < 0.5 ? 0 : 1;
+      if (currentSlot !== lastFootstepSlot) {
+        lastFootstepSlot = currentSlot;
+        soundManager.playFootstep(motor.body.translation());
+      }
+    }
+  }
+
   const ghostInputs = animTarget ? buildGhostInputs(actions, strikes) : null;
 
   // 9 — THE GHOST.
@@ -1134,6 +1342,40 @@ function fixedUpdate(dt, tick) {
 
   // 12 — IMPACTS.
   drainImpacts(tick, dt);
+
+  // 12b — SCORING. AFTER the step, so the segment it tests is the path the
+  // ball actually took this tick rather than the one it took last tick. It
+  // reads translations and writes integers; nothing here touches a body, so a
+  // goal cannot perturb the simulation and the determinism anchors do not move.
+  if (matchState) {
+    const goalsBefore = matchState.events.length;
+    updateScoring(matchState, balls, tick);
+    if (matchState.events.length > goalsBefore) {
+      const lastGoal = matchState.events[matchState.events.length - 1];
+      const hoopPos = {
+        x: 0,
+        y: TUNING.match.hoopCenterY,
+        z: lastGoal.goal === 'N' ? TUNING.match.hoopNorthZ : TUNING.match.hoopSouthZ,
+      };
+      soundManager.playGoal(lastGoal.scoredFor, lastGoal.goal, hoopPos);
+    }
+    if (matchState.matchOver && !matchState._buzzerPlayed) {
+      matchState._buzzerPlayed = true;
+      soundManager.playSample('arena_buzzer', 0.95, 1.0, null, soundManager.uiGain);
+    }
+  }
+
+  // THE PROXIMITY ASSIST, after the real contacts have had their chance. A
+  // touch Rapier actually reported always wins; this only fires when the drain
+  // resolved nothing and the swing was well timed.
+  if (ragdoll) {
+    const assisted = checkStrikeAssist(strikeState, ragdoll, balls, tick);
+    if (assisted) {
+      const kind = KIND_NAME[strikeState.lastStrikeKind] || 'volley';
+      const firstBallRadius = (balls && balls.length > 0 && balls[0].radius) || 0.5;
+      soundManager.playStrike(kind, strikeState.lastContactQuality, strikeState.lastLaunchSpeed, motor.body.translation(), firstBallRadius);
+    }
+  }
 
   // 13 — SNAPSHOTS.
   syncMotorSnapshot(motor);
@@ -1160,16 +1402,66 @@ function fixedUpdate(dt, tick) {
  * accumulate and nothing to reset. The old rig could get stuck because its
  * distance was whatever OrbitControls and the follow had last left it at.
  */
-function updateSpringArm() {
-  if (!motor) return;
-  const world = getWorld();
-  if (!world) return;
-  if (!_envRay) _envRay = new RAPIER.Ray(_rayFrom, _rayDir);
+/**
+ * THE ARM'S OBSTRUCTION TEST AND SPRING, shared by the two follow modes.
+ *
+ * Lifted out of the chase path unchanged when the ball cam arrived, rather than
+ * written twice: the ray filter, the instant-shorten/eased-restore asymmetry and
+ * the minimum length are properties of the ARM, not of the shot, and two copies
+ * of them would start agreeing and quietly stop.
+ *
+ * Reads _camTarget and _camDir; writes cameraRig.currentDistance and the camera
+ * position. The caller has already decided where to look from and how far.
+ *
+ * @param {object} world
+ * @param {object} tuning TUNING.camera
+ * @param {number} desired the arm length this mode wants, in the clear
+ * @param {number} frameDelta seconds
+ */
+function applySpringArm(world, tuning, desired, frameDelta) {
+  // THE RAY, from the character outward. Environment-only, so it can never hit
+  // the character's own sixteen bodies or the sphere. _rayFrom and _rayDir are
+  // plain {x,y,z} that RAPIER.Ray holds by reference — assigned componentwise
+  // rather than copied, because they are not Vector3s and never were.
+  _rayFrom.x = _camTarget.x; _rayFrom.y = _camTarget.y; _rayFrom.z = _camTarget.z;
+  _rayDir.x = _camDir.x; _rayDir.y = _camDir.y; _rayDir.z = _camDir.z;
 
-  const tuning = TUNING.camera;
-  const frameDelta = Math.min(loop.frameTimeMs / 1000, TUNING.loop.maxFrameTime);
+  const hit = world.castRay(_envRay, desired, true, undefined, ENVIRONMENT_RAY_GROUPS);
+  const obstructed = hit
+    ? Math.max(tuning.minDistance, hit.timeOfImpact - tuning.collisionMargin)
+    : desired;
 
-  // 1 — INPUT. Stick is a RATE (radians per second); mouse is a DISPLACEMENT
+  // Shorten INSTANTLY: a camera that eases into its limit spends those frames
+  // inside the wall, which is the artefact this exists to prevent. Lengthen on
+  // the ease, because an instant restore is a visible jump the moment the
+  // obstruction clears.
+  if (obstructed < cameraRig.currentDistance) {
+    cameraRig.currentDistance = obstructed;
+  } else {
+    cameraRig.currentDistance +=
+      (obstructed - cameraRig.currentDistance) * (1 - Math.exp(-tuning.restoreEase * frameDelta));
+  }
+
+  camera.position.copy(_camTarget).addScaledVector(_camDir, cameraRig.currentDistance);
+}
+
+/** The spherical offset for an azimuth/pitch pair, into _camOffset and _camDir. */
+function armDirection(radius, azimuth, pitch) {
+  const cosPitch = Math.cos(pitch);
+  _camOffset.set(
+    radius * cosPitch * Math.sin(azimuth),
+    radius * Math.sin(pitch),
+    radius * cosPitch * Math.cos(azimuth),
+  );
+  _camDir.copy(_camOffset).normalize();
+}
+
+/**
+ * CHASE — the original orbit, unchanged. Everything the other three modes do is
+ * measured against how this one feels.
+ */
+function cameraChase(world, tuning, frameDelta) {
+  // INPUT. Stick is a RATE (radians per second); mouse is a DISPLACEMENT
   // (pixels already travelled), so only the stick is scaled by frameDelta.
   // Scaling the mouse by it too would make a drag's throw depend on frame rate,
   // which is the classic mouse-sensitivity bug.
@@ -1179,45 +1471,160 @@ function updateSpringArm() {
   cameraRig.pitch += input.mouseDY / tuning.mousePixelsPerRadian;
   cameraRig.pitch = Math.min(tuning.maxPitch, Math.max(tuning.minPitch, cameraRig.pitch));
 
-  // 2 — TARGET. The interpolated sphere, lifted to the athlete's chest.
+  // TARGET. The interpolated sphere, lifted to the athlete's chest.
   _camTarget.copy(motor.mesh.position);
   _camTarget.y += tuning.targetHeight;
 
-  // 3 — DESIRED. Spherical, so azimuth and pitch are the state and the offset
-  // is derived — rather than the offset being the state and the angles being
+  // DESIRED. Spherical, so azimuth and pitch are the state and the offset is
+  // derived — rather than the offset being the state and the angles being
   // recovered from it, which is what made the old rig's pitch clamp awkward.
-  const cosPitch = Math.cos(cameraRig.pitch);
-  _camOffset.set(
-    tuning.radius * cosPitch * Math.sin(cameraRig.azimuth),
-    tuning.radius * Math.sin(cameraRig.pitch),
-    tuning.radius * cosPitch * Math.cos(cameraRig.azimuth),
-  );
-  _camDir.copy(_camOffset).normalize();
+  armDirection(tuning.radius, cameraRig.azimuth, cameraRig.pitch);
+  applySpringArm(world, tuning, tuning.radius, frameDelta);
+  camera.lookAt(_camTarget);
+}
 
-  // 4 — RAY, from the character outward. Environment-only, so it can never hit
-  // the character's own sixteen bodies or the sphere.
-  _rayFrom.x = _camTarget.x; _rayFrom.y = _camTarget.y; _rayFrom.z = _camTarget.z;
-  _rayDir.x = _camDir.x; _rayDir.y = _camDir.y; _rayDir.z = _camDir.z;
+/**
+ * BALL — the arm swings itself round so the ball stays past the athlete.
+ *
+ * The azimuth is DRIVEN rather than held: it eases toward the bearing that puts
+ * the camera opposite the ball, so the player and the ball share the frame with
+ * the player nearer. The stick is deliberately ignored here — a mode whose whole
+ * job is to aim the camera for you cannot also be aimed by you without fighting
+ * itself. Cycle back to chase to take the wheel.
+ */
+function cameraBall(world, tuning, frameDelta, ballPos) {
+  const cam = tuning.ballCam;
+  _camTarget.copy(motor.mesh.position);
+  _camTarget.y += cam.targetHeight;
 
-  const hit = world.castRay(_envRay, tuning.radius, true, undefined, ENVIRONMENT_RAY_GROUPS);
-  const obstructed = hit
-    ? Math.max(tuning.minDistance, hit.timeOfImpact - tuning.collisionMargin)
-    : tuning.radius;
+  let targetAzimuth = cameraRig.azimuth;
+  // THE PITCH DOES NOT FOLLOW THE BALL'S HEIGHT. It rests here and stays here
+  // for everything that happens at floor level, which is most of the game.
+  let targetPitch = cam.restPitch;
+  let loft = 0;
 
-  // 5 — SPRING. Shorten INSTANTLY: a camera that eases into its limit spends
-  // those frames inside the wall, which is the artefact this exists to prevent.
-  // Lengthen on the ease, because an instant restore is a visible jump the
-  // moment the obstruction clears.
-  if (obstructed < cameraRig.currentDistance) {
-    cameraRig.currentDistance = obstructed;
-  } else {
-    cameraRig.currentDistance +=
-      (obstructed - cameraRig.currentDistance) * (1 - Math.exp(-tuning.restoreEase * frameDelta));
+  if (ballPos) {
+    const dx = ballPos.x - _camTarget.x;
+    const dz = ballPos.z - _camTarget.z;
+    // BEHIND THE PLAYER, RELATIVE TO THE BALL. The arm points along
+    // (sin az, cos az), so pointing it away from the ball is atan2(-dx, -dz).
+    // Horizontal only: this is the half of the tracking that is comfortable.
+    targetAzimuth = Math.atan2(-dx, -dz);
+
+    // VERTICAL, AND ONLY WHEN IT IS REALLY IN THE AIR. A bounce is a ball
+    // spending a few frames at a metre and coming back; tracking it pitches the
+    // camera up and down at the bounce rate, which is the motion sickness. Below
+    // loftAboveY the height is not consulted at all, so a rally on the floor
+    // produces a perfectly still pitch rather than a small amount of nausea.
+    if (ballPos.y > cam.loftAboveY) {
+      loft = ballPos.y - cam.loftAboveY;
+      const loftPitch = Math.atan2(loft, Math.max(cam.loftMinDistance, Math.hypot(dx, dz)));
+      targetPitch = Math.min(cam.maxPitch, cam.restPitch + loftPitch * cam.loftPitchGain);
+    }
   }
 
-  // 6 — PLACE.
-  camera.position.copy(_camTarget).addScaledVector(_camDir, cameraRig.currentDistance);
+  // SHORTEST WAY ROUND. Easing the raw difference would take the long way
+  // whenever the ball crosses behind, spinning the camera a full turn.
+  const easeAzimuth = 1 - Math.exp(-cam.smoothEase * frameDelta);
+  let dAzimuth = (targetAzimuth - cameraRig.azimuth) % (Math.PI * 2);
+  if (dAzimuth > Math.PI) dAzimuth -= Math.PI * 2;
+  if (dAzimuth < -Math.PI) dAzimuth += Math.PI * 2;
+  cameraRig.azimuth += dAzimuth * easeAzimuth;
+
+  // THE PITCH GETS ITS OWN, MUCH SLOWER EASE — a low-pass filter. Even a ball
+  // that clears the threshold and drops back under it repeatedly cannot shake
+  // the camera, because the pitch cannot follow that fast.
+  cameraRig.pitch += (targetPitch - cameraRig.pitch) * (1 - Math.exp(-cam.pitchEase * frameDelta));
+
+  armDirection(cam.distance, cameraRig.azimuth, cameraRig.pitch);
+  applySpringArm(world, tuning, cam.distance, frameDelta);
+
+  // THE LOOK-AT POINT STAYS ON HIS CHEST. It used to lerp 65% of the way to the
+  // ball, which put the ball's bounce straight back into the shot through the
+  // other door — the camera stopped pitching and the framing bobbed instead.
+  // A high ball lifts it, gently and by a bounded amount, and nothing else does.
+  if (loft > 0) _camTarget.y += Math.min(cam.lookLiftMax, loft * cam.lookLiftGain);
   camera.lookAt(_camTarget);
+}
+
+/**
+ * BROADCAST — a fixed sideline camera that dollies along the court length.
+ *
+ * No spring arm: the shot is outside the play, so there is nothing between it
+ * and the action to collide with, and cameraRig.currentDistance is deliberately
+ * left alone so returning to chase restores the arm the player last had.
+ */
+function cameraBroadcast(tuning, frameDelta, ballPos) {
+  const tv = tuning.broadcast;
+  const playerZ = motor.mesh.position.z;
+  const leadZ = ballPos
+    ? playerZ * (1 - tv.trackZWeight) + ballPos.z * tv.trackZWeight
+    : playerZ;
+  const clampedZ = Math.min(tv.maxZ, Math.max(tv.minZ, leadZ));
+
+  _camDesired.set(tv.sideX, tv.heightY, clampedZ);
+  camera.position.lerp(_camDesired, 1 - Math.exp(-tv.smoothEase * frameDelta));
+
+  // THE ACTION CENTRE, weighted toward the athlete and with the ball's HEIGHT
+  // damped hard. An even lerp put the full bounce into the look-at point, so
+  // the TV shot jerked on every floor contact; capping the ball's contribution
+  // at 3 m and taking only 30% of it keeps a lofted rally in frame without the
+  // camera flinching at a dribble.
+  _camTarget.copy(motor.mesh.position);
+  if (ballPos) {
+    _camTarget.x = motor.mesh.position.x * 0.6 + ballPos.x * 0.4;
+    _camTarget.y = motor.mesh.position.y * 0.7 + Math.min(3.0, ballPos.y) * 0.3 + 0.5;
+    _camTarget.z = motor.mesh.position.z * 0.5 + ballPos.z * 0.5;
+  }
+  _camTarget.y = Math.max(1.0, _camTarget.y);
+  camera.lookAt(_camTarget);
+}
+
+/** TACTICAL — high and behind, the whole half-court in one frame. */
+function cameraTactical(tuning, frameDelta) {
+  const top = tuning.tactical;
+  const p = motor.mesh.position;
+  // The 0.4 on x pulls the shot toward the court's centre line as the athlete
+  // goes wide, so the far side stays in frame instead of sliding off it.
+  _camDesired.set(p.x * 0.4, p.y + top.heightY, p.z + top.distanceZ);
+  camera.position.lerp(_camDesired, 1 - Math.exp(-top.smoothEase * frameDelta));
+
+  _camTarget.copy(p);
+  _camTarget.z += top.lookAheadZ;
+  _camTarget.y = 1.0;
+  camera.lookAt(_camTarget);
+}
+
+/**
+ * THE CAMERA, once per FRAME — never per tick. Everything below is render-side
+ * state: the simulation's only view of it is input.cameraYaw, which input.js
+ * latches from the camera's own heading on the next sample.
+ *
+ * ONE CONSEQUENCE WORTH KNOWING: in broadcast and tactical the camera stops
+ * following the athlete's heading, so the stick's "forward" becomes the TV
+ * camera's forward. That is how fixed-camera games have always played and it is
+ * not a bug, but it is a different game to drive.
+ */
+function updateSpringArm() {
+  if (!motor) return;
+  const world = getWorld();
+  if (!world) return;
+  if (!_envRay) _envRay = new RAPIER.Ray(_rayFrom, _rayDir);
+
+  const tuning = TUNING.camera;
+  const frameDelta = Math.min(loop.frameTimeMs / 1000, TUNING.loop.maxFrameTime);
+  const activeBall = ball || (balls && balls[0]) || null;
+  const ballPos = activeBall ? activeBall.mesh.position : null;
+
+  if (consumeCameraCycle()) cycleCameraMode();
+
+  if (tuning.mode === 'ball') { cameraBall(world, tuning, frameDelta, ballPos); return; }
+  if (tuning.mode === 'broadcast') { cameraBroadcast(tuning, frameDelta, ballPos); return; }
+  if (tuning.mode === 'tactical') { cameraTactical(tuning, frameDelta); return; }
+  // CHASE IS THE FALLTHROUGH, not a fourth test: an unrecognised mode string
+  // typed into the GUI or a save file lands on the playable camera rather than
+  // on a frozen frame with no error.
+  cameraChase(world, tuning, frameDelta);
 }
 
 /**
@@ -1252,8 +1659,14 @@ function render(alpha) {
   // poseCharacter(1) for it separately. Mirroring that split is deliberate.
   syncRagdollPose(ragdoll, alpha);
   updateSpringArm();
+  // ONE PROBE, TWO READOUTS. The boards and the HUD show the same numbers, so
+  // they read the same snapshot rather than each taking their own — LESSON 22's
+  // other half: a readout that reads twice can disagree with itself.
+  const match = matchState ? matchProbe(matchState) : null;
+  // BEFORE the draw: the texture has to carry this frame's state into it.
+  updateScoreboards(scoreboards, match);
   renderer.render(scene, camera);
-  updateHud();
+  updateHud(match);
 }
 
 const loop = new Loop({ fixedUpdate, render });
@@ -1567,6 +1980,9 @@ async function loadActionClips() {
 }
 
 async function boot() {
+  // THE MATCH STATE FIRST, before anything can score into it.
+  matchState = createMatchState();
+  window.__matchState = matchState;
   await initPhysics(loop.fixedDt);
 
   // AWAITED — the court is a GLB and the loop must not start on an empty world.
@@ -1577,6 +1993,16 @@ async function boot() {
   arenaPreset = activeArenaPreset();
   console.log(`[arena] active type "${activeArenaType()}"`);
   const arena = await createArena(scene);
+
+  // THE BOUNDARY SCOREBOARDS, after the arena and before the loop. Nothing here
+  // is simulation: four meshes, four canvas textures, no physics body. They
+  // hang on wall positions measured off arena.glb — see TUNING.scoreboard.
+  scoreboards = createScoreboards(scene);
+  window.__scoreboards = scoreboards;
+
+  // THE PROCEDURAL SOUND ENGINE. Render-side, strictly consumer.
+  soundManager.init(camera);
+  window.__soundManager = soundManager;
 
   // The words are derived in physics.js and the table is computed from them, so
   // the "no" in the motor/ball cell is evidence rather than a caption.
@@ -1629,10 +2055,12 @@ async function boot() {
   // property of the code instead of a property of the network.
   for (let i = 0; i < TUNING.balls.length; i += 1) {
     const spec = TUNING.balls[i];
-    // The spawn comes from the ARENA, matched by index; everything else is the
-    // ball's own. A preset with fewer spawns than balls falls back to the ball
-    // defaults rather than stacking them all on one point.
-    const spawn = arenaPreset.ballSpawns[i];
+    // The spawn comes from the ARENA, matched by index; for the court,
+    // balls drop from Goal height (10.0m) within pitch bounds.
+    let spawn = arenaPreset.ballSpawns[i];
+    if (activeArenaType() === 'court') {
+      spawn = getCourtBallDropSpawn(i, TUNING.balls.length, 0, armedCaptureTick !== null);
+    }
     const built = await createBall(scene, spawn ? { ...spec, spawn } : spec);
     balls.push(built);
     ballByHandle.set(built.collider.handle, built);
@@ -1718,6 +2146,24 @@ async function boot() {
   // rollingResistance, so HUD speed says "stopped" while the body is still
   // sliding. Tuning the skid without this is tuning by anecdote.
   window.__vb = window.__vb || {};
+  window.__vb.matchState = matchState;
+  window.__vb.balls = balls;
+  window.__vb.sound = soundManager;
+  window.__soundManager = soundManager;
+  window.__vb.tuning = TUNING;
+  window.TUNING = TUNING;
+  window.THREE = THREE;
+  window.__vb.THREE = THREE;
+  window.__vb.scene = scene;
+  window.__vb.camera = camera;
+  window.__vb.cameraRig = cameraRig;
+  window.__vb.renderer = renderer;
+  window.__vb.loop = loop;
+  Object.defineProperty(window.__vb, 'ragdoll', { get: () => ragdoll, configurable: true });
+  Object.defineProperty(window.__vb, 'motor', { get: () => motor, configurable: true });
+  Object.defineProperty(window.__vb, 'animTarget', { get: () => animTarget, configurable: true });
+  window.__vb.updateAthletePalette = () => updateAthletePalette(ragdoll);
+  window.__vb.updateAthleteVariant = () => updateAthleteVariant(ragdoll);
   window.__vb.probe = () => {
     if (!ragdoll) return null;
     const pelvis = ragdoll.rig.get('pelvis');
@@ -1734,6 +2180,7 @@ async function boot() {
       // READ from the strike state; the quality is the number the resolver
       // computed, never a second evaluation of the curve (LESSON 22).
       strike: strikeProbe(strikeState),
+      match: matchState ? matchProbe(matchState) : null,
       balls: balls.map(ballProbe),
       pelvis: { x: pt.x, y: pt.y, z: pt.z, speed: Math.hypot(pv.x, pv.z) },
       motor: { x: mt.x, y: mt.y, z: mt.z, speed: Math.hypot(mv.x, mv.z) },
@@ -1885,7 +2332,9 @@ async function boot() {
     };
   };
 
-  createGui({
+  guiInstance = createGui({
+    getMatchState: () => matchState,
+    getScoreboards: () => scoreboards,
     onShowHudChange: setHudVisible,
     onShowSphereWireframeChange: (visible) => {
       motor.mesh.visible = visible;
@@ -1894,10 +2343,14 @@ async function boot() {
       for (const b of balls) b.mesh.material.wireframe = wireframe;
     },
     onCameraChange: applyCameraTuning,
-    onRagdollVisibilityChange: () => applyRagdollVisibility(ragdoll, characterRoot),
+    onRagdollVisibilityChange: () => {
+      updateAthletePalette(ragdoll);
+      applyRagdollVisibility(ragdoll, characterRoot);
+    },
     clipNames: characterClips.map((clip) => clip.name),
     tracker,
   });
+  window.__vb.gui = guiInstance;
 
   setHudVisible(TUNING.debug.showHud);
 

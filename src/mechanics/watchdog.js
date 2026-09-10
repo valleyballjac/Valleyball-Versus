@@ -2,7 +2,7 @@ import * as THREE from 'three';
 
 import { TUNING } from '../config/tuning.js';
 import { consumeBallReset } from '../input.js';
-import { resetBall } from '../sim/ball.js';
+import { resetBall, getCourtBallDropSpawn } from '../sim/ball.js';
 
 /**
  * THE WATCHDOGS — the athlete's kill plane and the balls'.
@@ -136,10 +136,17 @@ export function runWatchdog({ state, motor, ragdoll, balls, arenaPreset, armedCa
   // survive into a later tick and serve twice.
   const serveQueued = consumeBallReset();
   const armedBallSpawn = armedCaptureTick !== null && tick === TUNING.ball.captureSpawnTick;
-  for (const b of balls) {
+  const isCourt = (TUNING.arena && TUNING.arena.type !== 'bowl') || (arenaPreset && arenaPreset.killPlaneY === -15);
+  const isDeterministic = armedCaptureTick !== null;
+
+  for (let i = 0; i < balls.length; i += 1) {
+    const b = balls[i];
     const belowWorld = b.body.translation().y < arenaPreset.killPlaneY;
     if (serveQueued || armedBallSpawn || belowWorld) {
-      resetBall(b, tick);
+      const dropPos = isCourt
+        ? getCourtBallDropSpawn(i, balls.length, tick, isDeterministic)
+        : null;
+      resetBall(b, tick, dropPos);
       if (belowWorld && !serveQueued && !armedBallSpawn) {
         console.log(`[ball:${b.id}] out of bounds — reset at tick ${tick}`);
       }

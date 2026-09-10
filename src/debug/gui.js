@@ -1,6 +1,7 @@
 import GUI from 'lil-gui';
 import { TUNING, resetTuning, tuningJson } from '../config/tuning.js';
 import { activeArenaType, activeArenaPreset } from '../sim/arena.js';
+import { soundManager } from '../audio/soundManager.js';
 
 /**
  * The tuning panel.
@@ -38,10 +39,33 @@ export function createGui({
   onShowBallWireframeChange,
   onCameraChange,
   onRagdollVisibilityChange,
+  // Same reason as getMatchState: the boards are built after the GUI is.
+  getScoreboards = () => null,
   clipNames = [],
   tracker,
+  // A GETTER, not the object: the GUI is built during boot and the match state
+  // may not exist yet at that moment. Capturing the value would capture null
+  // for the life of the session.
+  getMatchState = () => null,
 }) {
   const gui = new GUI({ title: 'VALLEYBALL / TUNING' });
+
+  const athleteFolder = gui.addFolder('ATHLETE / CUSTOMIZATION');
+  athleteFolder
+    .add(TUNING.athlete, 'variant', ['masculine', 'feminine', 'classic'])
+    .name('silhouette [K]')
+    .listen()
+    .onChange(() => {
+      onRagdollVisibilityChange();
+    });
+  athleteFolder
+    .add(TUNING.athlete, 'team', ['home', 'away'])
+    .name('team jersey [J]')
+    .listen()
+    .onChange(() => {
+      onRagdollVisibilityChange();
+    });
+  athleteFolder.open();
 
   const loop = gui.addFolder('loop');
   // The loop binds fixedHz once at construction; changing the timestep at
@@ -51,9 +75,10 @@ export function createGui({
 
   const debug = gui.addFolder('debug');
   debug.add(TUNING.debug, 'showHud').onChange(onShowHudChange);
-  debug.add(TUNING.debug, 'showRagdollColliders').onChange(onRagdollVisibilityChange);
-  debug.add(TUNING.debug, 'showCharacterMesh').onChange(onRagdollVisibilityChange);
-  debug.add(TUNING.debug, 'showSphereWireframe').onChange(onShowSphereWireframeChange);
+  debug.add(TUNING.debug, 'showCapsuleAthlete').name('capsuleAthlete').onChange(onRagdollVisibilityChange);
+  debug.add(TUNING.debug, 'showRagdollColliders').name('ragdollWireframe').onChange(onRagdollVisibilityChange);
+  debug.add(TUNING.debug, 'showCharacterMesh').name('skinnedYBotMesh').onChange(onRagdollVisibilityChange);
+  debug.add(TUNING.debug, 'showSphereWireframe').name('sphereMotorWireframe').onChange(onShowSphereWireframeChange);
   debug.add(TUNING.debug, 'showBallWireframe').onChange(onShowBallWireframeChange);
 
   const physics = gui.addFolder('physics');
@@ -238,6 +263,17 @@ export function createGui({
   locked(jump.add(TUNING.jump, 'standingClip'), 'next R');
   locked(jump.add(TUNING.jump, 'runningClip'), 'next R');
 
+  // THE ACTIONS. The dive impulses are the two the designer is actually
+  // feeling for, and they were seeds in a table nobody could move without a
+  // reload. Live, they are a five-second question instead of a five-minute one.
+  const action = gui.addFolder('action');
+  action.add(TUNING.action, 'diveImpulseForward', 0, 12, 0.1).name('dive forward (N.s)');
+  action.add(TUNING.action, 'diveImpulseUp', 0, 8, 0.1).name('dive upward (N.s)');
+  action.add(TUNING.action, 'diveCooldownTicks', 30, 300, 1).name('dive cooldown (ticks)');
+  action.add(TUNING.action, 'slideResistance', 0.1, 3.0, 0.05).name('slide resistance');
+  action.add(TUNING.action, 'knockdownSpeed', 0.5, 5.0, 0.1).name('knockdown speed');
+  action.add(TUNING.action, 'crashMuscleTone', 0.0, 1.0, 0.05).name('crash muscle tone');
+
   // THE STRIKES. Clip names and windows are reload-or-next-R; everything else
   // is live, because the whole point of authoring the windows at 1x was to give
   // the designer a slider to move AFTER feeling 1x rather than a number decided
@@ -254,6 +290,9 @@ export function createGui({
   strike.add(TUNING.strike, 'qualityFloor', 0, 1, 0.01);
   strike.add(TUNING.strike, 'aimStickWeight', 0, 1, 0.05);
   strike.add(TUNING.strike, 'mixEase', 0.5, 40, 0.5);
+  strike.add(TUNING.strike, 'assistRadius', 0, 1.0, 0.02).name('assist radius (m)');
+  strike.add(TUNING.strike, 'assistWindowTicks', 0, 15, 1).name('assist window (ticks)');
+  strike.add(TUNING.strike, 'aimMagnetism', 0, 0.6, 0.05).name('target magnetism');
   for (const kind of ['volley', 'spike']) {
     const row = TUNING.strike[kind];
     const folder = strike.addFolder(kind);
@@ -279,7 +318,69 @@ export function createGui({
   locked(visual.add(TUNING.visual, 'boxHeight'), 'reload');
   locked(visual.add(TUNING.visual, 'boxDepth'), 'reload');
 
+  // THE MATCH. Mode is a TUNING value so it survives a reset the way everything
+  // else does; the live state it drives is main.js's, reached through the
+  // getter so this folder never holds a stale reference to it.
+  const matchFolder = gui.addFolder('match');
+  matchFolder
+    .add(TUNING.match, 'mode', ['practice', 'match'])
+    .name('match mode')
+    .onChange((value) => {
+      const match = getMatchState();
+      if (match) match.mode = value;
+    });
+  matchFolder.add(TUNING.match, 'durationSeconds', 30, 900, 15).name('duration (s)');
+  matchFolder.add(TUNING.match, 'hoopRearmX', 0.2, 5, 0.1).name('goal re-arm |x| (m)');
+  matchFolder
+    .add(TUNING.match, 'celebrationTicks', 0, 600, 15)
+    .name('goal flash (ticks)');
+  matchFolder
+    .add(TUNING.scoreboard, 'flashTicks', 3, 60, 1)
+    .name('flash half-cycle (ticks)');
+  matchFolder
+    .add({
+      boards: TUNING.scoreboard.enabled,
+    }, 'boards')
+    .name('show scoreboards')
+    .onChange((visible) => {
+      const handle = getScoreboards();
+      // VISIBILITY, not a rebuild. The boards own four canvases and four
+      // textures; tearing them down and remaking them to hide them for a
+      // screenshot would be four allocations for a boolean.
+      if (handle) handle.group.visible = visible;
+    });
+  matchFolder
+    .add({
+      reset: () => {
+        const match = getMatchState();
+        if (!match) return;
+        match.scoreHome = 0;
+        match.scoreAway = 0;
+        match.targetGoal = 'N';
+        match.ticksRemaining = TUNING.match.durationSeconds * 60;
+        match.matchOver = false;
+        match.events.length = 0;
+        // The celebration goes with it. Resetting mid-flash and leaving the
+        // counter running means the boards celebrate a goal that no longer
+        // exists in the events list.
+        match.celebrationTicks = 0;
+        match.lastScoredFor = null;
+        match.lastGoalId = null;
+        // The per-ball trackers go too. Leaving them would carry a disarmed
+        // hoop across the reset and swallow the first goal of the next match.
+        match.ballTrackers.clear();
+        console.log('[match] score, clock and ball trackers reset');
+      },
+    }, 'reset')
+    .name('reset score & state');
+
   const cameraFolder = gui.addFolder('camera (spring arm)');
+  // .listen() because Tab and the d-pad change this behind the GUI's back; a
+  // dropdown that shows the mode you are not in is worse than no dropdown.
+  cameraFolder
+    .add(TUNING.camera, 'mode', ['chase', 'ball', 'broadcast', 'tactical'])
+    .name('viewing mode')
+    .listen();
   cameraFolder.add(TUNING.camera, 'fov', 20, 110, 1).onChange(onCameraChange);
   cameraFolder.add(TUNING.camera, 'radius', 2, 30, 0.1);
   cameraFolder.add(TUNING.camera, 'targetHeight', 0, 4, 0.05);
@@ -290,6 +391,50 @@ export function createGui({
   cameraFolder.add(TUNING.camera, 'collisionMargin', 0, 3, 0.05);
   cameraFolder.add(TUNING.camera, 'minDistance', 0.5, 12, 0.1);
   cameraFolder.add(TUNING.camera, 'restoreEase', 0.2, 20, 0.1);
+
+  // ═══ AUDIO ═══
+  const audioFolder = gui.addFolder('audio & sfx');
+  audioFolder.add(TUNING.audio, 'enabled').name('audio enabled').onChange(() => soundManager.updateTuning());
+  audioFolder.add(TUNING.audio, 'masterVolume', 0, 1, 0.05).name('master volume').onChange(() => soundManager.updateTuning());
+  audioFolder.add(TUNING.audio, 'sfxVolume', 0, 1, 0.05).name('sfx volume').onChange(() => soundManager.updateTuning());
+  audioFolder.add(TUNING.audio, 'ambienceVolume', 0, 1, 0.05).name('ambience volume').onChange(() => soundManager.updateTuning());
+  audioFolder.add(TUNING.audio, 'spatialAudio').name('spatial 3D audio');
+  audioFolder.add({
+    testBuzzer: () => soundManager.playGoal('home', 'N'),
+  }, 'testBuzzer').name('test arena buzzer');
+  audioFolder.add({
+    testGlass: () => soundManager.playGlassImpact(8.0),
+  }, 'testGlass').name('test backboard glass');
+  audioFolder.add({
+    testHoopClank: () => soundManager.playHoopClank(8.0),
+  }, 'testHoopClank').name('test hoop steel clank');
+  audioFolder.add({
+    testVolleyGrunt: () => soundManager.playPlayerGrunt('volley', 0.9),
+  }, 'testVolleyGrunt').name('test tennis volley grunt');
+  audioFolder.add({
+    testSpikeGrunt: () => soundManager.playPlayerGrunt('spike', 0.9),
+  }, 'testSpikeGrunt').name('test tennis spike grunt');
+  audioFolder.add({
+    testKickKiai: () => soundManager.playPlayerGrunt('kick', 0.9),
+  }, 'testKickKiai').name('test karate kick kiai');
+  audioFolder.add({
+    testBodyThud: () => soundManager.playPlayerBallImpact(6.0, null, 0.5),
+  }, 'testBodyThud').name('test player body thud');
+  audioFolder.add({
+    testFootstep: () => soundManager.playFootstep(),
+  }, 'testFootstep').name('test court footstep');
+  audioFolder.add({
+    testVolley: () => soundManager.playStrike('volley', 0.9, 14, null, 0.5),
+  }, 'testVolley').name('test volley + grunt');
+  audioFolder.add({
+    testSpike: () => soundManager.playStrike('spike', 0.9, 20, null, 0.5),
+  }, 'testSpike').name('test spike + grunt');
+  audioFolder.add({
+    testKick: () => soundManager.playStrike('kick', 0.9, 12, null, 0.5),
+  }, 'testKick').name('test kick + kiai');
+  audioFolder.add({
+    testBounce: () => soundManager.playBallBounce(0.5, 8.0, 'court'),
+  }, 'testBounce').name('test bounce (rubber med)');
 
   const actions = {
     async copyTuningJson() {
@@ -309,12 +454,16 @@ export function createGui({
       gui.controllersRecursive().forEach((controller) => controller.updateDisplay());
       onShowHudChange(TUNING.debug.showHud);
       onShowSphereWireframeChange(TUNING.debug.showSphereWireframe);
+      onRagdollVisibilityChange();
       onCameraChange();
     },
   };
 
   gui.add(actions, 'copyTuningJson').name('Copy TUNING JSON');
   gui.add(actions, 'resetToDefaults').name('Reset to defaults');
+
+  // Start with tuning panel collapsed so screen is clean for gameplay
+  gui.close();
 
   return gui;
 }

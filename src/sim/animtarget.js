@@ -307,6 +307,12 @@ export function createAnimTarget(characterRoot, clips, rig) {
     strikePhase: 0,
     strikeKind: 0,
     strikeSide: 1,
+    /**
+     * Is the camera behind the athlete? Handed over by main.js, never read from
+     * TUNING.camera here — see the note in advanceMountYaw. True is the chase
+     * camera's answer and therefore the safe default before the first handoff.
+     */
+    facingFollowsCamera: true,
     /** True when an action's clip was missing and the held-apex pose stands in.
      *  Reported once at boot; not read per-step by anything. */
     slideIsFallback: false,
@@ -1376,7 +1382,10 @@ export function advanceMountYaw(state, cameraYaw, dt) {
   if (speed >= TUNING.facing.velocityFloor) {
     state.momentumYaw = Math.atan2(vx, vz);
   } else if (!Number.isFinite(state.momentumYaw)) {
-    state.momentumYaw = cameraYaw;
+    // THE SEED, once, before he has ever moved. Under a camera that sits behind
+    // him the camera's heading is the right guess; under a fixed sideline shot
+    // it is 90 degrees wrong, so a neutral down-court heading is used instead.
+    state.momentumYaw = state.facingFollowsCamera ? cameraYaw : 0;
   }
 
   // COASTING. Steering is what makes camera facing worth having; with the stick
@@ -1403,9 +1412,26 @@ export function advanceMountYaw(state, cameraYaw, dt) {
   // Wrapped, because cameraYaw + delta can leave (-PI, PI] and a target angle
   // outside that range is a trap for anything that reads it without going
   // through shortestAngleDelta — a HUD, or the next person to use it.
-  state.targetYaw = wrapAngle(
-    cameraYaw + shortestAngleDelta(cameraYaw, state.momentumYaw) * travelMix,
-  );
+  //
+  // UNLESS THE CAMERA IS NOT BEHIND HIM. Under a sideline or overhead shot,
+  // "square to the camera" means square to the far wall: the athlete stops,
+  // and turns to face the stands. There is nothing to strafe relative to in a
+  // fixed shot, so the travel heading IS the facing, and holding it when he
+  // stops is exactly what momentumYaw already does.
+  //
+  // WHICH IT IS ARRIVES THROUGH THE GHOST HANDOFF, not from TUNING.camera.
+  // Nothing under sim/ may read a camera transform or a camera mode: this file
+  // runs in the fixed step, the mode is changed by a render-side hotkey, and a
+  // fixed step that reads render state is a determinism bug waiting for someone
+  // to press Tab during a capture. It is one more boolean in the same one-step-
+  // stale channel that already carries slideMix.
+  if (state.facingFollowsCamera) {
+    state.targetYaw = wrapAngle(
+      cameraYaw + shortestAngleDelta(cameraYaw, state.momentumYaw) * travelMix,
+    );
+  } else {
+    state.targetYaw = wrapAngle(state.momentumYaw);
+  }
 
   const blend = 1 - Math.exp(-TUNING.facing.ease * dt);
   state.yaw += shortestAngleDelta(state.yaw, state.targetYaw) * blend;
@@ -1450,6 +1476,7 @@ function readGhostInputs(state, inputs) {
   state.strikePhase = inputs.strikePhase;
   state.strikeKind = inputs.strikeKind;
   state.strikeSide = inputs.strikeSide;
+  state.facingFollowsCamera = inputs.facingFollowsCamera;
 }
 
 /**
@@ -1706,11 +1733,28 @@ export function updateAnimTarget(
   const pelvis = rig && rig.get('pelvis');
   // pelvisDownness, not standUpNeed: this is about where the body physically
   // is, which is the question the mount is asking.
-  if (pelvis && state.pelvisDownness > TUNING.standUp.mountSlack) {
+  //
+  // AND NOT WHILE SLIDING. A slide puts the pelvis at about 0.25 m, which is
+  // exactly what a fall looks like to a height measurement — the block above
+  // says so itself: standUpNeed cannot tell a deliberate low pose from a
+  // knockdown. So a hard slide crosses mountSlack, this blend hands the ghost's
+  // horizontal position to the pelvis body, and the sphere stops hauling the
+  // athlete at the exact moment the whole mechanic depends on it doing so. The
+  // body then trails the sphere and the slide looks like it detached, because
+  // it did.
+  //
+  // slideMix is the ghost's own share of the slide pose, already handed over by
+  // main.js beside diveMix and eased on the same clock, so this is continuous
+  // in the same way the rest of the block is: nothing switches, and at
+  // slideMix 1 the mount stays exactly where mountMatrix put it. A genuine
+  // knockdown DURING a slide still recovers, because slideMix falls to 0 as
+  // the slide ends and the blend fades back in on its own.
+  const slideAttenuation = Math.max(0, 1 - state.slideMix);
+  if (pelvis && slideAttenuation > 0 && state.pelvisDownness > TUNING.standUp.mountSlack) {
     const blend = Math.min(
       1,
       (state.pelvisDownness - TUNING.standUp.mountSlack) / (1 - TUNING.standUp.mountSlack),
-    );
+    ) * slideAttenuation;
     const body = pelvis.body.translation();
     const e = _mount.elements;
     _mountPos.set(e[12], e[13], e[14]);

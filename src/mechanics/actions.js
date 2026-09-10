@@ -253,12 +253,24 @@ export function runActions({
   const sliding = state.slideTime > 0;
 
   // ═══ THE DIVE ═══
-  if (diveQueued && motor.grounded && tick - state.lastDiveTick >= TUNING.action.diveCooldownTicks) {
+  // JUMP-DIVE PROHIBITION: A dive cannot fire if a jump is queued on the same tick,
+  // or if the athlete has recently jumped and is still in the liftoff window (~0.4s / 25 ticks).
+  // Likewise, if a dive fires, any jump on this tick is immediately swallowed.
+  const jumpLockout = (tick - motor.lastJumpTick) < 25;
+  if (diveQueued && motor.grounded && !jumpQueued && !jumpLockout && tick - state.lastDiveTick >= TUNING.action.diveCooldownTicks) {
+    allowJump = false;
     const magnitude = Math.hypot(input.moveWorld.x, input.moveWorld.z);
     if (magnitude > DIVE_INPUT_DEADZONE) {
       state.diveDir.set(input.moveWorld.x / magnitude, 0, input.moveWorld.z / magnitude);
     } else {
-      state.diveDir.set(Math.sin(input.cameraYaw), 0, Math.cos(input.cameraYaw));
+      // NO STICK: DIVE WHERE HE IS LOOKING, not where the camera is. Under the
+      // chase camera the two agree, so this changes nothing there. Under a
+      // sideline shot the camera's heading points across the court, and a
+      // standing dive threw the athlete at the stands. The ghost's yaw is the
+      // direction his body is actually pointing, which is the only reading that
+      // is right under every camera.
+      const defaultYaw = ghost ? ghost.yaw : input.cameraYaw;
+      state.diveDir.set(Math.sin(defaultYaw), 0, Math.cos(defaultYaw));
     }
     applyDiveImpulse(motor, state.diveDir);
 

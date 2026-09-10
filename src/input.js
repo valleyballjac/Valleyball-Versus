@@ -109,6 +109,8 @@ export const input = {
   mouseDX: 0,
   mouseDY: 0,
   cameraYaw: 0,
+  /** Edge-triggered request to cycle the camera. Consumed render-side. */
+  cameraCycleQueued: false,
 };
 
 const heldKeys = new Set();
@@ -117,6 +119,7 @@ let padDiveWasDown = false;
 let padBallResetWasDown = false;
 let padVolleyWasDown = false;
 let padSpikeWasDown = false;
+let padDpadWasDown = false;
 let installed = false;
 
 /**
@@ -175,6 +178,15 @@ function onKeyDown(event) {
   if (KEYMAP.ballReset.keys.includes(event.code) && !event.repeat) input.ballResetQueued = true;
   if (KEYMAP.volley.keys.includes(event.code) && !event.repeat) input.volleyQueued = true;
   if (KEYMAP.spike.keys.includes(event.code) && !event.repeat) input.spikeQueued = true;
+
+  // TAB CYCLES THE CAMERA, and preventDefault runs on the REPEAT too. Guarding
+  // the whole thing behind !event.repeat would let a held Tab walk the browser's
+  // focus ring out of the canvas; guarding only the queue keeps the cycle
+  // edge-triggered while the browser default stays suppressed either way.
+  if (event.code === 'Tab') {
+    event.preventDefault();
+    if (!event.repeat) input.cameraCycleQueued = true;
+  }
 }
 
 function onKeyUp(event) {
@@ -239,6 +251,21 @@ function firstConnectedGamepad() {
  *
  * @param {THREE.Camera} camera
  */
+/**
+ * The camera-cycle request, consumed by whoever moves the camera.
+ *
+ * Same shape as consumeJump and the rest: a latch set on an edge and cleared by
+ * the one reader, so a frame that drops does not lose the press and a frame
+ * that repeats does not apply it twice.
+ *
+ * @returns {boolean}
+ */
+export function consumeCameraCycle() {
+  const queued = input.cameraCycleQueued;
+  input.cameraCycleQueued = false;
+  return queued;
+}
+
 export function sampleInput(camera) {
   let x = (heldKeys.has('KeyD') ? 1 : 0) - (heldKeys.has('KeyA') ? 1 : 0);
   let z = (heldKeys.has('KeyW') ? 1 : 0) - (heldKeys.has('KeyS') ? 1 : 0);
@@ -299,6 +326,16 @@ export function sampleInput(camera) {
     const spikeDown = padDown(pad, KEYMAP.spike.pad);
     if (spikeDown && !padSpikeWasDown) input.spikeQueued = true;
     padSpikeWasDown = spikeDown;
+
+    // THE D-PAD, all four directions, as ONE edge. 12/13/14/15 are Up/Down/
+    // Left/Right in the standard mapping. Any of them cycles: the camera has
+    // one control and four buttons reach it, rather than four bindings nobody
+    // remembers. Rolling a thumb across two of them still reads as one press,
+    // because the tracked value is "is any d-pad button down".
+    const dpadDown =
+      padDown(pad, 12) || padDown(pad, 13) || padDown(pad, 14) || padDown(pad, 15);
+    if (dpadDown && !padDpadWasDown) input.cameraCycleQueued = true;
+    padDpadWasDown = dpadDown;
   }
 
   // Diagonals must not be faster than cardinals.

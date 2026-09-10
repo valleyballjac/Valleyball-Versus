@@ -52,14 +52,7 @@ let _heightRay = null;
 const HEIGHT_PROBE_REACH = 60;
 
 /**
- * OPTIONAL SKIN. Drop a square image at this path and the ball wears it; leave
- * the folder empty and it falls back to the painted hemispheres below. Nothing
- * else changes either way — this is a costume, not a feature.
- */
-const TEXTURE_URL = '/textures/ball.png';
-
-/**
- * Fetches the skin if it is there, and resolves to null if it is not.
+ * Texture loader and cache for custom ball skins and emissive maps.
  *
  * AWAITED BEFORE THE LOOP STARTS, which is the whole reason it is a promise and
  * not a fire-and-forget load. A texture that arrives on some later frame would
@@ -67,28 +60,27 @@ const TEXTURE_URL = '/textures/ball.png';
  * disagree about a picture while agreeing about the simulation — a LAW 6 failure
  * with an innocent cause, which is the worst kind to debug. Resolved before tick
  * 0, it is either on or off for the entire run.
- *
- * @returns {Promise<THREE.Texture|null>}
  */
-let _skinPromise = null;
+const _textureLoader = new THREE.TextureLoader();
+const _textureCache = new Map();
 
-async function loadOptionalSkin() {
-  // Memoised: three balls must not mean three fetches, and they must all end up
-  // with the same answer. One promise, awaited by everyone.
-  if (_skinPromise) return _skinPromise;
-  _skinPromise = (async () => {
-  try {
-    const texture = await new THREE.TextureLoader().loadAsync(TEXTURE_URL);
-    texture.colorSpace = THREE.SRGBColorSpace;
-    texture.anisotropy = 4;
-    console.log(`[ball] skin ${TEXTURE_URL} loaded`);
-    return texture;
-  } catch {
-    console.log(`[ball] no skin at ${TEXTURE_URL} — using the painted hemispheres`);
-    return null;
-  }
+async function loadTexture(url) {
+  if (!url) return null;
+  if (_textureCache.has(url)) return _textureCache.get(url);
+  const promise = (async () => {
+    try {
+      const texture = await _textureLoader.loadAsync(url);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.anisotropy = 8;
+      console.log(`[ball] loaded texture ${url}`);
+      return texture;
+    } catch (e) {
+      console.log(`[ball] failed to load texture ${url}:`, e?.message || e);
+      return null;
+    }
   })();
-  return _skinPromise;
+  _textureCache.set(url, promise);
+  return promise;
 }
 
 /**
@@ -108,6 +100,8 @@ const BALL_DEFAULTS = {
   spawn: { x: 0, y: 3.0, z: 2.5 },
   colorA: 0xf2f0e6,
   colorB: 0x2f6f9f,
+  textureUrl: null,
+  emissiveUrl: null,
 };
 
 /**
@@ -158,6 +152,7 @@ export async function createBall(scene, options = {}) {
   const {
     id, label, radius, density, friction, restitution, spawn,
     linearDrag, angularDrag, colorA, colorB,
+    textureUrl, emissiveUrl,
   } = { ...BALL_DEFAULTS, ...options };
   // Shared by every ball, and deliberately not per-spec: the threshold is a
   // property of what the instrumentation should bother reporting, not of any
@@ -211,7 +206,8 @@ export async function createBall(scene, options = {}) {
   const segmentsU = Math.max(24, Math.min(64, Math.round(32 * (radius / 0.2) ** 0.5)));
   const segmentsV = Math.max(16, Math.min(48, Math.round(segmentsU * 0.75)));
   const geometry = new THREE.SphereGeometry(radius, segmentsU, segmentsV);
-  const skin = await loadOptionalSkin();
+  const diffuseMap = await loadTexture(textureUrl);
+  const emissiveMap = await loadTexture(emissiveUrl);
   // The painted hemispheres are the fallback, and they are still built when a
   // skin is present — they cost nothing, and a texture that fails to decode
   // leaves the colours underneath rather than a white ball.
@@ -219,10 +215,13 @@ export async function createBall(scene, options = {}) {
   const mesh = new THREE.Mesh(
     geometry,
     new THREE.MeshStandardMaterial({
-      map: skin,
+      map: diffuseMap,
+      emissiveMap: emissiveMap,
+      emissive: emissiveMap ? new THREE.Color(0xffffff) : new THREE.Color(0x000000),
+      emissiveIntensity: emissiveMap ? 1.0 : 0.0,
       // Vertex colours multiply the map, so with a skin on they would tint it
-      // blue down one side. On only when there is no skin to tint.
-      vertexColors: !skin,
+      // down one side. On only when there is no skin to tint.
+      vertexColors: !diffuseMap,
       // Rubber: matte enough to kill the plastic sheen, with a trace of specular
       // so the curvature still reads under the key light.
       roughness: 0.4,
@@ -315,10 +314,15 @@ export async function createBall(scene, options = {}) {
  *
  * @param {object} ball
  * @param {number} tick
+ * @param {{ x: number, y: number, z: number }|null} [targetPos=null]
  */
-export function resetBall(ball, tick) {
-  // THE BALL'S OWN spawn, carried on the handle. Reading it from TUNING would
-  // send all three to the same place the moment there was more than one.
+export function resetBall(ball, tick, targetPos = null) {
+  if (targetPos) {
+    ball.spawn.x = targetPos.x;
+    ball.spawn.y = targetPos.y;
+    ball.spawn.z = targetPos.z;
+  }
+  // THE BALL'S OWN spawn, carried on the handle.
   _spawn.set(ball.spawn.x, ball.spawn.y, ball.spawn.z);
 
   ball.body.setTranslation({ x: _spawn.x, y: _spawn.y, z: _spawn.z }, true);
@@ -328,6 +332,69 @@ export function resetBall(ball, tick) {
   ball.interpolated.reset(_spawn);
 
   ball.lastResetTick = tick;
+}
+
+/**
+ * Computes a non-colliding randomized drop position at Goal height (y = 10.0m)
+ * within the court pitch bounds.
+ *
+ * LAW 6 — Determinism: When isDeterministic is true (e.g. during an anchored
+ * capture run), the generator uses a seeded Mulberry32 PRNG keyed on tick and
+ * ball index. In live play, it introduces spontaneous random variation across
+ * non-overlapping court sectors so the balls never spawn inside each other.
+ *
+ * @param {number} ballIndex
+ * @param {number} totalBalls
+ * @param {number} [tick=0]
+ * @param {boolean} [isDeterministic=false]
+ * @returns {{ x: number, y: number, z: number }}
+ */
+export function getCourtBallDropSpawn(ballIndex, totalBalls = 3, tick = 0, isDeterministic = false) {
+  const {
+    ballDropHeightY = 10.0,
+    pitchBoundsX = 16.0,
+    pitchBoundsZ = 30.0,
+    pitchMarginX = 2.0,
+    pitchMarginZ = 4.0,
+  } = (TUNING.match || {});
+
+  const maxX = Math.max(2.0, pitchBoundsX - pitchMarginX); // e.g. 14.0 m
+  const maxZ = Math.max(4.0, pitchBoundsZ - pitchMarginZ); // e.g. 26.0 m
+
+  // Partition the court's longitudinal Z span into totalBalls non-overlapping sectors
+  const zSpan = 2 * maxZ;
+  const count = Math.max(1, totalBalls);
+  const sectorSize = zSpan / count;
+  const sectorMinZ = -maxZ + ballIndex * sectorSize;
+
+  let rX, rZ;
+  if (isDeterministic) {
+    const seed = (Math.imul(tick + 1, 198491317) ^ Math.imul(ballIndex + 1, 6542989)) >>> 0;
+    let t = (seed + 0x6D2B79F5) >>> 0;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    rX = ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+
+    t = (t + 0x6D2B79F5) >>> 0;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    rZ = ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  } else {
+    rX = Math.random();
+    rZ = Math.random();
+  }
+
+  // Margin inside the sector so balls don't drop on sector boundaries
+  const padZ = 1.5;
+  const innerSpanZ = Math.max(0.5, sectorSize - 2 * padZ);
+  const z = (sectorMinZ + padZ) + rZ * innerSpanZ;
+  const x = -maxX + rX * (2 * maxX);
+
+  return {
+    x: Math.round(x * 100) / 100,
+    y: ballDropHeightY,
+    z: Math.round(z * 100) / 100,
+  };
 }
 
 /**

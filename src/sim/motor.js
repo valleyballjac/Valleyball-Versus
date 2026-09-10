@@ -38,6 +38,25 @@ const _impulse = { x: 0, y: 0, z: 0 };
 const _rayOrigin = { x: 0, y: 0, z: 0 };
 let _ray = null;
 
+let _cachedRingCount = -1;
+let _ringCos = null;
+let _ringSin = null;
+let _lastHitRingIndex = -1;
+
+function getRingOffsets(ringCount) {
+  if (ringCount !== _cachedRingCount) {
+    _cachedRingCount = ringCount;
+    _ringCos = new Float32Array(ringCount);
+    _ringSin = new Float32Array(ringCount);
+    for (let i = 0; i < ringCount; i++) {
+      const angle = (i / ringCount) * Math.PI * 2;
+      _ringCos[i] = Math.cos(angle);
+      _ringSin[i] = Math.sin(angle);
+    }
+  }
+  return { cos: _ringCos, sin: _ringSin };
+}
+
 /**
  * The angular inertia of the root, about any axis.
  *
@@ -115,37 +134,53 @@ function castGroundFan(body, radius) {
   const reach = radius + TUNING.motor.groundedEpsilon;
   const ringCount = Math.max(0, Math.round(TUNING.motor.groundRayCount));
 
-  for (let i = -1; i < ringCount; i++) {
-    let offsetX = 0;
-    let offsetZ = 0;
+  // 1 — Centre ray: on flat ground or gentle slopes, this hits immediately and early-exits.
+  _rayOrigin.x = origin.x;
+  _rayOrigin.y = origin.y;
+  _rayOrigin.z = origin.z;
+  const centerHit = world.castRay(
+    _ray, reach, true, undefined, ENVIRONMENT_RAY_GROUPS, undefined, body,
+  );
+  if (centerHit && centerHit.timeOfImpact <= reach) {
+    _lastHitRingIndex = -1;
+    return true;
+  }
 
-    if (i >= 0) {
-      const angle = (i / ringCount) * Math.PI * 2;
-      offsetX = Math.cos(angle) * radius;
-      offsetZ = Math.sin(angle) * radius;
-    }
+  if (ringCount <= 0) return false;
 
-    _rayOrigin.x = origin.x + offsetX;
+  const { cos, sin } = getRingOffsets(ringCount);
+
+  // 2 — Temporal coherence: if a perimeter ray hit on the previous step (e.g. while
+  // rolling along a slope or mound), test that ray first before checking the rest.
+  if (_lastHitRingIndex >= 0 && _lastHitRingIndex < ringCount) {
+    _rayOrigin.x = origin.x + cos[_lastHitRingIndex] * radius;
     _rayOrigin.y = origin.y;
-    _rayOrigin.z = origin.z + offsetZ;
+    _rayOrigin.z = origin.z + sin[_lastHitRingIndex] * radius;
+    const hit = world.castRay(
+      _ray, reach, true, undefined, ENVIRONMENT_RAY_GROUPS, undefined, body,
+    );
+    if (hit && hit.timeOfImpact <= reach) return true;
+  }
 
-    // THE FILTER IS LOAD-BEARING (ruling, delegated). Unfiltered, this ray
-    // leaves the sphere and immediately hits the character's own calf — the
-    // ragdoll straddles the sphere — so `grounded` read TRUE from a standing
-    // rest with the sphere at y = 1.61, well clear of the floor. Excluding
-    // `body` is not enough: that argument takes one rigid body and the
-    // character is sixteen. Filtering to the environment layer is the only
-    // form of the exclusion that can express "the arena, and nothing else".
+  // 3 — Check remaining ring rays
+  for (let i = 0; i < ringCount; i++) {
+    if (i === _lastHitRingIndex) continue;
+
+    _rayOrigin.x = origin.x + cos[i] * radius;
+    _rayOrigin.y = origin.y;
+    _rayOrigin.z = origin.z + sin[i] * radius;
+
     const hit = world.castRay(
       _ray, reach, true, undefined, ENVIRONMENT_RAY_GROUPS, undefined, body,
     );
 
-    // Distance, not mere existence. Written as an explicit comparison so that a
-    // hit whose distance cannot be read fails closed rather than reading as
-    // grounded.
-    if (hit && hit.timeOfImpact <= reach) return true;
+    if (hit && hit.timeOfImpact <= reach) {
+      _lastHitRingIndex = i;
+      return true;
+    }
   }
 
+  _lastHitRingIndex = -1;
   return false;
 }
 

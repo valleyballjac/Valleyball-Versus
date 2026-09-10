@@ -71,8 +71,23 @@ import { RAPIER, getWorld, ENVIRONMENT_RAY_GROUPS } from '../sim/physics.js';
  * and it stays unreachable while tracking is healthy.
  */
 const MOUNT_FOLLOW_STAND_NEED = 0.25;
-/** How far above the pelvis the floor ray starts, and how far it reaches. */
-const MOUNT_RAY_LIFT = 2.0;
+/**
+ * How far above the pelvis the floor ray starts, and how far it reaches.
+ *
+ * LOWERED 2.0 -> 0.3 for the court. The goal tori are overhead rings, and a ray
+ * starting two metres above the pelvis begins ABOVE the ring while the athlete
+ * runs underneath it — so the first thing it hits on the way down is the goal,
+ * the probe reports a floor at hoop height, and the mount hitches. Starting
+ * just above the hip clears the ring without losing the probe: the reach is
+ * measured from the origin, so the ray still sees 19.7 m of floor below the
+ * pelvis instead of 18.0.
+ *
+ * THE COST, stated: a pelvis that has clipped more than 0.3 m BELOW the floor
+ * now starts its ray underneath the surface and finds nothing, where 2.0 m of
+ * headroom would have recovered it. That path already ends at the "NEVER GUESS
+ * A Y" branch below, which is the honest failure rather than a wrong answer.
+ */
+const MOUNT_RAY_LIFT = 0.3;
 const MOUNT_RAY_LENGTH = 20;
 
 /**

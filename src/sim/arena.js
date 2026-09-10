@@ -22,6 +22,16 @@ import { RAPIER, getWorld, ENVIRONMENT_GROUPS } from './physics.js';
  * player is not looking at. It can only ever be missing, never wrong — and the
  * inclusion decision is logged at boot so "missing" is visible.
  */
+const arenaColliderTypes = new Map();
+
+/**
+ * Returns the semantic surface type of an arena collider ('court', 'boundary', 'goal')
+ * @param {number} handle Rapier collider handle
+ * @returns {'court'|'boundary'|'goal'|null}
+ */
+export function getArenaColliderType(handle) {
+  return arenaColliderTypes.get(handle) || null;
+}
 
 /**
  * Profile for THREE.LatheGeometry, in (radius, height) pairs.
@@ -171,7 +181,7 @@ const _edgeAC = new THREE.Vector3();
  * @param {THREE.BufferGeometry} geometry
  * @returns {{ vertices: Float32Array, indices: Uint32Array, degenerateCount: number }}
  */
-export function toTrimeshArrays(geometry) {
+export function toTrimeshArrays(geometry, options = {}) {
   const position = geometry.getAttribute('position');
   const vertices =
     position.array instanceof Float32Array
@@ -192,7 +202,13 @@ export function toTrimeshArrays(geometry) {
   // Keep only triangles that enclose actual area. |AB x AC| is twice the area,
   // and the comparison is written so that a NaN coordinate fails the test and
   // the triangle is dropped, rather than passing it to the solver.
+  const filterInverted = options.filterInverted ?? false;
+  const maxInvertedY = options.maxInvertedY ?? 4.0;
+
   const kept = [];
+  let degenerateCount = 0;
+  let invertedCount = 0;
+
   for (let t = 0; t < source.length; t += 3) {
     const i = source[t];
     const j = source[t + 1];
@@ -205,12 +221,36 @@ export function toTrimeshArrays(geometry) {
     _edgeAB.subVectors(_triB, _triA);
     _edgeAC.subVectors(_triC, _triA);
 
-    if (_edgeAB.cross(_edgeAC).length() > DEGENERATE_CROSS_LENGTH) kept.push(i, j, k);
+    const cross = _edgeAB.cross(_edgeAC);
+    const len = cross.length();
+
+    if (len <= DEGENERATE_CROSS_LENGTH) {
+      degenerateCount++;
+      continue;
+    }
+
+    // Inverted floor triangles (faces with downward normal on playing floor)
+    // from mirrored instances or inverted face winding in Blender.
+    if (filterInverted) {
+      const ny = cross.y / len;
+      const midY = (_triA.y + _triB.y + _triC.y) / 3;
+      if (ny < -0.1 && midY < maxInvertedY) {
+        invertedCount++;
+        continue;
+      }
+    }
+
+    kept.push(i, j, k);
   }
 
   const indices = Uint32Array.from(kept);
 
-  return { vertices, indices, degenerateCount: (source.length - indices.length) / 3 };
+  return {
+    vertices,
+    indices,
+    degenerateCount,
+    invertedCount,
+  };
 }
 
 /**
@@ -285,6 +325,15 @@ function ownerNode(object, root) {
  * @returns {boolean}
  */
 function isRenderOnly(object, root) {
+  // Dense circle rims: visuals only
+  if (object.name === 'Circle039_1' || object.name === 'Circle186_1') return true;
+
+  // 5cm raised line ridges: keep visuals, exclude from physics colliders
+  if (object.isMesh) {
+    const mats = Array.isArray(object.material) ? object.material : [object.material];
+    if (mats.some((m) => m && m.name && m.name.includes('Lines'))) return true;
+  }
+
   for (let node = object; node && node !== root; node = node.parent) {
     const name = readableName(node.name);
     if (RENDER_ONLY_PREFIXES.some((prefix) => name.startsWith(prefix))) return true;
@@ -311,7 +360,11 @@ function normaliseCourtMaterial(material) {
   material.roughness = Math.max(material.roughness ?? 1, 0.8);
   // The glass barriers are authored alphaMode BLEND. Leave them transparent,
   // but stop them writing depth or they punch holes in everything behind.
-  if (material.transparent) material.depthWrite = false;
+  // Render FrontSide to eliminate 50% transparent pixel overdraw across large bounds.
+  if (material.transparent) {
+    material.depthWrite = false;
+    material.side = THREE.FrontSide;
+  }
 }
 
 /**
@@ -353,6 +406,16 @@ async function loadCourtArena(scene) {
   const scenery = new Set();
   let triangleCount = 0;
   let degenerateCount = 0;
+  let invertedCount = 0;
+
+  // Check if the asset provides dedicated collision proxies (prefixed with COL)
+  let hasDedicatedColliders = false;
+  group.traverse((object) => {
+    if (object.isMesh) {
+      const owner = readableName(ownerNode(object, group).name);
+      if (owner.startsWith('COL')) hasDedicatedColliders = true;
+    }
+  });
 
   // Traversal order is the glTF node order, which is fixed by the file — so the
   // colliders are created in the same order on every run. LAW 6 does not care
@@ -360,18 +423,35 @@ async function loadCourtArena(scene) {
   group.traverse((object) => {
     if (!object.isMesh) return;
 
-    // Visuals first, and for every mesh including the scenery.
-    object.receiveShadow = true;
-    object.castShadow = false;
-    object.frustumCulled = false;
-    const materials = Array.isArray(object.material) ? object.material : [object.material];
-    for (const material of materials) normaliseCourtMaterial(material);
-
     const owner = readableName(ownerNode(object, group).name) || readableName(object.name);
+    const isColliderProxy = owner.startsWith('COL');
 
-    if (isRenderOnly(object, group)) {
-      scenery.add(owner);
-      return;
+    if (hasDedicatedColliders) {
+      if (isColliderProxy) {
+        // Dedicated collision geometry: invisible in the render pass
+        object.visible = false;
+      } else {
+        // Visual mesh: normalise materials, render with shadows, skip physics collision
+        object.receiveShadow = true;
+        object.castShadow = false;
+        object.frustumCulled = true;
+        const materials = Array.isArray(object.material) ? object.material : [object.material];
+        for (const material of materials) normaliseCourtMaterial(material);
+        scenery.add(owner);
+        return;
+      }
+    } else {
+      // Visuals first, and for every mesh including the scenery.
+      object.receiveShadow = true;
+      object.castShadow = false;
+      object.frustumCulled = true;
+      const materials = Array.isArray(object.material) ? object.material : [object.material];
+      for (const material of materials) normaliseCourtMaterial(material);
+
+      if (isRenderOnly(object, group)) {
+        scenery.add(owner);
+        return;
+      }
     }
 
     // BAKED INTO WORLD SPACE. The clone is essential: applyMatrix4 mutates, and
@@ -379,7 +459,16 @@ async function loadCourtArena(scene) {
     const baked = object.geometry.clone();
     baked.applyMatrix4(object.matrixWorld);
 
-    const { vertices, indices, degenerateCount: dropped } = toTrimeshArrays(baked);
+    const isCourtSurface = isColliderProxy || !hasDedicatedColliders;
+    const {
+      vertices,
+      indices,
+      degenerateCount: dropped,
+      invertedCount: droppedInverted = 0,
+    } = toTrimeshArrays(baked, {
+      filterInverted: isCourtSurface,
+      maxInvertedY: 4.0,
+    });
     baked.dispose();
 
     if (indices.length === 0) {
@@ -395,19 +484,37 @@ async function loadCourtArena(scene) {
       }
     }
 
-    const collider = world.createCollider(RAPIER.ColliderDesc.trimesh(vertices, indices), body);
+    // INTERNAL EDGE FIXING: On authored court trimeshes (especially dense
+    // organic meshes with thousands of tiny facets), internal edges between adjacent
+    // coplanar/sub-coplanar triangles create ghost contact ridges. When a ball penetrates
+    // slightly, multiple conflicting facet normals generate phantom de-penetration
+    // impulses that shoot the ball sideways and artificially inject kinetic energy.
+    // FIX_INTERNAL_EDGES welds adjacent coplanar edges into smooth collision manifolds,
+    // guaranteeing clean, pure restitution bounces without phantom acceleration.
+    const desc = isCourtSurface
+      ? RAPIER.ColliderDesc.trimesh(vertices, indices, RAPIER.TriMeshFlags.FIX_INTERNAL_EDGES)
+      : RAPIER.ColliderDesc.trimesh(vertices, indices);
+    const collider = world.createCollider(desc, body);
     collider.setCollisionGroups(ENVIRONMENT_GROUPS);
     colliders.push(collider);
+
+    let arenaType = 'court';
+    if (owner.includes('Barrier') || owner.includes('Boundary')) arenaType = 'boundary';
+    else if (owner.includes('Goal') || owner.includes('Hoop')) arenaType = 'goal';
+    else if (owner.includes('Court')) arenaType = 'court';
+    arenaColliderTypes.set(collider.handle, arenaType);
+
     collidable.set(owner, (collidable.get(owner) || 0) + indices.length / 3);
     triangleCount += indices.length / 3;
     degenerateCount += dropped;
+    invertedCount += droppedInverted;
   });
 
   scene.add(group);
 
   console.log(
     `[arena] court "${url}": ${colliders.length} trimesh colliders on one fixed body, ` +
-      `${triangleCount} triangles (${degenerateCount} degenerate removed)`,
+      `${triangleCount} triangles (${degenerateCount} degenerate, ${invertedCount} inverted removed)`,
   );
   const byName = [...collidable.entries()].sort((a, b) => b[1] - a[1]);
   console.log(
@@ -532,6 +639,7 @@ function createBowlArena(scene) {
   // from main.js with a comment explaining that it could not live here; the
   // reason has gone, so the stamp has moved to the collider it describes.
   collider.setCollisionGroups(ENVIRONMENT_GROUPS);
+  arenaColliderTypes.set(collider.handle, 'court');
 
   scene.add(group);
 

@@ -48,6 +48,10 @@ import { TUNING } from '../config/tuning.js';
  *   0x0002  ragdoll     — the sixteen character bodies (autorig.js).
  *   0x0004  motor       — the sphere (detachMotorFromRagdoll).
  *   0x0008  ball        — the one ball (ball.js).
+ *   0x0010  ragdoll upper — the head and both arm chains (autorig.js). Split
+ *           out of ragdoll so seven capsules stop dragging on the arena floor
+ *           through a slide; they still meet the ball, which is what they are
+ *           for.
  *
  * Rapier packs an interaction word as (membership << 16) | filter, and two
  * colliders interact only if EACH one's membership passes the OTHER's filter.
@@ -72,6 +76,7 @@ export const GROUP_ENVIRONMENT = 0x0001;
 export const GROUP_RAGDOLL = 0x0002;
 export const GROUP_MOTOR = 0x0004;
 export const GROUP_BALL = 0x0008;
+export const GROUP_RAGDOLL_UPPER = 0x0010;
 
 /** Every bit that exists. The filter half is 16 bits wide. */
 const ALL_GROUPS = 0xffff;
@@ -82,12 +87,48 @@ const ALL_GROUPS = 0xffff;
  */
 export const ENVIRONMENT_MEMBERSHIP = GROUP_ENVIRONMENT;
 
-/** The arena: member of environment, collides with everything. */
-export const ENVIRONMENT_GROUPS = (GROUP_ENVIRONMENT << 16) | ALL_GROUPS;
+/** The arena: everything except the upper ragdoll, which passes through it. */
+export const ENVIRONMENT_GROUPS =
+  (GROUP_ENVIRONMENT << 16) | (ALL_GROUPS & ~GROUP_RAGDOLL_UPPER);
 
-/** Limbs hit the world and the BALL; never themselves, never the sphere. */
+/**
+ * TORSO AND LEGS: hit the world and the BALL; never themselves, never the
+ * sphere, and now never the upper chain either — the athlete's own arm must not
+ * collide with his own thigh any more than with his own shin.
+ */
 export const RAGDOLL_GROUPS =
-  (GROUP_RAGDOLL << 16) | (ALL_GROUPS & ~GROUP_RAGDOLL & ~GROUP_MOTOR);
+  (GROUP_RAGDOLL << 16) |
+  (ALL_GROUPS & ~GROUP_RAGDOLL & ~GROUP_RAGDOLL_UPPER & ~GROUP_MOTOR);
+
+/**
+ * HEAD AND ARMS: they meet the BALL and nothing else.
+ *
+ * Seven capsules — head, both upper arms, both forearms, both hands — used to
+ * drag across the arena trimesh for the length of every slide and dive. Each
+ * one is a contact manifold against triangles the torso is already resting on,
+ * so they bought no support and spent solver time snagging on triangle edges.
+ * Dropping the environment from their filter removes all seven manifolds at
+ * once and leaves the ball collision — which is the entire reason the hands and
+ * forearms are the volley's and the spike's striking bodies — completely
+ * untouched.
+ *
+ * BOTH DIRECTIONS, as this file requires: the environment's filter drops this
+ * bit above, and this filter drops the environment's here.
+ *
+ * WHAT THIS DOES NOT DO, said plainly because the intent was written as
+ * "collides with other athletes": it cannot. There is ONE membership bit for
+ * every athlete's upper chain, so excluding self-collision necessarily excludes
+ * every other athlete's arms too. Nothing regresses — ragdoll never collided
+ * with ragdoll — but athlete-vs-athlete contact needs a bit per athlete, and
+ * that is G5's problem, not a property of this word.
+ *
+ * AND THE HEAD NOW PASSES THROUGH THE FLOOR. On a knockdown the torso and legs
+ * still land and hold the body up; the head is free to clip the surface. That
+ * is the trade the streamlining buys, and it is visible rather than subtle.
+ */
+export const RAGDOLL_UPPER_GROUPS =
+  (GROUP_RAGDOLL_UPPER << 16) |
+  (ALL_GROUPS & ~GROUP_ENVIRONMENT & ~GROUP_RAGDOLL & ~GROUP_RAGDOLL_UPPER & ~GROUP_MOTOR);
 
 /**
  * The sphere hits the world only. Excluding the BALL is THE DESIGNER'S SPEC and
@@ -116,6 +157,7 @@ export function logCollisionMatrix() {
   const rows = [
     ['environment', ENVIRONMENT_GROUPS],
     ['ragdoll', RAGDOLL_GROUPS],
+    ['ragdoll_upper', RAGDOLL_UPPER_GROUPS],
     ['motor', MOTOR_GROUPS],
     ['ball', BALL_GROUPS],
   ];

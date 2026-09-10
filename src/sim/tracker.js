@@ -418,7 +418,13 @@ function applyGains(tracker, rig, animTarget, motor, dt) {
     // The cap is on the IMPULSE, in units of the body's own mass, so a heavy
     // torso and a light hand are limited proportionally rather than the cap
     // meaning something different for each.
-    const maxLinear = TUNING.tracking.maxLinearImpulse * mass;
+    // AND THE PELVIS GETS MORE OF IT WHILE SLIDING. A fast slide drags the
+    // whole body along the floor; the cap binds before the pelvis servo can
+    // hold station, and the body falls behind the sphere it is mounted on.
+    // Pelvis only, slide only — nothing else's cap moves.
+    const isSlidingPelvis = key === 'pelvis' && animTarget.slideMix > 0;
+    const clampBoost = isSlidingPelvis ? (TUNING.action.slidePelvisClampBoost || 3.0) : 1.0;
+    const maxLinear = TUNING.tracking.maxLinearImpulse * clampBoost * mass;
     if (_impulseVec.lengthSq() > maxLinear * maxLinear) _impulseVec.setLength(maxLinear);
 
     _impulse.x = _impulseVec.x;
@@ -449,16 +455,31 @@ function applyGains(tracker, rig, animTarget, motor, dt) {
       _errorQuat.set(-_errorQuat.x, -_errorQuat.y, -_errorQuat.z, -_errorQuat.w);
     }
 
+    const isFoot = key === 'footL' || key === 'footR';
+    const angularKp = isFoot
+      ? (TUNING.tracking.footAngularKp ?? 1500)
+      : TUNING.tracking.angularKp;
+    const angularKd = isFoot
+      ? (TUNING.tracking.footAngularKd ?? 150)
+      : TUNING.tracking.angularKd;
+    const maxAngular = isFoot
+      ? (TUNING.tracking.footMaxAngularImpulse ?? 0.35)
+      : TUNING.tracking.maxAngularImpulse;
+
     const angle = 2 * Math.acos(Math.min(1, _errorQuat.w));
     if (angle > MIN_ANGLE) {
       const sin = Math.sqrt(Math.max(0, 1 - _errorQuat.w * _errorQuat.w));
       _axis.set(_errorQuat.x, _errorQuat.y, _errorQuat.z).divideScalar(sin);
 
+      // Non-linear ligament stiffness ramp if foot begins to invert past natural range (~15-20 deg)
+      const stiffnessMult = isFoot && angle > 0.25
+        ? 1.0 + Math.pow((angle - 0.25) / 0.20, 2) * 5.0
+        : 1.0;
+
       _impulseVec
         .copy(_axis)
-        .multiplyScalar(angle * TUNING.tracking.angularKp * kpScale * groupScale * dt);
+        .multiplyScalar(angle * angularKp * stiffnessMult * kpScale * groupScale * dt);
 
-      const maxAngular = TUNING.tracking.maxAngularImpulse;
       if (_impulseVec.lengthSq() > maxAngular * maxAngular) _impulseVec.setLength(maxAngular);
 
       _impulse.x = _impulseVec.x;
@@ -471,7 +492,7 @@ function applyGains(tracker, rig, animTarget, motor, dt) {
     _relVel.subVectors(_preAngvel, target.angvel);
     applyClampedAngularDamping(
       body,
-      _relVel.length() * TUNING.tracking.angularKd * kdScale * groupScale * dt,
+      _relVel.length() * angularKd * kdScale * groupScale * dt,
       _relVel,
       dt,
     );

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { TUNING } from '../config/tuning.js';
 import { Interpolated } from '../core/Interpolated.js';
-import { RAPIER, getWorld, RAGDOLL_GROUPS, MOTOR_GROUPS } from './physics.js';
+import { RAPIER, getWorld, RAGDOLL_GROUPS, RAGDOLL_UPPER_GROUPS, MOTOR_GROUPS } from './physics.js';
 
 /**
  * The Auto-Rigger.
@@ -451,7 +451,7 @@ function buildSegment(entry, byName, characterHeight, spawn) {
   _dir.divideScalar(length);
   segmentOrientation(_dir, _quat);
 
-  const radius = TUNING.ragdoll.radiusRatio[entry.group] * characterHeight;
+  const radius = (TUNING.ragdoll.radiusRatio[entry.key] ?? TUNING.ragdoll.radiusRatio[entry.group]) * characterHeight;
   const halfHeight = (length / 2) * TUNING.ragdoll.lengthFit;
 
   // THE BIND POSE OF THE BODY, in bind space — deliberately WITHOUT the spawn
@@ -495,14 +495,27 @@ function buildSegment(entry, byName, characterHeight, spawn) {
   // the contact manifold it generates is garbage. The torso segments on this rig
   // are genuinely shorter than their radius, so this is the normal path for
   // them, not an error path.
-  const useBall = entry.shape === 'ball' || radius >= halfHeight;
+  const useBall = entry.shape === 'ball' || (entry.group === 'torso' && radius >= halfHeight);
 
   const desc = useBall
     ? RAPIER.ColliderDesc.ball(radius)
     : RAPIER.ColliderDesc.capsule(halfHeight, radius);
 
-  desc.setDensity(TUNING.ragdoll.density[entry.group] * DENSITY_G_PER_CM3_TO_KG_PER_M3);
-  desc.setCollisionGroups(RAGDOLL_GROUPS);
+  const density =
+    (TUNING.ragdoll.density[entry.key] ?? TUNING.ragdoll.density[entry.group]) *
+    DENSITY_G_PER_CM3_TO_KG_PER_M3;
+  desc.setDensity(density);
+
+  // THE UPPER CHAIN GETS ITS OWN WORD — head, both upper arms, both forearms,
+  // both hands. Seven of the sixteen, derived from THIS TABLE rather than
+  // listed a second time somewhere else: a hand-written list of seven keys is a
+  // copy of BONE_MAP that starts agreeing with it and quietly stops.
+  const isUpper =
+    entry.group === 'head' ||
+    entry.key.startsWith('upperArm') ||
+    entry.key.startsWith('foreArm') ||
+    entry.key.startsWith('hand');
+  desc.setCollisionGroups(isUpper ? RAGDOLL_UPPER_GROUPS : RAGDOLL_GROUPS);
   // Explicit rather than inherited. These ran on Rapier's defaults from Task 3
   // until now; see the TUNING comments for why restitution was never the cause
   // of the landing bounce and friction was the cause of the skid.

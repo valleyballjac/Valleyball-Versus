@@ -3,3 +3,11 @@ dist/
 captures/
 .DS_Store
 *.log
+_fable/
+scratch/
+test_*.mjs
+diff.mjs
+*_backup.glb
+c.json
+current_tuning.json
+user_tuning.json
