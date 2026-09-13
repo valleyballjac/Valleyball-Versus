@@ -9,7 +9,7 @@ import {
 } from './sim/physics.js';
 import { createArena, activeArenaType, activeArenaPreset, getArenaColliderType } from './sim/arena.js';
 import {
-  createBall, getCourtBallDropSpawn, applyBallResistance, noteBallContact, syncBallSnapshot, ballProbe,
+  createBall, resetBall, getCourtBallDropSpawn, applyBallResistance, noteBallContact, syncBallSnapshot, ballProbe,
 } from './sim/ball.js';
 import { createMotor, updateMotor, syncMotorSnapshot, horizontalSpeed } from './sim/motor.js';
 import {
@@ -35,12 +35,43 @@ import {
   findNonFinite,
   applyRagdollVisibility,
   updateAthletePalette,
+  updateAthleteVariant,
 } from './sim/ragdoll.js';
 import { applyClampedLinearDamping } from './sim/damping.js';
+import { createAthlete } from './sim/athlete.js';
 import {
-  input, initInput, sampleInput, consumeJump, consumeDive, consumeVolley, consumeSpike,
+  initInputRouter,
+  sampleAllInputs,
+  getInputSlot,
+  consumeAthleteJump,
+  consumeAthleteDive,
+  consumeAthleteVolley,
+  consumeAthleteSpike,
+  consumeAthleteBallReset,
   consumeCameraCycle,
-} from './input.js';
+  consumeMenuToggle,
+  getMouseDeltas,
+  getControllerAssignments,
+} from './input/inputRouter.js';
+import { updateSportsCamera } from './visuals/sportsCamera.js';
+import { PlayerCamera } from './visuals/playerCamera.js';
+import { CinematicCamera } from './visuals/cinematicCamera.js';
+import { initVictoryScreen, showVictoryScreen, hideVictoryScreen, showPracticeSummary } from './ui/victoryScreen.js';
+import { initCountdownOverlay, updateCountdownOverlay, resetCountdownOverlay } from './ui/countdownOverlay.js';
+import { initInGameMenu, toggleInGameMenu, hideInGameMenu, updateInGameMenuBanner, isInGameMenuOpen } from './ui/inGameMenu.js';
+import {
+  initMainMenu,
+  initMobileNotice,
+  showTitleScreen,
+  showPlayerSetup,
+  hideMainMenu,
+  isMainMenuActive,
+  showFlyoverOverlay,
+  hideFlyoverOverlay,
+  getPlayerConfigs,
+  getSelectedMatchBall,
+  getColorName,
+} from './ui/mainMenu.js';
 import { createWatchdogState, runWatchdog } from './mechanics/watchdog.js';
 import { createMountFollowerState, runMountFollower } from './mechanics/mountFollower.js';
 import { createActionState, runActions } from './mechanics/actions.js';
@@ -50,6 +81,8 @@ import {
 } from './mechanics/strikes.js';
 import { createMatchState, updateScoring, matchProbe } from './mechanics/scoring.js';
 import { createScoreboards, updateScoreboards } from './visuals/scoreboards.js';
+import { createHustleBoards, updateHustleBoards } from './visuals/hustleBoards.js';
+import { displayCoordinator } from './visuals/displayCoordinator.js';
 import { soundManager } from './audio/soundManager.js';
 import { createGui } from './debug/gui.js';
 import { initCapture } from './debug/capture.js';
@@ -66,6 +99,7 @@ const MAX_LIVE_PIXEL_RATIO = 2;
 
 /** The axis the gamepad orbit's azimuth turns about. */
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
+const _zeroVector = new THREE.Vector3(0, 0, 0);
 
 /**
  * The collision group layout lives in sim/physics.js, because the motor's ground
@@ -250,28 +284,67 @@ function installRespawnHotkey() {
     // "T" — THE KNOCKDOWN. The only writer of the blend weight besides the
     // recovery ramp. It queues a flag; fixedUpdate consumes it, so the weight
     // is never written from outside the fixed step.
-    if (isHotkey(event, 'KeyT')) knockdownRequested = true;
+    if (isHotkey(event, 'KeyT')) {
+      for (const a of athletes) a.requestKnockdown();
+    }
     // "H" — TOGGLE DEVELOPER TELEMETRY HUD
     if (isHotkey(event, 'KeyH')) {
       TUNING.debug.showHud = !TUNING.debug.showHud;
       setHudVisible(TUNING.debug.showHud);
     }
-    // "J" — TOGGLE TEAM JERSEY (Home <-> Away)
-    if (isHotkey(event, 'KeyJ')) {
-      TUNING.athlete.team = TUNING.athlete.team === 'home' ? 'away' : 'home';
-      updateAthletePalette(ragdoll);
-      if (guiInstance) {
-        guiInstance.controllersRecursive().forEach((c) => c.updateDisplay());
+    // "1" — TOGGLE TEAM JERSEY (Home <-> Away) for P1
+    if (isHotkey(event, 'Digit1')) {
+      const p = TUNING.players[0] || TUNING.athlete;
+      p.team = p.team === 'home' ? 'away' : 'home';
+      TUNING.athlete.team = p.team;
+      if (athletes[0]) athletes[0].setTeamAndVariant(p.team, null);
+      if (guiInstance) guiInstance.controllersRecursive().forEach((c) => c.updateDisplay());
+    }
+    // "2" — CYCLE SILHOUETTE VARIANT (masculine -> feminine -> classic) for P1
+    if (isHotkey(event, 'Digit2')) {
+      const p = TUNING.players[0] || TUNING.athlete;
+      const variants = ['masculine', 'feminine', 'classic'];
+      const nextIdx = (variants.indexOf(p.variant) + 1) % variants.length;
+      p.variant = variants[nextIdx];
+      TUNING.athlete.variant = variants[nextIdx];
+      if (athletes[0]) athletes[0].setTeamAndVariant(null, p.variant);
+      if (guiInstance) guiInstance.controllersRecursive().forEach((c) => c.updateDisplay());
+    }
+    // "9" — TOGGLE TEAM JERSEY (Home <-> Away) for P2
+    if (isHotkey(event, 'Digit9')) {
+      if (TUNING.players[1]) {
+        TUNING.players[1].team = TUNING.players[1].team === 'home' ? 'away' : 'home';
+        if (athletes[1]) athletes[1].setTeamAndVariant(TUNING.players[1].team, null);
+        if (guiInstance) guiInstance.controllersRecursive().forEach((c) => c.updateDisplay());
       }
     }
-    // "K" — CYCLE SILHOUETTE VARIANT (masculine -> feminine -> classic)
-    if (isHotkey(event, 'KeyK')) {
-      const variants = ['masculine', 'feminine', 'classic'];
-      const nextIdx = (variants.indexOf(TUNING.athlete.variant) + 1) % variants.length;
-      TUNING.athlete.variant = variants[nextIdx];
-      updateAthletePalette(ragdoll);
-      if (guiInstance) {
-        guiInstance.controllersRecursive().forEach((c) => c.updateDisplay());
+    // "0" — CYCLE SILHOUETTE VARIANT for P2
+    if (isHotkey(event, 'Digit0')) {
+      if (TUNING.players[1]) {
+        const variants = ['masculine', 'feminine', 'classic'];
+        const nextIdx = (variants.indexOf(TUNING.players[1].variant) + 1) % variants.length;
+        TUNING.players[1].variant = variants[nextIdx];
+        if (athletes[1]) athletes[1].setTeamAndVariant(null, TUNING.players[1].variant);
+        if (guiInstance) guiInstance.controllersRecursive().forEach((c) => c.updateDisplay());
+      }
+    }
+    // "V" — TOGGLE SPLITSCREEN MODE
+    if (isHotkey(event, 'KeyV')) {
+      TUNING.camera.splitscreen = !TUNING.camera.splitscreen;
+      applyViewportSize();
+      if (guiInstance) guiInstance.controllersRecursive().forEach((c) => c.updateDisplay());
+    }
+    // Skip flyover cutscene with Space, Enter, or Escape
+    if (gameState === 'flyover' && (isHotkey(event, 'Space') || isHotkey(event, 'Enter') || isHotkey(event, 'Escape'))) {
+      skipFlyover();
+      return;
+    }
+    // "Escape" — TOGGLE IN-GAME SETTINGS & PAUSE MENU (continuous play clock)
+    if (isHotkey(event, 'Escape')) {
+      if (gameState === 'menu') {
+        showTitleScreen();
+      } else {
+        toggleInGameMenu(playerCameras[0]?.mode, playerCameras[1]?.mode);
       }
     }
   });
@@ -301,6 +374,10 @@ const renderer = new THREE.WebGLRenderer({
 // why the caster list is kept to the ball rather than switched on scene-wide.
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+// splitscreen optimization: disable autoUpdate so we don't re-render 4 shadow maps
+// for every viewport pass. We flag needsUpdate once per frame before rendering.
+renderer.shadowMap.autoUpdate = false;
+renderer.shadowMap.needsUpdate = true;
 
 // ---------------------------------------------------------------------------
 // Scene
@@ -342,71 +419,129 @@ for (const tower of stadiumTowers) {
 
 scene.add(new THREE.AmbientLight(0x8fb4d6, 0.45));
 
-// Static three-quarter view. The camera is explicitly NOT simulation state and
-// is NOT interpolated. There is no follow logic in this task.
-const camera = new THREE.PerspectiveCamera(TUNING.camera.fov, 16 / 9, 0.1, 400);
-
 /**
- * THE SPRING ARM — the one and only owner of the camera.
- *
- * OrbitControls is gone: import, instance, its target, its update, and the
- * follow function that used to shove that target around. Three things all
- * believed they owned the camera transform, and the order they ran in was the
- * only thing keeping them from fighting. Now there is one rig, three numbers,
- * and one place that turns them into a transform.
- *
- * All three are RENDER-SIDE state. The simulation never reads them; it reads
- * the camera's heading once per frame through input.cameraYaw and through
- * nothing else (LAW L6).
+ * PLAYER CAMERAS — independent rigs for splitscreen and single screen.
  */
-const cameraRig = {
-  // Seeded to reproduce roughly the old three-quarter view: behind the
-  // character looking along +Z, tilted down.
-  azimuth: 0,
-  pitch: 0.62,
-  // Seeded at radius so the first frame opens at the resting distance rather
-  // than springing out from the character's chest.
-  currentDistance: TUNING.camera.radius,
-};
+const playerCameras = [
+  new PlayerCamera(0, TUNING.players[0]?.cameraMode || 'chase'),
+  new PlayerCamera(1, TUNING.players[1]?.cameraMode || 'chase'),
+];
+const camera = playerCameras[0].camera;
+const cameraRig = playerCameras[0]; // backward compatibility for debug capture & telemetry
+
+const cinematicCamera = new CinematicCamera();
+let gameState = 'menu'; // 'menu' | 'flyover' | 'match' | 'practice'
 
 const _camTarget = new THREE.Vector3();
 const _camOffset = new THREE.Vector3();
 const _camDir = new THREE.Vector3();
-/** Where a fixed-shot mode wants the camera. Scratch: these run every frame. */
 const _camDesired = new THREE.Vector3();
 
-/**
- * THE VIEWS, in cycle order. One array so the hotkey, the pad and the GUI
- * dropdown cannot disagree about what comes next.
- */
-const CAMERA_MODES = ['chase', 'ball', 'broadcast', 'tactical'];
-
-function cycleCameraMode() {
-  const current = CAMERA_MODES.indexOf(TUNING.camera.mode);
-  TUNING.camera.mode = CAMERA_MODES[(current + 1) % CAMERA_MODES.length];
-  console.log(`[camera] mode -> ${TUNING.camera.mode}`);
+function cycleCameraMode(playerIndex = 0) {
+  const pc = playerCameras[playerIndex] || playerCameras[0];
+  const mode = pc.cycleMode();
+  if (TUNING.players[playerIndex]) TUNING.players[playerIndex].cameraMode = mode;
+  if (playerIndex === 0) TUNING.camera.mode = mode;
 }
 
 /** Applied at boot and from the GUI. Never from the render pass. */
 function applyCameraTuning() {
-  camera.fov = TUNING.camera.fov;
-  camera.updateProjectionMatrix();
+  for (const pc of playerCameras) {
+    pc.camera.fov = TUNING.camera.fov;
+    pc.camera.updateProjectionMatrix();
+  }
+  cinematicCamera.camera.fov = TUNING.camera.fov;
+  cinematicCamera.camera.updateProjectionMatrix();
 }
 
 /**
- * Sizes the renderer and the camera projection to the window. Called at boot,
- * on resize, and by the anchored capture to put things back afterwards. Never
- * called from the render pass.
+ * Sizes the renderer and the camera projection to the window.
  */
 function applyViewportSize() {
   const width = window.innerWidth;
   const height = window.innerHeight;
 
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, MAX_LIVE_PIXEL_RATIO));
+  let ratio = Math.min(window.devicePixelRatio || 1, MAX_LIVE_PIXEL_RATIO);
+  const preset = TUNING.render?.pixelRatioPreset;
+  if (preset === '1.0') {
+    ratio = 1.0;
+  } else if (preset === '1.25') {
+    ratio = Math.min(1.25, window.devicePixelRatio || 1);
+  } else if (preset === 'native') {
+    ratio = Math.min(window.devicePixelRatio || 1, MAX_LIVE_PIXEL_RATIO);
+  }
+
+  renderer.setPixelRatio(ratio);
   renderer.setSize(width, height);
 
-  camera.aspect = width / height;
-  camera.updateProjectionMatrix();
+  cinematicCamera.camera.aspect = width / height;
+  cinematicCamera.camera.updateProjectionMatrix();
+
+  const p1CamMode = playerCameras[0]?.mode;
+  const p2CamMode = playerCameras[1]?.mode;
+  const isSharedCam = (p1CamMode === 'broadcast' && p2CamMode === 'broadcast') ||
+                      (p1CamMode === 'sports' && p2CamMode === 'sports');
+  const isSplitscreen = (gameState === 'match') && !!TUNING.camera.splitscreen && athletes.length >= 2 && !isSharedCam;
+  const aspect = isSplitscreen ? (width / 2) / height : width / height;
+
+  playerCameras[0].camera.aspect = aspect;
+  playerCameras[0].camera.updateProjectionMatrix();
+  playerCameras[1].camera.aspect = aspect;
+  playerCameras[1].camera.updateProjectionMatrix();
+}
+
+function applyShadowSettings() {
+  const quality = TUNING.render?.shadowQuality || 'high';
+  if (quality === 'off') {
+    renderer.shadowMap.enabled = false;
+    for (const light of stadiumLights) {
+      light.castShadow = false;
+    }
+  } else if (quality === 'balanced') {
+    renderer.shadowMap.enabled = true;
+    if (stadiumLights.length > 0) {
+      stadiumLights[0].castShadow = true;
+    }
+    for (let i = 1; i < stadiumLights.length; i++) {
+      stadiumLights[i].castShadow = false;
+    }
+  } else {
+    // 'high' - all 4 towers cast shadows
+    renderer.shadowMap.enabled = true;
+    for (const light of stadiumLights) {
+      light.castShadow = true;
+    }
+  }
+  renderer.shadowMap.needsUpdate = true;
+}
+
+function applyRenderSettings(settings = {}) {
+  if (settings.pixelRatioPreset) {
+    if (!TUNING.render) TUNING.render = {};
+    TUNING.render.pixelRatioPreset = settings.pixelRatioPreset;
+    applyViewportSize();
+  }
+  if (settings.shadowQuality) {
+    if (!TUNING.render) TUNING.render = {};
+    TUNING.render.shadowQuality = settings.shadowQuality;
+    applyShadowSettings();
+  }
+  if (settings.showControlsOverlay !== undefined) {
+    const controlsCard = document.getElementById('controls-card');
+    if (controlsCard) {
+      controlsCard.style.display = settings.showControlsOverlay ? 'flex' : 'none';
+    }
+  }
+  if (settings.showTuningGui !== undefined && guiInstance) {
+    if (settings.showTuningGui) {
+      guiInstance.show();
+    } else {
+      guiInstance.hide();
+    }
+  }
+  if (guiInstance) {
+    guiInstance.controllersRecursive().forEach((c) => c.updateDisplay());
+  }
 }
 
 window.addEventListener('resize', applyViewportSize);
@@ -460,106 +595,80 @@ function setHudVisible(visible) {
 function updateHud(match) {
   if (!TUNING.debug.showHud) return;
 
+  const a0 = athletes[0];
+  const mtr = a0 ? a0.motor : motor;
+  const trk = a0 ? a0.tracker : tracker;
+  const tgt = a0 ? a0.animTarget : animTarget;
+  const act = a0 ? a0.actionState : actionState;
+  const stk = a0 ? a0.strikeState : strikeState;
+
   hudTick.textContent = String(loop.tick);
   hudAlpha.textContent = loop.alpha.toFixed(2);
   hudSteps.textContent = String(loop.stepsThisFrame);
   hudFrameTime.textContent = `${loop.frameTimeMs.toFixed(2)} ms`;
   hudDisplayHz.textContent = `${loop.displayHz.toFixed(1)} Hz`;
   hudDrift.textContent = `${loop.driftMs.toFixed(1)} ms`;
-  hudSpeed.textContent = motor ? `${horizontalSpeed(motor).toFixed(2)} m/s` : '—';
-  hudGrounded.textContent = motor ? String(motor.grounded) : '—';
-  hudWeight.textContent = tracker.weight.toFixed(2);
-  hudAnimSpeed.textContent = animTarget ? animTarget.smoothedSpeed.toFixed(2) : '—';
-  hudBlend.textContent = animTarget
-    ? `${animTarget.gait.idle.toFixed(2)} ${animTarget.gait.walk.toFixed(2)} ` +
-      `${animTarget.gait.run.toFixed(2)} ${animTarget.gait.sprint.toFixed(2)}`
+  hudSpeed.textContent = mtr ? `${horizontalSpeed(mtr).toFixed(2)} m/s` : '—';
+  hudGrounded.textContent = mtr ? String(mtr.grounded) : '—';
+  hudWeight.textContent = trk ? trk.weight.toFixed(2) : '—';
+  hudAnimSpeed.textContent = tgt ? tgt.smoothedSpeed.toFixed(2) : '—';
+  hudBlend.textContent = tgt
+    ? `${tgt.gait.idle.toFixed(2)} ${tgt.gait.walk.toFixed(2)} ` +
+      `${tgt.gait.run.toFixed(2)} ${tgt.gait.sprint.toFixed(2)}`
     : '—';
-  hudDirection.textContent = animTarget
-    ? animTarget.direction.map((d) => d.toFixed(2)).join(' ')
+  hudDirection.textContent = tgt
+    ? tgt.direction.map((d) => d.toFixed(2)).join(' ')
     : '—';
-  // THE TWO BACK NODES, BY NAME. The row above gives the direction tent's B
-  // weight, which is the same number whatever clip a back node happens to hold —
-  // so on its own it cannot tell an authored backpedal from the forward-walk
-  // stand-in, nor the walk ring's clip from the run ring's. Each ring now owns
-  // its own back node, so each is printed with the weight that charges it:
-  // walk first, then run. Both names are READ off the nodes the ring
-  // construction built (Lesson 22) — nothing here reconstructs which clip
-  // TUNING asked for, which is the whole point, because a fallback would make
-  // those two answers differ and only the node knows the truth.
-  hudBackNode.textContent = animTarget
-    ? `${animTarget.weights.walkB.toFixed(2)} ${animTarget.nodes.walk.b.name} / ` +
-      `${animTarget.weights.runB.toFixed(2)} ${animTarget.nodes.run.b.name}`
+  hudBackNode.textContent = tgt
+    ? `${tgt.weights.walkB.toFixed(2)} ${tgt.nodes.walk.b.name} / ` +
+      `${tgt.weights.runB.toFixed(2)} ${tgt.nodes.run.b.name}`
     : '—';
-  // Velocity in the character's OWN frame: +Z is where it is pointing, +X its
-  // right. This is the number to watch while checking a strafe — a pure strafe
-  // reads as vz near zero and vx at the ground speed.
-  hudLocalVel.textContent = animTarget
-    ? `${animTarget.localVelX.toFixed(2)} / ${animTarget.localVelZ.toFixed(2)}`
+  hudLocalVel.textContent = tgt
+    ? `${tgt.localVelX.toFixed(2)} / ${tgt.localVelZ.toFixed(2)}`
     : '—';
-  // Input state, read straight off the latched frame snapshot.
-  hudSprint.textContent = input.sprintHeld ? 'SPRINT' : '—';
-  // air / phase / latched clip mix (1.00 = standing jump, 0.00 = running).
-  hudAirborne.textContent = animTarget
-    ? `${animTarget.airborneMix.toFixed(2)} / ${animTarget.jumpPhase.toFixed(2)} / ${animTarget.jumpClipMix.toFixed(2)}`
+  hudSprint.textContent = getInputSlot(0).sprintHeld ? 'SPRINT' : '—';
+  hudAirborne.textContent = tgt
+    ? `${tgt.airborneMix.toFixed(2)} / ${tgt.jumpPhase.toFixed(2)} / ${tgt.jumpClipMix.toFixed(2)}`
     : '—';
   hudDrag.textContent = lastResistanceScale.toFixed(2);
-  // The spring arm: distance / azimuth / pitch. Criterion 2 watches the
-  // distance return to exactly TUNING.camera.radius with no residue.
   hudArm.textContent =
     `${cameraRig.currentDistance.toFixed(3)} / ${cameraRig.azimuth.toFixed(2)} / ${cameraRig.pitch.toFixed(2)}`;
 
-  // slideTime in ticks / divePending / dive cooldown remaining in ticks.
-  const diveReady =
-    Math.max(0, TUNING.action.diveCooldownTicks - (loop.tick - actionState.lastDiveTick));
-  hudAction.textContent = `${actionState.slideTime} / ${actionState.divePending ? 'DIVE' : '—'} / cd ${
-    Number.isFinite(diveReady) ? Math.round(diveReady) : 0
-  }`;
+  const diveReady = act
+    ? Math.max(0, TUNING.action.diveCooldownTicks - (loop.tick - act.lastDiveTick))
+    : 0;
+  hudAction.textContent = act
+    ? `${act.slideTime} / ${act.divePending ? 'DIVE' : '—'} / cd ${Number.isFinite(diveReady) ? Math.round(diveReady) : 0}`
+    : '—';
 
-  // The four override shares, in precedence order: stand-up, action, air, loco.
-  // READ from the ghost, never recomputed here. This row used to carry its own
-  // copy of the tier arithmetic, and when the tiers were reordered the copy was
-  // left behind — it reported a held slide as 62% stand-up while the mixer was
-  // giving the stand-up nothing at all.
-  if (animTarget) {
-    const sh = animTarget.shares;
+  if (tgt) {
+    const sh = tgt.shares;
     hudShares.textContent =
       `${sh.stand.toFixed(2)} ${sh.action.toFixed(2)} ${sh.air.toFixed(2)} ${sh.loco.toFixed(2)}`;
   } else {
     hudShares.textContent = '—';
   }
-  // The locomotion group's share. Criterion 3 watches this go to ~0 in flight.
-  hudLoco.textContent = animTarget
-    ? animTarget.shares.loco < 0.005
+  hudLoco.textContent = tgt
+    ? tgt.shares.loco < 0.005
       ? '0.00'
-      : animTarget.shares.loco.toFixed(2)
+      : tgt.shares.loco.toFixed(2)
     : '—';
 
-  // Tick-stamped, so the fade is sim time. A wall-clock timer here would make
-  // the HUD a function of frame pacing.
-  const age = loop.tick - tracker.lastImpactTick;
+  const age = trk ? loop.tick - trk.lastImpactTick : Infinity;
   hudImpact.textContent =
-    tracker.lastImpactKey && age <= TUNING.impact.hudHoldTicks
-      ? `${tracker.lastImpactKey} ${Math.round(tracker.lastImpactExcess)}`
+    trk && trk.lastImpactKey && age <= TUNING.impact.hudHoldTicks
+      ? `${trk.lastImpactKey} ${Math.round(trk.lastImpactExcess)}`
       : '—';
 
-  hudStandUp.textContent = animTarget
-    ? `${animTarget.standUpNeed.toFixed(2)} / ${animTarget.standUpProgress.toFixed(2)} / ${animTarget.pelvisDownness.toFixed(2)}`
+  hudStandUp.textContent = tgt
+    ? `${tgt.standUpNeed.toFixed(2)} / ${tgt.standUpProgress.toFixed(2)} / ${tgt.pelvisDownness.toFixed(2)}`
     : '—';
 
-  // THE BALL ROWS, read through the ball's own probe (LESSON 22 — the readout
-  // reads; it does not keep a second copy of the arithmetic). `h` is the
-  // distance from the ball's CENTRE down to the arena, so a ball at rest on
-  // flat floor reads its own radius rather than zero — which is what makes
-  // "0.00 / 0.105" a meaningful thing to see in a capture.
   if (ball) {
     const b = ballProbe(ball);
     hudBall.textContent = `${b.label}  ${b.speed.toFixed(2)} m/s / ${
       Number.isFinite(b.heightAboveFloor) ? b.heightAboveFloor.toFixed(3) : '—'
     } m`;
-    // Ticks, not seconds: the HUD may not name a wall clock any more than the
-    // simulation may.
-    // The MOST RECENT touch across all three, so a hit on any ball shows up
-    // rather than only the primary's.
     let latest = null;
     for (const other of balls) {
       if (other.lastTouchKey && (!latest || other.lastTouchTick > latest.lastTouchTick)) {
@@ -569,9 +678,6 @@ function updateHud(match) {
     hudBallTouch.textContent = latest
       ? `${latest.id}:${latest.lastTouchKey} @${latest.lastTouchTick} ${latest.lastTouchForce.toFixed(1)} N`
       : '—';
-    // The right-hand number is the spec's evidence and must read 0 forever. It
-    // is the total ACROSS ALL THREE balls, not the primary's: one sphere
-    // ploughing through one ball is the failure, whichever ball it is.
     let motorContacts = 0;
     let peakAcross = 0;
     for (const other of balls) {
@@ -585,12 +691,7 @@ function updateHud(match) {
     hudBallPeak.textContent = '—';
   }
 
-  // THE STRIKE ROWS, read through the strike's own probe (LESSON 22 — the
-  // readout reads). `w` is the window: ticks since the press, and whether that
-  // number is inside the row's open/close. It is the one number that explains a
-  // whiff, because a whiff is always either "too early", "too late", or "the
-  // hand never got there".
-  const st = strikeProbe(strikeState);
+  const st = stk ? strikeProbe(stk) : strikeProbe(strikeState);
   const row = st.kind === 'spike'
     ? TUNING.strike.spike
     : (st.kind === 'kick' ? TUNING.strike.kick : TUNING.strike.volley);
@@ -605,11 +706,7 @@ function updateHud(match) {
     ? `${st.lastContactKey} @${st.lastContactTick} q ${st.lastContactQuality.toFixed(2)} ` +
       `${st.lastContactForce.toFixed(0)} N -> ${st.lastLaunchSpeed.toFixed(1)} m/s`
     : '—';
-  // HITS / SWINGS, not hits / misses. The old readout put two disjoint counts
-  // side by side and read as a fraction, so a perfect swing showed "1 / 0".
   const attempts = st.attempts || (st.resolvedCount + st.whiffCount);
-  // ASSISTED HITS ARE SHOWN, NOT FOLDED IN. A hit rate that hides how much of
-  // itself the assist paid for is a number that cannot be tuned against.
   const assisted = st.assistedCount || 0;
   const assistTag = assisted > 0 ? ` (${assisted} assisted)` : '';
   hudStrikeRate.textContent = `${st.resolvedCount}${assistTag} / ${attempts}` +
@@ -632,12 +729,27 @@ function updateHud(match) {
       `${m.scoreHome} - ${m.scoreAway}  ->goal ${m.targetGoal}  ` +
       `${m.mode === 'match' ? clock : 'practice'}${m.matchOver ? '  FULL TIME' : ''}`;
   }
+
+  const ctrlVal = document.getElementById('controls-assignment-val');
+  if (ctrlVal) {
+    const assignments = getControllerAssignments(athletes.length, TUNING.match.mode);
+    if (TUNING.match.mode === 'match') {
+      ctrlVal.textContent = `P1: ${assignments.p1}  |  P2: ${assignments.p2}`;
+    } else {
+      ctrlVal.textContent = `P1: ${assignments.p1}`;
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Loop
 // ---------------------------------------------------------------------------
 
+let athletes = [];
+const athleteMatchStats = [
+  { totalTouches: 0, sweetSpotHits: 0, spikes: 0, dives: 0, divingHits: 0, ownCircleTouches: 0, oppCircleTouches: 0 },
+  { totalTouches: 0, sweetSpotHits: 0, spikes: 0, dives: 0, divingHits: 0, ownCircleTouches: 0, oppCircleTouches: 0 },
+];
 let motor = null;
 
 /** The invisible clip-playing rig, and the PD tracker that chases it. */
@@ -653,6 +765,56 @@ let animTarget = null;
  * every per-step call below iterates the array.
  */
 let balls = [];
+let allBalls = [];
+let currentMatchBallType = 'random';
+
+function setActiveMatchBall(typeOrIndex = 'random') {
+  if (allBalls.length === 0) return null;
+
+  if (typeOrIndex === 'all') {
+    for (const b of allBalls) {
+      b.mesh.visible = true;
+      b.body.setEnabled(true);
+    }
+    balls = [...allBalls];
+    ball = allBalls[1] || allBalls[0];
+    console.log('[ball] active ball set to ALL 3 BALLS [SANDBOX]');
+    return ball;
+  }
+
+  let chosenIdx = 1; // default medium
+  if (typeof typeOrIndex === 'number') {
+    chosenIdx = Math.abs(typeOrIndex) % allBalls.length;
+  } else if (typeOrIndex === 'small') {
+    chosenIdx = 0;
+  } else if (typeOrIndex === 'medium') {
+    chosenIdx = 1;
+  } else if (typeOrIndex === 'large') {
+    chosenIdx = 2;
+  } else {
+    // 'random'
+    chosenIdx = Math.floor(Math.random() * allBalls.length);
+  }
+
+  for (let i = 0; i < allBalls.length; i++) {
+    const b = allBalls[i];
+    if (i === chosenIdx) {
+      b.mesh.visible = true;
+      b.body.setEnabled(true);
+    } else {
+      b.mesh.visible = false;
+      b.body.setTranslation({ x: 0, y: -200, z: 0 }, true);
+      b.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      b.body.setEnabled(false);
+    }
+  }
+
+  const chosenBall = allBalls[chosenIdx];
+  balls = [chosenBall];
+  ball = chosenBall;
+  console.log(`[ball] active match ball set to ${chosenBall.label} (index ${chosenIdx})`);
+  return chosenBall;
+}
 /** The match: score, target end and clock. Created in boot, one per session. */
 let matchState = null;
 /**
@@ -661,6 +823,19 @@ let matchState = null;
  * wall positions are already on screen when the boards mount to them.
  */
 let scoreboards = null;
+let hustleBoards = null;
+export const practiceStats = {
+  goals: 0,
+  hits: 0,
+  whiffs: 0,
+  sweetSpots: 0,
+  spikes: 0,
+  dives: 0,
+  divingHits: 0,
+  totalTouches: 0,
+};
+let practiceSessionTicks = 0;
+let selectedPracticeBallType = 'all';
 let ball = null;
 /** collider handle -> ball, so the drain callback can name which one was hit. */
 const ballByHandle = new Map();
@@ -949,6 +1124,10 @@ function buildGhostInputs(actions, strikes) {
     // every camera but these two.
     facingFollowsCamera:
       TUNING.camera.mode === 'chase' || TUNING.camera.mode === 'ball',
+    hasAim: input.hasAim || false,
+    aimYaw: input.aimYaw || 0,
+    moveWorldX: input.moveWorld ? input.moveWorld.x : 0,
+    moveWorldZ: input.moveWorld ? input.moveWorld.z : 0,
   };
 }
 
@@ -967,113 +1146,147 @@ function isTumbling(actions) {
 // hit and its cost are never a frame apart. The queue auto-drains at the next
 // step, so anything not taken here is gone — an impact belongs to its tick.
 function drainImpacts(tick, dt) {
-  if (ragdoll) {
-    impactEvents.length = 0;
-    drainContactForces((handle1, handle2, totalForce) => {
-      // A NOTE ON THE `if (ragdoll)` THIS SITS INSIDE: for the handful of ticks
-      // between boot and the first spawn there is no ragdoll, so the queue is
-      // not drained and any ball contact in that window is discarded with it.
-      // That window contains only ball-vs-arena contacts, which this branch
-      // ignores anyway, and the alternative is restructuring fixedUpdate around
-      // the ball — which the fence forbids and the fixture does not need.
-      //
-      // THE BALL'S CONTACTS ARE RECORDED AND NEVER SPENT (LESSON 15). A ball
-      // event is instrumentation in G2: it names the limb, stamps the tick and
-      // keeps the peak force, and it does NOT enter impactEvents, so it can
-      // never cost the athlete tracking weight. Mapping force to weight is a
-      // calibration decision and the numbers to calibrate against are what this
-      // step is collecting.
-      // Which ball, if either handle is one. A ball-vs-ball contact resolves to
-      // the first handle's ball and finds no rig key on the second, so it is
-      // recorded as "not a limb touch" and correctly changes nothing.
-      const hitBall = ballByHandle.get(handle1) || ballByHandle.get(handle2);
-      if (hitBall) {
-        const other = handle1 === hitBall.collider.handle ? handle2 : handle1;
-        const limb = impactByHandle.get(other);
-        noteBallContact(hitBall, other, limb && limb.key, motor.collider.handle, totalForce, tick);
-        // AND THE STRIKE GETS ITS LOOK AT THE SAME CONTACT. noteBallContact
-        // records that something touched the ball; this asks whether that touch
-        // was INTENT — a qualifying limb, inside an open window — and if it was,
-        // puts one impulse on the ball. Most contacts are not, and it returns
-        // without doing anything, which is the diving dig and every incidental
-        // knock continuing to work exactly as G2 left them.
-        const didStrike = resolveStrikeContact(strikeState, hitBall, limb && limb.key, totalForce, tick);
+  drainContactForces((handle1, handle2, totalForce) => {
+    const hitBall = ballByHandle.get(handle1) || ballByHandle.get(handle2);
+    if (hitBall) {
+      const other = handle1 === hitBall.collider.handle ? handle2 : handle1;
+      let athleteHit = null;
+      let hitInfo = null;
+      for (const a of athletes) {
+        const hit = a.ownsCollider(other);
+        if (hit) {
+          athleteHit = a;
+          hitInfo = hit;
+          break;
+        }
+      }
+
+      if (athleteHit) {
+        const limbKey = hitInfo.isMotor ? null : hitInfo.key;
+        noteBallContact(hitBall, other, limbKey, athleteHit.motor.collider.handle, totalForce, tick);
+        const didStrike = resolveStrikeContact(athleteHit.strikeState, hitBall, limbKey, totalForce, tick);
         const ballPos = hitBall.body.translation();
-        if (didStrike) {
-          const kind = KIND_NAME[strikeState.lastStrikeKind] || 'volley';
-          soundManager.playStrike(kind, strikeState.lastContactQuality, strikeState.lastLaunchSpeed, ballPos, hitBall.radius || 0.5);
-        } else if (limb || other === motor.collider.handle) {
-          // Ball made incidental contact with the player's body or limbs outside a strike
-          const vel = hitBall.body.linvel();
-          const speed = Math.hypot(vel.x, vel.y, vel.z);
-          soundManager.playPlayerBallImpact(speed, ballPos, hitBall.radius || 0.5);
-        } else {
-          // Ball bounced against the environment (boundary wall, goal hoop, or court floor)
-          const vel = hitBall.body.linvel();
-          const speed = Math.hypot(vel.x, vel.y, vel.z);
-          const arenaType = getArenaColliderType(other);
 
-          if (arenaType === 'goal') {
-            // Ball physically collided with the goal hoop frame / rim
-            soundManager.playHoopClank(speed, ballPos);
-          } else if (arenaType === 'boundary' && ballPos.y >= 13.0) {
-            // Ball hit upper boundary wall / acrylic glass backboard (y >= 13.0)
-            soundManager.playGlassImpact(speed, ballPos);
-          } else {
-            // Court surface / purple corner steps (y < 13.0) / river bounce
-            const wasInAir = (tick - (hitBall._lastGroundTick || 0)) > 10;
-            hitBall._lastGroundTick = tick;
+        // Track live match & practice statistics
+        const athleteIdx = athletes.indexOf(athleteHit);
+        if (athleteIdx >= 0) {
+          // Touch cooldown: only allow a touch to register once every 0.25 seconds (15 ticks at 60Hz)
+          const touchCooldownTicks = Math.round(0.25 * TUNING.loop.fixedHz);
+          const lastTouch = athleteHit._lastTouchTick ?? -999;
+          const isNewTouch = (tick - lastTouch) >= touchCooldownTicks;
 
-            // A true bounce requires meaningful vertical impact velocity, or landing from flight.
-            // Continuous surface rolling has |vy| < 0.40 and must NEVER trigger pitter-patter impact taps.
-            const vyAbs = Math.abs(vel.y);
-            const isBounceImpact = (wasInAir && (vyAbs > 0.35 || speed > 1.2)) || vyAbs >= 0.60;
+          if (isNewTouch) {
+            athleteHit._lastTouchTick = tick;
+            if (athleteMatchStats[athleteIdx] && gameState === 'match') {
+              athleteMatchStats[athleteIdx].totalTouches++;
 
-            if (isBounceImpact && (tick - (hitBall._lastBounceTick || 0)) > 8) {
-              hitBall._lastBounceTick = tick;
-              const isRiver = Math.abs(ballPos.x) < 2.5;
-              const bounceSpeed = Math.max(vyAbs, speed * 0.45);
-              soundManager.playBallBounce(
-                hitBall.radius || 0.5,
-                bounceSpeed,
-                isRiver ? 'river' : 'court',
-                ballPos,
-              );
+              const distToSouthCircle = Math.hypot(ballPos.x, ballPos.z - 40.0);
+              const distToNorthCircle = Math.hypot(ballPos.x, ballPos.z - (-40.0));
+              const isHome = (TUNING.players[athleteIdx]?.team || (athleteIdx === 0 ? 'home' : 'away')) === 'home';
+              const homeAttacksNorth = matchState?.targetGoal === 'N';
+              const athleteAttacksNorth = isHome ? homeAttacksNorth : !homeAttacksNorth;
+              const inAttackingCircle = athleteAttacksNorth ? (distToNorthCircle <= 11.5) : (distToSouthCircle <= 11.5);
+              const inDefensiveCircle = athleteAttacksNorth ? (distToSouthCircle <= 11.5) : (distToNorthCircle <= 11.5);
+
+              if (inDefensiveCircle) athleteMatchStats[athleteIdx].ownCircleTouches++;
+              if (inAttackingCircle) athleteMatchStats[athleteIdx].oppCircleTouches++;
+            } else if (athleteIdx === 0 && gameState === 'practice') {
+              practiceStats.totalTouches++;
+            }
+          }
+
+          // Diving hit / save detection (on any contact while diving)
+          if (athleteHit.isDiving && athleteHit.isDiving(tick)) {
+            const lastDivingHit = athleteHit._lastDivingHitTick ?? -999;
+            if ((tick - lastDivingHit) >= touchCooldownTicks) {
+              athleteHit._lastDivingHitTick = tick;
+              if (gameState === 'match' && athleteMatchStats[athleteIdx]) {
+                athleteMatchStats[athleteIdx].divingHits++;
+              } else if (athleteIdx === 0 && gameState === 'practice') {
+                practiceStats.divingHits++;
+              }
+            }
+          }
+
+          if (didStrike && athleteHit.strikeState) {
+            const quality = athleteHit.strikeState.lastContactQuality;
+            const kind = athleteHit.strikeState.lastStrikeKind;
+
+            if (gameState === 'match' && athleteMatchStats[athleteIdx]) {
+              if (quality >= 0.80) {
+                athleteMatchStats[athleteIdx].sweetSpotHits++;
+              }
+              if (kind === 2) {
+                athleteMatchStats[athleteIdx].spikes++;
+              }
+            } else if (athleteIdx === 0 && gameState === 'practice') {
+              if (quality >= 0.80) {
+                practiceStats.sweetSpots++;
+              }
+              if (kind === 2) {
+                practiceStats.spikes++;
+              }
             }
           }
         }
-        return;
-      }
 
-      // The sphere is not in the ragdoll's collision set at all (Task 4.1), so
-      // the permanent mount contact cannot appear here — measured across four
-      // calibration regimes, zero ragdoll-vs-sphere events. No exclusion needed.
-      const hit = impactByHandle.get(handle1) || impactByHandle.get(handle2);
-      if (hit) {
-        // WHILE SLIDING, THE FLOOR IS NOT AN ACCIDENT. A slide drags the hip and
-        // the trailing leg along the ground for its whole length, and every one
-        // of those scrapes was arriving here as an impact and costing tracking
-        // weight — so the harder the slide, the more the athlete went limp
-        // doing the thing he was told to do. Ground contact during a deliberate
-        // slide is intentional movement, and intentional movement does not cost
-        // authority.
-        //
-        // A TICK COMPARISON, NOT A FLAG: slideTime is the slide's own clock, so
-        // this reads the same recorded number startingSlide writes and nothing
-        // new is stored anywhere.
-        //
-        // WHAT THIS ALSO SUPPRESSES, said plainly: it drops EVERY non-ball
-        // impact while the clock runs, not only floor scrapes. Sliding into the
-        // bowl rim at speed no longer knocks the athlete down. That is the
-        // designer's call as written; if a wall hit should still count, the
-        // discriminator is the contact's own normal, not the slide clock.
-        const isSliding = actionState && actionState.slideTime > 0;
-        if (!isSliding && totalForce >= TUNING.impact.eventThreshold) {
-          impactEvents.push({ key: hit.key, group: hit.group, force: totalForce });
+        if (didStrike) {
+          const kind = KIND_NAME[athleteHit.strikeState.lastStrikeKind] || 'volley';
+          soundManager.playStrike(kind, athleteHit.strikeState.lastContactQuality, athleteHit.strikeState.lastLaunchSpeed, ballPos, hitBall.radius || 0.5);
+        } else {
+          const vel = hitBall.body.linvel();
+          const speed = Math.hypot(vel.x, vel.y, vel.z);
+          soundManager.playPlayerBallImpact(speed, ballPos, hitBall.radius || 0.5);
+        }
+      } else {
+        // Ball bounced against the environment (boundary wall, goal hoop, or court floor)
+        const vel = hitBall.body.linvel();
+        const speed = Math.hypot(vel.x, vel.y, vel.z);
+        const arenaType = getArenaColliderType(other);
+        const ballPos = hitBall.body.translation();
+
+        if (arenaType === 'goal') {
+          soundManager.playHoopClank(speed, ballPos);
+        } else if (arenaType === 'boundary' && ballPos.y >= 13.0) {
+          soundManager.playGlassImpact(speed, ballPos);
+        } else {
+          const wasInAir = (tick - (hitBall._lastGroundTick || 0)) > 10;
+          hitBall._lastGroundTick = tick;
+
+          const vyAbs = Math.abs(vel.y);
+          const isBounceImpact = (wasInAir && (vyAbs > 0.35 || speed > 1.2)) || vyAbs >= 0.60;
+
+          if (isBounceImpact && (tick - (hitBall._lastBounceTick || 0)) > 8) {
+            hitBall._lastBounceTick = tick;
+            const isRiver = Math.abs(ballPos.x) < 2.5;
+            const bounceSpeed = Math.max(vyAbs, speed * 0.45);
+            soundManager.playBallBounce(
+              hitBall.radius || 0.5,
+              bounceSpeed,
+              isRiver ? 'river' : 'court',
+              ballPos,
+            );
+          }
         }
       }
-    });
-    applyImpacts(tracker, impactEvents, tick, dt);
+      return;
+    }
+
+    // Body impacts (athlete vs world or athlete vs athlete)
+    for (const a of athletes) {
+      const hit = a.impactByHandle.get(handle1) || a.impactByHandle.get(handle2);
+      if (hit) {
+        const isSliding = a.actionState && a.actionState.slideTime > 0;
+        if (!isSliding && totalForce >= TUNING.impact.eventThreshold) {
+          a.impactEvents.push({ key: hit.key, group: hit.group, force: totalForce });
+        }
+      }
+    }
+  });
+
+  for (const a of athletes) {
+    applyImpacts(a.tracker, a.impactEvents, tick, dt);
+    a.impactEvents.length = 0;
   }
 }
 
@@ -1214,140 +1427,140 @@ function assertInvariants(tick) {
  * @param {number} tick
  */
 function fixedUpdate(dt, tick) {
-  if (!motor) return;
+  if (athletes.length === 0) return;
 
-  // 1 — RESPAWN. The only place bodies, colliders and joints are created. The
-  // flag comes from a keypress, the capture seam or the watchdog; either way it
-  // is consumed on a tick boundary.
+  // 1 — RESPAWN REQUESTS
   if (respawnRequested) {
     respawnRequested = false;
-    spawnRagdoll();
+    for (const a of athletes) a.requestRespawn();
   }
 
-  // 2 — THE WATCHDOGS. The flag is RETURNED rather than assigned from inside the
-  // module, so the variable that decides whether a body gets built has one writer.
-  if (runWatchdog({
-    state: watchdogState, motor, ragdoll, balls, arenaPreset, armedCaptureTick, tick,
-  })) {
-    respawnRequested = true;
-  }
+  // 2 — BALL WATCHDOG & SERVE (B / Start or fall out of bounds)
+  const serveQueued = consumeAthleteBallReset(0);
+  const armedBallSpawn = armedCaptureTick !== null && tick === TUNING.ball.captureSpawnTick;
+  const isCourt = (TUNING.arena && TUNING.arena.type !== 'bowl') || (arenaPreset && arenaPreset.killPlaneY === -15);
+  const isDeterministic = armedCaptureTick !== null;
 
-  // 3 — MOUNT RECOVERY, and the floor probe it casts on the way. pelvisFloorY was
-  // a module-level `let` written here and read at step 9; a local now.
-  const pelvisFloorY = runMountFollower({
-    state: mountFollowerState, motor, ragdoll, animTarget, tracker, tick, dt,
-  });
-
-  // 4 — KNOCKDOWN.
-  if (knockdownRequested) {
-    knockdownRequested = false;
-    queueKnockdown(tracker);
-  }
-
-  // 5 — Consumed exactly once per step, and cleared whether or not they fire.
-  const jumpQueued = consumeJump();
-  const diveQueued = consumeDive();
-
-  // 5b — THE ACTION STATES, and the strikes beside them. The two strike presses
-  // are consumed in the argument list: still once per step, still cleared
-  // whether or not they fire, and the consume sits where the value is used.
-  const actions = runActions({
-    state: actionState, motor, input, tracker, ragdoll, ghost: animTarget,
-    diveQueued, jumpQueued, tick, dt,
-  });
-  const strikes = runStrikes({
-    state: strikeState, input, motor, ghost: animTarget, balls, tick, dt,
-    volleyQueued: consumeVolley(), spikeQueued: consumeSpike(),
-  });
-
-  // 6 — THE BRACKET OPENS. See the contract above.
-  saveRagdollPrevious(ragdoll);
-
-  // 7 — THE MOTOR, and the four numbers that prepare it.
-  const driveScale = driveAttenuation();
-  const resistanceScale = knockdownDrag();
-  const stableGrounded = advanceGroundedDebounce();
-  applyLimpBrake(dt);
-
-  // THE LIFTOFF EDGE. motor.js is frozen and reports nothing, so the fact that
-  // a jump fired is read from its own lastJumpTick CHANGING across the call —
-  // the cooldown path already had to record that tick, so nothing new is
-  // stored. This is a mechanics edge of the same class as padJumpWasDown, and
-  // it latches a float rather than raising a state flag (RULING GF-2.0).
-  const jumpTickBefore = motor.lastJumpTick;
-  updateMotor(
-    motor,
-    input,
-    // THE JUMP THE ACTIONS ALLOW, not the raw press: a slide swallows it and a
-    // dive locks it out. Identical to jumpQueued whenever neither is running.
-    actions.allowJump,
-    dt,
-    actions.actionCommitted ? 0 : driveScale,
-    tick,
-    resistanceScale * actions.actionResistance,
-  );
-
-  // 7b — Air drag and spin decay, beside the motor's own resistance and for the
-  // same reason: every force must land in the ONE stepPhysics() below. LAW 3 — the
-  // gains go through the clamped helpers, never through a Rapier damping setter.
-  for (const b of balls) applyBallResistance(b, dt);
-
-  // 8 — THE LIFTOFF EDGE, and the ghost's inputs for this step.
-  const liftoff = motor.lastJumpTick !== jumpTickBefore;
-  if (liftoff) {
-    soundManager.playAthleteAction('jump', motor.body.translation());
-  }
-  if (motor.grounded && !wasGrounded) {
-    const vy = motor.body.linvel().y;
-    if (vy < -0.4) {
-      soundManager.playAthleteAction('land', motor.body.translation());
-    }
-  }
-  wasGrounded = motor.grounded;
-
-  if (actions.actionCommitted && actionState && actionState.slideTime === 1) {
-    soundManager.playAthleteAction('slide', motor.body.translation());
-  }
-
-  // ATHLETIC COURT FOOTSTEPS (Locomotion on court floor)
-  const motorVel = motor.body.linvel();
-  const speedH = Math.hypot(motorVel.x, motorVel.z);
-
-  if (motor.grounded && !liftoff && (!actionState || actionState.slideTime === 0)) {
-    // Rhythmic court footsteps during locomotion
-    if (animTarget && speedH > 1.2) {
-      const currentSlot = animTarget.locomotionPhase < 0.5 ? 0 : 1;
-      if (currentSlot !== lastFootstepSlot) {
-        lastFootstepSlot = currentSlot;
-        soundManager.playFootstep(motor.body.translation());
+  for (let i = 0; i < balls.length; i += 1) {
+    const b = balls[i];
+    const belowWorld = b.body.translation().y < arenaPreset.killPlaneY;
+    if (serveQueued || armedBallSpawn || belowWorld) {
+      const dropPos = isCourt
+        ? getCourtBallDropSpawn(i, balls.length, tick, isDeterministic)
+        : null;
+      resetBall(b, tick, dropPos);
+      if (belowWorld && !serveQueued && !armedBallSpawn) {
+        console.log(`[ball:${b.id}] out of bounds — reset at tick ${tick}`);
       }
     }
   }
 
-  const ghostInputs = animTarget ? buildGhostInputs(actions, strikes) : null;
+  // 3 to 10 — ATHLETE PRE-PHYSICS MECHANICS (Drive, Jump, Slide, Dive, Strikes, Ghost, Tracking)
+  const isCountingDown = (gameState === 'match') && !!(matchState && matchState.isCountingDown);
+  const isAthleteHeld = isCountingDown || (gameState === 'menu') || (gameState === 'flyover');
+  const isBallHeld = (gameState === 'match' && isCountingDown) || (gameState === 'flyover');
+  for (let i = 0; i < athletes.length; i++) {
+    if (gameState === 'practice' && i > 0) continue;
+    const athlete = athletes[i];
+    let inputSnapshot = getInputSlot(i);
+    let jumpQueued = consumeAthleteJump(i);
+    let diveQueued = consumeAthleteDive(i);
+    let volleyQueued = consumeAthleteVolley(i);
+    let spikeQueued = consumeAthleteSpike(i);
 
-  // 9 — THE GHOST.
-  if (ragdoll) {
-    updateAnimTarget(
-      animTarget, motor, ragdoll.rig, input.cameraYaw, liftoff, pelvisFloorY,
-      stableGrounded, dt, ghostInputs,
-    );
+    if (diveQueued && !isAthleteHeld) {
+      if (gameState === 'match' && athleteMatchStats[i]) {
+        athleteMatchStats[i].dives++;
+      } else if (gameState === 'practice' && i === 0) {
+        practiceStats.dives++;
+      }
+    }
+
+    if (isAthleteHeld) {
+      inputSnapshot = {
+        ...inputSnapshot,
+        moveX: 0,
+        moveZ: 0,
+        sprintHeld: false,
+        slideHeld: false,
+        moveWorld: _zeroVector,
+      };
+      jumpQueued = false;
+      diveQueued = false;
+      volleyQueued = false;
+      spikeQueued = false;
+    }
+
+    athlete.prePhysicsUpdate({
+      dt,
+      tick,
+      inputSnapshot,
+      jumpQueued,
+      diveQueued,
+      volleyQueued,
+      spikeQueued,
+      balls,
+      arenaPreset,
+      facingFollowsCamera:
+        !isAthleteHeld && (playerCameras[i]?.mode === 'chase' || playerCameras[i]?.mode === 'ball'),
+    });
+
+    if (isAthleteHeld && athlete.motor?.body) {
+      const lv = athlete.motor.body.linvel();
+      athlete.motor.body.setLinvel({ x: 0, y: Math.min(lv.y, 0), z: 0 }, true);
+    }
   }
 
-  // 10 — TRACKING.
-  applyTracking(tracker, ragdoll && ragdoll.rig, animTarget, motor, dt, isTumbling(actions));
+  // 7b — Air drag and spin decay for balls
+  for (const b of balls) applyBallResistance(b, dt);
 
-  // 11 — THE ONE WORLD STEP.
+  // 11 — THE ONE WORLD STEP
   stepPhysics();
 
-  // 12 — IMPACTS.
+  // If held during countdown or flyover, freeze balls at spawn
+  if (isBallHeld) {
+    for (let i = 0; i < balls.length; i++) {
+      const b = balls[i];
+      if (b && b.body) {
+        b.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+        b.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+        if (gameState === 'match' && isCountingDown) {
+          if (!b._preMatchSpawnPos) {
+            b._preMatchSpawnPos = matchState?.preMatchSpawnPos || getCourtBallDropSpawn(i, balls.length, tick, false);
+            if (matchState && !matchState.preMatchSpawnPos) {
+              matchState.preMatchSpawnPos = b._preMatchSpawnPos;
+            }
+          }
+          b.body.setTranslation(b._preMatchSpawnPos, true);
+        } else {
+          b._preMatchSpawnPos = null;
+        }
+      }
+    }
+  } else if (gameState === 'menu') {
+    // Keep balls alive and bouncing dynamically across the arena floor during title screen
+    for (let i = 0; i < balls.length; i++) {
+      const b = balls[i];
+      if (b && b.body) {
+        const pos = b.body.translation();
+        const vel = b.body.linvel();
+        const speedSq = vel.x * vel.x + vel.y * vel.y + vel.z * vel.z;
+        if (pos.y < 1.4 && speedSq < 6.0) {
+          b.body.applyImpulse({
+            x: (Math.random() - 0.5) * 4.0,
+            y: 8.0 + Math.random() * 5.0,
+            z: (Math.random() - 0.5) * 4.0,
+          }, true);
+        }
+      }
+    }
+  }
+
+  // 12 — IMPACTS
   drainImpacts(tick, dt);
 
-  // 12b — SCORING. AFTER the step, so the segment it tests is the path the
-  // ball actually took this tick rather than the one it took last tick. It
-  // reads translations and writes integers; nothing here touches a body, so a
-  // goal cannot perturb the simulation and the determinism anchors do not move.
-  if (matchState) {
+  // 12b — SCORING
+  if (matchState && (gameState === 'match' || gameState === 'practice')) {
     const goalsBefore = matchState.events.length;
     updateScoring(matchState, balls, tick);
     if (matchState.events.length > goalsBefore) {
@@ -1358,314 +1571,276 @@ function fixedUpdate(dt, tick) {
         z: lastGoal.goal === 'N' ? TUNING.match.hoopNorthZ : TUNING.match.hoopSouthZ,
       };
       soundManager.playGoal(lastGoal.scoredFor, lastGoal.goal, hoopPos);
+      if (gameState === 'practice') {
+        practiceStats.goals++;
+      }
     }
-    if (matchState.matchOver && !matchState._buzzerPlayed) {
-      matchState._buzzerPlayed = true;
-      soundManager.playSample('arena_buzzer', 0.95, 1.0, null, soundManager.uiGain);
+    if (gameState === 'match') {
+      if (matchState.matchOver && !matchState._buzzerPlayed) {
+        matchState._buzzerPlayed = true;
+        soundManager.playSample('arena_buzzer', 0.95, 1.0, null, soundManager.uiGain);
+        const p1Strike = athletes[0]?.getStrikeStats() || { hits: 0, whiffs: 0, accuracy: 0 };
+        const p2Strike = athletes[1]?.getStrikeStats() || { hits: 0, whiffs: 0, accuracy: 0 };
+        showVictoryScreen(
+          matchProbe(matchState),
+          { ...p1Strike, ...athleteMatchStats[0] },
+          { ...p2Strike, ...athleteMatchStats[1] },
+        );
+      }
     }
   }
 
-  // THE PROXIMITY ASSIST, after the real contacts have had their chance. A
-  // touch Rapier actually reported always wins; this only fires when the drain
-  // resolved nothing and the swing was well timed.
-  if (ragdoll) {
-    const assisted = checkStrikeAssist(strikeState, ragdoll, balls, tick);
-    if (assisted) {
-      const kind = KIND_NAME[strikeState.lastStrikeKind] || 'volley';
-      const firstBallRadius = (balls && balls.length > 0 && balls[0].radius) || 0.5;
-      soundManager.playStrike(kind, strikeState.lastContactQuality, strikeState.lastLaunchSpeed, motor.body.translation(), firstBallRadius);
-    }
+  if (gameState === 'practice') {
+    practiceSessionTicks++;
   }
 
-  // 13 — SNAPSHOTS.
-  syncMotorSnapshot(motor);
-  // Same slot, same contract: body -> curr, AFTER the world moved.
+  // 13 — POST-PHYSICS (Snapshots and strike assist)
+  for (let i = 0; i < athletes.length; i++) {
+    if (gameState === 'practice' && i > 0) continue;
+    const assistEvent = athletes[i].postPhysicsUpdate(tick, dt, balls);
+    if (assistEvent) {
+      const athlete = athletes[i];
+      const touchCooldownTicks = Math.round(0.25 * TUNING.loop.fixedHz);
+      const lastTouch = athlete._lastTouchTick ?? -999;
+      if ((tick - lastTouch) >= touchCooldownTicks) {
+        athlete._lastTouchTick = tick;
+        if (gameState === 'match' && athleteMatchStats[i]) {
+          athleteMatchStats[i].totalTouches++;
+        } else if (i === 0 && gameState === 'practice') {
+          practiceStats.totalTouches++;
+        }
+      }
+
+      if (athlete.isDiving && athlete.isDiving(tick)) {
+        const lastDivingHit = athlete._lastDivingHitTick ?? -999;
+        if ((tick - lastDivingHit) >= touchCooldownTicks) {
+          athlete._lastDivingHitTick = tick;
+          if (gameState === 'match' && athleteMatchStats[i]) {
+            athleteMatchStats[i].divingHits++;
+          } else if (i === 0 && gameState === 'practice') {
+            practiceStats.divingHits++;
+          }
+        }
+      }
+
+      if (gameState === 'match' && athleteMatchStats[i]) {
+        if (assistEvent.quality >= 0.80) {
+          athleteMatchStats[i].sweetSpotHits++;
+        }
+        if (assistEvent.kind === 2) {
+          athleteMatchStats[i].spikes++;
+        }
+      } else if (i === 0 && gameState === 'practice') {
+        if (assistEvent.quality >= 0.80) {
+          practiceStats.sweetSpots++;
+        }
+        if (assistEvent.kind === 2) {
+          practiceStats.spikes++;
+        }
+      }
+    }
+  }
   for (const b of balls) syncBallSnapshot(b);
-  snapshotRagdoll(ragdoll);
 
-  // 14 — THE ONCE-A-SECOND ALARMS.
+  // 14 — ASSERTS
   assertInvariants(tick);
 }
 
 /**
- * THE SPRING ARM, once per rendered frame.
- *
- * Strictly render-side and read-only with respect to the simulation: it reads
- * the sphere's INTERPOLATED position and the latched input snapshot, and writes
- * the camera transform. Nothing here can influence a body, so the anchored
- * capture stays a pure function of the tick.
- *
- * THE INVARIANT, which is the point of the shape below: in the clear,
- * currentDistance converges to radius. Always. `obstructed` is radius whenever
- * the ray misses, and the ease has no other fixed point, so a stuck-close
- * camera is not a state this rig can represent — there is no residue to
- * accumulate and nothing to reset. The old rig could get stuck because its
- * distance was whatever OrbitControls and the follow had last left it at.
+ * Updates all player cameras for the current frame.
  */
-/**
- * THE ARM'S OBSTRUCTION TEST AND SPRING, shared by the two follow modes.
- *
- * Lifted out of the chase path unchanged when the ball cam arrived, rather than
- * written twice: the ray filter, the instant-shorten/eased-restore asymmetry and
- * the minimum length are properties of the ARM, not of the shot, and two copies
- * of them would start agreeing and quietly stop.
- *
- * Reads _camTarget and _camDir; writes cameraRig.currentDistance and the camera
- * position. The caller has already decided where to look from and how far.
- *
- * @param {object} world
- * @param {object} tuning TUNING.camera
- * @param {number} desired the arm length this mode wants, in the clear
- * @param {number} frameDelta seconds
- */
-function applySpringArm(world, tuning, desired, frameDelta) {
-  // THE RAY, from the character outward. Environment-only, so it can never hit
-  // the character's own sixteen bodies or the sphere. _rayFrom and _rayDir are
-  // plain {x,y,z} that RAPIER.Ray holds by reference — assigned componentwise
-  // rather than copied, because they are not Vector3s and never were.
-  _rayFrom.x = _camTarget.x; _rayFrom.y = _camTarget.y; _rayFrom.z = _camTarget.z;
-  _rayDir.x = _camDir.x; _rayDir.y = _camDir.y; _rayDir.z = _camDir.z;
-
-  const hit = world.castRay(_envRay, desired, true, undefined, ENVIRONMENT_RAY_GROUPS);
-  const obstructed = hit
-    ? Math.max(tuning.minDistance, hit.timeOfImpact - tuning.collisionMargin)
-    : desired;
-
-  // Shorten INSTANTLY: a camera that eases into its limit spends those frames
-  // inside the wall, which is the artefact this exists to prevent. Lengthen on
-  // the ease, because an instant restore is a visible jump the moment the
-  // obstruction clears.
-  if (obstructed < cameraRig.currentDistance) {
-    cameraRig.currentDistance = obstructed;
-  } else {
-    cameraRig.currentDistance +=
-      (obstructed - cameraRig.currentDistance) * (1 - Math.exp(-tuning.restoreEase * frameDelta));
-  }
-
-  camera.position.copy(_camTarget).addScaledVector(_camDir, cameraRig.currentDistance);
-}
-
-/** The spherical offset for an azimuth/pitch pair, into _camOffset and _camDir. */
-function armDirection(radius, azimuth, pitch) {
-  const cosPitch = Math.cos(pitch);
-  _camOffset.set(
-    radius * cosPitch * Math.sin(azimuth),
-    radius * Math.sin(pitch),
-    radius * cosPitch * Math.cos(azimuth),
-  );
-  _camDir.copy(_camOffset).normalize();
-}
-
-/**
- * CHASE — the original orbit, unchanged. Everything the other three modes do is
- * measured against how this one feels.
- */
-function cameraChase(world, tuning, frameDelta) {
-  // INPUT. Stick is a RATE (radians per second); mouse is a DISPLACEMENT
-  // (pixels already travelled), so only the stick is scaled by frameDelta.
-  // Scaling the mouse by it too would make a drag's throw depend on frame rate,
-  // which is the classic mouse-sensitivity bug.
-  cameraRig.azimuth -= input.lookX * tuning.orbitSpeed * frameDelta;
-  cameraRig.azimuth -= input.mouseDX / tuning.mousePixelsPerRadian;
-  cameraRig.pitch += input.lookY * tuning.orbitSpeed * frameDelta;
-  cameraRig.pitch += input.mouseDY / tuning.mousePixelsPerRadian;
-  cameraRig.pitch = Math.min(tuning.maxPitch, Math.max(tuning.minPitch, cameraRig.pitch));
-
-  // TARGET. The interpolated sphere, lifted to the athlete's chest.
-  _camTarget.copy(motor.mesh.position);
-  _camTarget.y += tuning.targetHeight;
-
-  // DESIRED. Spherical, so azimuth and pitch are the state and the offset is
-  // derived — rather than the offset being the state and the angles being
-  // recovered from it, which is what made the old rig's pitch clamp awkward.
-  armDirection(tuning.radius, cameraRig.azimuth, cameraRig.pitch);
-  applySpringArm(world, tuning, tuning.radius, frameDelta);
-  camera.lookAt(_camTarget);
-}
-
-/**
- * BALL — the arm swings itself round so the ball stays past the athlete.
- *
- * The azimuth is DRIVEN rather than held: it eases toward the bearing that puts
- * the camera opposite the ball, so the player and the ball share the frame with
- * the player nearer. The stick is deliberately ignored here — a mode whose whole
- * job is to aim the camera for you cannot also be aimed by you without fighting
- * itself. Cycle back to chase to take the wheel.
- */
-function cameraBall(world, tuning, frameDelta, ballPos) {
-  const cam = tuning.ballCam;
-  _camTarget.copy(motor.mesh.position);
-  _camTarget.y += cam.targetHeight;
-
-  let targetAzimuth = cameraRig.azimuth;
-  // THE PITCH DOES NOT FOLLOW THE BALL'S HEIGHT. It rests here and stays here
-  // for everything that happens at floor level, which is most of the game.
-  let targetPitch = cam.restPitch;
-  let loft = 0;
-
-  if (ballPos) {
-    const dx = ballPos.x - _camTarget.x;
-    const dz = ballPos.z - _camTarget.z;
-    // BEHIND THE PLAYER, RELATIVE TO THE BALL. The arm points along
-    // (sin az, cos az), so pointing it away from the ball is atan2(-dx, -dz).
-    // Horizontal only: this is the half of the tracking that is comfortable.
-    targetAzimuth = Math.atan2(-dx, -dz);
-
-    // VERTICAL, AND ONLY WHEN IT IS REALLY IN THE AIR. A bounce is a ball
-    // spending a few frames at a metre and coming back; tracking it pitches the
-    // camera up and down at the bounce rate, which is the motion sickness. Below
-    // loftAboveY the height is not consulted at all, so a rally on the floor
-    // produces a perfectly still pitch rather than a small amount of nausea.
-    if (ballPos.y > cam.loftAboveY) {
-      loft = ballPos.y - cam.loftAboveY;
-      const loftPitch = Math.atan2(loft, Math.max(cam.loftMinDistance, Math.hypot(dx, dz)));
-      targetPitch = Math.min(cam.maxPitch, cam.restPitch + loftPitch * cam.loftPitchGain);
-    }
-  }
-
-  // SHORTEST WAY ROUND. Easing the raw difference would take the long way
-  // whenever the ball crosses behind, spinning the camera a full turn.
-  const easeAzimuth = 1 - Math.exp(-cam.smoothEase * frameDelta);
-  let dAzimuth = (targetAzimuth - cameraRig.azimuth) % (Math.PI * 2);
-  if (dAzimuth > Math.PI) dAzimuth -= Math.PI * 2;
-  if (dAzimuth < -Math.PI) dAzimuth += Math.PI * 2;
-  cameraRig.azimuth += dAzimuth * easeAzimuth;
-
-  // THE PITCH GETS ITS OWN, MUCH SLOWER EASE — a low-pass filter. Even a ball
-  // that clears the threshold and drops back under it repeatedly cannot shake
-  // the camera, because the pitch cannot follow that fast.
-  cameraRig.pitch += (targetPitch - cameraRig.pitch) * (1 - Math.exp(-cam.pitchEase * frameDelta));
-
-  armDirection(cam.distance, cameraRig.azimuth, cameraRig.pitch);
-  applySpringArm(world, tuning, cam.distance, frameDelta);
-
-  // THE LOOK-AT POINT STAYS ON HIS CHEST. It used to lerp 65% of the way to the
-  // ball, which put the ball's bounce straight back into the shot through the
-  // other door — the camera stopped pitching and the framing bobbed instead.
-  // A high ball lifts it, gently and by a bounded amount, and nothing else does.
-  if (loft > 0) _camTarget.y += Math.min(cam.lookLiftMax, loft * cam.lookLiftGain);
-  camera.lookAt(_camTarget);
-}
-
-/**
- * BROADCAST — a fixed sideline camera that dollies along the court length.
- *
- * No spring arm: the shot is outside the play, so there is nothing between it
- * and the action to collide with, and cameraRig.currentDistance is deliberately
- * left alone so returning to chase restores the arm the player last had.
- */
-function cameraBroadcast(tuning, frameDelta, ballPos) {
-  const tv = tuning.broadcast;
-  const playerZ = motor.mesh.position.z;
-  const leadZ = ballPos
-    ? playerZ * (1 - tv.trackZWeight) + ballPos.z * tv.trackZWeight
-    : playerZ;
-  const clampedZ = Math.min(tv.maxZ, Math.max(tv.minZ, leadZ));
-
-  _camDesired.set(tv.sideX, tv.heightY, clampedZ);
-  camera.position.lerp(_camDesired, 1 - Math.exp(-tv.smoothEase * frameDelta));
-
-  // THE ACTION CENTRE, weighted toward the athlete and with the ball's HEIGHT
-  // damped hard. An even lerp put the full bounce into the look-at point, so
-  // the TV shot jerked on every floor contact; capping the ball's contribution
-  // at 3 m and taking only 30% of it keeps a lofted rally in frame without the
-  // camera flinching at a dribble.
-  _camTarget.copy(motor.mesh.position);
-  if (ballPos) {
-    _camTarget.x = motor.mesh.position.x * 0.6 + ballPos.x * 0.4;
-    _camTarget.y = motor.mesh.position.y * 0.7 + Math.min(3.0, ballPos.y) * 0.3 + 0.5;
-    _camTarget.z = motor.mesh.position.z * 0.5 + ballPos.z * 0.5;
-  }
-  _camTarget.y = Math.max(1.0, _camTarget.y);
-  camera.lookAt(_camTarget);
-}
-
-/** TACTICAL — high and behind, the whole half-court in one frame. */
-function cameraTactical(tuning, frameDelta) {
-  const top = tuning.tactical;
-  const p = motor.mesh.position;
-  // The 0.4 on x pulls the shot toward the court's centre line as the athlete
-  // goes wide, so the far side stays in frame instead of sliding off it.
-  _camDesired.set(p.x * 0.4, p.y + top.heightY, p.z + top.distanceZ);
-  camera.position.lerp(_camDesired, 1 - Math.exp(-top.smoothEase * frameDelta));
-
-  _camTarget.copy(p);
-  _camTarget.z += top.lookAheadZ;
-  _camTarget.y = 1.0;
-  camera.lookAt(_camTarget);
-}
-
-/**
- * THE CAMERA, once per FRAME — never per tick. Everything below is render-side
- * state: the simulation's only view of it is input.cameraYaw, which input.js
- * latches from the camera's own heading on the next sample.
- *
- * ONE CONSEQUENCE WORTH KNOWING: in broadcast and tactical the camera stops
- * following the athlete's heading, so the stick's "forward" becomes the TV
- * camera's forward. That is how fixed-camera games have always played and it is
- * not a bug, but it is a different game to drive.
- */
-function updateSpringArm() {
-  if (!motor) return;
+function updateCameras() {
   const world = getWorld();
   if (!world) return;
-  if (!_envRay) _envRay = new RAPIER.Ray(_rayFrom, _rayDir);
 
-  const tuning = TUNING.camera;
   const frameDelta = Math.min(loop.frameTimeMs / 1000, TUNING.loop.maxFrameTime);
   const activeBall = ball || (balls && balls[0]) || null;
-  const ballPos = activeBall ? activeBall.mesh.position : null;
 
-  if (consumeCameraCycle()) cycleCameraMode();
+  // Check per-player camera cycle triggers
+  if (consumeCameraCycle(0)) {
+    playerCameras[0].cycleMode();
+    if (TUNING.players[0]) TUNING.players[0].cameraMode = playerCameras[0].mode;
+    TUNING.camera.mode = playerCameras[0].mode;
+  }
+  if (consumeCameraCycle(1)) {
+    playerCameras[1].cycleMode();
+    if (TUNING.players[1]) TUNING.players[1].cameraMode = playerCameras[1].mode;
+  }
 
-  if (tuning.mode === 'ball') { cameraBall(world, tuning, frameDelta, ballPos); return; }
-  if (tuning.mode === 'broadcast') { cameraBroadcast(tuning, frameDelta, ballPos); return; }
-  if (tuning.mode === 'tactical') { cameraTactical(tuning, frameDelta); return; }
-  // CHASE IS THE FALLTHROUGH, not a fourth test: an unrecognised mode string
-  // typed into the GUI or a save file lands on the playable camera rather than
-  // on a frozen frame with no error.
-  cameraChase(world, tuning, frameDelta);
+  const hoopCenterY = TUNING.match?.hoopCenterY ?? 10.0;
+  const hoopNorthZ = TUNING.match?.hoopNorthZ ?? -40.0;
+  const hoopSouthZ = TUNING.match?.hoopSouthZ ?? 40.0;
+  const p1IsHome = (TUNING.players?.[0]?.team || 'home') === 'home';
+  const p1AttacksNorth = p1IsHome ? (matchState?.targetGoal === 'N') : (matchState?.targetGoal === 'S');
+  const targetGoalZ_P1 = p1AttacksNorth ? hoopNorthZ : hoopSouthZ;
+  const targetGoalZ_P2 = p1AttacksNorth ? hoopSouthZ : hoopNorthZ;
+  const p1Goal = { x: 0, y: hoopCenterY, z: targetGoalZ_P1 };
+  const p2Goal = { x: 0, y: hoopCenterY, z: targetGoalZ_P2 };
+
+  // Update P1 camera
+  if (athletes[0]) {
+    playerCameras[0].update({
+      athlete: athletes[0],
+      activeBall,
+      inputSlot: getInputSlot(0),
+      mouseDeltas: getMouseDeltas(),
+      world,
+      frameDelta,
+      allAthletes: athletes,
+      attackingGoal: p1Goal,
+    });
+  }
+
+  // Update P2 camera
+  if (athletes[1]) {
+    playerCameras[1].update({
+      athlete: athletes[1],
+      activeBall,
+      inputSlot: getInputSlot(1),
+      mouseDeltas: { dx: 0, dy: 0 },
+      world,
+      frameDelta,
+      allAthletes: athletes,
+      attackingGoal: p2Goal,
+    });
+  }
 }
+const updateSpringArm = updateCameras;
+
+let renderFrameCount = 0;
 
 /**
- * The render pass. Strictly read-only with respect to simulation state.
- *
- * It writes exactly three things:
- *   1. position / quaternion on registered Object3Ds, only via apply();
- *   2. the camera transform, via the spring arm;
- *   3. HUD text, via textContent.
+ * The render pass. Supports vertical splitscreen and single-viewport modes.
  *
  * @param {number} alpha
  */
 function render(alpha) {
-  // LESSON 23 — ONE APPLY SITE. Walk the registry; never apply an Interpolated
-  // by name.
-  //
-  // This used to be a hand-written list — the motor, and then a `for` over the
-  // balls — and the ball was missing from it for a whole step. The body fell,
-  // bounced and rolled through every session of interactive play while the mesh
-  // sat at its spawn point, and NO automated capture could see it, because
-  // captureAnchored walks `loop.interpolated` and applies alpha to every
-  // registered entry. Two consumers, two lists, and the gate only checked one.
-  //
-  // There is one consumer now, and it is the same walk the capture does, so
-  // registering an Interpolated IS the whole contract. Adding an entity to the
-  // scene can no longer half-add it.
+  renderFrameCount++;
+  displayCoordinator.reset(1);
+
   const registry = loop.interpolated;
   for (let i = 0; i < registry.length; i += 1) registry[i].apply(alpha);
-  // The ragdoll keeps its own interpolation OUTSIDE that registry by design —
-  // sixteen bodies posed through the skeleton rather than as loose transforms —
-  // so it is posed explicitly here, exactly as captureAnchored calls
-  // poseCharacter(1) for it separately. Mirroring that split is deliberate.
-  syncRagdollPose(ragdoll, alpha);
-  updateSpringArm();
-  // ONE PROBE, TWO READOUTS. The boards and the HUD show the same numbers, so
-  // they read the same snapshot rather than each taking their own — LESSON 22's
-  // other half: a readout that reads twice can disagree with itself.
+
+  for (let i = 0; i < athletes.length; i++) {
+    const athlete = athletes[i];
+    if (gameState === 'practice' && i > 0) {
+      if (athlete.ragdoll?.group) athlete.ragdoll.group.visible = false;
+      continue;
+    }
+    athlete.renderPose(alpha);
+  }
+
+  const frameDelta = Math.min(loop.frameTimeMs / 1000, TUNING.loop.maxFrameTime);
+
+  if (gameState === 'flyover') {
+    cinematicCamera.update(frameDelta);
+    // Check if connected gamepad pressed button 0 (A / Cross) to skip flyover
+    const pads = (navigator.getGamepads ? navigator.getGamepads() : []) || [];
+    for (const pad of pads) {
+      if (pad && pad.buttons && pad.buttons[0]?.pressed) {
+        skipFlyover();
+        break;
+      }
+    }
+    if (cinematicCamera.isComplete) {
+      skipFlyover();
+    }
+  } else if (gameState === 'menu') {
+    cinematicCamera.update(frameDelta);
+  } else {
+    updateCameras();
+  }
+
+  if (consumeMenuToggle() && gameState !== 'menu' && gameState !== 'flyover' && !isInGameMenuOpen()) {
+    toggleInGameMenu(playerCameras[0]?.mode, playerCameras[1]?.mode);
+  }
+
   const match = matchState ? matchProbe(matchState) : null;
-  // BEFORE the draw: the texture has to carry this frame's state into it.
-  updateScoreboards(scoreboards, match);
-  renderer.render(scene, camera);
+
+  const isPracticeActive = (gameState === 'practice');
+  const a0Strike = athletes[0]?.getStrikeStats();
+  if (a0Strike) {
+    practiceStats.hits = a0Strike.hits;
+    practiceStats.whiffs = a0Strike.whiffs;
+  }
+
+  const callScoreboards = () => updateScoreboards(scoreboards, match);
+  const callHustleBoards = () => updateHustleBoards(
+    hustleBoards,
+    practiceStats,
+    practiceSessionTicks / 60,
+    isPracticeActive,
+    matchState?.celebrationTicks || 0,
+    match,
+    athletes,
+    athleteMatchStats,
+  );
+
+  // Alternate priority so scoreboards and hustle boards do not starve each other
+  if (renderFrameCount % 2 === 0) {
+    callScoreboards();
+    callHustleBoards();
+  } else {
+    callHustleBoards();
+    callScoreboards();
+  }
+
+  if (match) {
+    if (gameState === 'match') {
+      updateCountdownOverlay(match.countdownSecondsRemaining, match.isCountingDown, frameDelta);
+    }
+    updateInGameMenuBanner(match);
+  }
+
+  const p1CamMode = playerCameras[0]?.mode;
+  const p2CamMode = playerCameras[1]?.mode;
+  const isSharedCam = (p1CamMode === 'broadcast' && p2CamMode === 'broadcast') ||
+                      (p1CamMode === 'sports' && p2CamMode === 'sports');
+  const isSplitscreen = (gameState === 'match') && !!TUNING.camera.splitscreen && athletes.length >= 2 && !isSharedCam;
+  const dividerEl = document.getElementById('splitscreen-divider');
+  if (dividerEl) {
+    dividerEl.style.display = isSplitscreen ? 'block' : 'none';
+  }
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+
+  // Render stadium shadow maps once per frame across all viewports
+  renderer.shadowMap.needsUpdate = true;
+
+  if (gameState === 'menu' || gameState === 'flyover') {
+    cinematicCamera.camera.aspect = width / height;
+    cinematicCamera.camera.updateProjectionMatrix();
+    renderer.setViewport(0, 0, width, height);
+    renderer.render(scene, cinematicCamera.camera);
+  } else if (isSplitscreen) {
+    const halfW = Math.floor(width / 2);
+
+    renderer.setScissorTest(true);
+
+    // Left Viewport (Player 1)
+    playerCameras[0].camera.aspect = halfW / height;
+    playerCameras[0].camera.updateProjectionMatrix();
+    renderer.setViewport(0, 0, halfW, height);
+    renderer.setScissor(0, 0, halfW, height);
+    renderer.render(scene, playerCameras[0].camera);
+
+    // Right Viewport (Player 2)
+    playerCameras[1].camera.aspect = (width - halfW) / height;
+    playerCameras[1].camera.updateProjectionMatrix();
+    renderer.setViewport(halfW, 0, width - halfW, height);
+    renderer.setScissor(halfW, 0, width - halfW, height);
+    renderer.render(scene, playerCameras[1].camera);
+
+    renderer.setScissorTest(false);
+    renderer.setViewport(0, 0, width, height);
+  } else {
+    // Single Viewport (Practice or single camera)
+    playerCameras[0].camera.aspect = width / height;
+    playerCameras[0].camera.updateProjectionMatrix();
+    renderer.setViewport(0, 0, width, height);
+    renderer.render(scene, playerCameras[0].camera);
+  }
+
   updateHud(match);
 }
 
@@ -1979,129 +2154,681 @@ async function loadActionClips() {
   );
 }
 
+function handleRematch() {
+  if (!matchState) return;
+  // 1. Reset match clock, countdown, and score
+  matchState.scoreHome = 0;
+  matchState.scoreAway = 0;
+  matchState.ticksRemaining = TUNING.match.durationSeconds * TUNING.loop.fixedHz;
+  matchState.countdownTicksRemaining = TUNING.match.countdownSeconds * TUNING.loop.fixedHz;
+  matchState.isCountingDown = true;
+  matchState.matchOver = false;
+  matchState._buzzerPlayed = false;
+  matchState.events.length = 0;
+
+  // Reset athlete strike stats and extended match stats
+  for (const a of athletes) {
+    if (a.strikeState) {
+      a.strikeState.resolvedCount = 0;
+      a.strikeState.whiffCount = 0;
+    }
+  }
+  for (const s of athleteMatchStats) {
+    s.totalTouches = 0;
+    s.sweetSpotHits = 0;
+    s.spikes = 0;
+    s.dives = 0;
+    s.divingHits = 0;
+    s.ownCircleTouches = 0;
+    s.oppCircleTouches = 0;
+  }
+
+  // 2. Re-randomize stream heads matching assigned teams (Home -> South, Away -> North)
+  if (athletes.length >= 2) {
+    const southHead = Math.random() < 0.5 ? TUNING.match.streamHeads.sw : TUNING.match.streamHeads.se;
+    const northHead = Math.random() < 0.5 ? TUNING.match.streamHeads.nw : TUNING.match.streamHeads.ne;
+    const p1IsHome = TUNING.players?.[0]?.team === 'home';
+    const p1Head = p1IsHome ? southHead : northHead;
+    const p2Head = p1IsHome ? northHead : southHead;
+
+    athletes[0].teleportTo({ x: p1Head.x, y: p1Head.y + 7.5, z: p1Head.z }, p1Head.yaw);
+    athletes[1].teleportTo({ x: p2Head.x, y: p2Head.y + 7.5, z: p2Head.z }, p2Head.yaw);
+
+    playerCameras[0].azimuth = p1Head.yaw;
+    playerCameras[1].azimuth = p2Head.yaw;
+    playerCameras[0].manualAzimuthOffset = 0;
+    playerCameras[0].manualPitchOffset = 0;
+    playerCameras[1].manualAzimuthOffset = 0;
+    playerCameras[1].manualPitchOffset = 0;
+    playerCameras[0].resetSmoothing();
+    playerCameras[1].resetSmoothing();
+  }
+
+  // 3. Ensure match ball is refreshed (respecting random or specific selection)
+  setActiveMatchBall(currentMatchBallType);
+  if (balls.length > 0) {
+    const dropPos = getCourtBallDropSpawn(0, 1, loop.tick, false);
+    resetBall(balls[0], loop.tick, dropPos);
+    balls[0]._preMatchSpawnPos = { x: dropPos.x, y: dropPos.y, z: dropPos.z };
+    if (matchState) matchState.preMatchSpawnPos = balls[0]._preMatchSpawnPos;
+  }
+
+  resetCountdownOverlay();
+  hideVictoryScreen();
+  hideInGameMenu();
+  console.log('[match] rematch started!');
+}
+
+function skipFlyover() {
+  if (gameState !== 'flyover') return;
+  gameState = 'match';
+  hideFlyoverOverlay();
+
+  if (matchState) {
+    matchState.isCountingDown = true;
+    matchState.countdownTicksRemaining = TUNING.match.countdownSeconds * TUNING.loop.fixedHz;
+  }
+  resetCountdownOverlay();
+
+  playerCameras[0].resetSmoothing();
+  playerCameras[1].resetSmoothing();
+  applyViewportSize();
+  console.log('[flyover] skipped -> countdown started');
+}
+
+function handleStartMatch(configs, ballPreference = getSelectedMatchBall()) {
+  hideMainMenu();
+
+  for (const s of athleteMatchStats) {
+    s.totalTouches = 0;
+    s.sweetSpotHits = 0;
+    s.spikes = 0;
+    s.dives = 0;
+    s.divingHits = 0;
+    s.ownCircleTouches = 0;
+    s.oppCircleTouches = 0;
+  }
+
+  // 1. Apply configurations
+  if (configs && configs[0] && athletes[0]) {
+    athletes[0].setTeamAndVariant(configs[0].team, configs[0].variant, { primaryColor: configs[0].primaryColor });
+    playerCameras[0].setMode(configs[0].cameraMode);
+    if (TUNING.players[0]) {
+      TUNING.players[0].team = configs[0].team;
+      TUNING.players[0].variant = configs[0].variant;
+      TUNING.players[0].primaryColor = configs[0].primaryColor;
+      TUNING.players[0].cameraMode = configs[0].cameraMode;
+    }
+  }
+  if (configs && configs[1] && athletes[1]) {
+    athletes[1].setTeamAndVariant(configs[1].team, configs[1].variant, { primaryColor: configs[1].primaryColor });
+    playerCameras[1].setMode(configs[1].cameraMode);
+    if (TUNING.players[1]) {
+      TUNING.players[1].team = configs[1].team;
+      TUNING.players[1].variant = configs[1].variant;
+      TUNING.players[1].primaryColor = configs[1].primaryColor;
+      TUNING.players[1].cameraMode = configs[1].cameraMode;
+    }
+  }
+
+  // 2. Dynamic Scoreboard & Palette Colors matching player choices
+  const homeIdx = configs && configs[0]?.team === 'home' ? 0 : 1;
+  const awayIdx = 1 - homeIdx;
+  const homeColor = configs?.[homeIdx]?.primaryColor ?? 0xd90429;
+  const awayColor = configs?.[awayIdx]?.primaryColor ?? 0x1d4ed8;
+
+  if (TUNING.athlete && TUNING.athlete.palette) {
+    TUNING.athlete.palette.homePrimary = homeColor;
+    TUNING.athlete.palette.awayPrimary = awayColor;
+  }
+  if (TUNING.teams) {
+    if (TUNING.teams.home) {
+      TUNING.teams.home.primaryColor = homeColor;
+      TUNING.teams.home.name = `${getColorName(homeColor)} (Home)`;
+    }
+    if (TUNING.teams.away) {
+      TUNING.teams.away.primaryColor = awayColor;
+      TUNING.teams.away.name = `${getColorName(awayColor)} (Away)`;
+    }
+  }
+  if (scoreboards) {
+    updateScoreboards(scoreboards, matchState);
+  }
+
+  // 3. Select and configure match ball
+  currentMatchBallType = ballPreference;
+  setActiveMatchBall(currentMatchBallType);
+
+  TUNING.match.mode = 'match';
+  if (matchState) {
+    matchState.mode = 'match';
+    matchState.scoreHome = 0;
+    matchState.scoreAway = 0;
+    matchState.targetGoal = 'N';
+    matchState.celebrationTicks = 0;
+    matchState.lastScoredFor = null;
+    matchState.lastGoalId = null;
+    matchState.ticksRemaining = TUNING.match.durationSeconds * TUNING.loop.fixedHz;
+    matchState.countdownTicksRemaining = TUNING.match.countdownSeconds * TUNING.loop.fixedHz;
+    matchState.isCountingDown = true;
+    matchState.matchOver = false;
+    matchState._buzzerPlayed = false;
+    matchState.events.length = 0;
+  }
+
+  // Clear strike stats
+  for (const a of athletes) {
+    if (a.strikeState) {
+      a.strikeState.resolvedCount = 0;
+      a.strikeState.whiffCount = 0;
+    }
+  }
+
+  // Position athletes at stream heads matching chosen team (Home -> South, Away -> North)
+  if (athletes.length >= 2) {
+    const southHead = Math.random() < 0.5 ? TUNING.match.streamHeads.sw : TUNING.match.streamHeads.se;
+    const northHead = Math.random() < 0.5 ? TUNING.match.streamHeads.nw : TUNING.match.streamHeads.ne;
+
+    const p1IsHome = configs && configs[0]?.team === 'home';
+    const p1Head = p1IsHome ? southHead : northHead;
+    const p2Head = p1IsHome ? northHead : southHead;
+
+    athletes[0].teleportTo({ x: p1Head.x, y: p1Head.y + 7.5, z: p1Head.z }, p1Head.yaw);
+    athletes[1].teleportTo({ x: p2Head.x, y: p2Head.y + 7.5, z: p2Head.z }, p2Head.yaw);
+
+    playerCameras[0].azimuth = p1Head.yaw;
+    playerCameras[1].azimuth = p2Head.yaw;
+    playerCameras[0].manualAzimuthOffset = 0;
+    playerCameras[0].manualPitchOffset = 0;
+    playerCameras[1].manualAzimuthOffset = 0;
+    playerCameras[1].manualPitchOffset = 0;
+    playerCameras[0].resetSmoothing();
+    playerCameras[1].resetSmoothing();
+  }
+
+  // Fresh match ball at 10m
+  if (balls.length > 0) {
+    const dropPos = getCourtBallDropSpawn(0, 1, loop.tick, false);
+    resetBall(balls[0], loop.tick, dropPos);
+    balls[0]._preMatchSpawnPos = { x: dropPos.x, y: dropPos.y, z: dropPos.z };
+    if (matchState) matchState.preMatchSpawnPos = balls[0]._preMatchSpawnPos;
+  }
+
+  // Start 10s flyover cutscene
+  gameState = 'flyover';
+  cinematicCamera.startFlyover(10.0);
+  const p1Color = configs?.[0]?.primaryColor ?? 0xd90429;
+  const p2Color = configs?.[1]?.primaryColor ?? 0x1d4ed8;
+  const p1TeamName = getColorName(p1Color).toUpperCase();
+  const p2TeamName = getColorName(p2Color).toUpperCase();
+  const p1Hex = '#' + p1Color.toString(16).padStart(6, '0');
+  const p2Hex = '#' + p2Color.toString(16).padStart(6, '0');
+  showFlyoverOverlay(p1TeamName, p2TeamName, p1Hex, p2Hex);
+  applyViewportSize();
+  console.log('[match] starting 10s flyover cutscene...');
+}
+
+function handleStartPractice(playerConfig = null, ballChoice = 'all') {
+  hideMainMenu();
+  hideInGameMenu();
+  hideVictoryScreen();
+  gameState = 'practice';
+  TUNING.match.mode = 'practice';
+  selectedPracticeBallType = ballChoice;
+
+  // Reset practice drill stats
+  practiceStats.goals = 0;
+  practiceStats.hits = 0;
+  practiceStats.whiffs = 0;
+  practiceStats.sweetSpots = 0;
+  practiceStats.spikes = 0;
+  practiceStats.dives = 0;
+  practiceStats.divingHits = 0;
+  practiceStats.totalTouches = 0;
+  practiceSessionTicks = 0;
+
+  if (athletes[0]?.strikeState) {
+    athletes[0].strikeState.resolvedCount = 0;
+    athletes[0].strikeState.whiffCount = 0;
+  }
+
+  // 1. Apply customized solo athlete options
+  if (playerConfig && athletes[0]) {
+    athletes[0].setTeamAndVariant(playerConfig.team || 'home', playerConfig.variant || 'classic', { primaryColor: playerConfig.primaryColor });
+    playerCameras[0].setMode(playerConfig.cameraMode || 'chase');
+    if (TUNING.players[0]) {
+      TUNING.players[0].team = playerConfig.team;
+      TUNING.players[0].variant = playerConfig.variant;
+      TUNING.players[0].primaryColor = playerConfig.primaryColor;
+      TUNING.players[0].cameraMode = playerConfig.cameraMode;
+    }
+    TUNING.camera.mode = playerCameras[0].mode;
+    const pColor = playerConfig.primaryColor ?? 0xd90429;
+    if (TUNING.athlete?.palette) {
+      TUNING.athlete.palette.homePrimary = pColor;
+    }
+    if (TUNING.teams?.home) {
+      TUNING.teams.home.primaryColor = pColor;
+    }
+  }
+
+  // 2. Hide P2 and put away during practice
+  if (athletes.length >= 2 && athletes[1]) {
+    if (athletes[1].motor?.body) {
+      athletes[1].motor.body.setEnabled(false);
+    }
+    if (athletes[1].ragdoll?.rig) {
+      for (const item of athletes[1].ragdoll.rig.values()) {
+        item.body.setEnabled(false);
+      }
+    }
+    if (athletes[1].ragdoll?.group) {
+      athletes[1].ragdoll.group.visible = false;
+    }
+  }
+  if (athletes[0]?.ragdoll?.group) {
+    athletes[0].ragdoll.group.visible = true;
+  }
+
+  if (matchState) {
+    matchState.mode = 'practice';
+    matchState.scoreHome = 0;
+    matchState.scoreAway = 0;
+    matchState.targetGoal = 'N';
+    matchState.celebrationTicks = 0;
+    matchState.lastScoredFor = null;
+    matchState.lastGoalId = null;
+    matchState.isCountingDown = false;
+    matchState.matchOver = false;
+    matchState.events.length = 0;
+  }
+
+  // 3. Configure ball(s) according to user selection
+  if (ballChoice === 'small') {
+    for (let i = 0; i < allBalls.length; i++) {
+      const b = allBalls[i];
+      if (i === 0) {
+        b.mesh.visible = true;
+        b.body.setEnabled(true);
+      } else {
+        b.mesh.visible = false;
+        b.body.setTranslation({ x: 0, y: -200, z: 0 }, true);
+        b.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+        b.body.setEnabled(false);
+      }
+    }
+    balls = [allBalls[0]];
+    ball = allBalls[0];
+  } else if (ballChoice === 'medium') {
+    for (let i = 0; i < allBalls.length; i++) {
+      const b = allBalls[i];
+      if (i === 1) {
+        b.mesh.visible = true;
+        b.body.setEnabled(true);
+      } else {
+        b.mesh.visible = false;
+        b.body.setTranslation({ x: 0, y: -200, z: 0 }, true);
+        b.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+        b.body.setEnabled(false);
+      }
+    }
+    balls = [allBalls[1]];
+    ball = allBalls[1];
+  } else if (ballChoice === 'large') {
+    for (let i = 0; i < allBalls.length; i++) {
+      const b = allBalls[i];
+      if (i === 2) {
+        b.mesh.visible = true;
+        b.body.setEnabled(true);
+      } else {
+        b.mesh.visible = false;
+        b.body.setTranslation({ x: 0, y: -200, z: 0 }, true);
+        b.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+        b.body.setEnabled(false);
+      }
+    }
+    balls = [allBalls[2]];
+    ball = allBalls[2];
+  } else {
+    // 'all' / multi-ball sandbox default
+    balls = [...allBalls];
+    ball = allBalls[1] || allBalls[0] || null;
+    for (const b of allBalls) {
+      b.mesh.visible = true;
+      b.body.setEnabled(true);
+    }
+  }
+
+  // Drop P1 from above center court
+  if (athletes[0]) {
+    const spawnPos = (arenaPreset && arenaPreset.spawn) || { x: 0, y: 1.2, z: 0 };
+    athletes[0].teleportTo({ x: spawnPos.x, y: 12.0, z: spawnPos.z }, 0);
+    playerCameras[0].resetSmoothing();
+  }
+
+
+  // Drop balls
+  for (let i = 0; i < balls.length; i++) {
+    const dropPos = getCourtBallDropSpawn(i, balls.length, loop.tick, false);
+    resetBall(balls[i], loop.tick, dropPos);
+  }
+
+  applyViewportSize();
+  console.log(`[practice] sandbox started with ball choice "${ballChoice}"`);
+}
+
+function handleFinishPractice() {
+  hideInGameMenu();
+  const a0Strike = athletes[0]?.getStrikeStats();
+  if (a0Strike) {
+    practiceStats.hits = a0Strike.hits;
+    practiceStats.whiffs = a0Strike.whiffs;
+  }
+  showPracticeSummary(practiceStats, practiceSessionTicks / 60, {
+    onPracticeAgain: () => {
+      handleStartPractice(getPlayerConfigs()[0], selectedPracticeBallType);
+    },
+    onCustomize: () => {
+      hideVictoryScreen();
+      gameState = 'menu';
+      showPlayerSetup('practice');
+      applyViewportSize();
+    },
+    onMainMenu: returnToMainMenu,
+  });
+}
+
+function launchMenuBalls() {
+  setActiveMatchBall('all');
+  for (let i = 0; i < balls.length; i++) {
+    const b = balls[i];
+    if (b && b.body) {
+      const angle = (i / Math.max(balls.length, 1)) * Math.PI * 2 + Math.random() * 0.5;
+      const dist = 3.0 + Math.random() * 4.0;
+      b.body.setTranslation({
+        x: Math.cos(angle) * dist,
+        y: 6.0 + i * 2.0,
+        z: Math.sin(angle) * dist,
+      }, true);
+      b.body.setLinvel({
+        x: (Math.random() - 0.5) * 8.0,
+        y: 2.0 + Math.random() * 4.0,
+        z: (Math.random() - 0.5) * 8.0,
+      }, true);
+      b.body.setAngvel({
+        x: (Math.random() - 0.5) * 4.0,
+        y: (Math.random() - 0.5) * 4.0,
+        z: (Math.random() - 0.5) * 4.0,
+      }, true);
+    }
+  }
+}
+
+function returnToMainMenu() {
+  hideInGameMenu();
+  hideVictoryScreen();
+  resetCountdownOverlay();
+  hideFlyoverOverlay();
+
+  gameState = 'menu';
+  cinematicCamera.startTitleOrbit();
+  showTitleScreen();
+
+  // Reset athletes to stream heads and restore visibility
+  if (athletes.length >= 2) {
+    if (athletes[1]?.motor?.body) athletes[1].motor.body.setEnabled(true);
+    if (athletes[1]?.ragdoll?.rig) {
+      for (const item of athletes[1].ragdoll.rig.values()) item.body.setEnabled(true);
+    }
+    athletes[0].teleportTo(TUNING.match.streamHeads.sw, 0);
+    athletes[1].teleportTo(TUNING.match.streamHeads.ne, Math.PI);
+    if (athletes[0]?.ragdoll?.group) athletes[0].ragdoll.group.visible = true;
+    if (athletes[1]?.ragdoll?.group) athletes[1].ragdoll.group.visible = true;
+  }
+
+  launchMenuBalls();
+  applyViewportSize();
+  console.log('[mainMenu] returned to title screen');
+}
+
+let currentSetupMode = 'match';
+let setupAthleteYaw = [Math.PI * 0.40, -Math.PI * 0.40];
+
+function handleEnterSetup(mode = 'match') {
+  currentSetupMode = mode;
+  // Move balls out of player preview viewport
+  for (const b of allBalls) {
+    if (b?.body) {
+      b.body.setTranslation({ x: 0, y: -200, z: 0 }, true);
+      b.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    }
+  }
+
+  if (mode === 'practice') {
+    if (athletes.length >= 2) {
+      if (athletes[1]?.motor?.body) athletes[1].motor.body.setEnabled(false);
+      if (athletes[1]?.ragdoll?.rig) {
+        for (const item of athletes[1].ragdoll.rig.values()) item.body.setEnabled(false);
+      }
+      setupAthleteYaw[0] = -Math.PI * 0.35;
+      athletes[0].teleportTo({ x: 1.45, y: 6.0, z: 0.2 }, setupAthleteYaw[0]);
+      if (athletes[0]?.ragdoll?.group) athletes[0].ragdoll.group.visible = true;
+      if (athletes[1]?.ragdoll?.group) athletes[1].ragdoll.group.visible = false;
+    }
+  } else {
+    // Drop athletes in from above camera at center circle flanking the menu, facing each other
+    if (athletes.length >= 2) {
+      if (athletes[1]?.motor?.body) athletes[1].motor.body.setEnabled(true);
+      if (athletes[1]?.ragdoll?.rig) {
+        for (const item of athletes[1].ragdoll.rig.values()) item.body.setEnabled(true);
+      }
+      setupAthleteYaw[0] = Math.PI * 0.40;
+      setupAthleteYaw[1] = -Math.PI * 0.40;
+      athletes[0].teleportTo({ x: -3.2, y: 6.0, z: 0.0 }, setupAthleteYaw[0]);
+      athletes[1].teleportTo({ x: 3.2, y: 6.0, z: 0.0 }, setupAthleteYaw[1]);
+      if (athletes[0]?.ragdoll?.group) athletes[0].ragdoll.group.visible = true;
+      if (athletes[1]?.ragdoll?.group) athletes[1].ragdoll.group.visible = true;
+    }
+  }
+  cinematicCamera.startSetupPreview();
+  console.log(`[mainMenu] entered setup (${mode}) -> 3D athlete staging active`);
+}
+
+function handleExitSetup() {
+
+  // Return to ambient title orbit and stream heads
+  if (athletes.length >= 2) {
+    if (athletes[1]?.motor?.body) athletes[1].motor.body.setEnabled(true);
+    if (athletes[1]?.ragdoll?.rig) {
+      for (const item of athletes[1].ragdoll.rig.values()) item.body.setEnabled(true);
+    }
+    athletes[0].teleportTo(TUNING.match.streamHeads.sw, 0);
+    athletes[1].teleportTo(TUNING.match.streamHeads.ne, Math.PI);
+    if (athletes[0]?.ragdoll?.group) athletes[0].ragdoll.group.visible = true;
+    if (athletes[1]?.ragdoll?.group) athletes[1].ragdoll.group.visible = true;
+  }
+  launchMenuBalls();
+  cinematicCamera.startTitleOrbit();
+  console.log('[mainMenu] exited setup -> ambient title orbit');
+}
+
+function handlePlayerConfigChange(idx, config) {
+  if (athletes[idx]) {
+    athletes[idx].setTeamAndVariant(config.team, config.variant, { primaryColor: config.primaryColor });
+    if (TUNING.players[idx]) {
+      TUNING.players[idx].team = config.team;
+      TUNING.players[idx].variant = config.variant;
+      TUNING.players[idx].primaryColor = config.primaryColor;
+      TUNING.players[idx].cameraMode = config.cameraMode;
+    }
+  }
+
+  // Update TUNING palette live during setup as well
+  const p1Team = TUNING.players[0]?.team || 'home';
+  const homeIdx = p1Team === 'home' ? 0 : 1;
+  const awayIdx = 1 - homeIdx;
+  if (TUNING.athlete?.palette) {
+    TUNING.athlete.palette.homePrimary = TUNING.players[homeIdx]?.primaryColor ?? 0xd90429;
+    TUNING.athlete.palette.awayPrimary = TUNING.players[awayIdx]?.primaryColor ?? 0x1d4ed8;
+  }
+  if (scoreboards) {
+    updateScoreboards(scoreboards, matchState);
+  }
+}
+
 async function boot() {
+  // Determine mode from URL query or TUNING first
+  const urlParams = new URLSearchParams(window.location.search);
+  const modeParam = urlParams.get('mode');
+  if (modeParam === 'match' || modeParam === 'practice') {
+    TUNING.match.mode = modeParam;
+  }
+
   // THE MATCH STATE FIRST, before anything can score into it.
   matchState = createMatchState();
+  matchState.mode = TUNING.match.mode;
   window.__matchState = matchState;
   await initPhysics(loop.fixedDt);
 
-  // AWAITED — the court is a GLB and the loop must not start on an empty world.
-  // arena.js now owns adding the group, stamping ENVIRONMENT_GROUPS on its own
-  // colliders and setting receiveShadow, all of which used to be done from here
-  // with a comment explaining that arena.js was frozen. It is not any more, so
-  // the stamps have moved next to the things they describe.
   arenaPreset = activeArenaPreset();
   console.log(`[arena] active type "${activeArenaType()}"`);
   const arena = await createArena(scene);
 
-  // THE BOUNDARY SCOREBOARDS, after the arena and before the loop. Nothing here
-  // is simulation: four meshes, four canvas textures, no physics body. They
-  // hang on wall positions measured off arena.glb — see TUNING.scoreboard.
   scoreboards = createScoreboards(scene);
   window.__scoreboards = scoreboards;
 
-  // THE PROCEDURAL SOUND ENGINE. Render-side, strictly consumer.
+  hustleBoards = createHustleBoards(scene);
+  window.__hustleBoards = hustleBoards;
+
   soundManager.init(camera);
   window.__soundManager = soundManager;
 
-  // The words are derived in physics.js and the table is computed from them, so
-  // the "no" in the motor/ball cell is evidence rather than a caption.
   logCollisionMatrix();
 
-  motor = createMotor();
-  // THE ATHLETE'S LANDING POINT, from the active preset.
-  //
-  // CONSTRUCTION, not gameplay: this runs in boot, before loop.start(), on a
-  // body nothing has stepped yet. motor.js authors its own spawn from
-  // TUNING.motor.spawnY and motor.js is frozen, so the arena's choice is applied
-  // here instead. It does NOT join the play-code setTranslation census for the
-  // same reason the RigidBodyDesc builders do not: it cannot be reached once the
-  // loop is running.
-  motor.body.setTranslation(
-    { x: arenaPreset.spawn.x, y: arenaPreset.spawn.y, z: arenaPreset.spawn.z },
-    true,
-  );
-  motor.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
-  motor.interpolated.reset(
-    _bootSpawnPoint.set(arenaPreset.spawn.x, arenaPreset.spawn.y, arenaPreset.spawn.z),
-  );
-  // Construction-time, next to the collider it edits: the character rides the
-  // sphere through tracking forces, not through contact, and its legs straddle
-  // the ball by construction. See detachMotorFromRagdoll.
-  detachMotorFromRagdoll(motor);
-  scene.add(motor.mesh);
-  motor.mesh.visible = TUNING.debug.showSphereWireframe;
+  // Load character first so characterSkeleton & characterRoot are ready
+  try {
+    await loadCharacter();
+  } catch (error) {
+    console.error('[character] load failed; continuing without it', error);
+  }
 
-  loop.register(motor.interpolated);
+  // 1. CREATE ATHLETES (Both P1 and P2 created for lobby presentation and match play)
+  const p1Cfg = TUNING.players[0] || { team: 'home', variant: 'classic' };
+  const p2Cfg = TUNING.players[1] || { team: 'away', variant: 'classic' };
+  const p1Head = TUNING.match.streamHeads.sw;
+  const p2Head = TUNING.match.streamHeads.ne;
 
-  // THE BALL joins the interpolation registry on exactly the terms the sphere
-  // does — one Interpolated, registered once, snapshotted after the world step.
-  // The before/after count is logged because "did the ball actually get
-  // registered" is otherwise invisible until something renders at the wrong
-  // alpha and nobody can say when it started.
+  const p1 = createAthlete({
+    id: 'p1',
+    team: p1Cfg.team || 'home',
+    variant: p1Cfg.variant || 'classic',
+    primaryColor: p1Cfg.primaryColor || null,
+    colorOverride: p1Cfg.colorOverride || null,
+    spawn: { ...p1Head },
+    scene,
+    characterSkeleton,
+    characterRoot,
+    clips: characterClips,
+  });
+
+  const p2 = createAthlete({
+    id: 'p2',
+    team: p2Cfg.team || 'away',
+    variant: p2Cfg.variant || 'classic',
+    primaryColor: p2Cfg.primaryColor || null,
+    colorOverride: p2Cfg.colorOverride || null,
+    spawn: { ...p2Head },
+    scene,
+    characterSkeleton,
+    characterRoot,
+    clips: characterClips,
+  });
+
+  athletes = [p1, p2];
+  playerCameras[0].mode = p1Cfg.cameraMode || 'chase';
+  playerCameras[1].mode = p2Cfg.cameraMode || 'chase';
+  playerCameras[0].azimuth = p1Head.yaw;
+  playerCameras[1].azimuth = p2Head.yaw;
+  playerCameras[0].resetSmoothing();
+  playerCameras[1].resetSmoothing();
+  TUNING.camera.mode = playerCameras[0].mode;
+
+  for (const a of athletes) {
+    loop.register(a.motor.interpolated);
+  }
+
+  motor = athletes[0].motor;
+  ragdoll = athletes[0].ragdoll;
+  animTarget = athletes[0].animTarget;
+
+  // 2. CREATE BALLS (Pre-create all 3 sizes: small, medium, large)
   const registryBefore = loop.interpolated.length;
-  // BUILT ONE AT A TIME, IN ARRAY ORDER, and awaited — both halves matter for
-  // LAW 6.
-  //
-  // Awaited, because the optional skin must resolve before the loop starts: a
-  // texture landing on a different frame in each run would make an anchored pair
-  // differ over a picture rather than over the simulation.
-  //
-  // Sequential rather than Promise.all, because Rapier hands out body handles in
-  // creation order and the solver walks bodies in handle order. With Promise.all
-  // the three constructors interleave at their await points, and the creation
-  // order would then depend on how fast a texture fetch resolved — which is not
-  // a thing the simulation may depend on. A for-of loop makes the order a
-  // property of the code instead of a property of the network.
   for (let i = 0; i < TUNING.balls.length; i += 1) {
     const spec = TUNING.balls[i];
-    // The spawn comes from the ARENA, matched by index; for the court,
-    // balls drop from Goal height (10.0m) within pitch bounds.
     let spawn = arenaPreset.ballSpawns[i];
     if (activeArenaType() === 'court') {
       spawn = getCourtBallDropSpawn(i, TUNING.balls.length, 0, armedCaptureTick !== null);
     }
     const built = await createBall(scene, spawn ? { ...spec, spawn } : spec);
-    balls.push(built);
+    allBalls.push(built);
     ballByHandle.set(built.collider.handle, built);
     loop.register(built.interpolated);
   }
-  // The 1 m ball is the primary the HUD reports; see the declaration.
-  ball = balls[1] || balls[0] || null;
+  balls = [...allBalls];
+  ball = allBalls[1] || allBalls[0] || null;
   console.log(
-    `[ball] ${balls.length} balls (${balls.map((b) => b.id).join(', ')}); ` +
+    `[ball] ${allBalls.length} balls (${allBalls.map((b) => b.id).join(', ')}); ` +
       `interpolation registry ${registryBefore} -> ${loop.interpolated.length}; ` +
       `HUD primary "${ball ? ball.label : 'none'}"`,
   );
 
-  initInput(canvas);
-  // Sampled once per rendered frame, before that frame's steps drain, so every
-  // step in the frame consumes an identical snapshot.
-  loop.onFrame(() => sampleInput(camera));
+  initInputRouter(canvas);
+  loop.onFrame(() => sampleAllInputs([playerCameras[0].camera, playerCameras[1].camera], gameState === 'practice' ? 1 : athletes.length, TUNING.match.mode));
 
   applyViewportSize();
   applyCameraTuning();
 
-  // Baseline BEFORE any ragdoll exists: the arena body plus the motor body, and
-  // their colliders. Spam-respawn has to come back to exactly this.
   baselineCounts = worldCounts();
   console.log(
     `[ragdoll] baseline ${baselineCounts.bodies} bodies / ${baselineCounts.colliders} colliders / ` +
       `${baselineCounts.joints} joints`,
   );
 
-  // The character is optional scenery as far as the sphere motor is concerned.
-  // If it fails to load, Task 2's scene must still run — so this is caught here
-  // rather than allowed to take the whole boot down.
-  try {
-    await loadCharacter();
-    // MOUNTED FROM THE START. Task 3 waited for R because the ragdoll had
-    // nowhere to be; now it has a mount, so it takes it. R still respawns, at
-    // that same mount.
-    requestRagdollSpawn();
-  } catch (error) {
-    console.error('[character] load failed; the sphere motor scene continues without it', error);
-  }
+  initCountdownOverlay();
+
+  initVictoryScreen({
+    onRematch: handleRematch,
+    onPracticeMode: handleStartPractice,
+    onMainMenu: returnToMainMenu,
+  });
+
+  initInGameMenu({
+    onResume: () => {},
+    onRematch: handleRematch,
+    onPracticeMode: () => handleStartPractice(getPlayerConfigs()[0], selectedPracticeBallType),
+    onFinishPractice: handleFinishPractice,
+    onMainMenu: returnToMainMenu,
+    onRenderSettingsChange: (settings) => {
+      applyRenderSettings(settings);
+    },
+    onCameraChange: (playerIdx, mode) => {
+      if (playerCameras[playerIdx]) {
+        playerCameras[playerIdx].setMode(mode);
+        if (TUNING.players[playerIdx]) {
+          TUNING.players[playerIdx].cameraMode = mode;
+        }
+        if (playerIdx === 0) {
+          TUNING.camera.mode = mode;
+        }
+      }
+    },
+    initialRenderSettings: {
+      pixelRatioPreset: TUNING.render?.pixelRatioPreset || '1.25',
+      shadowQuality: TUNING.render?.shadowQuality || 'high',
+    },
+  });
+
+  applyShadowSettings();
 
   installRespawnHotkey();
 
@@ -2111,43 +2838,16 @@ async function boot() {
     camera,
     loop,
     restoreViewport: applyViewportSize,
-    // THE CAMERA MUST BE RE-DERIVED AT THE CAPTURE'S ALPHA.
-    //
-    // captureAnchored pins alpha = 1 so no interpolation fraction reaches the
-    // image — but it re-applies the POSES only, and the spring arm had already
-    // run earlier in that frame from the sphere's position at the frame's own
-    // alpha. So the bodies were pinned and the camera was not, and the camera
-    // offset carried a frame-pacing-dependent remainder straight into the
-    // pixels. Two runs agreed on every simulated number and still produced
-    // different images.
-    //
-    // Re-running the arm here, after the poses are pinned, closes it: the
-    // camera is derived from the same alpha = 1 state as everything else. A
-    // latent hole since the spring arm replaced the static camera in GF-3 —
-    // invisible until the gravity change moved the ball enough at the anchor
-    // tick for the difference to show.
     poseCharacter: (alpha) => {
-      syncRagdollPose(ragdoll, alpha);
+      for (const a of athletes) a.renderPose(alpha);
       updateSpringArm();
     },
     requestRagdollSpawn,
   });
 
-  // A READ-ONLY SNAPSHOT, for measuring the things the HUD cannot show.
-  //
-  // It returns plain numbers, never the bodies themselves: a console handle on
-  // a rigid body is a way to write velocity into the sim from outside every law
-  // in the project, and a determinism claim that anyone can quietly break from
-  // a devtools prompt is not a claim. Reading is free; there is nothing here to
-  // write through.
-  //
-  // It exists because the sphere's own brake hides the ragdoll's motion — after
-  // a dive the sphere is being hauled by the mount follower AND braked by
-  // rollingResistance, so HUD speed says "stopped" while the body is still
-  // sliding. Tuning the skid without this is tuning by anecdote.
   window.__vb = window.__vb || {};
   window.__vb.matchState = matchState;
-  window.__vb.balls = balls;
+  Object.defineProperty(window.__vb, 'balls', { get: () => balls, configurable: true });
   window.__vb.sound = soundManager;
   window.__soundManager = soundManager;
   window.__vb.tuning = TUNING;
@@ -2156,66 +2856,132 @@ async function boot() {
   window.__vb.THREE = THREE;
   window.__vb.scene = scene;
   window.__vb.camera = camera;
+  window.__vb.playerCameras = playerCameras;
   window.__vb.cameraRig = cameraRig;
   window.__vb.renderer = renderer;
   window.__vb.loop = loop;
-  Object.defineProperty(window.__vb, 'ragdoll', { get: () => ragdoll, configurable: true });
-  Object.defineProperty(window.__vb, 'motor', { get: () => motor, configurable: true });
-  Object.defineProperty(window.__vb, 'animTarget', { get: () => animTarget, configurable: true });
-  window.__vb.updateAthletePalette = () => updateAthletePalette(ragdoll);
-  window.__vb.updateAthleteVariant = () => updateAthleteVariant(ragdoll);
-  window.__vb.probe = () => {
-    if (!ragdoll) return null;
-    const pelvis = ragdoll.rig.get('pelvis');
+  window.__vb.athletes = athletes;
+  window.__vb.rematch = handleRematch;
+  window.__vb.toggleInGameMenu = toggleInGameMenu;
+  window.__vb.hideInGameMenu = hideInGameMenu;
+  window.__vb.isInGameMenuOpen = isInGameMenuOpen;
+  window.__vb.getInputSlot = getInputSlot;
+  window.__vb.applyRenderSettings = applyRenderSettings;
+  window.__vb.showMainMenu = showTitleScreen;
+  window.__vb.showPlayerSetup = showPlayerSetup;
+  window.__vb.startMatch = handleStartMatch;
+  window.__vb.skipFlyover = skipFlyover;
+  window.__vb.returnToMainMenu = returnToMainMenu;
+  window.__vb.setActiveMatchBall = setActiveMatchBall;
+  window.__vb.allBalls = allBalls;
+  window.__vb.getGameState = () => gameState;
+  window.__vb.cinematicCamera = cinematicCamera;
+  window.__vb.getPlayerConfigs = getPlayerConfigs;
+  window.__vb.athleteMatchStats = athleteMatchStats;
+  window.__vb.showVictoryScreen = showVictoryScreen;
+  window.__vb.showPracticeSummary = showPracticeSummary;
+  window.__vb.hustleBoards = hustleBoards;
+  window.__vb.updateHustleBoards = updateHustleBoards;
+  window.__vb.displayCoordinator = displayCoordinator;
+  window.__vb.practiceStats = practiceStats;
+  window.__vb.finishPractice = handleFinishPractice;
+  window.__vb.startPractice = handleStartPractice;
+  Object.defineProperty(window.__vb, 'practiceSessionSeconds', {
+    get: () => practiceSessionTicks / 60,
+    configurable: true,
+  });
+
+  window.__vb.setTeamConfig = (teamId, options) => {
+    if (!TUNING.teams || !TUNING.teams[teamId]) return;
+    Object.assign(TUNING.teams[teamId], options);
+    for (const a of athletes) {
+      if (a.team === teamId) {
+        a.refreshVisuals();
+      }
+    }
+    if (guiInstance) guiInstance.controllersRecursive().forEach((c) => c.updateDisplay());
+  };
+
+  window.__vb.setPlayerConfig = (playerIndex, options) => {
+    if (!TUNING.players || !TUNING.players[playerIndex]) return;
+    Object.assign(TUNING.players[playerIndex], options);
+    const a = athletes[playerIndex];
+    if (a) {
+      if (options.team) a.team = options.team;
+      if (options.variant) a.variant = options.variant;
+      if (options.primaryColor !== undefined) a.primaryColor = options.primaryColor;
+      if (options.colorOverride !== undefined) a.colorOverride = options.colorOverride;
+      a.refreshVisuals();
+    }
+    if (options.cameraMode && playerCameras[playerIndex]) {
+      playerCameras[playerIndex].mode = options.cameraMode;
+    }
+    if (guiInstance) guiInstance.controllersRecursive().forEach((c) => c.updateDisplay());
+  };
+
+  window.__vb.setSplitscreen = (enabled) => {
+    TUNING.camera.splitscreen = !!enabled;
+    applyViewportSize();
+    if (guiInstance) guiInstance.controllersRecursive().forEach((c) => c.updateDisplay());
+  };
+
+  Object.defineProperty(window.__vb, 'ragdoll', { get: () => athletes[0]?.ragdoll || ragdoll, configurable: true });
+  Object.defineProperty(window.__vb, 'motor', { get: () => athletes[0]?.motor || motor, configurable: true });
+  Object.defineProperty(window.__vb, 'animTarget', { get: () => athletes[0]?.animTarget || animTarget, configurable: true });
+  window.__vb.updateAthletePalette = () => {
+    for (const a of athletes) {
+      if (a.ragdoll) a.refreshVisuals();
+    }
+  };
+  window.__vb.updateAthleteVariant = () => {
+    for (const a of athletes) {
+      if (a.ragdoll) a.refreshVisuals();
+    }
+  };
+  window.__vb.probe = (athleteIndex = 0) => {
+    const a = athletes[athleteIndex] || athletes[0];
+    if (!a || !a.ragdoll) return null;
+    const r = a.ragdoll;
+    const m = a.motor;
+    const at = a.animTarget;
+    const tr = a.tracker;
+    const st = a.strikeState;
+    const pelvis = r.rig.get('pelvis');
     const pv = pelvis.body.linvel();
     const pt = pelvis.body.translation();
-    const mt = motor.body.translation();
-    const mv = motor.body.linvel();
+    const mt = m.body.translation();
+    const mv = m.body.linvel();
     return {
       tick: loop.tick,
-      // READ from the ball bodies; recomputes nothing the simulation knows.
-      // `ball` is the primary (the 1 m medium); `balls` is all three, in the
-      // order TUNING.balls authored them.
       ball: ball ? ballProbe(ball) : null,
-      // READ from the strike state; the quality is the number the resolver
-      // computed, never a second evaluation of the curve (LESSON 22).
-      strike: strikeProbe(strikeState),
+      strike: strikeProbe(st),
       match: matchState ? matchProbe(matchState) : null,
       balls: balls.map(ballProbe),
+      athletesCount: athletes.length,
       pelvis: { x: pt.x, y: pt.y, z: pt.z, speed: Math.hypot(pv.x, pv.z) },
       motor: { x: mt.x, y: mt.y, z: mt.z, speed: Math.hypot(mv.x, mv.z) },
-      weight: tracker.weight,
-      grounded: motor.grounded,
-      // THE SCORPION METRIC. Height of the highest foot against the head, and
-      // the thigh's angle from the pelvis. A foot above the head means the legs
-      // have come over the back.
+      weight: tr.weight,
+      grounded: m.grounded,
       scorpion: (() => {
-        const head = ragdoll.rig.get('head');
-        const fL = ragdoll.rig.get('footL');
-        const fR = ragdoll.rig.get('footR');
+        const head = r.rig.get('head');
+        const fL = r.rig.get('footL');
+        const fR = r.rig.get('footR');
         if (!head || !fL || !fR) return null;
         const hy = head.body.translation().y;
         const fy = Math.max(fL.body.translation().y, fR.body.translation().y);
         return { footAboveHead: +(fy - hy).toFixed(3), headY: +hy.toFixed(3), footY: +fy.toFixed(3) };
       })(),
-      // Torso tilt from world up, body vs the pose it is being asked to hold.
-      // The gap between these two IS the tracker's authority, in degrees.
       tilt: pelvisTilt(pelvis.body.rotation()),
       targetTilt: (() => {
-        const t = animTarget && animTarget.targets && animTarget.targets.get('pelvis');
+        const t = at && at.targets && at.targets.get('pelvis');
         return t ? pelvisTilt(t.currQuat) : NaN;
       })(),
-      // Extremity motion, for the jitter measurement. A character standing
-      // still should read ~0 on all four; anything else is the PD loop
-      // oscillating against the joints rather than settling.
-      // Mean distance from every body to the pose it is being asked to hold.
-      // The number that must NOT get worse when the damping is raised.
       trackError: (() => {
-        if (!animTarget || !animTarget.targets) return NaN;
+        if (!at || !at.targets) return NaN;
         let sum = 0;
         let n = 0;
-        for (const [k, item] of ragdoll.rig) {
-          const t = animTarget.targets.get(k);
+        for (const [k, item] of r.rig) {
+          const t = at.targets.get(k);
           if (!t) continue;
           const b = item.body.translation();
           sum += Math.hypot(t.currPos.x - b.x, t.currPos.y - b.y, t.currPos.z - b.z);
@@ -2223,112 +2989,23 @@ async function boot() {
         }
         return n ? sum / n : NaN;
       })(),
-      motorMass: motor.body.mass(),
-      motorVy: motor.body.linvel().y,
-      // JOINT DEVIATION FROM BIND, per child body: the total relative angle
-      // between the body and its parent measured against the bind pose, and
-      // for hinges how much of it is OFF the hinge axis. Off-axis on a hinge is
-      // the twist the joint is supposed to make impossible.
-      joints: (() => {
-        const out = {};
-        for (const [k, item] of ragdoll.rig) {
-          const parentKey = item.entry.parent;
-          if (!parentKey) continue;
-          const par = ragdoll.rig.get(parentKey);
-          if (!par) continue;
-          const qp = par.body.rotation();
-          const qc = item.body.rotation();
-          _jA.set(qp.x, qp.y, qp.z, qp.w).invert();
-          _jB.set(qc.x, qc.y, qc.z, qc.w);
-          _jRel.copy(_jA).multiply(_jB);
-          // Cached OUTSIDE the rig entry. The probe must not write anything the
-          // simulation can see, even a field nothing reads.
-          if (!_jBind.has(k)) {
-            _jBind.set(k, _jRel.clone());
-            continue;
-          }
-          _jA.copy(_jBind.get(k)).invert();
-          _jDelta.copy(_jA).multiply(_jRel);
-          if (_jDelta.w < 0) _jDelta.set(-_jDelta.x, -_jDelta.y, -_jDelta.z, -_jDelta.w);
-          const angle = 2 * Math.acos(Math.min(1, Math.abs(_jDelta.w)));
-          let offAxis = angle;
-          if (item.entry.axis) {
-            _jAxis.fromArray(item.entry.axis).normalize();
-            const sin = Math.sqrt(Math.max(0, 1 - _jDelta.w * _jDelta.w));
-            if (sin > 1e-6) {
-              _jVec.set(_jDelta.x, _jDelta.y, _jDelta.z).divideScalar(sin);
-              const along = Math.abs(_jVec.dot(_jAxis));
-              offAxis = angle * Math.sqrt(Math.max(0, 1 - along * along));
-            }
-          }
-          // Signed angle about the authored hinge axis, so the limit's
-          // direction can be checked rather than assumed.
-          let signed = 0;
-          if (item.entry.axis) {
-            _jAxis.fromArray(item.entry.axis).normalize();
-            const sin = Math.sqrt(Math.max(0, 1 - _jDelta.w * _jDelta.w));
-            if (sin > 1e-6) {
-              _jVec.set(_jDelta.x, _jDelta.y, _jDelta.z).divideScalar(sin);
-              signed = angle * _jVec.dot(_jAxis);
-            }
-          }
-          out[k] = [
-            +((angle * 180) / Math.PI).toFixed(1),
-            +((offAxis * 180) / Math.PI).toFixed(1),
-            +((signed * 180) / Math.PI).toFixed(1),
-          ];
-        }
-        return out;
-      })(),
-      // Mean tracking error per BONE GROUP. During a crash the core should be
-      // holding its pose while the extremities let go; this is that, in metres.
-      groupError: (() => {
-        const acc = {};
-        if (!animTarget || !animTarget.targets) return acc;
-        for (const [k, item] of ragdoll.rig) {
-          const t = animTarget.targets.get(k);
-          if (!t) continue;
-          const b = item.body.translation();
-          const d = Math.hypot(t.currPos.x - b.x, t.currPos.y - b.y, t.currPos.z - b.z);
-          const g = item.group;
-          if (!acc[g]) acc[g] = [0, 0];
-          acc[g][0] += d;
-          acc[g][1] += 1;
-        }
-        for (const g of Object.keys(acc)) acc[g] = +(acc[g][0] / acc[g][1]).toFixed(4);
-        return acc;
-      })(),
+      motorMass: m.body.mass(),
+      motorVy: m.body.linvel().y,
       limbs: ['handL', 'handR', 'footL', 'footR'].map((k) => {
-        const item = ragdoll.rig.get(k);
+        const item = r.rig.get(k);
         if (!item) return 0;
         const v = item.body.linvel();
         return Math.hypot(v.x, v.y, v.z);
       }),
-      // What the GHOST is asking those same four to do. Body speed far above
-      // this is oscillation; body speed that matches it is the animation.
-      limbTargets: ['handL', 'handR', 'footL', 'footR'].map((k) => {
-        const t = animTarget && animTarget.targets && animTarget.targets.get(k);
-        if (!t) return 0;
-        return Math.hypot(t.vel.x, t.vel.y, t.vel.z);
-      }),
-      // THE GHOST'S OWN PELVIS, in world. The hip-drop work needs the target
-      // height and the target's horizontal offset from the sphere separately:
-      // a drop that lowers the ghost also raises pelvisDownness, which the
-      // mount blend reads as a fall and slides the target off the sphere.
-      ghostPelvis: (() => {
-        const t = animTarget && animTarget.targets && animTarget.targets.get('pelvis');
-        return t ? { x: t.currPos.x, y: t.currPos.y, z: t.currPos.z } : null;
-      })(),
-      yaw: animTarget ? animTarget.yaw : 0,
-      targetYaw: animTarget ? animTarget.targetYaw : 0,
-      momentumYaw: animTarget ? animTarget.momentumYaw : 0,
-      standUpNeed: animTarget ? animTarget.standUpNeed : 0,
-      standUpProgress: animTarget ? animTarget.standUpProgress : 0,
-      pelvisDownness: animTarget ? animTarget.pelvisDownness : 0,
-      faceUpMix: animTarget ? animTarget.faceUpMix : 0,
-      slidePhase: animTarget ? animTarget.slidePhase : 0,
-      divePhase: animTarget ? animTarget.divePhase : 0,
-      shares: animTarget ? { ...animTarget.shares } : null,
+      yaw: at ? at.yaw : 0,
+      targetYaw: at ? at.targetYaw : 0,
+      momentumYaw: at ? at.momentumYaw : 0,
+      standUpNeed: at ? at.standUpNeed : 0,
+      standUpProgress: at ? at.standUpProgress : 0,
+      pelvisDownness: at ? at.pelvisDownness : 0,
+      slidePhase: at ? at.slidePhase : 0,
+      divePhase: at ? at.divePhase : 0,
+      shares: at ? { ...at.shares } : null,
     };
   };
 
@@ -2337,25 +3014,66 @@ async function boot() {
     getScoreboards: () => scoreboards,
     onShowHudChange: setHudVisible,
     onShowSphereWireframeChange: (visible) => {
-      motor.mesh.visible = visible;
+      for (const a of athletes) {
+        if (a.motor && a.motor.mesh) a.motor.mesh.visible = visible;
+      }
     },
     onShowBallWireframeChange: (wireframe) => {
       for (const b of balls) b.mesh.material.wireframe = wireframe;
     },
     onCameraChange: applyCameraTuning,
     onRagdollVisibilityChange: () => {
-      updateAthletePalette(ragdoll);
-      applyRagdollVisibility(ragdoll, characterRoot);
+      if (athletes[0]) {
+        athletes[0].setTeamAndVariant(TUNING.athlete.team, TUNING.athlete.variant);
+      }
+      for (const a of athletes) {
+        if (a.ragdoll) {
+          applyRagdollVisibility(a.ragdoll, characterRoot);
+        }
+      }
     },
     clipNames: characterClips.map((clip) => clip.name),
-    tracker,
+    tracker: athletes[0]?.tracker || tracker,
   });
   window.__vb.gui = guiInstance;
+  guiInstance.hide();
 
   setHudVisible(TUNING.debug.showHud);
 
-  // The arena logs its own construction now — one line for the bowl, three for
-  // the court — because only arena.js knows which one it built.
+  // Initialize and route Main Menu flow
+  initMainMenu({
+    onStartMatch: handleStartMatch,
+    onStartPractice: handleStartPractice,
+    onPlayerConfigChange: handlePlayerConfigChange,
+    onOpenSettings: () => toggleInGameMenu(playerCameras[0]?.mode, playerCameras[1]?.mode),
+    onSkipFlyover: skipFlyover,
+    onEnterSetup: handleEnterSetup,
+    onExitSetup: handleExitSetup,
+  });
+
+  initMobileNotice();
+
+  const skipMenuParam = urlParams.get('skipMenu');
+  const shouldSkipMenu = skipMenuParam === 'true' || armedCaptureTick !== null || urlParams.has('captureTick');
+
+  if (shouldSkipMenu) {
+    if (TUNING.match.mode === 'practice') {
+      handleStartPractice();
+    } else {
+      gameState = 'match';
+      setActiveMatchBall('random');
+      matchState.isCountingDown = true;
+      matchState.countdownTicksRemaining = TUNING.match.countdownSeconds * TUNING.loop.fixedHz;
+      resetCountdownOverlay();
+      applyViewportSize();
+    }
+  } else {
+    gameState = 'menu';
+    cinematicCamera.startTitleOrbit();
+    showTitleScreen();
+    launchMenuBalls();
+    applyViewportSize();
+  }
 
   loop.start();
 }

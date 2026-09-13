@@ -55,11 +55,11 @@ export const BONE_MAP = [
 
   { key: 'upperArmL', bone: 'mixamorig:LeftArm',      end: 'mixamorig:LeftForeArm',        parent: 'chest',     shape: 'capsule', group: 'limb',      joint: 'spherical', axis: null,       limits: null },
   { key: 'foreArmL',  bone: 'mixamorig:LeftForeArm',  end: 'mixamorig:LeftHand',           parent: 'upperArmL', shape: 'capsule', group: 'limb',      joint: 'revolute',  axis: [0, -1, 0], limits: 'elbow' },
-  { key: 'handL',     bone: 'mixamorig:LeftHand',     end: 'mixamorig:LeftHandMiddle1',    parent: 'foreArmL',  shape: 'capsule', group: 'extremity', joint: 'spherical', axis: null,       limits: null },
+  { key: 'handL',     bone: 'mixamorig:LeftHand',     end: 'mixamorig:LeftHandMiddle1',    parent: 'foreArmL',  shape: 'capsule', group: 'extremity', joint: 'universal', axis: [1, 0, 0],  limits: null },
 
   { key: 'upperArmR', bone: 'mixamorig:RightArm',     end: 'mixamorig:RightForeArm',       parent: 'chest',     shape: 'capsule', group: 'limb',      joint: 'spherical', axis: null,       limits: null },
   { key: 'foreArmR',  bone: 'mixamorig:RightForeArm', end: 'mixamorig:RightHand',          parent: 'upperArmR', shape: 'capsule', group: 'limb',      joint: 'revolute',  axis: [0, 1, 0],  limits: 'elbow' },
-  { key: 'handR',     bone: 'mixamorig:RightHand',    end: 'mixamorig:RightHandMiddle1',   parent: 'foreArmR',  shape: 'capsule', group: 'extremity', joint: 'spherical', axis: null,       limits: null },
+  { key: 'handR',     bone: 'mixamorig:RightHand',    end: 'mixamorig:RightHandMiddle1',   parent: 'foreArmR',  shape: 'capsule', group: 'extremity', joint: 'universal', axis: [-1, 0, 0], limits: null },
 
   { key: 'thighL',    bone: 'mixamorig:LeftUpLeg',    end: 'mixamorig:LeftLeg',            parent: 'pelvis',    shape: 'capsule', group: 'limb',      joint: 'spherical', axis: null,       limits: null },
   { key: 'calfL',     bone: 'mixamorig:LeftLeg',      end: 'mixamorig:LeftFoot',           parent: 'thighL',    shape: 'capsule', group: 'limb',      joint: 'revolute',  axis: [1, 0, 0],  limits: 'knee' },
@@ -451,7 +451,7 @@ function buildSegment(entry, byName, characterHeight, spawn) {
   _dir.divideScalar(length);
   segmentOrientation(_dir, _quat);
 
-  const radius = (TUNING.ragdoll.radiusRatio[entry.key] ?? TUNING.ragdoll.radiusRatio[entry.group]) * characterHeight;
+  const radius = TUNING.ragdoll.radiusRatio[entry.group] * characterHeight;
   const halfHeight = (length / 2) * TUNING.ragdoll.lengthFit;
 
   // THE BIND POSE OF THE BODY, in bind space — deliberately WITHOUT the spawn
@@ -495,15 +495,13 @@ function buildSegment(entry, byName, characterHeight, spawn) {
   // the contact manifold it generates is garbage. The torso segments on this rig
   // are genuinely shorter than their radius, so this is the normal path for
   // them, not an error path.
-  const useBall = entry.shape === 'ball' || (entry.group === 'torso' && radius >= halfHeight);
+  const useBall = entry.shape === 'ball' || radius >= halfHeight;
 
   const desc = useBall
     ? RAPIER.ColliderDesc.ball(radius)
     : RAPIER.ColliderDesc.capsule(halfHeight, radius);
 
-  const density =
-    (TUNING.ragdoll.density[entry.key] ?? TUNING.ragdoll.density[entry.group]) *
-    DENSITY_G_PER_CM3_TO_KG_PER_M3;
+  const density = TUNING.ragdoll.density[entry.group] * DENSITY_G_PER_CM3_TO_KG_PER_M3;
   desc.setDensity(density);
 
   // THE UPPER CHAIN GETS ITS OWN WORD — head, both upper arms, both forearms,

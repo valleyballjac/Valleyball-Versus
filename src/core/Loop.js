@@ -217,7 +217,22 @@ export class Loop {
     if (!(frameTime > 0)) return;
     this._displaySamples[this._displayCursor % DISPLAY_SAMPLE_COUNT] = frameTime;
     this._displayCursor++;
-    const sorted = this._displaySamples.slice().sort((a, b) => a - b);
-    this.displayHz = 1 / sorted[sorted.length >> 1];
+    // Update median displayHz every 15 frames to eliminate per-frame array allocations
+    if (this._displayCursor % 15 === 0 && this._displaySamples.length > 0) {
+      if (!this._sortBuffer) this._sortBuffer = new Float64Array(DISPLAY_SAMPLE_COUNT);
+      const len = this._displaySamples.length;
+      for (let i = 0; i < len; i++) this._sortBuffer[i] = this._displaySamples[i];
+      for (let i = 1; i < len; i++) {
+        const val = this._sortBuffer[i];
+        let j = i - 1;
+        while (j >= 0 && this._sortBuffer[j] > val) {
+          this._sortBuffer[j + 1] = this._sortBuffer[j];
+          j--;
+        }
+        this._sortBuffer[j + 1] = val;
+      }
+      const median = this._sortBuffer[len >> 1];
+      if (median > 0) this.displayHz = 1 / median;
+    }
   }
 }

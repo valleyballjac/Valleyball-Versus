@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-
 import { TUNING } from '../config/tuning.js';
+import { displayCoordinator } from './displayCoordinator.js';
 
 /**
  * THE FOUR BOUNDARY SCOREBOARDS — diegetic stadium jumbotrons.
@@ -71,6 +71,42 @@ function hexToRgba(hex, alpha = 0.16) {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
+export function isDarkColor(hex) {
+  if (!hex) return false;
+  const num = typeof hex === 'string' ? parseInt(hex.replace('#', ''), 16) : hex;
+  const r = (num >> 16) & 255;
+  const g = (num >> 8) & 255;
+  const b = num & 255;
+  const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+  return brightness < 70;
+}
+
+function drawTeamText(ctx, text, x, y, color, strokeWidth = 2.5) {
+  if (isDarkColor(color)) {
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
+    ctx.lineWidth = strokeWidth;
+    ctx.lineJoin = 'round';
+    ctx.strokeText(text, x, y);
+    ctx.restore();
+  }
+  ctx.fillStyle = color;
+  ctx.fillText(text, x, y);
+}
+
+/**
+ * Draws the high-contrast clock string onto the shared decoupled micro-canvas (256x64).
+ */
+function drawMicroClock(ctx, W, H, text, isMatchOver) {
+  ctx.clearRect(0, 0, W, H);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const fontSize = text.length > 7 ? 32 : 38;
+  ctx.font = `bold ${fontSize}px ui-monospace, Consolas, monospace`;
+  ctx.fillStyle = isMatchOver ? INK.away : INK.value;
+  ctx.fillText(text, W / 2, H / 2 + 1);
+}
+
 /** The palette. Reads dynamic team colors from TUNING so boards match athletes. */
 const INK = {
   panelIdle: '#090e15',
@@ -119,6 +155,31 @@ export function createScoreboards(scene) {
     sideScreen: new THREE.PlaneGeometry(cfg.sideWidth, cfg.sideHeight),
   };
 
+  // ─── DECOUPLED MICRO-CLOCK OVERLAY ──────────────────────────────────────────
+  // A single shared 256x64 canvas (65 KB payload) shared by all 4 scoreboards.
+  // Replaces redrawing and re-uploading 13.6 MB across large canvases every second.
+  const clockCanvas = document.createElement('canvas');
+  clockCanvas.width = 256;
+  clockCanvas.height = 64;
+  const clockContext = clockCanvas.getContext('2d');
+
+  const clockTexture = new THREE.CanvasTexture(clockCanvas);
+  clockTexture.colorSpace = THREE.SRGBColorSpace;
+  clockTexture.generateMipmaps = false;
+  clockTexture.minFilter = THREE.LinearFilter;
+  clockTexture.magFilter = THREE.LinearFilter;
+
+  const clockMaterial = new THREE.MeshBasicMaterial({
+    map: clockTexture,
+    transparent: true,
+    depthWrite: false,
+    side: THREE.FrontSide,
+  });
+
+  const clockGeometryEnd = new THREE.PlaneGeometry(4.4, 1.1);
+  const clockGeometrySide = new THREE.PlaneGeometry(3.6, 0.9);
+  const clockMeshes = [];
+
   const boards = [
     { key: 'north', side: 'end', x: 0, y: cfg.endCenterY, z: -cfg.endZ },
     { key: 'south', side: 'end', x: 0, y: cfg.endCenterY, z: cfg.endZ },
@@ -148,6 +209,21 @@ export function createScoreboards(scene) {
     );
     screen.frustumCulled = true;
 
+    // Child clock overlay mounted 2cm in front of the board plane to eliminate z-fighting
+    const isEnd = spec.side === 'end';
+    const clockMesh = new THREE.Mesh(
+      isEnd ? clockGeometryEnd : clockGeometrySide,
+      clockMaterial,
+    );
+    clockMesh.name = `clock-${spec.key}`;
+    // Positioned directly over the designated clock cutout area
+    // End: Y = +1.15m (canvas middle row between header pill and score rule)
+    // Side: Y = +0.70m (canvas upper center column between flanks and score line)
+    clockMesh.position.set(0, isEnd ? 1.15 : 0.70, 0.02);
+    clockMesh.frustumCulled = true;
+    screen.add(clockMesh);
+    clockMeshes.push(clockMesh);
+
     const pivot = new THREE.Group();
     pivot.name = `scoreboard-${spec.key}`;
     pivot.position.set(spec.x, spec.y, spec.z);
@@ -162,6 +238,7 @@ export function createScoreboards(scene) {
       context,
       texture,
       screenMaterial,
+      clockMesh,
       /** Cache key to skip redundant canvas repaints */
       lastKey: null,
     };
@@ -175,7 +252,20 @@ export function createScoreboards(scene) {
       `y ${cfg.sideCenterY}, |x| ${cfg.sideX}`,
   );
 
-  return { group, boards, geometry };
+  return {
+    group,
+    boards,
+    geometry,
+    clockCanvas,
+    clockContext,
+    clockTexture,
+    clockMaterial,
+    clockGeometryEnd,
+    clockGeometrySide,
+    clockMeshes,
+    lastClockText: null,
+    lastFlashing: null,
+  };
 }
 
 /**
@@ -208,27 +298,79 @@ export function updateScoreboards(handle, probe) {
     probe.mode === 'match'
       ? `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`
       : 'PRACTICE';
+  const clockText = probe.matchOver ? 'FULL TIME' : clock;
 
-  // ONE STRING. If it has not changed, not one of the four canvases is touched
-  // and not one texture is re-uploaded — which for a static scoreboard is every
-  // frame but the handful where something actually happened.
-  const key = `${probe.scoreHome}|${probe.scoreAway}|${probe.targetGoal}|${clock}|` +
-    `${probe.matchOver ? 1 : 0}|${flashing ? phase + 1 : 0}|${probe.lastGoalId || ''}`;
+  // 1. DECOUPLED MICRO-CLOCK OVERLAY UPDATE (65 KB payload shared across all 4 boards)
+  // Only updates when clock string or celebration flashing changes
+  const clockDirty = (handle.lastClockText !== clockText) || (handle.lastFlashing !== flashing) || (handle.lastMatchOver !== probe.matchOver);
+  if (clockDirty) {
+    handle.lastClockText = clockText;
+    handle.lastFlashing = flashing;
+    handle.lastMatchOver = probe.matchOver;
 
-  for (const board of handle.boards) {
-    const key = `${board.key}|${probe.scoreHome}|${probe.scoreAway}|${probe.targetGoal}|${clock}|` +
-      `${probe.matchOver ? 1 : 0}|${flashing ? phase + 1 : 0}|${probe.lastGoalId || ''}|${probe.lastScoredFor || ''}|${INK.home}|${INK.away}`;
-
-    if (board.lastKey === key) continue;
-    board.lastKey = key;
-
-    if (board.side === 'end') {
-      drawEndBoard(board, probe, { clock, flashing, phase });
-    } else {
-      drawSideBoard(board, probe, { clock, flashing, phase });
+    // During celebration flashing, hide clock overlays so the GOAL banner displays unimpeded
+    if (handle.clockMeshes) {
+      for (const mesh of handle.clockMeshes) {
+        mesh.visible = !flashing;
+      }
     }
 
-    board.texture.needsUpdate = true;
+    if (!flashing && handle.clockContext) {
+      drawMicroClock(handle.clockContext, handle.clockCanvas.width, handle.clockCanvas.height, clockText, probe.matchOver);
+      handle.clockTexture.needsUpdate = true;
+    }
+  }
+
+  // 2. BACKPLATES UPDATE ONLY ON SCORE/GOAL/SIDE EVENTS (Zero uploads on standard second ticks)
+  for (const board of handle.boards) {
+    const key = `${board.key}|${probe.scoreHome}|${probe.scoreAway}|${probe.targetGoal}|` +
+      `${probe.matchOver ? 1 : 0}|${flashing ? phase + 1 : 0}|${probe.lastGoalId || ''}|${probe.lastScoredFor || ''}|${INK.home}|${INK.away}`;
+
+    board.pendingKey = key;
+    board.pendingView = { flashing, phase };
+    if (board.lastKey !== key) {
+      board.dirty = true;
+    }
+  }
+
+  // If celebration flashing or match over, update all dirty boards immediately
+  if (flashing || probe.matchOver) {
+    for (const board of handle.boards) {
+      if (board.dirty) {
+        if (board.side === 'end') {
+          drawEndBoard(board, probe, board.pendingView);
+        } else {
+          drawSideBoard(board, probe, board.pendingView);
+        }
+        board.texture.needsUpdate = true;
+        board.lastKey = board.pendingKey;
+        board.dirty = false;
+      }
+    }
+    return;
+  }
+
+  // Smooth round-robin: redraw and upload at most 1 dirty scoreboard per frame within budget
+  if (handle.cursor === undefined) handle.cursor = 0;
+  for (let step = 0; step < handle.boards.length; step++) {
+    const idx = (handle.cursor + step) % handle.boards.length;
+    const board = handle.boards[idx];
+    if (board.dirty) {
+      if (!displayCoordinator.canUpload()) {
+        break; // Upload budget filled for this frame; yield to next frame
+      }
+      if (board.side === 'end') {
+        drawEndBoard(board, probe, board.pendingView);
+      } else {
+        drawSideBoard(board, probe, board.pendingView);
+      }
+      board.texture.needsUpdate = true;
+      displayCoordinator.consumeUpload();
+      board.lastKey = board.pendingKey;
+      board.dirty = false;
+      handle.cursor = (idx + 1) % handle.boards.length;
+      break;
+    }
   }
 }
 
@@ -287,6 +429,7 @@ function drawEndBoard(board, probe, view) {
   const homeAttacksThis = isNorth ? (probe.targetGoal === 'N') : (probe.targetGoal === 'S');
   const attackingTeam = homeAttacksThis ? 'HOME' : 'AWAY';
   const teamColor = homeAttacksThis ? INK.home : INK.away;
+  const darkTeam = isDarkColor(teamColor);
 
   // Inset pill safely below top frame
   const pillW = Math.round(W * 0.84);
@@ -294,23 +437,20 @@ function drawEndBoard(board, probe, view) {
   const pillX = Math.round((W - pillW) / 2);
   const pillY = Math.round(H * 0.065);
 
-  ctx.fillStyle = homeAttacksThis ? INK.homeTint : INK.awayTint;
+  ctx.fillStyle = darkTeam ? 'rgba(255, 255, 255, 0.12)' : (homeAttacksThis ? INK.homeTint : INK.awayTint);
   ctx.beginPath();
   ctx.roundRect(pillX, pillY, pillW, pillH, 8);
   ctx.fill();
-  ctx.strokeStyle = teamColor;
+  ctx.strokeStyle = darkTeam ? '#e2e8f0' : teamColor;
   ctx.lineWidth = 2.5;
   ctx.stroke();
 
-  ctx.fillStyle = teamColor;
   ctx.font = `bold ${Math.round(H * 0.068)}px ui-monospace, Consolas, monospace`;
   const thisGoalName = isNorth ? 'NORTH' : 'SOUTH';
-  ctx.fillText(`●  ${attackingTeam} ATTACKING GOAL ${thisGoalName}  ●`, W / 2, pillY + pillH / 2);
+  drawTeamText(ctx, `●  ${attackingTeam} ATTACKING GOAL ${thisGoalName}  ●`, W / 2, pillY + pillH / 2, teamColor, 3);
 
   // 2. MIDDLE ROW: Match Clock / Practice Status / Full Time
-  ctx.fillStyle = probe.matchOver ? INK.away : INK.value;
-  ctx.font = `bold ${Math.round(H * 0.14)}px ui-monospace, Consolas, monospace`;
-  ctx.fillText(probe.matchOver ? 'FULL TIME' : view.clock, W / 2, H * 0.33);
+  // Handled by the decoupled micro-clock mesh overlay (PlaneGeometry child)
 
   // Thin separator rule
   ctx.strokeStyle = INK.rule;
@@ -322,10 +462,8 @@ function drawEndBoard(board, probe, view) {
 
   // 3. BOTTOM ROW: THE PROMINENT SCORE LINE (as requested)
   ctx.font = `bold ${Math.round(H * 0.075)}px ui-monospace, Consolas, monospace`;
-  ctx.fillStyle = INK.home;
-  ctx.fillText('HOME', W * 0.30, H * 0.57);
-  ctx.fillStyle = INK.away;
-  ctx.fillText('AWAY', W * 0.70, H * 0.57);
+  drawTeamText(ctx, 'HOME', W * 0.30, H * 0.57, INK.home, 2.5);
+  drawTeamText(ctx, 'AWAY', W * 0.70, H * 0.57, INK.away, 2.5);
 
   // Bold score numbers
   ctx.font = `bold ${Math.round(H * 0.23)}px ui-monospace, Consolas, monospace`;
@@ -396,29 +534,29 @@ function drawSideBoard(board, probe, view) {
   const leftTeam = leftIsNorth ? teamAttackingNorth : teamAttackingSouth;
   const leftColor = leftIsNorth ? colorAttackingNorth : colorAttackingSouth;
   const leftGoalLabel = leftIsNorth ? 'GOAL NORTH' : 'GOAL SOUTH';
+  const darkLeft = isDarkColor(leftColor);
 
   const rightTeam = leftIsNorth ? teamAttackingSouth : teamAttackingNorth;
   const rightColor = leftIsNorth ? colorAttackingSouth : colorAttackingNorth;
   const rightGoalLabel = leftIsNorth ? 'GOAL SOUTH' : 'GOAL NORTH';
+  const darkRight = isDarkColor(rightColor);
 
   // 1. LEFT FLANK (Directional attack indicator toward left goal)
-  // Generous 692px box gives the 420px "ATTACKING GOAL X" text ~136px padding on each side.
   const flankW = 692;
   const flankH = Math.round(H * 0.74);
   const flankY = Math.round((H - flankH) / 2);
   const leftX = 24;
 
-  ctx.fillStyle = leftTeam === 'HOME' ? INK.homeTint : INK.awayTint;
+  ctx.fillStyle = darkLeft ? 'rgba(255, 255, 255, 0.12)' : (leftTeam === 'HOME' ? INK.homeTint : INK.awayTint);
   ctx.beginPath();
   ctx.roundRect(leftX, flankY, flankW, flankH, 8);
   ctx.fill();
-  ctx.strokeStyle = leftColor;
+  ctx.strokeStyle = darkLeft ? '#e2e8f0' : leftColor;
   ctx.lineWidth = 2.5;
   ctx.stroke();
 
-  ctx.fillStyle = leftColor;
   ctx.font = `bold ${Math.round(H * 0.21)}px ui-monospace, Consolas, monospace`;
-  ctx.fillText(`◀  ${leftTeam}`, leftX + flankW / 2, flankY + flankH * 0.36);
+  drawTeamText(ctx, `◀  ${leftTeam}`, leftX + flankW / 2, flankY + flankH * 0.36, leftColor, 3.5);
 
   ctx.fillStyle = '#e6f1fc';
   ctx.font = `bold ${Math.round(H * 0.135)}px ui-monospace, Consolas, monospace`;
@@ -427,17 +565,16 @@ function drawSideBoard(board, probe, view) {
   // 2. RIGHT FLANK (Directional attack indicator toward right goal)
   const rightX = W - flankW - 24;
 
-  ctx.fillStyle = rightTeam === 'HOME' ? INK.homeTint : INK.awayTint;
+  ctx.fillStyle = darkRight ? 'rgba(255, 255, 255, 0.12)' : (rightTeam === 'HOME' ? INK.homeTint : INK.awayTint);
   ctx.beginPath();
   ctx.roundRect(rightX, flankY, flankW, flankH, 8);
   ctx.fill();
-  ctx.strokeStyle = rightColor;
+  ctx.strokeStyle = darkRight ? '#e2e8f0' : rightColor;
   ctx.lineWidth = 2.5;
   ctx.stroke();
 
-  ctx.fillStyle = rightColor;
   ctx.font = `bold ${Math.round(H * 0.21)}px ui-monospace, Consolas, monospace`;
-  ctx.fillText(`${rightTeam}  ▶`, rightX + flankW / 2, flankY + flankH * 0.36);
+  drawTeamText(ctx, `${rightTeam}  ▶`, rightX + flankW / 2, flankY + flankH * 0.36, rightColor, 3.5);
 
   ctx.fillStyle = '#e6f1fc';
   ctx.font = `bold ${Math.round(H * 0.135)}px ui-monospace, Consolas, monospace`;
@@ -456,15 +593,11 @@ function drawSideBoard(board, probe, view) {
   ctx.lineTo(rightX - 12, H * 0.88);
   ctx.stroke();
 
-  // Match clock on upper half
-  ctx.fillStyle = probe.matchOver ? INK.away : INK.value;
-  ctx.font = `bold ${Math.round(H * 0.20)}px ui-monospace, Consolas, monospace`;
-  ctx.fillText(probe.matchOver ? 'FULL TIME' : view.clock, centerX, H * 0.28);
+  // Match clock on upper half is handled by the decoupled micro-clock mesh overlay
 
   // SCORE LINE ON THE BOTTOM (as requested)
   ctx.font = `bold ${Math.round(H * 0.13)}px ui-monospace, Consolas, monospace`;
-  ctx.fillStyle = INK.home;
-  ctx.fillText('HOME', centerX - 170, H * 0.70);
+  drawTeamText(ctx, 'HOME', centerX - 170, H * 0.70, INK.home, 3);
 
   ctx.font = `bold ${Math.round(H * 0.32)}px ui-monospace, Consolas, monospace`;
   ctx.fillStyle = INK.value;
@@ -479,8 +612,7 @@ function drawSideBoard(board, probe, view) {
   ctx.fillText(String(probe.scoreAway), centerX + 82, H * 0.70);
 
   ctx.font = `bold ${Math.round(H * 0.13)}px ui-monospace, Consolas, monospace`;
-  ctx.fillStyle = INK.away;
-  ctx.fillText('AWAY', centerX + 170, H * 0.70);
+  drawTeamText(ctx, 'AWAY', centerX + 170, H * 0.70, INK.away, 3);
 }
 
 /**
@@ -496,5 +628,9 @@ export function disposeScoreboards(scene, handle) {
     board.texture.dispose();
     board.screenMaterial.dispose();
   }
+  if (handle.clockTexture) handle.clockTexture.dispose();
+  if (handle.clockMaterial) handle.clockMaterial.dispose();
+  if (handle.clockGeometryEnd) handle.clockGeometryEnd.dispose();
+  if (handle.clockGeometrySide) handle.clockGeometrySide.dispose();
   for (const geometry of Object.values(handle.geometry)) geometry.dispose();
 }

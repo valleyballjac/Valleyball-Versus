@@ -54,7 +54,7 @@ const DEFAULTS = {
   athlete: {
     model: 'capsule', // 'capsule' | 'skinned'
     team: 'home',     // 'home' | 'away'
-    variant: 'masculine', // 'masculine' | 'feminine' | 'classic'
+    variant: 'classic', // 'masculine' | 'feminine' | 'classic'
     palette: {
       homePrimary: 0xd90429,    // Royal Scarlet Crimson (Classic Red Rivalry)
       awayPrimary: 0x1d4ed8,    // Electric Cobalt Blue (Classic Blue Rivalry)
@@ -67,6 +67,67 @@ const DEFAULTS = {
       visorTint: 0x111317,
     },
   },
+
+  /**
+   * TEAMS CONFIGURATION ARRAY (Whole-Team properties)
+   */
+  teams: {
+    home: {
+      id: 'home',
+      name: 'Red (Home)',
+      side: 'south',
+      primaryColor: 0xd90429,
+      bodyColor: 0x383b42,
+      jointColor: 0x22242a,
+    },
+    away: {
+      id: 'away',
+      name: 'Blue (Away)',
+      side: 'north',
+      primaryColor: 0x1d4ed8,
+      bodyColor: 0xffffff,
+      jointColor: 0xd0d5dd,
+    },
+  },
+
+  /**
+   * PLAYERS CONFIGURATION ARRAY (Individual athlete properties)
+   * Scalable from 1 to 4 athletes (1v1 to 2v2).
+   */
+  players: [
+    {
+      id: 'p1',
+      name: 'Player 1',
+      team: 'home',
+      variant: 'classic',
+      cameraMode: 'chase',
+      colorOverride: null,
+    },
+    {
+      id: 'p2',
+      name: 'Player 2',
+      team: 'away',
+      variant: 'classic',
+      cameraMode: 'chase',
+      colorOverride: null,
+    },
+    {
+      id: 'p3',
+      name: 'Player 3',
+      team: 'home',
+      variant: 'classic',
+      cameraMode: 'chase',
+      colorOverride: null,
+    },
+    {
+      id: 'p4',
+      name: 'Player 4',
+      team: 'away',
+      variant: 'classic',
+      cameraMode: 'chase',
+      colorOverride: null,
+    },
+  ],
 
   // -12, not -20. The user tested this live through the GUI and reported the
   // jump feels much better; it was never written back to disk, so the file
@@ -1093,10 +1154,6 @@ const DEFAULTS = {
     // Seeded 3. Same clamp argument as linearKd.
     angularKd: 40,
     pelvisBoost: 3.0,
-    // Foot active stability: prevents feet from inverting/flipping backwards on slopes
-    footAngularKp: 1500,
-    footAngularKd: 150,
-    footMaxAngularImpulse: 0.35,
 
     // PER-GROUP STIFFNESS, keyed by autorig's BONE_MAP group. Multiplies both
     // kpScale and kdScale, so a group that is softer is also less damped —
@@ -1168,17 +1225,13 @@ const DEFAULTS = {
     // run contains a character in a repeatable pose rather than an empty bowl.
     captureSpawnTick: 30,
     // g/cm3 (water = 1.0). autorig converts to Rapier's kg/m3.
-    density: { torso: 1.2, limb: 1.0, head: 0.9, extremity: 0.8, handL: 0.12, handR: 0.12 },
+    density: { torso: 1.2, limb: 1.0, head: 0.9, extremity: 0.8 },
     // Fractions of the MEASURED character height, never of segment length.
     radiusRatio: {
       torso: 0.075,
       limb: 0.032,
       head: 0.062,
       extremity: 0.024,
-      handL: 0.062,
-      handR: 0.062,
-      footL: 0.038,
-      footR: 0.038,
     },
     lengthFit: 0.9,
     // JOINT RANGES, radians, about each hinge's authored axis.
@@ -1327,6 +1380,7 @@ const DEFAULTS = {
     // 'practice' (all three balls, sandbox, no clock) | 'match' (clock running)
     mode: 'practice',
     durationSeconds: 300,
+    countdownSeconds: 5,
     ballDropHeightY: 10.0,
     pitchBoundsX: 16.0,
     pitchBoundsZ: 30.0,
@@ -1337,6 +1391,14 @@ const DEFAULTS = {
     hoopCenterY: 10.0,      // MEASURED
     hoopNorthZ: -40.0,      // MEASURED
     hoopSouthZ: 40.0,       // MEASURED
+
+    // Landmark stream heads measured off arena.glb for team opening spawns
+    streamHeads: {
+      sw: { x: -12.78, y: 8.24, z: 39.96, yaw: 0 },
+      se: { x: 12.78, y: 8.24, z: 39.96, yaw: 0 },
+      nw: { x: -12.78, y: 8.24, z: -39.96, yaw: Math.PI },
+      ne: { x: 12.78, y: 8.24, z: -39.96, yaw: Math.PI },
+    },
 
     // HOW FAR CLEAR OF THE PLANE A BALL MUST GET before it can score in the
     // same hoop again. This is the anti-jitter rule and it is a DISTANCE, not a
@@ -1399,14 +1461,24 @@ const DEFAULTS = {
     flashTicks: 15,
   },
 
+  hustleBoard: {
+    enabled: true,
+    canvasWidth: 1024,
+    canvasHeight: 640,
+    posX: 24.98,
+    centerZSouth: 25.0,
+    centerZNorth: -25.0,
+    centerY: 10.4,
+    width: 4.8,
+    height: 3.2,
+    flashTicks: 15,
+  },
+
   camera: {
-    // 'chase' | 'ball' | 'broadcast' | 'tactical'. RENDER-SIDE STATE, and the
-    // only reason that is safe: nothing under sim/ or mechanics/ reads a camera
-    // transform. The simulation's one view of the camera is input.cameraYaw,
-    // latched once per frame in input.js from whatever the camera ended up
-    // looking at — so a mode change reaches the athlete as a different heading
-    // for his stick and in no other way (LAW 6: the fixed step is untouched).
+    // 'chase' | 'ball' | 'sports' | 'broadcast' | 'tactical'.
     mode: 'chase',
+    // Splitscreen mode: side-by-side vertical viewports for local multiplayer matches
+    splitscreen: true,
     fov: 52,
     // Where the arm sits in the clear. currentDistance always converges here.
     radius: 8.0,
@@ -1417,11 +1489,12 @@ const DEFAULTS = {
     orbitSpeed: 2.5,
     // Mouse drag: screen pixels per radian. Larger is slower.
     mousePixelsPerRadian: 400,
-    // Elevation clamps, in radians above the horizon. The lower bound keeps the
-    // camera off the ground plane; the upper stops it reaching straight down,
-    // where azimuth stops meaning anything and the view gimbals.
-    minPitch: 0.1,
+    // Elevation clamps, in radians above/below horizon.
+    // -0.40 rad allows looking up into the sky (~ -23 deg) to track high balls.
+    minPitch: -0.40,
     maxPitch: 1.35,
+    // When looking up towards minPitch, arm dynamically pulls closer to avoid arena floor clipping
+    pullbackMinDistance: 3.8,
     // How far in front of an obstruction the camera stops.
     collisionMargin: 0.3,
     // The arm will not shorten past this even against a hard corner.
@@ -1430,36 +1503,22 @@ const DEFAULTS = {
     restoreEase: 4.0,
 
     // ═══ THE OTHER THREE VIEWS ═══
-    //
-    // Each mode owns its own numbers rather than reusing the chase arm's, so
-    // tuning a TV shot cannot quietly change how the game plays in chase.
-    // minDistance, collisionMargin and restoreEase ARE shared, because they
-    // describe the arm's behaviour against geometry rather than the shot.
     ballCam: {
       distance: 8.5,
       targetHeight: 1.2,
-      minPitch: 0.05,
+      minPitch: -0.35,
       maxPitch: 1.25,
       smoothEase: 6.0,
-
-      // ═══ THE COMFORT NUMBERS ═══
-      //
-      // A ball cam that tracks the ball's HEIGHT rides every floor bounce, and
-      // a camera that pitches up and down several times a second is the fastest
-      // way to make someone put the controller down. So the pitch ignores
-      // height entirely until the ball is genuinely lofted, and even then it
-      // moves on its own much slower ease.
-      //
-      // These are comfort thresholds, and comfort is per-person — they live in
-      // the table rather than as literals in main.js so they can be moved
-      // without a rebuild when someone says it still makes them queasy.
-      restPitch: 0.22,      // rad, ~12 deg down. The pitch when nothing is lofted.
+      restPitch: 0.15,      // rad, relaxed downward angle
       loftAboveY: 2.2,      // m. Below this the ball's height is not tracked AT ALL.
-      loftPitchGain: 0.75,  // how much of the lofted angle the pitch actually takes
-      loftMinDistance: 6.0, // m floor under the horizontal, so overhead does not gimbal
-      pitchEase: 2.5,       // 1/s. Deliberately far slower than smoothEase.
-      lookLiftMax: 1.0,     // m the look-at point rises on a high ball, at most
-      lookLiftGain: 0.25,   // m of lift per m of loft
+      loftPitchGain: 0.55,  // how much pitch compensates when ball is high
+      loftMinDistance: 6.0,
+      pitchEase: 3.0,       // 1/s ease on pitch adjustment
+      lookLiftMax: 6.0,     // m the look-at point rises on a high ball
+      lookLiftGain: 0.50,   // m of lift per m of loft
+      // Manual right-stick override
+      manualReturnDelay: 0.35, // s of stick idle before decaying back to ball lock
+      manualReturnSpeed: 3.5,  // 1/s rate of return to ball
     },
     broadcast: {
       sideX: 30.0,        // sideline distance, East side
@@ -1488,6 +1547,13 @@ const DEFAULTS = {
     spatialAudio: true,
     minBounceForce: 2.0, // N: ignore micro-contacts/resting jitters
     strikeSweetBonus: false,
+  },
+
+  render: {
+    // 'native' | '1.25' | '1.0'
+    pixelRatioPreset: 'native',
+    // 'high' (4 stadium towers) | 'balanced' (1 key tower) | 'off'
+    shadowQuality: 'high',
   },
 };
 

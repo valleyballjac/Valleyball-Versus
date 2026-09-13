@@ -50,22 +50,60 @@ export function createGui({
 }) {
   const gui = new GUI({ title: 'VALLEYBALL / TUNING' });
 
-  const athleteFolder = gui.addFolder('ATHLETE / CUSTOMIZATION');
-  athleteFolder
-    .add(TUNING.athlete, 'variant', ['masculine', 'feminine', 'classic'])
-    .name('silhouette [K]')
-    .listen()
-    .onChange(() => {
+  // ═══ TEAMS CONFIGURATION ═══
+  const teamsFolder = gui.addFolder('TEAMS CONFIGURATION');
+  if (TUNING.teams) {
+    const homeFolder = teamsFolder.addFolder('HOME TEAM (South Goal)');
+    homeFolder.add(TUNING.teams.home, 'name').name('Team Name');
+    homeFolder.addColor(TUNING.teams.home, 'primaryColor').name('Kit Primary').onChange(() => {
       onRagdollVisibilityChange();
     });
-  athleteFolder
-    .add(TUNING.athlete, 'team', ['home', 'away'])
-    .name('team jersey [J]')
-    .listen()
-    .onChange(() => {
+    homeFolder.addColor(TUNING.teams.home, 'bodyColor').name('Body Tone').onChange(() => {
       onRagdollVisibilityChange();
     });
-  athleteFolder.open();
+
+    const awayFolder = teamsFolder.addFolder('AWAY TEAM (North Goal)');
+    awayFolder.add(TUNING.teams.away, 'name').name('Team Name');
+    awayFolder.addColor(TUNING.teams.away, 'primaryColor').name('Kit Primary').onChange(() => {
+      onRagdollVisibilityChange();
+    });
+    awayFolder.addColor(TUNING.teams.away, 'bodyColor').name('Body Tone').onChange(() => {
+      onRagdollVisibilityChange();
+    });
+  }
+
+  // ═══ PLAYERS CONFIGURATION ═══
+  const playersFolder = gui.addFolder('PLAYERS CONFIGURATION');
+  if (TUNING.players) {
+    // Player 1
+    const p1Folder = playersFolder.addFolder('PLAYER 1 (P1)');
+    p1Folder.add(TUNING.players[0], 'team', ['home', 'away']).name('Team [1]').listen().onChange((val) => {
+      if (window.__vb?.setPlayerConfig) window.__vb.setPlayerConfig(0, { team: val });
+      else onRagdollVisibilityChange();
+    });
+    p1Folder.add(TUNING.players[0], 'variant', ['masculine', 'feminine', 'classic']).name('Silhouette [2]').listen().onChange((val) => {
+      if (window.__vb?.setPlayerConfig) window.__vb.setPlayerConfig(0, { variant: val });
+      else onRagdollVisibilityChange();
+    });
+    p1Folder.add(TUNING.players[0], 'cameraMode', ['chase', 'ball', 'sports', 'broadcast', 'tactical']).name('Camera [Tab]').listen().onChange((val) => {
+      if (window.__vb?.setPlayerConfig) window.__vb.setPlayerConfig(0, { cameraMode: val });
+    });
+
+    // Player 2
+    const p2Folder = playersFolder.addFolder('PLAYER 2 (P2)');
+    p2Folder.add(TUNING.players[1], 'team', ['home', 'away']).name('Team [9]').listen().onChange((val) => {
+      if (window.__vb?.setPlayerConfig) window.__vb.setPlayerConfig(1, { team: val });
+      else onRagdollVisibilityChange();
+    });
+    p2Folder.add(TUNING.players[1], 'variant', ['masculine', 'feminine', 'classic']).name('Silhouette [0]').listen().onChange((val) => {
+      if (window.__vb?.setPlayerConfig) window.__vb.setPlayerConfig(1, { variant: val });
+      else onRagdollVisibilityChange();
+    });
+    p2Folder.add(TUNING.players[1], 'cameraMode', ['chase', 'ball', 'sports', 'broadcast', 'tactical']).name('Camera [ ] ]').listen().onChange((val) => {
+      if (window.__vb?.setPlayerConfig) window.__vb.setPlayerConfig(1, { cameraMode: val });
+    });
+  }
+  playersFolder.open();
 
   const loop = gui.addFolder('loop');
   // The loop binds fixedHz once at construction; changing the timestep at
@@ -375,10 +413,16 @@ export function createGui({
     .name('reset score & state');
 
   const cameraFolder = gui.addFolder('camera (spring arm)');
-  // .listen() because Tab and the d-pad change this behind the GUI's back; a
-  // dropdown that shows the mode you are not in is worse than no dropdown.
   cameraFolder
-    .add(TUNING.camera, 'mode', ['chase', 'ball', 'broadcast', 'tactical'])
+    .add(TUNING.camera, 'splitscreen')
+    .name('splitscreen [V]')
+    .listen()
+    .onChange((val) => {
+      if (window.__vb?.setSplitscreen) window.__vb.setSplitscreen(val);
+      else onCameraChange();
+    });
+  cameraFolder
+    .add(TUNING.camera, 'mode', ['ball', 'chase', 'sports', 'broadcast', 'tactical'])
     .name('viewing mode')
     .listen();
   cameraFolder.add(TUNING.camera, 'fov', 20, 110, 1).onChange(onCameraChange);
@@ -388,6 +432,7 @@ export function createGui({
   cameraFolder.add(TUNING.camera, 'mousePixelsPerRadian', 50, 2000, 10);
   cameraFolder.add(TUNING.camera, 'minPitch', -1.5, 1.5, 0.01);
   cameraFolder.add(TUNING.camera, 'maxPitch', 0, 1.55, 0.01);
+  cameraFolder.add(TUNING.camera, 'pullbackMinDistance', 1.0, 10, 0.1);
   cameraFolder.add(TUNING.camera, 'collisionMargin', 0, 3, 0.05);
   cameraFolder.add(TUNING.camera, 'minDistance', 0.5, 12, 0.1);
   cameraFolder.add(TUNING.camera, 'restoreEase', 0.2, 20, 0.1);

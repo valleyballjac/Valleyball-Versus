@@ -216,6 +216,24 @@ class SoundManager {
     this.ambienceGain.gain.setTargetAtTime(TUNING.audio.ambienceVolume, now, 0.05);
   }
 
+  setMasterVolume(val) {
+    TUNING.audio.masterVolume = Math.max(0, Math.min(1, val));
+    this.updateTuning();
+  }
+
+  getMasterVolume() {
+    return TUNING.audio?.masterVolume ?? 0.8;
+  }
+
+  setMuted(muted) {
+    TUNING.audio.enabled = !muted;
+    this.updateTuning();
+  }
+
+  isMuted() {
+    return !TUNING.audio?.enabled || (TUNING.audio?.masterVolume <= 0.001);
+  }
+
   /**
    * Helper to create stereo panner and distance gain based on 3D world position.
    */
@@ -511,6 +529,28 @@ class SoundManager {
       this.playFootstep(worldPos);
     } else if (action === 'slide') {
       this.playProceduralWhoosh(worldPos, 0.20);
+    }
+  }
+
+  /**
+   * UI Chime / Countdown Pip Tone
+   */
+  playTone(freq = 440, dur = 0.1, type = 'sine', vol = 0.25) {
+    if (!this.ensureRunning()) return;
+    try {
+      const now = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, now);
+      const gain = this.ctx.createGain();
+      gain.gain.setValueAtTime(vol, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + dur);
+      osc.connect(gain);
+      gain.connect(this.uiGain || this.masterGain);
+      osc.start(now);
+      osc.stop(now + dur + 0.01);
+    } catch (e) {
+      // Audio context might be restricted
     }
   }
 

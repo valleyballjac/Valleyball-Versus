@@ -265,10 +265,6 @@ export function runMountFollower({ state, motor, ragdoll, animTarget, tracker, t
 
           if (tick - state.lastMountLogTick >= TUNING.loop.fixedHz) {
             state.lastMountLogTick = tick;
-            console.log(
-              `[mount] following pelvis (tick ${tick}, d=${separation.toFixed(3)}, ` +
-                `step=${move.toFixed(3)} m)`,
-            );
           }
         }
       }

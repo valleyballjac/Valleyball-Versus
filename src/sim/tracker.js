@@ -226,8 +226,8 @@ function applyArmDamping(rig, motor, animTarget) {
   for (const key of ARM_CHAIN_DAMPED) {
     const item = rig.get(key);
     if (!item) continue;
-    item.body.setLinearDamping(TUNING.ragdoll.armLinearDamping * still);
-    item.body.setAngularDamping(TUNING.ragdoll.armAngularDamping * still);
+    item.body.setLinearDamping(Math.max(1.5, TUNING.ragdoll.armLinearDamping * still));
+    item.body.setAngularDamping(Math.max(6.0, TUNING.ragdoll.armAngularDamping * still));
   }
 
   // THE DIVE'S LEG PARACHUTE. Same mechanism, different reason: the legs are
@@ -455,31 +455,16 @@ function applyGains(tracker, rig, animTarget, motor, dt) {
       _errorQuat.set(-_errorQuat.x, -_errorQuat.y, -_errorQuat.z, -_errorQuat.w);
     }
 
-    const isFoot = key === 'footL' || key === 'footR';
-    const angularKp = isFoot
-      ? (TUNING.tracking.footAngularKp ?? 1500)
-      : TUNING.tracking.angularKp;
-    const angularKd = isFoot
-      ? (TUNING.tracking.footAngularKd ?? 150)
-      : TUNING.tracking.angularKd;
-    const maxAngular = isFoot
-      ? (TUNING.tracking.footMaxAngularImpulse ?? 0.35)
-      : TUNING.tracking.maxAngularImpulse;
-
     const angle = 2 * Math.acos(Math.min(1, _errorQuat.w));
     if (angle > MIN_ANGLE) {
       const sin = Math.sqrt(Math.max(0, 1 - _errorQuat.w * _errorQuat.w));
       _axis.set(_errorQuat.x, _errorQuat.y, _errorQuat.z).divideScalar(sin);
 
-      // Non-linear ligament stiffness ramp if foot begins to invert past natural range (~15-20 deg)
-      const stiffnessMult = isFoot && angle > 0.25
-        ? 1.0 + Math.pow((angle - 0.25) / 0.20, 2) * 5.0
-        : 1.0;
-
       _impulseVec
         .copy(_axis)
-        .multiplyScalar(angle * angularKp * stiffnessMult * kpScale * groupScale * dt);
+        .multiplyScalar(angle * TUNING.tracking.angularKp * kpScale * groupScale * dt);
 
+      const maxAngular = TUNING.tracking.maxAngularImpulse;
       if (_impulseVec.lengthSq() > maxAngular * maxAngular) _impulseVec.setLength(maxAngular);
 
       _impulse.x = _impulseVec.x;
@@ -492,7 +477,7 @@ function applyGains(tracker, rig, animTarget, motor, dt) {
     _relVel.subVectors(_preAngvel, target.angvel);
     applyClampedAngularDamping(
       body,
-      _relVel.length() * angularKd * kdScale * groupScale * dt,
+      _relVel.length() * TUNING.tracking.angularKd * kdScale * groupScale * dt,
       _relVel,
       dt,
     );

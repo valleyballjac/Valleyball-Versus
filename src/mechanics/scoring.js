@@ -38,6 +38,7 @@ function oppositeGoal(goalId) {
  *   module singleton — the same reason the strike state is not one.
  */
 export function createMatchState() {
+  const countdownSec = TUNING.match?.countdownSeconds !== undefined ? TUNING.match.countdownSeconds : 5;
   return {
     mode: TUNING.match.mode,
     scoreHome: 0,
@@ -45,7 +46,10 @@ export function createMatchState() {
     /** 'N' | 'S'. The goal the home player is currently attacking. */
     targetGoal: GOAL_N,
     /** Remaining match ticks. 60 per second, counted down in the fixed step. */
-    ticksRemaining: TUNING.match.durationSeconds * 60,
+    ticksRemaining: (TUNING.match?.durationSeconds || 300) * 60,
+    /** Pre-match countdown ticks (5s). Clock is held at 5:00 while this counts down. */
+    countdownTicksRemaining: countdownSec * 60,
+    isCountingDown: TUNING.match?.mode === 'match' && countdownSec > 0,
     matchOver: false,
     /**
      * TICKS LEFT ON THE GOAL CELEBRATION, counted down in the fixed step.
@@ -123,11 +127,25 @@ export function updateScoring(state, balls, tick) {
   // same tick gets its full span rather than one tick less.
   if (state.celebrationTicks > 0) state.celebrationTicks -= 1;
 
-  if (state.mode === 'match' && !state.matchOver && state.ticksRemaining > 0) {
-    state.ticksRemaining -= 1;
-    if (state.ticksRemaining === 0) {
-      state.matchOver = true;
-      console.log(`[match] FULL TIME — home ${state.scoreHome} - ${state.scoreAway} away`);
+  state.mode = TUNING.match?.mode || state.mode;
+
+  if (state.mode === 'match' && !state.matchOver) {
+    if (state.isCountingDown) {
+      if (state.countdownTicksRemaining > 0) {
+        state.countdownTicksRemaining -= 1;
+        if (state.countdownTicksRemaining === 0) {
+          state.isCountingDown = false;
+          console.log('[match] Countdown finished — PLAY CLOCK RUNNING!');
+        }
+      } else {
+        state.isCountingDown = false;
+      }
+    } else if (state.ticksRemaining > 0) {
+      state.ticksRemaining -= 1;
+      if (state.ticksRemaining === 0) {
+        state.matchOver = true;
+        console.log(`[match] FULL TIME — home ${state.scoreHome} - ${state.scoreAway} away`);
+      }
     }
   }
 
@@ -212,10 +230,13 @@ export function updateScoring(state, balls, tick) {
  * @param {number} tick
  */
 function recordGoal(state, goalId, hitInfo, tick) {
-  const scoredForHome = state.targetGoal === goalId;
+  // Whichever team is currently attacking this goal gets the point.
+  // state.targetGoal tracks the goal currently attacked by Home.
+  const scoredForHome = (state.targetGoal === goalId);
   if (scoredForHome) state.scoreHome += 1;
   else state.scoreAway += 1;
 
+  // Unconditional end flip: after any goal, target becomes the goal at the other end.
   state.targetGoal = oppositeGoal(state.targetGoal);
 
   // ARM THE CELEBRATION. A tick count, read by the scoreboards.
@@ -243,12 +264,16 @@ function recordGoal(state, goalId, hitInfo, tick) {
 
 /** A read-only snapshot for the HUD and the console probe. LESSON 22 — a read. */
 export function matchProbe(state) {
+  const cdSec = Math.ceil(state.countdownTicksRemaining / 60);
   return {
     mode: state.mode,
     scoreHome: state.scoreHome,
     scoreAway: state.scoreAway,
     targetGoal: state.targetGoal,
     ticksRemaining: state.ticksRemaining,
+    countdownTicksRemaining: state.countdownTicksRemaining,
+    countdownSecondsRemaining: cdSec,
+    isCountingDown: !!state.isCountingDown,
     matchOver: state.matchOver,
     celebrationTicks: state.celebrationTicks,
     lastScoredFor: state.lastScoredFor,

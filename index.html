@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Valleyball Versus — Practice Mode</title>
+    <title>Valleyball Versus</title>
     <style>
       html,
       body {
@@ -58,7 +58,8 @@
       #controls-card {
         position: fixed;
         bottom: 16px;
-        left: 16px;
+        left: 50%;
+        transform: translateX(-50%);
         padding: 10px 14px 12px;
         background: rgba(6, 10, 16, 0.78);
         border: 1px solid rgba(120, 170, 210, 0.25);
@@ -72,6 +73,7 @@
         box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
         z-index: 10;
         min-width: 380px;
+        transition: opacity 0.2s ease;
       }
 
       .card-header {
@@ -92,13 +94,13 @@
 
       .card-tag {
         font-size: 9px;
-        font-weight: 600;
-        padding: 1px 6px;
-        border-radius: 3px;
-        background: rgba(217, 4, 41, 0.22);
-        color: #ff6b81;
-        border: 1px solid rgba(217, 4, 41, 0.45);
-        letter-spacing: 0.06em;
+        font-weight: 700;
+        padding: 2px 7px;
+        border-radius: 4px;
+        background: rgba(255, 255, 255, 0.08);
+        color: #ffffff;
+        border: 1px solid rgba(255, 255, 255, 0.25);
+        letter-spacing: 0.08em;
       }
 
       .card-row {
@@ -139,9 +141,9 @@
       }
 
       kbd.pad {
-        background: rgba(37, 99, 235, 0.28);
-        border: 1px solid rgba(96, 165, 250, 0.48);
-        color: #93c5fd;
+        background: rgba(255, 255, 255, 0.16);
+        border: 1px solid rgba(255, 255, 255, 0.35);
+        color: #ffffff;
         font-weight: 700;
       }
 
@@ -153,10 +155,33 @@
         color: #43586b;
         margin: 0 3px;
       }
+
+
+
+      #splitscreen-divider {
+        display: none;
+        position: fixed;
+        top: 0;
+        bottom: 0;
+        left: 50%;
+        width: 2px;
+        transform: translateX(-50%);
+        background: linear-gradient(
+          to bottom,
+          rgba(255, 255, 255, 0.3),
+          rgba(217, 4, 41, 0.6) 30%,
+          rgba(29, 78, 216, 0.6) 70%,
+          rgba(255, 255, 255, 0.3)
+        );
+        box-shadow: 0 0 8px rgba(0, 0, 0, 0.8);
+        pointer-events: none;
+        z-index: 5;
+      }
     </style>
   </head>
   <body>
     <canvas id="viewport"></canvas>
+
 
     <div id="hud"
       ><b>tick</b><span id="hud-tick">0</span>
@@ -202,7 +227,7 @@
       </div>
       <div class="card-row">
         <span class="row-label">SPRINT / SLIDE</span>
-        <span class="row-val"><kbd>Shift</kbd> <span class="dim">/</span> <kbd class="pad">RT</kbd> Sprint <span class="sep">·</span> <kbd>C</kbd> <span class="dim">/</span> <kbd class="pad">LT</kbd> Slide</span>
+        <span class="row-val"><kbd>Shift</kbd> <span class="dim">/</span> <kbd class="pad">LT</kbd> Sprint <span class="sep">·</span> <kbd>C</kbd> <span class="dim">/</span> <kbd class="pad">RT</kbd> Slide</span>
       </div>
       <div class="card-row">
         <span class="row-label">ACTIONS</span>
@@ -214,13 +239,23 @@
       </div>
       <div class="card-row">
         <span class="row-label">STYLE</span>
-        <span class="row-val"><kbd>J</kbd> Jersey (Home/Away) <span class="sep">·</span> <kbd>K</kbd> Silhouette</span>
+        <span class="row-val"><kbd>1</kbd>/<kbd>2</kbd> P1 Style <span class="sep">·</span> <kbd>9</kbd>/<kbd>0</kbd> P2 Style</span>
+      </div>
+      <div class="card-row">
+        <span class="row-label">CAMERAS</span>
+        <span class="row-val"><kbd>V</kbd> Splitscreen <span class="sep">·</span> <kbd>Tab</kbd> P1 Cam <span class="sep">·</span> <kbd>]</kbd> P2 Cam</span>
       </div>
       <div class="card-row">
         <span class="row-label">OTHER</span>
-        <span class="row-val"><kbd>Tab</kbd> <span class="dim">/</span> <kbd class="pad">D-Pad</kbd> Cam <span class="sep">·</span> <kbd>B</kbd> <span class="dim">/</span> <kbd class="pad">Start</kbd> Balls <span class="sep">·</span> <kbd>H</kbd> HUD</span>
+        <span class="row-val"><kbd>B</kbd> Balls <span class="sep">·</span> <kbd>H</kbd> HUD <span class="sep">·</span> <kbd>Backspace</kbd> Teleport</span>
+      </div>
+      <div id="controls-assignment-row" class="card-row" style="margin-top: 5px; padding-top: 4px; border-top: 1px dashed rgba(120, 170, 210, 0.2);">
+        <span class="row-label">ROUTING</span>
+        <span id="controls-assignment-val" class="row-val" style="color: #ffffff; font-size: 10px;">P1: Keyboard WASD</span>
       </div>
     </div>
+
+    <div id="splitscreen-divider"></div>
 
     <script type="module" src="/src/main.js"></script>
   </body>

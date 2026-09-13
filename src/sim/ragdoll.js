@@ -49,22 +49,33 @@ const _quat = new THREE.Quaternion();
 /**
  * Visual palette and styling for the Capsule Athlete.
  */
-function getAthleteColors() {
-  const p = TUNING.athlete?.palette || {
-    homePrimary: 0xd90429,
-    awayPrimary: 0x1d4ed8,
-    bodyGrey: 0x383b42,
-    jointGrey: 0x22242a,
-    awayBody: 0xffffff,
-    awayJoint: 0xd0d5dd,
-    roughness: 0.82,
-    metalness: 0.04,
-  };
-  const isHome = TUNING.athlete?.team !== 'away';
+function getAthleteColors(options = null) {
+  const teamKey = options?.team ?? TUNING.athlete?.team ?? 'home';
+  const teamConfig = TUNING.teams?.[teamKey];
+  const p = TUNING.athlete?.palette || {};
+  const isHome = teamKey !== 'away';
+
+  // Base team colors
+  const defaultPrimary = isHome
+    ? (teamConfig?.primaryColor ?? p.homePrimary ?? 0xd90429)
+    : (teamConfig?.primaryColor ?? p.awayPrimary ?? 0x1d4ed8);
+  const defaultBody = isHome
+    ? (teamConfig?.bodyColor ?? p.bodyGrey ?? 0x383b42)
+    : (teamConfig?.bodyColor ?? p.awayBody ?? 0xffffff);
+  const defaultJoint = isHome
+    ? (teamConfig?.jointColor ?? p.jointGrey ?? 0x22242a)
+    : (teamConfig?.jointColor ?? p.awayJoint ?? 0xd0d5dd);
+
+  const primary = options?.primaryColor ?? options?.colorOverride ?? defaultPrimary;
+  const bodyGrey = options?.bodyColor ?? defaultBody;
+  const jointGrey = options?.jointColor ?? defaultJoint;
+
+  const parseColor = (c) => (typeof c === 'string' ? parseInt(c.replace('#', '0x'), 16) : c);
+
   return {
-    primary: isHome ? p.homePrimary : p.awayPrimary,
-    bodyGrey: isHome ? (p.bodyGrey ?? 0x383b42) : (p.awayBody ?? 0xffffff),
-    jointGrey: isHome ? (p.jointGrey ?? 0x22242a) : (p.awayJoint ?? 0xd0d5dd),
+    primary: parseColor(primary),
+    bodyGrey: parseColor(bodyGrey),
+    jointGrey: parseColor(jointGrey),
     roughness: p.roughness ?? 0.82,
     metalness: p.metalness ?? 0.04,
   };
@@ -278,9 +289,10 @@ function createSolidAthletePart(item, colors) {
 
   // 2. CLUB HANDS (handL, handR)
   if (key === 'handL' || key === 'handR') {
-    // Heavy striking club head in Team Primary color
-    const clubHeight = Math.max(radius * 0.6, halfHeight * 2);
-    const clubGeo = new THREE.CapsuleGeometry(radius, clubHeight, 16, 20);
+    // Heavy striking club head in Team Primary color - bold oversized striking mallet / club head
+    const clubRadius = radius * 2.3;
+    const clubHeight = halfHeight * 2.6;
+    const clubGeo = new THREE.CapsuleGeometry(clubRadius, clubHeight, 16, 20);
     const clubMat = new THREE.MeshStandardMaterial({
       color: colors.primary,
       roughness: 0.6,
@@ -293,7 +305,7 @@ function createSolidAthletePart(item, colors) {
     solidGroup.add(clubMesh);
 
     // Wrist cuff accent in dark matte graphite
-    const cuffGeo = new THREE.CylinderGeometry(radius * 0.95, radius * 0.95, radius * 0.32, 16);
+    const cuffGeo = new THREE.CylinderGeometry(clubRadius * 0.96, clubRadius * 0.96, radius * 0.40, 16);
     const cuffMat = new THREE.MeshStandardMaterial({
       color: colors.jointGrey,
       roughness: 0.85,
@@ -301,7 +313,7 @@ function createSolidAthletePart(item, colors) {
     });
     cuffMat.userData.colorRole = 'joint';
     const cuff = new THREE.Mesh(cuffGeo, cuffMat);
-    cuff.position.set(0, halfHeight > 0 ? halfHeight * 0.75 : radius * 0.4, 0);
+    cuff.position.set(0, halfHeight * 0.85, 0);
     cuff.castShadow = true;
     solidGroup.add(cuff);
 
@@ -321,11 +333,10 @@ function createSolidAthletePart(item, colors) {
 
     const footGeo = new THREE.CapsuleGeometry(radius, halfHeight * 2, 16, 24);
     const footMesh = new THREE.Mesh(footGeo, footMat);
-    // Scaled for a sleek, compact athletic foot: slightly shrunk (0.80, 0.88, 0.50)
-    footMesh.scale.set(0.80, 0.88, 0.50);
-    // Shift forward along +Y by halfHeight * 0.45 so the heel sits naturally under the leg
-    // and eliminates heavy rear clipping with the calf from third-person chase camera view.
-    footMesh.position.set(0, halfHeight * 0.45, 0);
+    // Scaled for a sleek athletic shoe: flattened vertically along Z, natural width along X
+    footMesh.scale.set(0.85, 1.0, 0.55);
+    // Shift slightly forward (+Y in segment space) so the heel naturally sits under the calf
+    footMesh.position.set(0, halfHeight * 0.25, 0);
     footMesh.castShadow = true;
     footMesh.receiveShadow = true;
     solidGroup.add(footMesh);
@@ -375,10 +386,10 @@ function createSolidAthletePart(item, colors) {
  * @param {Map<string, object>} rig
  * @returns {THREE.Group}
  */
-export function createRagdollVisuals(rig) {
+export function createRagdollVisuals(rig, options = null) {
   const group = new THREE.Group();
   group.name = 'ragdoll-visuals';
-  const colors = getAthleteColors();
+  const colors = getAthleteColors(options);
 
   for (const item of rig.values()) {
     const bodyGroup = new THREE.Group();
@@ -423,7 +434,7 @@ export function createRagdollVisuals(rig) {
     group.add(bodyGroup);
   }
 
-  updateAthleteVariant({ rig });
+  updateAthleteVariant({ rig, ...options }, options);
 
   return group;
 }
@@ -559,7 +570,9 @@ export function syncRagdollPose(state, alpha) {
 
   // Unmapped descendants — fingers, toes, Neck, the End leaves — inherit from
   // the mapped bones that just moved.
-  state.characterRoot.updateMatrixWorld(true);
+  if (state.characterRoot) {
+    state.characterRoot.updateMatrixWorld(true);
+  }
 }
 
 /**
@@ -633,10 +646,10 @@ function createPonytailGroup(radius, colors) {
  * - 'feminine': Athletic Feminine (open-top sports visor, compact chest & hips, slender waist, sleeker limbs, shorter stance, ponytail)
  * - 'classic': Original 1:1:1 unscaled capsule athlete
  */
-export function updateAthleteVariant(state) {
+export function updateAthleteVariant(state, options = null) {
   if (!state || !state.rig) return;
-  const variant = TUNING.athlete.variant ?? 'masculine';
-  const colors = getAthleteColors();
+  const variant = options?.variant ?? state.variant ?? TUNING.athlete.variant ?? 'masculine';
+  const colors = getAthleteColors(options ?? state);
 
   const pelvis = state.rig.get('pelvis');
   const spine = state.rig.get('spine');
@@ -650,17 +663,6 @@ export function updateAthleteVariant(state) {
       item.solidMesh.position.set(0, 0, 0);
     }
   }
-  const footL = state.rig.get('footL');
-  const footR = state.rig.get('footR');
-  if (footL?.solidMesh) {
-    footL.solidMesh.scale.set(0.76, 0.84, 0.48);
-    footL.solidMesh.position.set(0, footL.halfHeight * 0.45, 0);
-  }
-  if (footR?.solidMesh) {
-    footR.solidMesh.scale.set(0.76, 0.84, 0.48);
-    footR.solidMesh.position.set(0, footR.halfHeight * 0.45, 0);
-  }
-
   // Headwear controls (baseball cap vs open-top sports visor)
   if (head?.solidMesh) {
     const crown = head.solidMesh.getObjectByName('cap-crown');
@@ -728,21 +730,23 @@ export function updateAthleteVariant(state) {
       const part = state.rig.get(k);
       if (part?.solidMesh) part.solidMesh.scale.set(0.78, 0.94, 0.78);
     }
-    // Refined hands
-    for (const k of handKeys) {
-      const part = state.rig.get(k);
-      if (part?.solidMesh) part.solidMesh.scale.set(0.80, 0.80, 0.80);
-    }
+    // Note: Signature club hands remain full scale (1.0) to preserve bold striking silhouette
   }
 }
 
 /**
  * Updates live material colors when the team palette changes.
  */
-export function updateAthletePalette(state) {
+export function updateAthletePalette(state, options = null) {
   if (!state || !state.rig) return;
-  updateAthleteVariant(state);
-  const colors = getAthleteColors();
+  if (options?.team) state.team = options.team;
+  if (options?.variant) state.variant = options.variant;
+  if (options?.primaryColor !== undefined) state.primaryColor = options.primaryColor;
+  if (options?.colorOverride !== undefined) state.colorOverride = options.colorOverride;
+  if (options?.bodyColor !== undefined) state.bodyColor = options.bodyColor;
+  if (options?.jointColor !== undefined) state.jointColor = options.jointColor;
+  updateAthleteVariant(state, options);
+  const colors = getAthleteColors(options ?? state);
   for (const item of state.rig.values()) {
     if (!item.solidMesh) continue;
     item.solidMesh.traverse((child) => {

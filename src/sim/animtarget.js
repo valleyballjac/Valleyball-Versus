@@ -313,6 +313,10 @@ export function createAnimTarget(characterRoot, clips, rig) {
      * camera's answer and therefore the safe default before the first handoff.
      */
     facingFollowsCamera: true,
+    hasAim: false,
+    aimYaw: 0,
+    moveWorldX: 0,
+    moveWorldZ: 0,
     /** True when an action's clip was missing and the held-apex pose stands in.
      *  Reported once at boot; not read per-step by anything. */
     slideIsFallback: false,
@@ -1379,7 +1383,7 @@ export function advanceMountYaw(state, cameraYaw, dt) {
   // Hold, do not snap. momentumYaw simply is not rewritten below the floor, so
   // a slide that runs out of speed keeps the heading it had rather than
   // swinging to wherever the last centimetre per second happened to point.
-  if (speed >= TUNING.facing.velocityFloor) {
+  if (speed >= TUNING.facing.velocityFloor && !state.hasAim) {
     state.momentumYaw = Math.atan2(vx, vz);
   } else if (!Number.isFinite(state.momentumYaw)) {
     // THE SEED, once, before he has ever moved. Under a camera that sits behind
@@ -1425,15 +1429,30 @@ export function advanceMountYaw(state, cameraYaw, dt) {
   // fixed step that reads render state is a determinism bug waiting for someone
   // to press Tab during a capture. It is one more boolean in the same one-step-
   // stale channel that already carries slideMix.
+  let currentEase = TUNING.facing.ease;
   if (state.facingFollowsCamera) {
     state.targetYaw = wrapAngle(
       cameraYaw + shortestAngleDelta(cameraYaw, state.momentumYaw) * travelMix,
     );
   } else {
-    state.targetYaw = wrapAngle(state.momentumYaw);
+    // FIXED CAMERAS (Tactical, Broadcast, Sports):
+    // 1. Right-stick direct aiming
+    if (state.hasAim) {
+      state.targetYaw = wrapAngle(state.aimYaw);
+      state.momentumYaw = state.targetYaw;
+      currentEase = 24.0; // Crisp twin-stick responsiveness
+    } else if (state.steerInput > 0.05 && (Math.abs(state.moveWorldX) > 1e-4 || Math.abs(state.moveWorldZ) > 1e-4)) {
+      // 2. Immediate left-stick movement direction without velocity lag
+      state.targetYaw = wrapAngle(Math.atan2(state.moveWorldX, state.moveWorldZ));
+      state.momentumYaw = state.targetYaw;
+      currentEase = 18.0; // Agile turning response
+    } else {
+      // 3. Maintain last facing
+      state.targetYaw = wrapAngle(state.momentumYaw);
+    }
   }
 
-  const blend = 1 - Math.exp(-TUNING.facing.ease * dt);
+  const blend = 1 - Math.exp(-currentEase * dt);
   state.yaw += shortestAngleDelta(state.yaw, state.targetYaw) * blend;
   return state.yaw;
 }
@@ -1477,6 +1496,10 @@ function readGhostInputs(state, inputs) {
   state.strikeKind = inputs.strikeKind;
   state.strikeSide = inputs.strikeSide;
   state.facingFollowsCamera = inputs.facingFollowsCamera;
+  state.hasAim = inputs.hasAim;
+  state.aimYaw = inputs.aimYaw;
+  state.moveWorldX = inputs.moveWorldX;
+  state.moveWorldZ = inputs.moveWorldZ;
 }
 
 /**
