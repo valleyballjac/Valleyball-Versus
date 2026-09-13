@@ -11,3 +11,5 @@ diff.mjs
 c.json
 current_tuning.json
 user_tuning.json
+dist-itch/
+release/

@@ -9,6 +9,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "deploy": "gh-pages -d dist",
+    "package:itch": "node scripts/package_itch.mjs",
     "determinism": "node scripts/determinism.mjs",
     "scenario": "node scripts/scenario.mjs"
   },
