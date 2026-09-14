@@ -86,6 +86,7 @@ import { displayCoordinator } from './visuals/displayCoordinator.js';
 import { soundManager } from './audio/soundManager.js';
 import { createGui } from './debug/gui.js';
 import { initCapture } from './debug/capture.js';
+import { createBotController, updateBot } from './ai/botController.js';
 
 /**
  * Scene construction, wiring, and the render pass.
@@ -746,6 +747,13 @@ function updateHud(match) {
 // ---------------------------------------------------------------------------
 
 let athletes = [];
+/**
+ * BOT CONTROLLERS — one per AI-controlled slot. Empty means all human.
+ * Created by handleStartMatch when a player is configured as 'bot'.
+ */
+let botControllers = [];
+/** Which input slot indices are bot-controlled (passed to sampleAllInputs). */
+let activeBotSlots = [];
 const athleteMatchStats = [
   { totalTouches: 0, sweetSpotHits: 0, spikes: 0, dives: 0, divingHits: 0, ownCircleTouches: 0, oppCircleTouches: 0 },
   { totalTouches: 0, sweetSpotHits: 0, spikes: 0, dives: 0, divingHits: 0, ownCircleTouches: 0, oppCircleTouches: 0 },
@@ -1459,6 +1467,20 @@ function fixedUpdate(dt, tick) {
   const isCountingDown = (gameState === 'match') && !!(matchState && matchState.isCountingDown);
   const isAthleteHeld = isCountingDown || (gameState === 'menu') || (gameState === 'flyover');
   const isBallHeld = (gameState === 'match' && isCountingDown) || (gameState === 'flyover');
+
+  // ═══ AI BOT UPDATE ═══
+  // Runs BEFORE athlete.prePhysicsUpdate so synthetic input is ready
+  // when the athlete reads its slot.
+  for (let i = 0; i < botControllers.length; i++) {
+    const bc = botControllers[i];
+    if (!bc) continue;
+    const botAthlete = athletes[bc.slotIndex];
+    const opponent = athletes[bc.slotIndex === 0 ? 1 : 0] || null;
+    if (!botAthlete) continue;
+    const botSlot = getInputSlot(bc.slotIndex);
+    updateBot(bc, botAthlete, opponent, balls, matchState, botSlot, tick, dt);
+  }
+
   for (let i = 0; i < athletes.length; i++) {
     if (gameState === 'practice' && i > 0) continue;
     const athlete = athletes[i];
@@ -2354,6 +2376,26 @@ function handleStartMatch(configs, ballPreference = getSelectedMatchBall()) {
     if (matchState) matchState.preMatchSpawnPos = balls[0]._preMatchSpawnPos;
   }
 
+  // ═══ AI BOT SETUP ═══
+  // On this branch, Player 2 is always AI-controlled.
+  // TODO: Make this configurable from the main menu UI.
+  botControllers = [];
+  activeBotSlots = [];
+  if (athletes.length >= 2) {
+    const aiDifficulty = TUNING.ai?.difficulty || 'medium';
+    const p2Bot = createBotController({
+      difficulty: aiDifficulty,
+      slotIndex: 1,
+      seed: loop.tick + 42,  // Deterministic seed based on match start tick
+    });
+    botControllers.push(p2Bot);
+    activeBotSlots.push(1);
+    console.log(`[ai] P2 bot created — difficulty: ${aiDifficulty}`);
+
+    // When P2 is a bot, give P1 fullscreen (disable splitscreen)
+    TUNING.camera.splitscreen = false;
+  }
+
   // Start 10s flyover cutscene
   gameState = 'flyover';
   cinematicCamera.startFlyover(10.0);
@@ -2570,6 +2612,10 @@ function returnToMainMenu() {
   resetCountdownOverlay();
   hideFlyoverOverlay();
 
+  // Clear AI bots
+  botControllers = [];
+  activeBotSlots = [];
+
   gameState = 'menu';
   cinematicCamera.startTitleOrbit();
   showTitleScreen();
@@ -2783,7 +2829,7 @@ async function boot() {
   );
 
   initInputRouter(canvas);
-  loop.onFrame(() => sampleAllInputs([playerCameras[0].camera, playerCameras[1].camera], gameState === 'practice' ? 1 : athletes.length, TUNING.match.mode));
+  loop.onFrame(() => sampleAllInputs([playerCameras[0].camera, playerCameras[1].camera], gameState === 'practice' ? 1 : athletes.length, TUNING.match.mode, activeBotSlots));
 
   applyViewportSize();
   applyCameraTuning();

@@ -1549,6 +1549,49 @@ const DEFAULTS = {
     strikeSweetBonus: false,
   },
 
+  // ═══ AI OPPONENT ═══
+  // Bot controller parameters. Difficulty presets scale execution quality only;
+  // all tiers have access to all moves.
+  ai: {
+    /** 'easy' | 'medium' | 'hard'. Read by botController.js at runtime. */
+    difficulty: 'medium',
+
+    // Per-difficulty parameter sets. All timing in ticks (60 Hz).
+    easy: {
+      reactionDelayTicks: 18,       // 300 ms of perception lag
+      aimAccuracy: 0.4,             // probability of attempting a strike at the right time
+      interceptLeadFactor: 0.5,     // how well the bot predicts ball trajectory
+      strikeTimingJitter: 8,        // ± ticks of timing error on strikes
+      sprintUsage: 0.3,             // probability of sprinting when chasing
+      diveAccuracy: 0.3,            // probability of diving at the right time
+      spikeAccuracy: 0.3,           // probability of spiking vs easier volley
+      defensiveAwareness: 0.2,      // threat level required to switch to DEFEND
+      strategyUpdateInterval: 12,   // ticks between strategy re-evaluations
+    },
+    medium: {
+      reactionDelayTicks: 8,
+      aimAccuracy: 0.7,
+      interceptLeadFactor: 0.8,
+      strikeTimingJitter: 4,
+      sprintUsage: 0.7,
+      diveAccuracy: 0.6,
+      spikeAccuracy: 0.6,
+      defensiveAwareness: 0.6,
+      strategyUpdateInterval: 8,
+    },
+    hard: {
+      reactionDelayTicks: 2,
+      aimAccuracy: 0.95,
+      interceptLeadFactor: 1.0,
+      strikeTimingJitter: 1,
+      sprintUsage: 1.0,
+      diveAccuracy: 0.9,
+      spikeAccuracy: 0.9,
+      defensiveAwareness: 0.9,
+      strategyUpdateInterval: 6,
+    },
+  },
+
   render: {
     // 'native' | '1.25' | '1.0'
     pixelRatioPreset: 'native',

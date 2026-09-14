@@ -302,8 +302,9 @@ function getCamVectors(cam, slotIdx = 0) {
  * @param {THREE.Camera|THREE.Camera[]} cameras Single camera or array [cam1, cam2]
  * @param {number} athleteCount
  * @param {'practice' | 'match'} mode
+ * @param {number[]} botSlots  slot indices controlled by bots (skip device polling)
  */
-export function sampleAllInputs(cameras, athleteCount = 2, mode = 'match') {
+export function sampleAllInputs(cameras, athleteCount = 2, mode = 'match', botSlots = []) {
   // Hand over accumulated mouse deltas
   _mouseDX = accumDX;
   _mouseDY = accumDY;
@@ -433,7 +434,7 @@ export function sampleAllInputs(cameras, athleteCount = 2, mode = 'match') {
   }
 
   // --- SLOT 1 (P2) ---
-  if (athleteCount > 1) {
+  if (athleteCount > 1 && !botSlots.includes(1)) {
     const slot = slots[1];
     let x = (heldKeys.has(P2_KEYS.moveRight) ? 1 : 0) - (heldKeys.has(P2_KEYS.moveLeft) ? 1 : 0);
     let z = (heldKeys.has(P2_KEYS.moveUp) ? 1 : 0) - (heldKeys.has(P2_KEYS.moveDown) ? 1 : 0);
@@ -580,5 +581,34 @@ export function consumeMenuToggle() {
   const q = menuToggleQueued;
   menuToggleQueued = false;
   return q;
+}
+
+// ═══ BOT INJECTION API ═══
+// Used by src/ai/botController.js to drive synthetic input into a slot.
+
+/**
+ * Returns the raw input slot for bot controllers to write into directly.
+ * The bot writes moveWorld, moveX, moveZ, sprintHeld, and action queues.
+ *
+ * @param {number} index slot index (0-3)
+ * @returns {object} the input slot
+ */
+export function getBotSlot(index) {
+  return slots[index] || slots[0];
+}
+
+/**
+ * Queues a discrete action trigger for a bot-controlled slot.
+ *
+ * @param {number} index slot index
+ * @param {string} action 'jump' | 'dive' | 'volley' | 'spike' | 'ballReset'
+ */
+export function queueBotAction(index, action) {
+  const slot = slots[index] || slots[0];
+  if (action === 'jump') slot.jumpQueued = true;
+  if (action === 'dive') slot.diveQueued = true;
+  if (action === 'volley') slot.volleyQueued = true;
+  if (action === 'spike') slot.spikeQueued = true;
+  if (action === 'ballReset') slot.ballResetQueued = true;
 }
 
