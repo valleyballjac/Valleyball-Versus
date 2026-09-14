@@ -107,4 +107,19 @@ If asked to build new features, prioritize the following architecture-aligned ta
    - Build a peer-to-peer network layer syncing discrete 60 Hz input frames.
 
 ---
+
+## 7. CANONICAL GAMEPLAY RULES & SPECIFICATION
+
+Before altering scoring, match flow, spawns, camera bias, or ball physics, read:
+📖 **`docs/VALLEYBALL_GAMEPLAY_SOURCE_OF_TRUTH.md`**
+
+This document governs the official rules of the sport:
+- **Continuous Momentum**: Play never pauses on a goal; the ball remains live in physics.
+- **Dynamic Goal Switching**: Ends unconditionally invert immediately after any scored goal.
+- **Spawns & Kickoff**: Elevated stream head spawns and randomized field ball drop.
+- **Tackling & Possession**: 100% legal full-contact collisions with free arcade possession.
+- **Ball Profiles**: Small (speed), Medium (official standard), Large (heavy inertia).
+- **Match Time & Resolution**: Strictly 5-minute regulation with draw / overtime options.
+
+---
 *Follow the laws, verify with tests, and build upon this solid foundation.*

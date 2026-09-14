@@ -23,6 +23,14 @@
 
 ---
 
+## Documentation & Rulebooks
+
+- 📖 **[Official Gameplay Source of Truth & Rulebook](docs/VALLEYBALL_GAMEPLAY_SOURCE_OF_TRUTH.md)**: Canonical rules of Valleyball—continuous momentum, dynamic goal switching invariants, spawns, and ball profiles.
+- 📐 **[Technical Architecture & Post-Mortem](docs/POST_MORTEM_AND_HANDOVER_v0.2.0.md)**: Deep dive into the Rapier 3D physics pipeline, decoupled micro-clock overlay, and the 7 Invariant Laws.
+- 🤖 **[Operational Directives for AI Agents](AGENTS.md)**: Grounding instructions and constraints for incoming autonomous AI models.
+
+---
+
 ## Controls Reference
 
 Valleyball Versus supports full dual-gamepad input (Xbox, PlayStation, standard XInput) as well as split-keyboard and mouse controls.
