@@ -1567,6 +1567,19 @@ const DEFAULTS = {
       spikeAccuracy: 0.3,           // probability of spiking vs easier volley
       defensiveAwareness: 0.2,      // threat level required to switch to DEFEND
       strategyUpdateInterval: 12,   // ticks between strategy re-evaluations
+      // Tactical positioning (optimizable by evolutionary training)
+      positionOffset: 1.5,          // m behind ball relative to goal direction
+      strikeRange: 2.5,             // m — max distance to attempt a strike
+      strikeHeightMin: -0.5,        // m below pelvis — min ball height for STRIKE strategy
+      strikeHeightMax: 3.0,         // m above pelvis — max ball height for STRIKE strategy
+      chaseToPositionDist: 12.0,    // m — switch from CHASE to POSITION below this
+      defenseDepth: 0.5,            // 0→ball, 1→goal — where to position when defending
+      arriveRadiusChase: 2.0,       // m — steering arrive radius for CHASE
+      arriveRadiusPosition: 1.0,    // m — steering arrive radius for POSITION
+      arriveRadiusStrike: 0.5,      // m — steering arrive radius for STRIKE
+      jumpHeightThreshold: 2.0,     // m above pelvis — trigger jump to reach ball
+      diveDistMin: 3.0,             // m — min distance to consider diving
+      diveDistMax: 6.0,             // m — max distance for dive
     },
     medium: {
       reactionDelayTicks: 8,
@@ -1578,6 +1591,18 @@ const DEFAULTS = {
       spikeAccuracy: 0.6,
       defensiveAwareness: 0.6,
       strategyUpdateInterval: 8,
+      positionOffset: 1.5,
+      strikeRange: 2.5,
+      strikeHeightMin: -0.5,
+      strikeHeightMax: 3.0,
+      chaseToPositionDist: 12.0,
+      defenseDepth: 0.5,
+      arriveRadiusChase: 2.0,
+      arriveRadiusPosition: 1.0,
+      arriveRadiusStrike: 0.5,
+      jumpHeightThreshold: 2.0,
+      diveDistMin: 3.0,
+      diveDistMax: 6.0,
     },
     hard: {
       reactionDelayTicks: 2,
@@ -1589,6 +1614,18 @@ const DEFAULTS = {
       spikeAccuracy: 0.9,
       defensiveAwareness: 0.9,
       strategyUpdateInterval: 6,
+      positionOffset: 1.5,
+      strikeRange: 2.5,
+      strikeHeightMin: -0.5,
+      strikeHeightMax: 3.0,
+      chaseToPositionDist: 12.0,
+      defenseDepth: 0.5,
+      arriveRadiusChase: 2.0,
+      arriveRadiusPosition: 1.0,
+      arriveRadiusStrike: 0.5,
+      jumpHeightThreshold: 2.0,
+      diveDistMin: 3.0,
+      diveDistMax: 6.0,
     },
   },
 

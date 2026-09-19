@@ -130,13 +130,20 @@ export function createBotController({
       defendTime: 0,
       recoverTime: 0,
     },
+
+    // Override params for training — when set, these replace TUNING.ai values
+    overrideParams: null,
   };
 }
 
 /**
  * Gets the difficulty parameters, reading from TUNING.ai if available.
+ * Training overrides take priority.
  */
 function getDifficultyParams(bot) {
+  // Training override takes priority
+  if (bot.overrideParams) return bot.overrideParams;
+
   const level = bot.difficulty;
   const tuningAi = TUNING.ai;
   if (tuningAi && tuningAi[level]) {
@@ -161,7 +168,8 @@ function selectStrategy(bot, perception, params) {
 
   // STRIKE: ball is very close and at a hittable height
   const ballRelativeHeight = perception.ball.position.y - perception.self.position.y;
-  if (distToBall < 2.5 && ballRelativeHeight > -0.5 && ballRelativeHeight < 3.0) {
+  const strikeRange = params.strikeRange ?? 2.5;
+  if (distToBall < strikeRange && ballRelativeHeight > (params.strikeHeightMin ?? -0.5) && ballRelativeHeight < (params.strikeHeightMax ?? 3.0)) {
     return STRATEGY.STRIKE;
   }
 
@@ -183,7 +191,7 @@ function selectStrategy(bot, perception, params) {
   }
 
   // POSITION: ball is reachable and approaching, get into position
-  if (perception.ballIntercept.reachable && distToBall < 12) {
+  if (perception.ballIntercept.reachable && distToBall < (params.chaseToPositionDist ?? 12)) {
     return STRATEGY.POSITION;
   }
 
@@ -309,7 +317,7 @@ function executeChase(bot, perception, params, slot, tick) {
   const shouldSprint = bot.rng() < params.sprintUsage;
   steerToward(slot, perception.self.position, _interceptTarget, {
     sprint: shouldSprint,
-    arriveRadius: 2.0,
+    arriveRadius: params.arriveRadiusChase ?? 2.0,
   });
 
   // Compute aim yaw toward the attack goal for potential strikes
@@ -331,10 +339,11 @@ function executePosition(bot, perception, params, slot, tick) {
 
   // Position ourselves behind the ball (relative to goal direction)
   // so strikes go toward the goal
+  const posOffset = params.positionOffset ?? 1.5;
   _interceptTarget.set(
-    ballPos.x - _toGoal.x * 1.5,
+    ballPos.x - _toGoal.x * posOffset,
     0,
-    ballPos.z - _toGoal.z * 1.5,
+    ballPos.z - _toGoal.z * posOffset,
   );
 
   // If the ball is coming down, position under the intercept point
@@ -348,7 +357,7 @@ function executePosition(bot, perception, params, slot, tick) {
 
   steerToward(slot, perception.self.position, _interceptTarget, {
     sprint: false,
-    arriveRadius: 1.0,
+    arriveRadius: params.arriveRadiusPosition ?? 1.0,
   });
 
   // Aim toward goal
@@ -378,7 +387,7 @@ function executeStrike(bot, perception, freshPerception, params, slot, tick) {
   _interceptTarget.set(ballPos.x, 0, ballPos.z);
   steerToward(slot, selfPos, _interceptTarget, {
     sprint: false,
-    arriveRadius: 0.5,
+    arriveRadius: params.arriveRadiusStrike ?? 0.5,
   });
 
   // Aim toward attack goal
@@ -416,15 +425,17 @@ function executeStrike(bot, perception, freshPerception, params, slot, tick) {
   }
 
   // Jump to reach high balls
-  if (ballRelHeight > 2.0 && distXZ < 3.0 && freshPerception.self.grounded) {
+  if (ballRelHeight > (params.jumpHeightThreshold ?? 2.0) && distXZ < 3.0 && freshPerception.self.grounded) {
     if (tick - bot.lastJumpTick >= bot.jumpCooldownTicks) {
       slot.jumpQueued = true;
       bot.lastJumpTick = tick;
     }
   }
 
-  // Dive to reach far balls (medium/hard only)
-  if (distXZ > 3.0 && distXZ < 6.0 && freshPerception.self.grounded) {
+  // Dive to reach far balls
+  const diveMin = params.diveDistMin ?? 3.0;
+  const diveMax = params.diveDistMax ?? 6.0;
+  if (distXZ > diveMin && distXZ < diveMax && freshPerception.self.grounded) {
     const ballApproaching = freshPerception.ball.velocity.y < -2.0;
     if (ballApproaching && bot.rng() < params.diveAccuracy * 0.3) {
       slot.diveQueued = true;
@@ -439,11 +450,12 @@ function executeDefend(bot, perception, params, slot, tick) {
   const defendPos = perception.hoops.defendGoalPos;
   const ballPos = perception.ball.position;
 
-  // Position between ball and own goal
+  // Position between ball and own goal, biased by defenseDepth
+  const depth = params.defenseDepth ?? 0.5;
   _defenseTarget.set(
-    (ballPos.x + defendPos.x) * 0.5,
+    ballPos.x * (1 - depth) + defendPos.x * depth,
     0,
-    (ballPos.z + defendPos.z) * 0.5,
+    ballPos.z * (1 - depth) + defendPos.z * depth,
   );
 
   // Bias toward the ball's predicted path
