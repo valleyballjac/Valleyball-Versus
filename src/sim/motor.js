@@ -203,7 +203,8 @@ export function createMotor() {
     RAPIER.ColliderDesc.ball(radius)
       .setDensity(density)
       .setFriction(friction)
-      .setRestitution(restitution),
+      .setRestitution(restitution)
+      .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS),
     body,
   );
 

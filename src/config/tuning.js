@@ -1260,7 +1260,7 @@ const DEFAULTS = {
     // backward" was the feet all along. Left at [0, 2.4] because nothing in the
     // measurement asks for anything else — the knee never reached the limit,
     // it just swung through its legitimate range.
-    limits: { knee: [0, 2.4], elbow: [0, 2.6] },
+    limits: { knee: [0, 2.4], elbow: [0, 2.6], wrist: [-0.44, 0.44] },
 
     // SURFACE. Neither of these was ever set, so the sixteen ragdoll colliders
     // have been running on Rapier's defaults (friction 0.5, restitution 0)

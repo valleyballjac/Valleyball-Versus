@@ -40,8 +40,8 @@ const PHYSIQUE_OPTIONS = ['classic', 'masculine', 'feminine'];
 const CAMERA_OPTIONS = [
   { id: 'chase', label: '3RD PERSON CHASE (DEFAULT)' },
   { id: 'ball', label: 'BALL TRACKING CAM' },
-  { id: 'sports', label: 'SPORTS CAM (SPECTATOR)' },
-  { id: 'broadcast', label: 'SIDELINE BROADCAST' },
+  { id: 'sports', label: 'SPORTS CAM [FULLSCREEN]' },
+  { id: 'broadcast', label: 'SIDELINE BROADCAST [FULLSCREEN]' },
   { id: 'tactical', label: 'TACTICAL OVERHEAD' },
 ];
 
@@ -67,6 +67,7 @@ let playerSetupEl = null;
 let playerSetupContainerEl = null;
 let flyoverOverlayEl = null;
 let controlsModalEl = null;
+let mainMenuSettingsModalEl = null;
 let titleBrandBall = null;
 
 let callbacks = {
@@ -74,6 +75,7 @@ let callbacks = {
   onStartPractice: null,
   onPlayerConfigChange: null,
   onOpenSettings: null,
+  onRenderSettingsChange: null,
   onSkipFlyover: null,
   onEnterSetup: null,
   onExitSetup: null,
@@ -159,8 +161,11 @@ export function initMainMenu(cbs = {}) {
   // 3. Pre-Match Flyover Cutscene Overlay
   buildFlyoverOverlay();
 
-  // 4. Controls Modal
-  buildControlsModal();
+  // 4. How To Play Modal (Controls, Match Basics, Scoring & Pro Tips)
+  buildHowToPlayModal();
+
+  // 5. Main Menu Settings Modal (Audio, Graphics, Camera)
+  buildMainMenuSettingsModal();
 
   document.body.appendChild(rootEl);
   startMenuGamepadPolling();
@@ -294,22 +299,22 @@ function buildTitleScreen() {
   `;
 
   const btnSettings = createMenuButton('SETTINGS', 'rgba(255, 255, 255, 0.08)', () => {
-    if (callbacks.onOpenSettings) callbacks.onOpenSettings();
+    showMainMenuSettingsModal();
   });
   btnSettings.id = 'btn-title-settings';
 
-  const btnControls = createMenuButton('CONTROLS', 'rgba(255, 255, 255, 0.08)', () => {
-    showControlsModal();
+  const btnHowToPlay = createMenuButton('HOW TO PLAY', 'rgba(255, 255, 255, 0.08)', () => {
+    showHowToPlayModal();
   });
-  btnControls.id = 'btn-title-controls';
+  btnHowToPlay.id = 'btn-title-how-to-play';
 
   menuList.appendChild(btnPractice);
   menuList.appendChild(btnPlayMatch);
   menuList.appendChild(btnMatch2v2);
   menuList.appendChild(btnSettings);
-  menuList.appendChild(btnControls);
+  menuList.appendChild(btnHowToPlay);
 
-  titleButtons = [btnPractice, btnPlayMatch, btnSettings, btnControls];
+  titleButtons = [btnPractice, btnPlayMatch, btnSettings, btnHowToPlay];
   titleFocusIndex = 0;
   titleButtons.forEach((btn, idx) => {
     btn.onmouseenter = () => {
@@ -1006,19 +1011,24 @@ function updateReadyUI() {
   });
 
   if (btnStartMatch && !matchCountdownActive) {
-    const isAnyReady = playerReadyState[0] || playerReadyState[1];
-    btnStartMatch.disabled = !isAnyReady;
-    if (isAnyReady) {
+    const bothReady = playerReadyState[0] && playerReadyState[1];
+    const countReady = (playerReadyState[0] ? 1 : 0) + (playerReadyState[1] ? 1 : 0);
+    btnStartMatch.disabled = !bothReady;
+    if (bothReady) {
       btnStartMatch.textContent = 'START MATCH ➔';
-      btnStartMatch.style.background = '#ffffff';
-      btnStartMatch.style.color = '#000000';
+      btnStartMatch.style.background = '#10b981';
+      btnStartMatch.style.color = '#ffffff';
       btnStartMatch.style.fontWeight = '900';
-      btnStartMatch.style.border = '2px solid #ffffff';
+      btnStartMatch.style.border = '2px solid #34d399';
       btnStartMatch.style.opacity = '1';
       btnStartMatch.style.cursor = 'pointer';
-      btnStartMatch.style.boxShadow = '0 4px 20px rgba(255, 255, 255, 0.45), 0 0 25px rgba(0, 229, 255, 0.25)';
+      btnStartMatch.style.boxShadow = '0 0 25px rgba(16, 185, 129, 0.6), 0 0 35px rgba(52, 211, 153, 0.35)';
+      startMatchCountdown(3);
     } else {
-      btnStartMatch.textContent = 'READY UP TO BEGIN MATCH';
+      cancelMatchCountdown();
+      btnStartMatch.textContent = countReady === 1
+        ? 'WAITING FOR BOTH PLAYERS TO READY UP (1/2 READY)'
+        : 'READY UP BOTH PLAYERS TO BEGIN MATCH (0/2 READY)';
       btnStartMatch.style.background = 'rgba(255, 255, 255, 0.08)';
       btnStartMatch.style.color = 'rgba(255, 255, 255, 0.4)';
       btnStartMatch.style.fontWeight = '800';
@@ -1510,11 +1520,13 @@ function buildFlyoverOverlay() {
 }
 
 // ---------------------------------------------------------------------------
-// 4. Controls Modal
+// 4. How To Play Modal (Controls, Match Basics, Scoring & Pro Tips)
 // ---------------------------------------------------------------------------
-let currentControlsTab = 'gamepad'; // 'gamepad' | 'keyboard'
+const HOWTO_TABS = ['controls', 'basics', 'tips'];
+let currentHowToPlayTab = 'controls';
+let currentControlsDevice = 'gamepad'; // 'gamepad' | 'keyboard'
 
-function buildControlsModal() {
+export function buildHowToPlayModal() {
   controlsModalEl = document.createElement('div');
   controlsModalEl.id = 'controls-modal';
   controlsModalEl.style.cssText = `
@@ -1533,7 +1545,7 @@ function buildControlsModal() {
   box.style.cssText = `
     display: flex;
     flex-direction: column;
-    max-width: 820px;
+    max-width: 840px;
     width: 92%;
     max-height: 90vh;
     overflow-y: auto;
@@ -1542,9 +1554,10 @@ function buildControlsModal() {
     border-radius: 14px;
     padding: 24px 28px;
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.9), 0 0 30px rgba(56, 189, 248, 0.15);
+    font-family: inherit;
   `;
 
-  // Header & Tab Navigation
+  // Header & 3-Tab Navigation
   const header = document.createElement('div');
   header.style.cssText = `
     display: flex;
@@ -1562,65 +1575,90 @@ function buildControlsModal() {
   titleGroup.innerHTML = `
     <div style="font-size: 20px; font-weight: 900; letter-spacing: 0.1em; display: flex; align-items: baseline; gap: 8px;">
       <span style="background: linear-gradient(90deg, #ff2e55 0%, #ff6b35 20%, #fbb417 40%, #4ade80 60%, #00e5ff 80%, #a855f7 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">VALLEYBALL</span>
-      <span style="color: #ffffff;">CONTROLS</span>
+      <span style="color: #ffffff;">HOW TO PLAY</span>
     </div>
-    <div style="font-size: 11px; color: #94a3b8; font-weight: 700; letter-spacing: 0.08em; margin-top: 2px;">INTERACTIVE SCHEMATIC & FIELD MANUAL</div>
+    <div style="font-size: 11px; color: #94a3b8; font-weight: 700; letter-spacing: 0.08em; margin-top: 2px;">CONTROLS · MATCH BASICS · SCORING STRATEGY</div>
   `;
 
-  const tabGroup = document.createElement('div');
-  tabGroup.style.cssText = 'display: flex; gap: 8px; background: rgba(0, 0, 0, 0.4); padding: 4px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);';
+  const mainTabGroup = document.createElement('div');
+  mainTabGroup.style.cssText = 'display: flex; gap: 8px; background: rgba(0, 0, 0, 0.4); padding: 4px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);';
 
-  const btnTabGamepad = document.createElement('button');
-  btnTabGamepad.id = 'tab-controls-gamepad';
-  btnTabGamepad.textContent = '🎮 GAMEPAD';
-  btnTabGamepad.style.cssText = `
-    padding: 8px 16px;
-    font-size: 12px;
-    font-weight: 800;
-    font-family: inherit;
-    letter-spacing: 0.08em;
-    color: #000000;
-    background: #ffffff;
-    border: 1px solid #ffffff;
-    border-radius: 6px;
-    cursor: pointer;
-    box-shadow: 0 0 14px rgba(255, 255, 255, 0.45), 0 0 20px rgba(0, 229, 255, 0.25);
-    transition: all 0.15s ease;
-  `;
+  const btnTabControls = document.createElement('button');
+  btnTabControls.id = 'tab-howto-controls';
+  btnTabControls.textContent = '🎮 CONTROLS';
 
-  const btnTabKeyboard = document.createElement('button');
-  btnTabKeyboard.id = 'tab-controls-keyboard';
-  btnTabKeyboard.textContent = '⌨️ KEYBOARD & MOUSE';
-  btnTabKeyboard.style.cssText = `
-    padding: 8px 16px;
-    font-size: 12px;
-    font-weight: 800;
-    font-family: inherit;
-    letter-spacing: 0.08em;
-    color: #94a3b8;
-    background: transparent;
-    border: 1px solid transparent;
-    border-radius: 6px;
-    cursor: pointer;
-    transition: all 0.15s ease;
-  `;
+  const btnTabBasics = document.createElement('button');
+  btnTabBasics.id = 'tab-howto-basics';
+  btnTabBasics.textContent = '📋 MATCH BASICS';
 
-  tabGroup.appendChild(btnTabGamepad);
-  tabGroup.appendChild(btnTabKeyboard);
+  const btnTabTips = document.createElement('button');
+  btnTabTips.id = 'tab-howto-tips';
+  btnTabTips.textContent = '🎯 SCORING & PRO TIPS';
+
+  [btnTabControls, btnTabBasics, btnTabTips].forEach((btn) => {
+    btn.style.cssText = `
+      padding: 8px 14px;
+      font-size: 12px;
+      font-weight: 800;
+      font-family: inherit;
+      letter-spacing: 0.08em;
+      color: #94a3b8;
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    `;
+    mainTabGroup.appendChild(btn);
+  });
+
   header.appendChild(titleGroup);
-  header.appendChild(tabGroup);
+  header.appendChild(mainTabGroup);
   box.appendChild(header);
 
-  // Diagram Container
-  const diagramContainer = document.createElement('div');
-  diagramContainer.style.cssText = 'display: flex; flex-direction: column; align-items: center; width: 100%; margin-bottom: 20px;';
+  // -------------------------------------------------------------------------
+  // VIEW 1: CONTROLS VIEW (Gamepad SVG + Keyboard Diagram + Reference Table)
+  // -------------------------------------------------------------------------
+  const controlsView = document.createElement('div');
+  controlsView.id = 'howto-view-controls';
+  controlsView.style.cssText = 'display: flex; flex-direction: column; width: 100%;';
 
-  // 1. GAMEPAD SVG SCHEMATIC
+  // Sub-tab switcher: Gamepad vs Keyboard
+  const subTabContainer = document.createElement('div');
+  subTabContainer.style.cssText = 'display: flex; justify-content: center; margin-bottom: 12px;';
+  const subTabGroup = document.createElement('div');
+  subTabGroup.style.cssText = 'display: flex; gap: 6px; background: rgba(255,255,255,0.05); padding: 3px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1);';
+
+  const btnSubGamepad = document.createElement('button');
+  btnSubGamepad.id = 'subtab-controls-gamepad';
+  btnSubGamepad.textContent = '🎮 GAMEPAD';
+  btnSubGamepad.style.cssText = `
+    padding: 6px 14px; font-size: 11px; font-weight: 800; font-family: inherit;
+    color: #000000; background: #ffffff; border: 1px solid #ffffff; border-radius: 4px; cursor: pointer;
+  `;
+
+  const btnSubKeyboard = document.createElement('button');
+  btnSubKeyboard.id = 'subtab-controls-keyboard';
+  btnSubKeyboard.textContent = '⌨️ KEYBOARD & MOUSE';
+  btnSubKeyboard.style.cssText = `
+    padding: 6px 14px; font-size: 11px; font-weight: 800; font-family: inherit;
+    color: #94a3b8; background: transparent; border: 1px solid transparent; border-radius: 4px; cursor: pointer;
+  `;
+
+  subTabGroup.appendChild(btnSubGamepad);
+  subTabGroup.appendChild(btnSubKeyboard);
+  subTabContainer.appendChild(subTabGroup);
+  controlsView.appendChild(subTabContainer);
+
+  const diagramContainer = document.createElement('div');
+  diagramContainer.style.cssText = 'display: flex; flex-direction: column; align-items: center; width: 100%; margin-bottom: 16px;';
+
+  // 1A. GAMEPAD SVG SCHEMATIC
   const gamepadView = document.createElement('div');
   gamepadView.id = 'controls-view-gamepad';
   gamepadView.style.cssText = 'width: 100%; display: flex; justify-content: center;';
   gamepadView.innerHTML = `
-    <svg viewBox="0 0 760 300" style="width: 100%; max-height: 290px; filter: drop-shadow(0 6px 20px rgba(0,0,0,0.6)); font-family: ui-monospace, SFMono-Regular, Consolas, monospace;">
+    <svg viewBox="0 0 760 300" style="width: 100%; max-height: 280px; filter: drop-shadow(0 6px 20px rgba(0,0,0,0.6)); font-family: ui-monospace, SFMono-Regular, Consolas, monospace;">
       <defs>
         <linearGradient id="bodyGrad" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stop-color="#1e293b"/>
@@ -1666,93 +1704,81 @@ function buildControlsModal() {
       <circle cx="348" cy="132" r="7" fill="#1e293b" stroke="#94a3b8" stroke-width="1.5"/>
       <circle cx="412" cy="132" r="7" fill="#1e293b" stroke="#94a3b8" stroke-width="1.5"/>
 
-      <!-- Face Buttons (Diamond) -->
-      <!-- Y (North) -->
+      <!-- Face Buttons -->
       <circle cx="495" cy="120" r="12" fill="#1e293b" stroke="#f43f5e" stroke-width="2" filter="url(#glowRose)"/>
       <text x="495" y="124" fill="#f43f5e" font-size="11" font-weight="900" text-anchor="middle">Y</text>
-      <!-- B (East) -->
+
       <circle cx="525" cy="150" r="12" fill="#1e293b" stroke="#38bdf8" stroke-width="2" filter="url(#glowCyan)"/>
       <text x="525" y="154" fill="#38bdf8" font-size="11" font-weight="900" text-anchor="middle">B</text>
-      <!-- A (South) -->
+
       <circle cx="495" cy="180" r="12" fill="#1e293b" stroke="#10b981" stroke-width="2" filter="url(#glowGreen)"/>
       <text x="495" y="184" fill="#10b981" font-size="11" font-weight="900" text-anchor="middle">A</text>
-      <!-- X (West) -->
+
       <circle cx="465" cy="150" r="12" fill="#1e293b" stroke="#a855f7" stroke-width="2"/>
       <text x="465" y="154" fill="#a855f7" font-size="11" font-weight="900" text-anchor="middle">X</text>
 
-      <!-- CALLOUT POINTERS & LABELS (LEFT SIDE) -->
-      <!-- LT Callout -->
+      <!-- CALLOUT POINTERS & LABELS (LEFT) -->
       <polyline points="220,70 140,45" fill="none" stroke="#38bdf8" stroke-width="1.5" stroke-dasharray="3,3"/>
       <rect x="25" y="32" width="115" height="24" rx="4" fill="rgba(56,189,248,0.15)" stroke="#38bdf8" stroke-width="1"/>
       <text x="82" y="48" fill="#ffffff" font-size="10" font-weight="800" text-anchor="middle">LT · SPRINT</text>
 
-      <!-- Back / Select Callout -->
       <polyline points="348,125 310,35" fill="none" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="3,3"/>
       <rect x="220" y="22" width="150" height="24" rx="4" fill="rgba(245,158,11,0.15)" stroke="#f59e0b" stroke-width="1"/>
       <text x="295" y="38" fill="#fcd34d" font-size="10" font-weight="800" text-anchor="middle">SELECT · BALL RESET</text>
 
-      <!-- Left Stick Callout -->
       <polyline points="237,155 125,145" fill="none" stroke="#10b981" stroke-width="1.5" stroke-dasharray="3,3"/>
       <rect x="10" y="133" width="115" height="24" rx="4" fill="rgba(16,185,129,0.15)" stroke="#10b981" stroke-width="1"/>
       <text x="67" y="149" fill="#6ee7b7" font-size="10" font-weight="800" text-anchor="middle">L-STICK · MOVE</text>
 
-      <!-- D-Pad Callout -->
       <polyline points="312,195 140,225" fill="none" stroke="#fbbf24" stroke-width="1.5" stroke-dasharray="3,3"/>
       <rect x="15" y="213" width="125" height="24" rx="4" fill="rgba(251,191,36,0.15)" stroke="#fbbf24" stroke-width="1"/>
       <text x="77" y="229" fill="#fde68a" font-size="10" font-weight="800" text-anchor="middle">D-PAD · CYCLE CAM</text>
 
-      <!-- CALLOUT POINTERS & LABELS (RIGHT SIDE) -->
-      <!-- RT Callout -->
+      <!-- CALLOUT POINTERS & LABELS (RIGHT) -->
       <polyline points="540,70 620,45" fill="none" stroke="#38bdf8" stroke-width="1.5" stroke-dasharray="3,3"/>
       <rect x="620" y="32" width="115" height="24" rx="4" fill="rgba(56,189,248,0.15)" stroke="#38bdf8" stroke-width="1"/>
       <text x="677" y="48" fill="#ffffff" font-size="10" font-weight="800" text-anchor="middle">RT · SLIDE</text>
 
-      <!-- Start Callout -->
       <polyline points="412,125 450,35" fill="none" stroke="#f43f5e" stroke-width="1.5" stroke-dasharray="3,3"/>
       <rect x="390" y="22" width="140" height="24" rx="4" fill="rgba(244,63,94,0.15)" stroke="#f43f5e" stroke-width="1"/>
       <text x="460" y="38" fill="#fda4af" font-size="10" font-weight="800" text-anchor="middle">START · PAUSE</text>
 
-      <!-- Y Strike Callout -->
       <polyline points="507,120 625,95" fill="none" stroke="#f43f5e" stroke-width="1.5" stroke-dasharray="3,3"/>
       <rect x="625" y="83" width="115" height="24" rx="4" fill="rgba(244,63,94,0.15)" stroke="#f43f5e" stroke-width="1"/>
       <text x="682" y="99" fill="#fda4af" font-size="10" font-weight="800" text-anchor="middle">Y · SPIKE</text>
 
-      <!-- B Volley Callout -->
       <polyline points="537,150 635,135" fill="none" stroke="#38bdf8" stroke-width="1.5" stroke-dasharray="3,3"/>
       <rect x="635" y="123" width="115" height="24" rx="4" fill="rgba(56,189,248,0.15)" stroke="#38bdf8" stroke-width="1"/>
       <text x="692" y="139" fill="#bae6fd" font-size="10" font-weight="800" text-anchor="middle">B · VOLLEY</text>
 
-      <!-- X Dive Callout -->
       <polyline points="465,162 615,175" fill="none" stroke="#a855f7" stroke-width="1.5" stroke-dasharray="3,3"/>
       <rect x="615" y="163" width="115" height="24" rx="4" fill="rgba(168,85,247,0.15)" stroke="#a855f7" stroke-width="1"/>
       <text x="672" y="179" fill="#e9d5ff" font-size="10" font-weight="800" text-anchor="middle">X · DIVE</text>
 
-      <!-- A Jump Callout -->
       <polyline points="507,180 625,215" fill="none" stroke="#10b981" stroke-width="1.5" stroke-dasharray="3,3"/>
       <rect x="625" y="203" width="115" height="24" rx="4" fill="rgba(16,185,129,0.15)" stroke="#10b981" stroke-width="1"/>
       <text x="682" y="219" fill="#a7f3d0" font-size="10" font-weight="800" text-anchor="middle">A · JUMP</text>
 
-      <!-- Right Stick Callout -->
       <polyline points="445,205 530,265" fill="none" stroke="#38bdf8" stroke-width="1.5" stroke-dasharray="3,3"/>
       <rect x="450" y="260" width="165" height="24" rx="4" fill="rgba(56,189,248,0.15)" stroke="#38bdf8" stroke-width="1"/>
       <text x="532" y="276" fill="#7dd3fc" font-size="10" font-weight="800" text-anchor="middle">R-STICK · AIM / ORIENT</text>
     </svg>
   `;
 
-  // 2. KEYBOARD & MOUSE SCHEMATIC
+  // 1B. KEYBOARD & MOUSE SCHEMATIC
   const keyboardView = document.createElement('div');
   keyboardView.id = 'controls-view-keyboard';
-  keyboardView.style.cssText = 'width: 100%; display: none; flex-direction: column; align-items: center; gap: 14px; padding: 10px 0;';
+  keyboardView.style.cssText = 'width: 100%; display: none; flex-direction: column; align-items: center; gap: 14px; padding: 6px 0;';
   keyboardView.innerHTML = `
-    <div style="display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 680px;">
+    <div style="display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 720px;">
       <!-- Row 1: Function Keys -->
       <div style="display: flex; justify-content: space-between; align-items: center;">
         <div style="display: flex; gap: 8px;">
-          <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 68px; height: 50px; background: #0f172a; border: 1px solid #ef4444; border-radius: 6px; box-shadow: 0 0 10px rgba(239,68,68,0.3);">
+          <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 68px; height: 48px; background: #0f172a; border: 1px solid #ef4444; border-radius: 6px; box-shadow: 0 0 10px rgba(239,68,68,0.3);">
             <span style="color: #ffffff; font-weight: 900; font-size: 13px;">ESC</span>
             <span style="color: #ef4444; font-weight: 700; font-size: 9px;">PAUSE</span>
           </div>
-          <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 68px; height: 50px; background: #0f172a; border: 1px solid #fbbf24; border-radius: 6px; box-shadow: 0 0 10px rgba(251,191,36,0.3);">
+          <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 68px; height: 48px; background: #0f172a; border: 1px solid #fbbf24; border-radius: 6px; box-shadow: 0 0 10px rgba(251,191,36,0.3);">
             <span style="color: #ffffff; font-weight: 900; font-size: 13px;">TAB</span>
             <span style="color: #fbbf24; font-weight: 700; font-size: 9px;">CAM CYCLE</span>
           </div>
@@ -1760,64 +1786,68 @@ function buildControlsModal() {
         <div style="font-size: 11px; font-weight: 700; color: #94a3b8; letter-spacing: 0.08em;">PRIMARY ATHLETE CONTROLS (P1)</div>
       </div>
 
-      <!-- Row 2: Action Letters Row (Q, W, E, R) -->
-      <div style="display: flex; gap: 10px; justify-content: center;">
-        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 72px; height: 62px; background: #0f172a; border: 1px solid #a855f7; border-radius: 8px; box-shadow: 0 0 12px rgba(168,85,247,0.35);">
-          <span style="color: #ffffff; font-weight: 900; font-size: 18px;">Q</span>
-          <span style="color: #c084fc; font-weight: 800; font-size: 10px;">DIVE</span>
+      <!-- Row 2: Action Letters Row (Q, W, E, R) + Mouse Look/Strikes -->
+      <div style="display: flex; gap: 10px; justify-content: center; align-items: center;">
+        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 72px; height: 58px; background: #0f172a; border: 1px solid #a855f7; border-radius: 8px; box-shadow: 0 0 12px rgba(168,85,247,0.35);">
+          <span style="color: #ffffff; font-weight: 900; font-size: 17px;">Q</span>
+          <span style="color: #c084fc; font-weight: 800; font-size: 9px;">DIVE</span>
         </div>
-        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 72px; height: 62px; background: #0f172a; border: 2px solid #10b981; border-radius: 8px; box-shadow: 0 0 16px rgba(16,185,129,0.45);">
-          <span style="color: #ffffff; font-weight: 900; font-size: 18px;">W</span>
-          <span style="color: #34d399; font-weight: 800; font-size: 10px;">MOVE FWD</span>
+        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 72px; height: 58px; background: #0f172a; border: 2px solid #10b981; border-radius: 8px; box-shadow: 0 0 16px rgba(16,185,129,0.45);">
+          <span style="color: #ffffff; font-weight: 900; font-size: 17px;">W</span>
+          <span style="color: #34d399; font-weight: 800; font-size: 9px;">MOVE FWD</span>
         </div>
-        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 72px; height: 62px; background: #0f172a; border: 1px solid #38bdf8; border-radius: 8px; box-shadow: 0 0 12px rgba(56,189,248,0.35);">
-          <span style="color: #ffffff; font-weight: 900; font-size: 18px;">E</span>
-          <span style="color: #7dd3fc; font-weight: 800; font-size: 10px;">VOLLEY</span>
+        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 78px; height: 58px; background: #0f172a; border: 1px solid #38bdf8; border-radius: 8px; box-shadow: 0 0 12px rgba(56,189,248,0.35);">
+          <span style="color: #ffffff; font-weight: 900; font-size: 17px;">E / L-CLICK</span>
+          <span style="color: #7dd3fc; font-weight: 800; font-size: 8.5px;">VOLLEY</span>
         </div>
-        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 72px; height: 62px; background: #0f172a; border: 1px solid #f43f5e; border-radius: 8px; box-shadow: 0 0 12px rgba(244,63,94,0.35);">
-          <span style="color: #ffffff; font-weight: 900; font-size: 18px;">R</span>
-          <span style="color: #fb7185; font-weight: 800; font-size: 10px;">SPIKE</span>
+        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 78px; height: 58px; background: #0f172a; border: 1px solid #f43f5e; border-radius: 8px; box-shadow: 0 0 12px rgba(244,63,94,0.35);">
+          <span style="color: #ffffff; font-weight: 900; font-size: 17px;">R / R-CLICK</span>
+          <span style="color: #fb7185; font-weight: 800; font-size: 8.5px;">SPIKE</span>
+        </div>
+        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 120px; height: 58px; background: #0f172a; border: 1px solid #00e5ff; border-radius: 8px; box-shadow: 0 0 12px rgba(0,229,255,0.35);">
+          <span style="color: #00e5ff; font-weight: 900; font-size: 13px;">🖱️ MOUSE LOOK</span>
+          <span style="color: #94a3b8; font-weight: 700; font-size: 8.5px;">POINTER LOCK (CLICK)</span>
         </div>
       </div>
 
       <!-- Row 3: Movement (A, S, D) + Practice Reset (B) -->
       <div style="display: flex; gap: 10px; justify-content: center;">
-        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 72px; height: 62px; background: #0f172a; border: 2px solid #10b981; border-radius: 8px; box-shadow: 0 0 16px rgba(16,185,129,0.45);">
-          <span style="color: #ffffff; font-weight: 900; font-size: 18px;">A</span>
-          <span style="color: #34d399; font-weight: 800; font-size: 10px;">MOVE LEFT</span>
+        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 72px; height: 58px; background: #0f172a; border: 2px solid #10b981; border-radius: 8px; box-shadow: 0 0 16px rgba(16,185,129,0.45);">
+          <span style="color: #ffffff; font-weight: 900; font-size: 17px;">A</span>
+          <span style="color: #34d399; font-weight: 800; font-size: 9px;">MOVE LEFT</span>
         </div>
-        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 72px; height: 62px; background: #0f172a; border: 2px solid #10b981; border-radius: 8px; box-shadow: 0 0 16px rgba(16,185,129,0.45);">
-          <span style="color: #ffffff; font-weight: 900; font-size: 18px;">S</span>
-          <span style="color: #34d399; font-weight: 800; font-size: 10px;">MOVE BACK</span>
+        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 72px; height: 58px; background: #0f172a; border: 2px solid #10b981; border-radius: 8px; box-shadow: 0 0 16px rgba(16,185,129,0.45);">
+          <span style="color: #ffffff; font-weight: 900; font-size: 17px;">S</span>
+          <span style="color: #34d399; font-weight: 800; font-size: 9px;">MOVE BACK</span>
         </div>
-        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 72px; height: 62px; background: #0f172a; border: 2px solid #10b981; border-radius: 8px; box-shadow: 0 0 16px rgba(16,185,129,0.45);">
-          <span style="color: #ffffff; font-weight: 900; font-size: 18px;">D</span>
-          <span style="color: #34d399; font-weight: 800; font-size: 10px;">MOVE RIGHT</span>
+        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 72px; height: 58px; background: #0f172a; border: 2px solid #10b981; border-radius: 8px; box-shadow: 0 0 16px rgba(16,185,129,0.45);">
+          <span style="color: #ffffff; font-weight: 900; font-size: 17px;">D</span>
+          <span style="color: #34d399; font-weight: 800; font-size: 9px;">MOVE RIGHT</span>
         </div>
-        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 72px; height: 62px; background: #0f172a; border: 1px solid #f59e0b; border-radius: 8px; box-shadow: 0 0 12px rgba(245,158,11,0.35);">
-          <span style="color: #ffffff; font-weight: 900; font-size: 18px;">B</span>
-          <span style="color: #fcd34d; font-weight: 800; font-size: 10px;">RESET BALL</span>
+        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 72px; height: 58px; background: #0f172a; border: 1px solid #f59e0b; border-radius: 8px; box-shadow: 0 0 12px rgba(245,158,11,0.35);">
+          <span style="color: #ffffff; font-weight: 900; font-size: 17px;">B</span>
+          <span style="color: #fcd34d; font-weight: 800; font-size: 9px;">RESET BALL</span>
         </div>
       </div>
 
       <!-- Row 4: Modifiers (Shift, C, Space) -->
       <div style="display: flex; gap: 10px; justify-content: center;">
-        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 95px; height: 54px; background: #0f172a; border: 1px solid #38bdf8; border-radius: 8px; box-shadow: 0 0 12px rgba(56,189,248,0.35);">
-          <span style="color: #ffffff; font-weight: 900; font-size: 14px;">SHIFT</span>
-          <span style="color: #7dd3fc; font-weight: 800; font-size: 9px;">SPRINT</span>
+        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 95px; height: 50px; background: #0f172a; border: 1px solid #38bdf8; border-radius: 8px; box-shadow: 0 0 12px rgba(56,189,248,0.35);">
+          <span style="color: #ffffff; font-weight: 900; font-size: 13px;">SHIFT</span>
+          <span style="color: #7dd3fc; font-weight: 800; font-size: 8.5px;">SPRINT</span>
         </div>
-        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 72px; height: 54px; background: #0f172a; border: 1px solid #38bdf8; border-radius: 8px; box-shadow: 0 0 12px rgba(56,189,248,0.35);">
-          <span style="color: #ffffff; font-weight: 900; font-size: 14px;">C</span>
-          <span style="color: #7dd3fc; font-weight: 800; font-size: 9px;">SLIDE</span>
+        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 72px; height: 50px; background: #0f172a; border: 1px solid #38bdf8; border-radius: 8px; box-shadow: 0 0 12px rgba(56,189,248,0.35);">
+          <span style="color: #ffffff; font-weight: 900; font-size: 13px;">C</span>
+          <span style="color: #7dd3fc; font-weight: 800; font-size: 8.5px;">SLIDE</span>
         </div>
-        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 200px; height: 54px; background: #0f172a; border: 2px solid #10b981; border-radius: 8px; box-shadow: 0 0 16px rgba(16,185,129,0.45);">
-          <span style="color: #ffffff; font-weight: 900; font-size: 15px;">SPACEBAR</span>
-          <span style="color: #34d399; font-weight: 800; font-size: 10px;">JUMP (HOLD FOR HEIGHT)</span>
+        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 200px; height: 50px; background: #0f172a; border: 2px solid #10b981; border-radius: 8px; box-shadow: 0 0 16px rgba(16,185,129,0.45);">
+          <span style="color: #ffffff; font-weight: 900; font-size: 14px;">SPACEBAR</span>
+          <span style="color: #34d399; font-weight: 800; font-size: 9px;">JUMP (HOLD FOR HEIGHT)</span>
         </div>
       </div>
-      
+
       <!-- Sub-notice for P2 -->
-      <div style="text-align: center; font-size: 11px; color: #64748b; font-weight: 600; margin-top: 4px;">
+      <div style="text-align: center; font-size: 10.5px; color: #64748b; font-weight: 600; margin-top: 4px;">
         PLAYER 2 SECONDARY KEYBOARD: <span style="color: #94a3b8;">IJKL (Move) · Enter (Jump) · Slash (Sprint) · O (Slide) · U (Dive) · P (Volley) · Bracket [ (Spike)</span>
       </div>
     </div>
@@ -1825,65 +1855,24 @@ function buildControlsModal() {
 
   diagramContainer.appendChild(gamepadView);
   diagramContainer.appendChild(keyboardView);
-  box.appendChild(diagramContainer);
-
-  // Tab Switching Logic
-  function setControlsTab(tab) {
-    currentControlsTab = tab;
-    if (tab === 'gamepad') {
-      btnTabGamepad.style.background = '#ffffff';
-      btnTabGamepad.style.borderColor = '#ffffff';
-      btnTabGamepad.style.color = '#000000';
-      btnTabGamepad.style.boxShadow = '0 0 14px rgba(255, 255, 255, 0.45), 0 0 20px rgba(0, 229, 255, 0.25)';
-
-      btnTabKeyboard.style.background = 'transparent';
-      btnTabKeyboard.style.borderColor = 'transparent';
-      btnTabKeyboard.style.color = '#94a3b8';
-      btnTabKeyboard.style.boxShadow = 'none';
-
-      gamepadView.style.display = 'flex';
-      keyboardView.style.display = 'none';
-    } else {
-      btnTabKeyboard.style.background = '#ffffff';
-      btnTabKeyboard.style.borderColor = '#ffffff';
-      btnTabKeyboard.style.color = '#000000';
-      btnTabKeyboard.style.boxShadow = '0 0 14px rgba(255, 255, 255, 0.45), 0 0 20px rgba(0, 229, 255, 0.25)';
-
-      btnTabGamepad.style.background = 'transparent';
-      btnTabGamepad.style.borderColor = 'transparent';
-      btnTabGamepad.style.color = '#94a3b8';
-      btnTabGamepad.style.boxShadow = 'none';
-
-      gamepadView.style.display = 'none';
-      keyboardView.style.display = 'flex';
-    }
-  }
-
-  btnTabGamepad.onclick = () => setControlsTab('gamepad');
-  btnTabKeyboard.onclick = () => setControlsTab('keyboard');
+  controlsView.appendChild(diagramContainer);
 
   // Quick Reference Table Card
   const tableCard = document.createElement('div');
   tableCard.style.cssText = `
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    background: rgba(0, 0, 0, 0.35);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 10px;
-    padding: 14px 18px;
-    font-size: 12px;
+    display: flex; flex-direction: column; gap: 7px; background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 10px; padding: 12px 16px; font-size: 11.5px;
   `;
 
   const rows = [
     { action: 'Move Athlete', pad: 'Left Stick', key: 'WASD · (P2: IJKL)', color: '#10b981' },
-    { action: 'Aim Strikes / Orient', pad: 'Right Stick', key: 'Arrow Keys · Mouse Drag', color: '#38bdf8' },
+    { action: 'Aim Strikes / Look', pad: 'Right Stick', key: 'Mouse Movement · Arrow Keys', color: '#38bdf8' },
     { action: 'Sprint Boost', pad: 'Left Trigger (LT)', key: 'Shift · (P2: Slash /)', color: '#38bdf8' },
     { action: 'Slide Tackle (Hold)', pad: 'Right Trigger (RT)', key: 'C · (P2: O)', color: '#38bdf8' },
     { action: 'Jump (Hold for Height)', pad: 'A / Cross', key: 'Space · (P2: Enter)', color: '#10b981' },
     { action: 'Ground Dive', pad: 'X / Square', key: 'Q · (P2: U)', color: '#a855f7' },
-    { action: 'Volley / Kick Strike', pad: 'B / Circle', key: 'E · (P2: P)', color: '#38bdf8' },
-    { action: 'Spike Strike', pad: 'Y / Triangle', key: 'R · (P2: Bracket [)', color: '#f43f5e' },
+    { action: 'Volley / Kick Strike', pad: 'B / Circle', key: 'Left-Click · E · (P2: P)', color: '#38bdf8' },
+    { action: 'Spike Strike', pad: 'Y / Triangle', key: 'Right-Click · R · (P2: Bracket [)', color: '#f43f5e' },
     { action: 'Reset Ball (Practice)', pad: 'Select / Back / View', key: 'B · (P2: N)', color: '#f59e0b' },
     { action: 'Cycle Camera Angle', pad: 'D-Pad', key: 'Tab · (P2: Backslash \\)', color: '#fbbf24' },
     { action: 'Pause Menu / Settings', pad: 'Start / Options', key: 'Escape', color: '#ef4444' },
@@ -1892,15 +1881,12 @@ function buildControlsModal() {
   rows.forEach((r, idx) => {
     const rowEl = document.createElement('div');
     rowEl.style.cssText = `
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding-bottom: 6px;
+      display: flex; justify-content: space-between; align-items: center; padding-bottom: 5px;
       ${idx < rows.length - 1 ? 'border-bottom: 1px solid rgba(255, 255, 255, 0.05);' : ''}
     `;
     rowEl.innerHTML = `
       <span style="color: #cbd5e1; font-weight: 700; display: flex; align-items: center; gap: 8px;">
-        <span style="width: 8px; height: 8px; border-radius: 50%; background: ${r.color}; box-shadow: 0 0 6px ${r.color};"></span>
+        <span style="width: 7px; height: 7px; border-radius: 50%; background: ${r.color}; box-shadow: 0 0 6px ${r.color};"></span>
         ${r.action}
       </span>
       <div style="display: flex; gap: 14px; font-weight: 700;">
@@ -1911,53 +1897,464 @@ function buildControlsModal() {
     `;
     tableCard.appendChild(rowEl);
   });
-  box.appendChild(tableCard);
+  controlsView.appendChild(tableCard);
+  box.appendChild(controlsView);
+
+  // Sub-tab switcher logic (Gamepad vs Keyboard)
+  function setDeviceTab(device) {
+    currentControlsDevice = device;
+    if (device === 'gamepad') {
+      btnSubGamepad.style.background = '#ffffff';
+      btnSubGamepad.style.color = '#000000';
+      btnSubGamepad.style.borderColor = '#ffffff';
+      btnSubKeyboard.style.background = 'transparent';
+      btnSubKeyboard.style.color = '#94a3b8';
+      btnSubKeyboard.style.borderColor = 'transparent';
+      gamepadView.style.display = 'flex';
+      keyboardView.style.display = 'none';
+    } else {
+      btnSubKeyboard.style.background = '#ffffff';
+      btnSubKeyboard.style.color = '#000000';
+      btnSubKeyboard.style.borderColor = '#ffffff';
+      btnSubGamepad.style.background = 'transparent';
+      btnSubGamepad.style.color = '#94a3b8';
+      btnSubGamepad.style.borderColor = 'transparent';
+      gamepadView.style.display = 'none';
+      keyboardView.style.display = 'flex';
+    }
+  }
+  btnSubGamepad.onclick = () => setDeviceTab('gamepad');
+  btnSubKeyboard.onclick = () => setDeviceTab('keyboard');
+
+  // -------------------------------------------------------------------------
+  // VIEW 2: MATCH BASICS VIEW
+  // -------------------------------------------------------------------------
+  const basicsView = document.createElement('div');
+  basicsView.id = 'howto-view-basics';
+  basicsView.style.cssText = 'display: none; flex-direction: column; gap: 16px; width: 100%;';
+  basicsView.innerHTML = `
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
+      <!-- Card 1: THE ARENA & COURT -->
+      <div style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(56, 189, 248, 0.35); border-radius: 10px; padding: 16px;">
+        <div style="font-size: 13px; font-weight: 900; color: #38bdf8; letter-spacing: 0.08em; margin-bottom: 8px; display: flex; align-items: center; gap: 8px;">
+          <span>🏟️</span> THE COURT & ARENA
+        </div>
+        <div style="font-size: 11.5px; color: #cbd5e1; line-height: 1.6;">
+          <p style="margin: 0 0 8px 0;"><strong style="color: #ffffff;">1v1 Sunken Basin:</strong> Two athletes face off across an open arena bordered by high concrete and glass perimeter walls.</p>
+          <p style="margin: 0 0 8px 0;"><strong style="color: #ffffff;">The Goal Hoops:</strong> Steel goal hoops sit high on the North and South boundary walls. Driving the ball through the ring awards 1 point.</p>
+          <p style="margin: 0;"><strong style="color: #ffffff;">Active Rebounds:</strong> Side ramps and glass backboards are 100% physically live. Rebound bank shots keep rallies moving!</p>
+        </div>
+      </div>
+
+      <!-- Card 2: RULES & CLOCK -->
+      <div style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(16, 185, 129, 0.35); border-radius: 10px; padding: 16px;">
+        <div style="font-size: 13px; font-weight: 900; color: #10b981; letter-spacing: 0.08em; margin-bottom: 8px; display: flex; align-items: center; gap: 8px;">
+          <span>⏱️</span> MATCH RULES & CLOCK
+        </div>
+        <div style="font-size: 11.5px; color: #cbd5e1; line-height: 1.6;">
+          <p style="margin: 0 0 8px 0;"><strong style="color: #ffffff;">5-Minute Regulation:</strong> Standard matches run for 5:00 of live play clock action.</p>
+          <p style="margin: 0 0 8px 0;"><strong style="color: #ffffff;">Alternating Targets:</strong> Scoring a goal immediately flips attack ends. You defend the goal just scored on!</p>
+          <p style="margin: 0;"><strong style="color: #ffffff;">Golden Goal Overtime:</strong> If scores are level at 0:00, sudden death initiates: next goal wins the match!</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Full-Width Card: PHYSICAL COMBAT & KNOCKDOWNS -->
+    <div style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(244, 63, 94, 0.35); border-radius: 10px; padding: 16px;">
+      <div style="font-size: 13px; font-weight: 900; color: #f43f5e; letter-spacing: 0.08em; margin-bottom: 8px; display: flex; align-items: center; gap: 8px;">
+        <span>💥</span> FULL-CONTACT COMBAT & KNOCKDOWNS
+      </div>
+      <div style="font-size: 11.5px; color: #cbd5e1; line-height: 1.6; display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+        <div>
+          <p style="margin: 0 0 6px 0;"><strong style="color: #ffffff;">Slide Tackles:</strong> Sliding at sprint speeds (> 7 m/s) into an opponent sweeps their legs, causing an instant ragdoll knockdown!</p>
+          <p style="margin: 0;"><strong style="color: #ffffff;">Physical Bumps:</strong> Colliding with an opposing athlete generates physical momentum impulse and authentic sneaker squeak audio.</p>
+        </div>
+        <div>
+          <p style="margin: 0 0 6px 0;"><strong style="color: #ffffff;">Strike Staggers:</strong> Connecting with a kick, volley, or spike while an opponent is in reach applies physical strike impulse.</p>
+          <p style="margin: 0;"><strong style="color: #ffffff;">Heavy Ball Hits:</strong> High-speed projectile balls (> 14 m/s) will knock athletes off their feet if hit in the chest or head!</p>
+        </div>
+      </div>
+    </div>
+  `;
+  box.appendChild(basicsView);
+
+  // -------------------------------------------------------------------------
+  // VIEW 3: SCORING & PRO TIPS VIEW
+  // -------------------------------------------------------------------------
+  const tipsView = document.createElement('div');
+  tipsView.id = 'howto-view-tips';
+  tipsView.style.cssText = 'display: none; flex-direction: column; gap: 12px; width: 100%;';
+  tipsView.innerHTML = `
+    <!-- Tip 1 -->
+    <div style="background: rgba(15, 23, 42, 0.75); border-left: 4px solid #10b981; border-radius: 8px; padding: 12px 16px;">
+      <div style="font-size: 12.5px; font-weight: 800; color: #34d399; margin-bottom: 3px;">1. HOW TO SCORE YOUR FIRST GOAL: VOLLEY THEN SPIKE</div>
+      <div style="font-size: 11px; color: #cbd5e1; line-height: 1.55;">
+        Don't just chase or run into the ball! Position yourself as the ball approaches. Press <strong style="color: #38bdf8;">Volley (Left-Click / E / B)</strong> to pop the ball upward in a high arc toward the opponent's side. Then, as it reaches its peak, jump and unleash a <strong style="color: #f43f5e;">Spike (Right-Click / R / Y)</strong> to blast it downward into the hoop or off the backboard into the goal!
+      </div>
+    </div>
+
+    <!-- Tip 2 -->
+    <div style="background: rgba(15, 23, 42, 0.75); border-left: 4px solid #38bdf8; border-radius: 8px; padding: 12px 16px;">
+      <div style="font-size: 12.5px; font-weight: 800; color: #38bdf8; margin-bottom: 3px;">2. JUMP TIMING & SWEET-SPOT CONTACT</div>
+      <div style="font-size: 11px; color: #cbd5e1; line-height: 1.55;">
+        Strikes hit significantly harder when connected near the center of the strike window! Hold <strong style="color: #ffffff;">Spacebar / A</strong> to jump higher. An aerial spike angled down over the center court net has immense velocity and is nearly impossible for a grounded keeper to stop.
+      </div>
+    </div>
+
+    <!-- Tip 3 -->
+    <div style="background: rgba(15, 23, 42, 0.75); border-left: 4px solid #f59e0b; border-radius: 8px; padding: 12px 16px;">
+      <div style="font-size: 12.5px; font-weight: 800; color: #fbbf24; margin-bottom: 3px;">3. BANK SHOTS OFF THE SIDE WALLS</div>
+      <div style="font-size: 11px; color: #cbd5e1; line-height: 1.55;">
+        If your opponent is camping directly in front of the goal hoop, aim at the 45-degree corner ramps or high side walls. The ball will rebound at high velocity across the goal mouth, bypassing the defender entirely.
+      </div>
+    </div>
+
+    <!-- Tip 4 -->
+    <div style="background: rgba(15, 23, 42, 0.75); border-left: 4px solid #a855f7; border-radius: 8px; padding: 12px 16px;">
+      <div style="font-size: 12.5px; font-weight: 800; color: #c084fc; margin-bottom: 3px;">4. CLUTCH DIVING SAVES & RECOVERY</div>
+      <div style="font-size: 11px; color: #cbd5e1; line-height: 1.55;">
+        If a spiked ball is dropping fast toward the floor, press <strong style="color: #ffffff;">Q / X</strong> to perform a ground dive! An outstretched dive pops the ball back up into play for a second chance. If you get knocked down, your athlete automatically recovers and stands back up with active physics.
+      </div>
+    </div>
+
+    <!-- Tip 5 -->
+    <div style="background: rgba(15, 23, 42, 0.75); border-left: 4px solid #ef4444; border-radius: 8px; padding: 12px 16px;">
+      <div style="font-size: 12.5px; font-weight: 800; color: #f87171; margin-bottom: 3px;">5. BALL SIZES & DIFFICULTY</div>
+      <div style="font-size: 11px; color: #cbd5e1; line-height: 1.55;">
+        • <strong style="color: #ffffff;">Small Ball (0.4m):</strong> Fast, twitchy, heavy physics momentum, hardest difficulty.<br>
+        • <strong style="color: #ffffff;">Medium Ball (1.0m):</strong> Standard regulation match ball, balanced flight and bounces.<br>
+        • <strong style="color: #ffffff;">Big Ball (1.5m):</strong> Enormous rebound area, easiest difficulty, great for high rallies!
+      </div>
+    </div>
+  `;
+  box.appendChild(tipsView);
+
+  // -------------------------------------------------------------------------
+  // Main Tab Navigation Logic
+  // -------------------------------------------------------------------------
+  function setHowToPlayTab(tab) {
+    currentHowToPlayTab = tab;
+    const tabBtns = [
+      { id: 'controls', btn: btnTabControls, view: controlsView },
+      { id: 'basics', btn: btnTabBasics, view: basicsView },
+      { id: 'tips', btn: btnTabTips, view: tipsView },
+    ];
+
+    tabBtns.forEach((item) => {
+      const isSel = item.id === tab;
+      item.btn.style.background = isSel ? '#ffffff' : 'transparent';
+      item.btn.style.borderColor = isSel ? '#ffffff' : 'transparent';
+      item.btn.style.color = isSel ? '#000000' : '#94a3b8';
+      item.btn.style.boxShadow = isSel ? '0 0 14px rgba(255, 255, 255, 0.45), 0 0 20px rgba(0, 229, 255, 0.25)' : 'none';
+      item.view.style.display = isSel ? 'flex' : 'none';
+    });
+  }
+
+  function cycleHowToPlayTab(direction = 1) {
+    const idx = HOWTO_TABS.indexOf(currentHowToPlayTab);
+    const nextIdx = (idx + direction + HOWTO_TABS.length) % HOWTO_TABS.length;
+    setHowToPlayTab(HOWTO_TABS[nextIdx]);
+  }
+
+  btnTabControls.onclick = () => setHowToPlayTab('controls');
+  btnTabBasics.onclick = () => setHowToPlayTab('basics');
+  btnTabTips.onclick = () => setHowToPlayTab('tips');
 
   // Close Button
   const closeBtn = document.createElement('button');
   closeBtn.id = 'btn-close-controls';
   closeBtn.textContent = 'CLOSE [ESC / B / SPACE]';
   closeBtn.style.cssText = `
-    margin-top: 16px;
-    padding: 12px;
-    font-size: 13px;
-    font-weight: 900;
-    font-family: inherit;
-    letter-spacing: 0.1em;
-    color: #ffffff;
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.25);
-    border-radius: 8px;
-    cursor: pointer;
-    transition: all 0.15s ease;
+    margin-top: 16px; padding: 12px; font-size: 13px; font-weight: 900; font-family: inherit;
+    letter-spacing: 0.1em; color: #ffffff; background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.25); border-radius: 8px; cursor: pointer; transition: all 0.15s ease;
   `;
-  closeBtn.onmouseenter = () => {
-    closeBtn.style.background = 'rgba(255, 255, 255, 0.2)';
-    closeBtn.style.borderColor = '#ffffff';
-  };
-  closeBtn.onmouseleave = () => {
-    closeBtn.style.background = 'rgba(255, 255, 255, 0.1)';
-    closeBtn.style.borderColor = 'rgba(255, 255, 255, 0.25)';
-  };
-  closeBtn.onclick = hideControlsModal;
+  closeBtn.onmouseenter = () => { closeBtn.style.background = 'rgba(255, 255, 255, 0.2)'; closeBtn.style.borderColor = '#ffffff'; };
+  closeBtn.onmouseleave = () => { closeBtn.style.background = 'rgba(255, 255, 255, 0.1)'; closeBtn.style.borderColor = 'rgba(255, 255, 255, 0.25)'; };
+  closeBtn.onclick = hideHowToPlayModal;
   box.appendChild(closeBtn);
 
   controlsModalEl.appendChild(box);
   rootEl.appendChild(controlsModalEl);
 
-  // Expose tab switcher for hotkeys
-  controlsModalEl._setTab = setControlsTab;
+  controlsModalEl._setTab = setHowToPlayTab;
+  controlsModalEl._setDevice = setDeviceTab;
+  controlsModalEl._cycleTab = cycleHowToPlayTab;
 }
 
-function showControlsModal() {
+export function showHowToPlayModal(tab = 'controls') {
   if (controlsModalEl) {
     controlsModalEl.style.display = 'flex';
-    if (controlsModalEl._setTab) controlsModalEl._setTab('gamepad');
+    if (controlsModalEl._setTab) controlsModalEl._setTab(tab);
   }
 }
 
-function hideControlsModal() {
+export function hideHowToPlayModal() {
   if (controlsModalEl) controlsModalEl.style.display = 'none';
+}
+
+export const showControlsModal = showHowToPlayModal;
+export const hideControlsModal = hideHowToPlayModal;
+export const buildControlsModal = buildHowToPlayModal;
+
+// ---------------------------------------------------------------------------
+// 5. Main Menu Settings Modal (Decoupled from In-Game Pause)
+// ---------------------------------------------------------------------------
+export function buildMainMenuSettingsModal() {
+  mainMenuSettingsModalEl = document.createElement('div');
+  mainMenuSettingsModalEl.id = 'main-menu-settings-modal';
+  mainMenuSettingsModalEl.style.cssText = `
+    position: absolute;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(4, 7, 12, 0.88);
+    backdrop-filter: blur(12px);
+    pointer-events: auto;
+    z-index: 1000;
+  `;
+
+  const box = document.createElement('div');
+  box.style.cssText = `
+    display: flex;
+    flex-direction: column;
+    max-width: 580px;
+    width: 92%;
+    max-height: 88vh;
+    overflow-y: auto;
+    background: rgba(11, 17, 26, 0.98);
+    border: 1px solid rgba(120, 170, 210, 0.35);
+    border-radius: 14px;
+    padding: 24px 32px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.9), 0 0 30px rgba(56, 189, 248, 0.15);
+    font-family: inherit;
+    color: #cfe3f5;
+  `;
+
+  // Header
+  const header = document.createElement('div');
+  header.style.cssText = `
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 2px solid;
+    border-image: linear-gradient(90deg, #ff2e55, #ff6b35, #fbb417, #4ade80, #00e5ff, #3b82f6, #a855f7) 1;
+    padding-bottom: 12px;
+    margin-bottom: 20px;
+  `;
+  header.innerHTML = `
+    <div>
+      <div style="font-size: 20px; font-weight: 900; letter-spacing: 0.1em; color: #ffffff;">SETTINGS</div>
+      <div style="font-size: 11px; color: #94a3b8; font-weight: 700; letter-spacing: 0.08em; margin-top: 2px;">GLOBAL AUDIO, DISPLAY & CAMERA PREFERENCES</div>
+    </div>
+  `;
+  box.appendChild(header);
+
+  function createSectionHeader(title) {
+    const el = document.createElement('div');
+    el.style.cssText = 'font-size: 11px; font-weight: 800; letter-spacing: 0.12em; color: #38bdf8; margin: 12px 0 8px 0; text-transform: uppercase;';
+    el.textContent = title;
+    return el;
+  }
+
+  // 1. AUDIO SECTION
+  box.appendChild(createSectionHeader('🔊 Audio Levels'));
+
+  // Master Volume
+  const masterRow = document.createElement('div');
+  masterRow.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;';
+  const masterLabel = document.createElement('span');
+  masterLabel.style.cssText = 'font-size: 12px; font-weight: 700; color: #cbd5e1;';
+  masterLabel.textContent = 'Master Volume';
+  const masterVal = document.createElement('span');
+  masterVal.style.cssText = 'font-size: 12px; font-weight: 800; color: #ffffff; min-width: 45px; text-align: right;';
+  const masterSlider = document.createElement('input');
+  masterSlider.type = 'range';
+  masterSlider.min = '0';
+  masterSlider.max = '100';
+  masterSlider.value = String(Math.round((soundManager.getMasterVolume?.() ?? 0.8) * 100));
+  masterVal.textContent = `${masterSlider.value}%`;
+  masterSlider.style.cssText = 'flex: 1; margin: 0 16px; accent-color: #38bdf8; cursor: pointer;';
+  masterSlider.oninput = (e) => {
+    const val = Number(e.target.value) / 100;
+    masterVal.textContent = `${e.target.value}%`;
+    soundManager.setMasterVolume(val);
+  };
+  masterRow.appendChild(masterLabel);
+  masterRow.appendChild(masterSlider);
+  masterRow.appendChild(masterVal);
+  box.appendChild(masterRow);
+
+  // SFX Volume
+  const sfxRow = document.createElement('div');
+  sfxRow.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;';
+  const sfxLabel = document.createElement('span');
+  sfxLabel.style.cssText = 'font-size: 12px; font-weight: 700; color: #cbd5e1;';
+  sfxLabel.textContent = 'SFX & Ball Audio';
+  const sfxVal = document.createElement('span');
+  sfxVal.style.cssText = 'font-size: 12px; font-weight: 800; color: #ffffff; min-width: 45px; text-align: right;';
+  const sfxSlider = document.createElement('input');
+  sfxSlider.type = 'range';
+  sfxSlider.min = '0';
+  sfxSlider.max = '100';
+  sfxSlider.value = String(Math.round((soundManager.getSfxVolume?.() ?? 0.8) * 100));
+  sfxVal.textContent = `${sfxSlider.value}%`;
+  sfxSlider.style.cssText = 'flex: 1; margin: 0 16px; accent-color: #10b981; cursor: pointer;';
+  sfxSlider.oninput = (e) => {
+    const val = Number(e.target.value) / 100;
+    sfxVal.textContent = `${e.target.value}%`;
+    soundManager.setSfxVolume(val);
+  };
+  sfxRow.appendChild(sfxLabel);
+  sfxRow.appendChild(sfxSlider);
+  sfxRow.appendChild(sfxVal);
+  box.appendChild(sfxRow);
+
+  // 2. DISPLAY & GRAPHICS SECTION
+  box.appendChild(createSectionHeader('🖥️ Display & Graphics'));
+
+  // Stadium Shadows
+  const shadowRow = document.createElement('div');
+  shadowRow.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;';
+  const shadowLabel = document.createElement('span');
+  shadowLabel.style.cssText = 'font-size: 12px; font-weight: 700; color: #cbd5e1;';
+  shadowLabel.textContent = 'Stadium Shadows';
+  const shadowGroup = document.createElement('div');
+  shadowGroup.style.cssText = 'display: flex; gap: 6px;';
+  const shadowOpts = [
+    { id: 'off', label: 'Off' },
+    { id: 'balanced', label: 'Balanced' },
+    { id: 'high', label: 'High (4 Towers)' },
+  ];
+  const shadowBtns = [];
+  shadowOpts.forEach((opt) => {
+    const b = document.createElement('button');
+    b.textContent = opt.label;
+    const isSel = (TUNING.render?.shadowQuality || 'high') === opt.id;
+    b.style.cssText = `
+      padding: 6px 12px; font-size: 11px; font-weight: 700; font-family: inherit;
+      border-radius: 4px; cursor: pointer; border: 1px solid rgba(120, 170, 210, 0.3); transition: all 0.12s ease;
+      background: ${isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)'};
+      color: ${isSel ? '#ffffff' : '#94a3b8'};
+    `;
+    b.onclick = () => {
+      if (!TUNING.render) TUNING.render = {};
+      TUNING.render.shadowQuality = opt.id;
+      shadowBtns.forEach((btn, idx) => {
+        const s = shadowOpts[idx].id === opt.id;
+        btn.style.background = s ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
+        btn.style.color = s ? '#ffffff' : '#94a3b8';
+      });
+      if (callbacks.onRenderSettingsChange) callbacks.onRenderSettingsChange({ shadowQuality: opt.id });
+      else if (window.__vb?.applyRenderSettings) window.__vb.applyRenderSettings({ shadowQuality: opt.id });
+    };
+    shadowBtns.push(b);
+    shadowGroup.appendChild(b);
+  });
+  shadowRow.appendChild(shadowLabel);
+  shadowRow.appendChild(shadowGroup);
+  box.appendChild(shadowRow);
+
+  // Controls Overlay (HUD)
+  const overlayRow = document.createElement('div');
+  overlayRow.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;';
+  const overlayLabel = document.createElement('span');
+  overlayLabel.style.cssText = 'font-size: 12px; font-weight: 700; color: #cbd5e1;';
+  overlayLabel.textContent = 'Controls Overlay (HUD)';
+  const overlayGroup = document.createElement('div');
+  overlayGroup.style.cssText = 'display: flex; gap: 6px;';
+  const overlayOpts = [
+    { id: false, label: 'Hidden (Default)' },
+    { id: true, label: 'Visible' },
+  ];
+  const overlayBtns = [];
+  overlayOpts.forEach((opt) => {
+    const b = document.createElement('button');
+    b.textContent = opt.label;
+    const isSel = (opt.id === false);
+    b.style.cssText = `
+      padding: 6px 14px; font-size: 11px; font-weight: 700; font-family: inherit;
+      border-radius: 4px; cursor: pointer; border: 1px solid rgba(120, 170, 210, 0.3); transition: all 0.12s ease;
+      background: ${isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)'};
+      color: ${isSel ? '#ffffff' : '#94a3b8'};
+    `;
+    b.onclick = () => {
+      overlayBtns.forEach((btn, idx) => {
+        const s = overlayOpts[idx].id === opt.id;
+        btn.style.background = s ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
+        btn.style.color = s ? '#ffffff' : '#94a3b8';
+      });
+      if (callbacks.onRenderSettingsChange) callbacks.onRenderSettingsChange({ showControlsOverlay: opt.id });
+      else if (window.__vb?.applyRenderSettings) window.__vb.applyRenderSettings({ showControlsOverlay: opt.id });
+    };
+    overlayBtns.push(b);
+    overlayGroup.appendChild(b);
+  });
+  overlayRow.appendChild(overlayLabel);
+  overlayRow.appendChild(overlayGroup);
+  box.appendChild(overlayRow);
+
+  // 3. CAMERA & CONTROLS SECTION
+  box.appendChild(createSectionHeader('🎥 Camera Angle'));
+
+  const camRow = document.createElement('div');
+  camRow.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;';
+  const camLabel = document.createElement('span');
+  camLabel.style.cssText = 'font-size: 12px; font-weight: 700; color: #cbd5e1;';
+  camLabel.textContent = 'Default Camera Mode';
+  const camSelect = document.createElement('select');
+  camSelect.style.cssText = `
+    padding: 6px 12px; font-size: 11px; font-weight: 700; font-family: inherit;
+    color: #ffffff; background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 5px; cursor: pointer;
+  `;
+  CAMERA_OPTIONS.forEach((opt) => {
+    const o = document.createElement('option');
+    o.value = opt.id;
+    o.textContent = opt.label;
+    o.style.background = '#0b111a';
+    if (opt.id === (playerConfigs[0]?.cameraMode || 'chase')) o.selected = true;
+    camSelect.appendChild(o);
+  });
+  camSelect.onchange = (e) => {
+    const val = e.target.value;
+    playerConfigs[0].cameraMode = val;
+    TUNING.camera.mode = val;
+    if (window.__vb?.setPlayerConfig) window.__vb.setPlayerConfig(0, { cameraMode: val });
+  };
+  camRow.appendChild(camLabel);
+  camRow.appendChild(camSelect);
+  box.appendChild(camRow);
+
+  // Close Button
+  const closeBtn = document.createElement('button');
+  closeBtn.id = 'btn-close-main-menu-settings';
+  closeBtn.textContent = 'BACK / CLOSE [ESC / B]';
+  closeBtn.style.cssText = `
+    margin-top: 8px; padding: 12px; font-size: 13px; font-weight: 900; font-family: inherit;
+    letter-spacing: 0.1em; color: #ffffff; background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.25); border-radius: 8px; cursor: pointer; transition: all 0.15s ease;
+  `;
+  closeBtn.onmouseenter = () => { closeBtn.style.background = 'rgba(255, 255, 255, 0.2)'; closeBtn.style.borderColor = '#ffffff'; };
+  closeBtn.onmouseleave = () => { closeBtn.style.background = 'rgba(255, 255, 255, 0.1)'; closeBtn.style.borderColor = 'rgba(255, 255, 255, 0.25)'; };
+  closeBtn.onclick = hideMainMenuSettingsModal;
+  box.appendChild(closeBtn);
+
+  mainMenuSettingsModalEl.appendChild(box);
+  rootEl.appendChild(mainMenuSettingsModalEl);
+}
+
+export function showMainMenuSettingsModal() {
+  if (mainMenuSettingsModalEl) {
+    mainMenuSettingsModalEl.style.display = 'flex';
+  }
+}
+
+export function hideMainMenuSettingsModal() {
+  if (mainMenuSettingsModalEl) {
+    mainMenuSettingsModalEl.style.display = 'none';
+  }
 }
 
 let titlePrevPads = [{ up: false, down: false, a: false, b: false, start: false, back: false }];
@@ -1972,27 +2369,36 @@ function startMenuGamepadPolling() {
       return;
     }
 
-    // 1. Controls Modal Open
+    // 0b. Main Menu Settings Modal Open
+    if (mainMenuSettingsModalEl && mainMenuSettingsModalEl.style.display === 'flex') {
+      if (e.code === 'Escape' || e.code === 'Space' || e.code === 'Enter') {
+        e.preventDefault();
+        hideMainMenuSettingsModal();
+        return;
+      }
+      return;
+    }
+
+    // 1. How To Play Modal Open
     if (controlsModalEl && controlsModalEl.style.display === 'flex') {
       if (e.code === 'ArrowLeft' || e.code === 'KeyA') {
         e.preventDefault();
-        if (controlsModalEl._setTab) controlsModalEl._setTab('gamepad');
+        controlsModalEl._cycleTab?.(-1);
         return;
       }
       if (e.code === 'ArrowRight' || e.code === 'KeyD') {
         e.preventDefault();
-        if (controlsModalEl._setTab) controlsModalEl._setTab('keyboard');
+        controlsModalEl._cycleTab?.(1);
         return;
       }
       if (e.code === 'Tab') {
         e.preventDefault();
-        const next = currentControlsTab === 'gamepad' ? 'keyboard' : 'gamepad';
-        if (controlsModalEl._setTab) controlsModalEl._setTab(next);
+        controlsModalEl._cycleTab?.(e.shiftKey ? -1 : 1);
         return;
       }
       if (e.code === 'Escape' || e.code === 'Space' || e.code === 'Enter') {
         e.preventDefault();
-        hideControlsModal();
+        hideHowToPlayModal();
         return;
       }
     }
@@ -2195,7 +2601,26 @@ function startMenuGamepadPolling() {
       if (raw[i] && raw[i].connected) pads.push(raw[i]);
     }
 
-    // 1. Controls Modal Active -> B / Start / Back closes; LB/RB/Left/Right switches tabs
+    // 0. Main Menu Settings Modal Active
+    if (mainMenuSettingsModalEl && mainMenuSettingsModalEl.style.display === 'flex') {
+      for (const pad of pads) {
+        if (!pad) continue;
+        const btnB = pad.buttons[1]?.pressed || false;
+        const btnStart = pad.buttons[9]?.pressed || false;
+        const btnBack = pad.buttons[8]?.pressed || false;
+        const p = titlePrevPads[0];
+
+        if ((btnB && !p.b) || (btnStart && !p.start) || (btnBack && !p.back)) {
+          hideMainMenuSettingsModal();
+          p.b = btnB; p.start = btnStart; p.back = btnBack;
+          return;
+        }
+        p.b = btnB; p.start = btnStart; p.back = btnBack;
+      }
+      return;
+    }
+
+    // 1. How To Play Modal Active -> B / Start / Back closes; LB/RB/Left/Right switches tabs
     if (controlsModalEl && controlsModalEl.style.display === 'flex') {
       for (const pad of pads) {
         if (!pad) continue;
@@ -2209,15 +2634,15 @@ function startMenuGamepadPolling() {
         const p = titlePrevPads[0];
 
         if ((btnLB && !p.lb) || (left && !p.left)) {
-          if (controlsModalEl._setTab) controlsModalEl._setTab('gamepad');
+          controlsModalEl._cycleTab?.(-1);
         } else if ((btnRB && !p.rb) || (right && !p.right)) {
-          if (controlsModalEl._setTab) controlsModalEl._setTab('keyboard');
+          controlsModalEl._cycleTab?.(1);
         }
 
         p.lb = btnLB; p.rb = btnRB; p.left = left; p.right = right;
 
         if ((btnB && !p.b) || (btnStart && !p.start) || (btnBack && !p.back)) {
-          hideControlsModal();
+          hideHowToPlayModal();
           p.b = btnB; p.start = btnStart; p.back = btnBack;
           return;
         }
@@ -2565,6 +2990,7 @@ export function showTitleScreen() {
   playerSetupEl.style.display = 'none';
   flyoverOverlayEl.style.display = 'none';
   hideControlsModal();
+  hideMainMenuSettingsModal();
   updateTitleFocusUI();
   startMenuGamepadPolling();
   titleBrandBall?.start();
@@ -2688,11 +3114,14 @@ export function showFlyoverOverlay(
 
 export function hideFlyoverOverlay() {
   if (flyoverOverlayEl) flyoverOverlayEl.style.display = 'none';
+  if (rootEl) rootEl.style.pointerEvents = 'none';
 }
 
 export function hideMainMenu() {
   stopSetupGamepadPolling();
   titleBrandBall?.stop();
+  hideHowToPlayModal();
+  hideMainMenuSettingsModal();
   if (rootEl) rootEl.style.pointerEvents = 'none';
   if (titleScreenEl) titleScreenEl.style.display = 'none';
   if (playerSetupEl) playerSetupEl.style.display = 'none';

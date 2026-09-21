@@ -171,6 +171,10 @@ function onKeyDown(event) {
     event.preventDefault();
     if (!event.repeat) cameraCyclesQueued[1] = true;
   }
+
+  if (event.code === 'Escape') {
+    exitGamePointerLock();
+  }
 }
 
 function onKeyUp(event) {
@@ -186,41 +190,115 @@ function onBlur() {
   accumDY = 0;
 }
 
+let isPointerLocked = false;
+let inputSurface = null;
+
+export function isInputPointerLocked() {
+  return isPointerLocked;
+}
+
+export function requestGamePointerLock() {
+  const target = inputSurface || document.body;
+  if (target && typeof target.requestPointerLock === 'function') {
+    try {
+      const promise = target.requestPointerLock();
+      if (promise && typeof promise.catch === 'function') {
+        promise.catch(() => {});
+      }
+    } catch (_) {}
+  }
+}
+
+export function exitGamePointerLock() {
+  if (document.exitPointerLock && document.pointerLockElement) {
+    document.exitPointerLock();
+  }
+}
+
 function onPointerDown(event) {
-  if (event.button !== 0) return;
-  dragging = true;
-  dragPointerId = event.pointerId;
-  accumDX = 0;
-  accumDY = 0;
-  if (event.target && event.target.setPointerCapture) {
-    event.target.setPointerCapture(event.pointerId);
+  if (event.button === 0 && !isPointerLocked) {
+    dragging = true;
+    dragPointerId = event.pointerId;
+    accumDX = 0;
+    accumDY = 0;
   }
 }
 
 function onPointerMove(event) {
+  if (isPointerLocked) return; // handled by window mousemove
   if (!dragging || event.pointerId !== dragPointerId) return;
   accumDX += event.movementX || 0;
   accumDY += event.movementY || 0;
 }
 
 function onPointerUp(event) {
-  if (event.pointerId !== dragPointerId) return;
-  dragging = false;
-  dragPointerId = -1;
+  if (event.pointerId === dragPointerId) {
+    dragging = false;
+    dragPointerId = -1;
+  }
 }
 
 export function initInputRouter(surface) {
   if (installed) return;
   installed = true;
+  inputSurface = surface || window;
+
   window.addEventListener('keydown', onKeyDown);
   window.addEventListener('keyup', onKeyUp);
   window.addEventListener('blur', onBlur);
 
+  document.addEventListener('pointerlockchange', () => {
+    isPointerLocked = Boolean(document.pointerLockElement);
+  });
+
+  // Dedicated mousemove listener for Pointer Lock movement across browsers
+  window.addEventListener('mousemove', (event) => {
+    if (isPointerLocked) {
+      accumDX += event.movementX || 0;
+      accumDY += event.movementY || 0;
+    }
+  });
+
+  // Clicking into gameplay requests pointer lock
   const target = surface || window;
   target.addEventListener('pointerdown', onPointerDown);
   target.addEventListener('pointermove', onPointerMove);
   target.addEventListener('pointerup', onPointerUp);
   target.addEventListener('pointercancel', onPointerUp);
+
+  window.addEventListener('click', (e) => {
+    if (isTextEntry(e.target)) return;
+    if (e.target.closest && (e.target.closest('#main-menu-root') || e.target.closest('#in-game-menu-container') || e.target.closest('.how-to-play-modal') || e.target.closest('.victory-overlay'))) {
+      return;
+    }
+    const isGameplay = window.__vb?.getGameState ? (window.__vb.getGameState() === 'match' || window.__vb.getGameState() === 'practice') : true;
+    if (isGameplay && !isInGameMenuOpen() && !isPointerLocked) {
+      requestGamePointerLock();
+    }
+  });
+
+  // Mouse buttons for Player 1 strike actions
+  window.addEventListener('mousedown', (event) => {
+    if (isTextEntry(event.target)) return;
+    const isGameplay = window.__vb?.getGameState ? (window.__vb.getGameState() === 'match' || window.__vb.getGameState() === 'practice') : true;
+    if (!isGameplay || isInGameMenuOpen()) return;
+
+    if (event.button === 0) {
+      // Left click = Kick / Volley
+      slots[0].volleyQueued = true;
+    } else if (event.button === 2) {
+      // Right click = Spike
+      slots[0].spikeQueued = true;
+    }
+  });
+
+  // Disable context menu so right click performs spike without browser menu
+  window.addEventListener('contextmenu', (event) => {
+    const isGameplay = window.__vb?.getGameState ? (window.__vb.getGameState() === 'match' || window.__vb.getGameState() === 'practice') : true;
+    if (isGameplay) {
+      event.preventDefault();
+    }
+  });
 
   // Gamepad hotplug notifications
   window.addEventListener('gamepadconnected', (e) => {

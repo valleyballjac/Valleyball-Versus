@@ -293,12 +293,11 @@ export function updateScoreboards(handle, probe) {
   const flashing = probe.celebrationTicks > 0;
   const phase = flashing ? Math.floor(probe.celebrationTicks / cfg.flashTicks) % 2 : 0;
 
+  const isMatchMode = probe.mode === 'match';
   const seconds = Math.floor(probe.ticksRemaining / 60);
-  const clock =
-    probe.mode === 'match'
-      ? `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`
-      : 'PRACTICE';
-  const clockText = probe.matchOver ? 'FULL TIME' : clock;
+  const clockText = !isMatchMode
+    ? 'PRACTICE'
+    : (probe.matchOver ? 'FULL TIME' : `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`);
 
   // 1. DECOUPLED MICRO-CLOCK OVERLAY UPDATE (65 KB payload shared across all 4 boards)
   // Only updates when clock string or celebration flashing changes

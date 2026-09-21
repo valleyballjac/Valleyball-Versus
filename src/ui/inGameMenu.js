@@ -494,8 +494,8 @@ export function initInGameMenu({
     const camLabels = {
       chase: '3RD PERSON CHASE',
       ball: 'BALL TRACKING CAM',
-      sports: 'SPORTS CAM (SPECTATOR)',
-      broadcast: 'BROADCAST CAM',
+      sports: 'SPORTS CAM [FULLSCREEN]',
+      broadcast: 'BROADCAST CAM [FULLSCREEN]',
       tactical: 'TACTICAL CAM',
     };
     ['chase', 'ball', 'sports', 'broadcast', 'tactical'].forEach((m) => {
@@ -1109,11 +1109,7 @@ export function isInGameMenuOpen() {
 export function updateInGameMenuBanner(match) {
   if (!isOpen || !clockBannerEl || !match) return;
   if (match.mode !== 'match') {
-    const rawSec = window.__vb?.practiceSessionSeconds;
-    const sec = typeof rawSec === 'function' ? rawSec() : (Number(rawSec) || 0);
-    const minStr = String(Math.floor(sec / 60)).padStart(2, '0');
-    const secStr = String(Math.floor(sec % 60)).padStart(2, '0');
-    clockBannerEl.textContent = `PRACTICE · DRILL TIME ${minStr}:${secStr}`;
+    clockBannerEl.textContent = 'PRACTICE SANDBOX';
     return;
   }
   const min = Math.floor(match.ticksRemaining / (60 * 60));

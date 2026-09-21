@@ -856,6 +856,7 @@ export function checkStrikeAssist(state, ragdoll, balls, tick) {
   return false;
 }
 
+
 /**
  * A read-only snapshot for the console probe and the HUD.
  *

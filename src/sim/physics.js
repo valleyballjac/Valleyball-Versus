@@ -77,6 +77,8 @@ export const GROUP_RAGDOLL = 0x0002;
 export const GROUP_MOTOR = 0x0004;
 export const GROUP_BALL = 0x0008;
 export const GROUP_RAGDOLL_UPPER = 0x0010;
+export const GROUP_RAGDOLL_P2 = 0x0020;
+export const GROUP_RAGDOLL_UPPER_P2 = 0x0040;
 
 /** Every bit that exists. The filter half is 16 bits wide. */
 const ALL_GROUPS = 0xffff;
@@ -87,59 +89,59 @@ const ALL_GROUPS = 0xffff;
  */
 export const ENVIRONMENT_MEMBERSHIP = GROUP_ENVIRONMENT;
 
-/** The arena: everything except the upper ragdoll, which passes through it. */
+/** The arena: everything except upper ragdolls, which pass through it. */
 export const ENVIRONMENT_GROUPS =
-  (GROUP_ENVIRONMENT << 16) | (ALL_GROUPS & ~GROUP_RAGDOLL_UPPER);
+  (GROUP_ENVIRONMENT << 16) | (ALL_GROUPS & ~GROUP_RAGDOLL_UPPER & ~GROUP_RAGDOLL_UPPER_P2);
 
 /**
- * TORSO AND LEGS: hit the world and the BALL; never themselves, never the
- * sphere, and now never the upper chain either — the athlete's own arm must not
- * collide with his own thigh any more than with his own shin.
+ * TORSO AND LEGS (P1): hit the world, the BALL, and P2's ragdoll bodies;
+ * never themselves, never the sphere motor, and never P1's own upper chain.
  */
 export const RAGDOLL_GROUPS =
   (GROUP_RAGDOLL << 16) |
   (ALL_GROUPS & ~GROUP_RAGDOLL & ~GROUP_RAGDOLL_UPPER & ~GROUP_MOTOR);
 
 /**
- * HEAD AND ARMS: they meet the BALL and nothing else.
- *
- * Seven capsules — head, both upper arms, both forearms, both hands — used to
- * drag across the arena trimesh for the length of every slide and dive. Each
- * one is a contact manifold against triangles the torso is already resting on,
- * so they bought no support and spent solver time snagging on triangle edges.
- * Dropping the environment from their filter removes all seven manifolds at
- * once and leaves the ball collision — which is the entire reason the hands and
- * forearms are the volley's and the spike's striking bodies — completely
- * untouched.
- *
- * BOTH DIRECTIONS, as this file requires: the environment's filter drops this
- * bit above, and this filter drops the environment's here.
- *
- * WHAT THIS DOES NOT DO, said plainly because the intent was written as
- * "collides with other athletes": it cannot. There is ONE membership bit for
- * every athlete's upper chain, so excluding self-collision necessarily excludes
- * every other athlete's arms too. Nothing regresses — ragdoll never collided
- * with ragdoll — but athlete-vs-athlete contact needs a bit per athlete, and
- * that is G5's problem, not a property of this word.
- *
- * AND THE HEAD NOW PASSES THROUGH THE FLOOR. On a knockdown the torso and legs
- * still land and hold the body up; the head is free to clip the surface. That
- * is the trade the streamlining buys, and it is visible rather than subtle.
+ * HEAD AND ARMS (P1): meet the BALL and P2's ragdoll bodies, ignoring floor and motor.
  */
 export const RAGDOLL_UPPER_GROUPS =
   (GROUP_RAGDOLL_UPPER << 16) |
   (ALL_GROUPS & ~GROUP_ENVIRONMENT & ~GROUP_RAGDOLL & ~GROUP_RAGDOLL_UPPER & ~GROUP_MOTOR);
 
 /**
- * The sphere hits the world only. Excluding the BALL is THE DESIGNER'S SPEC and
- * not an optimisation: a player who runs through the ball with their shins must
- * knock it with their shins, not with an invisible half-metre sphere centred on
- * their hips. Remove ~GROUP_BALL and the athlete becomes a bulldozer.
+ * TORSO AND LEGS (P2): hit the world, the BALL, and P1's ragdoll bodies;
+ * never themselves, never the sphere motor, and never P2's own upper chain.
+ */
+export const RAGDOLL_P2_GROUPS =
+  (GROUP_RAGDOLL_P2 << 16) |
+  (ALL_GROUPS & ~GROUP_RAGDOLL_P2 & ~GROUP_RAGDOLL_UPPER_P2 & ~GROUP_MOTOR);
+
+/**
+ * HEAD AND ARMS (P2): meet the BALL and P1's ragdoll bodies, ignoring floor and motor.
+ */
+export const RAGDOLL_UPPER_P2_GROUPS =
+  (GROUP_RAGDOLL_UPPER_P2 << 16) |
+  (ALL_GROUPS & ~GROUP_ENVIRONMENT & ~GROUP_RAGDOLL_P2 & ~GROUP_RAGDOLL_UPPER_P2 & ~GROUP_MOTOR);
+
+/**
+ * Resolves the collision interaction word for an athlete's ragdoll bone.
+ */
+export function getRagdollGroups(athleteIndex = 0, isUpper = false) {
+  if (athleteIndex === 1) {
+    return isUpper ? RAGDOLL_UPPER_P2_GROUPS : RAGDOLL_P2_GROUPS;
+  }
+  return isUpper ? RAGDOLL_UPPER_GROUPS : RAGDOLL_GROUPS;
+}
+
+/**
+ * The sphere hits the world only.
+ * Motors NEVER collide with other motors, never with balls, and never with ragdolls.
  */
 export const MOTOR_GROUPS =
-  (GROUP_MOTOR << 16) | (ALL_GROUPS & ~GROUP_RAGDOLL & ~GROUP_BALL);
+  (GROUP_MOTOR << 16) |
+  (ALL_GROUPS & ~GROUP_RAGDOLL & ~GROUP_RAGDOLL_UPPER & ~GROUP_RAGDOLL_P2 & ~GROUP_RAGDOLL_UPPER_P2 & ~GROUP_BALL & ~GROUP_MOTOR);
 
-/** The ball hits the world and the limbs, and passes through the sphere. */
+/** The ball hits the world and athlete limbs, and passes through the sphere motors. */
 export const BALL_GROUPS = (GROUP_BALL << 16) | (ALL_GROUPS & ~GROUP_MOTOR);
 
 export const ENVIRONMENT_RAY_GROUPS = (0xffff << 16) | ENVIRONMENT_MEMBERSHIP;

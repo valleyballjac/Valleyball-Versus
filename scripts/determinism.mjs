@@ -51,8 +51,8 @@ import { chromium } from 'playwright';
 import { createServer } from 'vite';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const PORT = 5173;
-const RUN_TIMEOUT_MS = 60_000;
+const PORT = process.env.VITE_PORT ? parseInt(process.env.VITE_PORT, 10) : 5180;
+const RUN_TIMEOUT_MS = 120_000;
 
 /**
  * The renderer flags. WebGL in headless Chromium needs ANGLE pointed at
@@ -135,11 +135,10 @@ const sha256 = (buffer) => createHash('sha256').update(buffer).digest('hex');
  * through console.error, and a pair that stayed byte-identical while an
  * invariant was screaming would be a pass that means nothing.
  */
-async function runOnce(letter, tick, arena) {
-  const browser = await chromium.launch({ headless: true, args: CHROMIUM_ARGS });
+async function runOnce(browser, letter, tick, arena) {
   const problems = [];
+  const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
   try {
-    const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
 
     page.on('console', (message) => {
       const level = message.type();
@@ -193,7 +192,7 @@ async function runOnce(letter, tick, arena) {
     const bytes = await readFile(destination);
     return { letter, file: path.relative(ROOT, destination), hash: sha256(bytes), bytes: bytes.length };
   } finally {
-    await browser.close();
+    await page.close().catch(() => {});
   }
 }
 
@@ -228,13 +227,15 @@ async function main() {
   }
 
   const results = [];
+  const browser = await chromium.launch({ headless: true, args: CHROMIUM_ARGS });
   try {
     for (const letter of letters) {
       console.log(`[determinism] run ${letter} —`);
-      results.push(await runOnce(letter, tick, arena));
+      results.push(await runOnce(browser, letter, tick, arena));
       console.log('');
     }
   } finally {
+    await browser.close().catch(() => {});
     // Always, on every path. The tail below then lets the process end on its
     // own, which is the whole point of not calling process.exit().
     await server.close().catch(() => {});

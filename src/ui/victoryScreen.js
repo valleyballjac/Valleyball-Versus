@@ -17,6 +17,7 @@ let activeVictoryButtons = [];
 let victoryFocusIndex = 0;
 let victoryPollHandle = null;
 let victoryPrevPad = { left: false, right: false, up: false, down: false, a: false, start: false };
+let victoryOpenTimestamp = 0;
 
 let bannerElement = null;
 let btnRowElement = null;
@@ -564,6 +565,7 @@ function startVictoryGamepadPolling(buttons) {
 
   const onKeyDown = (e) => {
     if (!isVisible) return;
+    if (Date.now() - victoryOpenTimestamp < 750) return;
     if (e.code === 'ArrowLeft' || e.code === 'KeyA' || e.code === 'KeyJ') {
       e.preventDefault();
       victoryFocusIndex = (victoryFocusIndex - 1 + activeVictoryButtons.length) % activeVictoryButtons.length;
@@ -579,7 +581,8 @@ function startVictoryGamepadPolling(buttons) {
   };
   window.addEventListener('keydown', onKeyDown);
 
-  victoryPrevPad = { left: false, right: false, up: false, down: false, a: false, start: false };
+  victoryOpenTimestamp = Date.now();
+  const perPadStates = new Map();
 
   victoryPollHandle = setInterval(() => {
     if (!isVisible || !overlayElement || overlayElement.style.display !== 'flex') {
@@ -594,27 +597,60 @@ function startVictoryGamepadPolling(buttons) {
       if (raw[i] && raw[i].connected) pads.push(raw[i]);
     }
 
+    const isLocked = Date.now() - victoryOpenTimestamp < 750;
+
     for (const pad of pads) {
       if (!pad) continue;
-      const left = (pad.buttons[14]?.pressed || (pad.axes[0] && pad.axes[0] < -0.5)) || false;
-      const right = (pad.buttons[15]?.pressed || (pad.axes[0] && pad.axes[0] > 0.5)) || false;
-      const up = (pad.buttons[12]?.pressed || (pad.axes[1] && pad.axes[1] < -0.5)) || false;
-      const down = (pad.buttons[13]?.pressed || (pad.axes[1] && pad.axes[1] > 0.5)) || false;
+      const padIdx = pad.index ?? 0;
+      let p = perPadStates.get(padIdx);
+      if (!p) {
+        p = {
+          left: (pad.buttons[14]?.pressed || (pad.axes[0] && pad.axes[0] < -0.5)) || false,
+          right: (pad.buttons[15]?.pressed || (pad.axes[0] && pad.axes[0] > 0.5)) || false,
+          up: (pad.buttons[12]?.pressed || (pad.axes[1] && pad.axes[1] < -0.5)) || false,
+          down: (pad.buttons[13]?.pressed || (pad.axes[1] && pad.axes[1] > 0.5)) || false,
+          a: pad.buttons[0]?.pressed || false,
+          start: pad.buttons[9]?.pressed || false,
+          axisCenteredX: Math.abs(pad.axes[0] || 0) < 0.2,
+          axisCenteredY: Math.abs(pad.axes[1] || 0) < 0.2,
+        };
+        perPadStates.set(padIdx, p);
+      }
+
+      const axisX = pad.axes[0] || 0;
+      const axisY = pad.axes[1] || 0;
+      const centeredX = Math.abs(axisX) < 0.2;
+      const centeredY = Math.abs(axisY) < 0.2;
+
+      const dpadLeft = pad.buttons[14]?.pressed || false;
+      const dpadRight = pad.buttons[15]?.pressed || false;
+      const dpadUp = pad.buttons[12]?.pressed || false;
+      const dpadDown = pad.buttons[13]?.pressed || false;
+
+      const stickLeft = axisX < -0.5 && p.axisCenteredX;
+      const stickRight = axisX > 0.5 && p.axisCenteredX;
+      const stickUp = axisY < -0.5 && p.axisCenteredY;
+      const stickDown = axisY > 0.5 && p.axisCenteredY;
+
+      const left = dpadLeft || stickLeft;
+      const right = dpadRight || stickRight;
+      const up = dpadUp || stickUp;
+      const down = dpadDown || stickDown;
       const btnA = pad.buttons[0]?.pressed || false;
       const btnStart = pad.buttons[9]?.pressed || false;
 
-      const p = victoryPrevPad;
-
-      if ((left && !p.left) || (up && !p.up)) {
-        victoryFocusIndex = (victoryFocusIndex - 1 + activeVictoryButtons.length) % activeVictoryButtons.length;
-        updateVictoryFocusUI();
-      }
-      if ((right && !p.right) || (down && !p.down)) {
-        victoryFocusIndex = (victoryFocusIndex + 1) % activeVictoryButtons.length;
-        updateVictoryFocusUI();
-      }
-      if ((btnA && !p.a) || (btnStart && !p.start)) {
-        activeVictoryButtons[victoryFocusIndex]?.click();
+      if (!isLocked) {
+        if ((left && !p.left) || (up && !p.up)) {
+          victoryFocusIndex = (victoryFocusIndex - 1 + activeVictoryButtons.length) % activeVictoryButtons.length;
+          updateVictoryFocusUI();
+        }
+        if ((right && !p.right) || (down && !p.down)) {
+          victoryFocusIndex = (victoryFocusIndex + 1) % activeVictoryButtons.length;
+          updateVictoryFocusUI();
+        }
+        if ((btnA && !p.a) || (btnStart && !p.start)) {
+          activeVictoryButtons[victoryFocusIndex]?.click();
+        }
       }
 
       p.left = left;
@@ -623,6 +659,10 @@ function startVictoryGamepadPolling(buttons) {
       p.down = down;
       p.a = btnA;
       p.start = btnStart;
+      if (centeredX) p.axisCenteredX = true;
+      if (Math.abs(axisX) > 0.5) p.axisCenteredX = false;
+      if (centeredY) p.axisCenteredY = true;
+      if (Math.abs(axisY) > 0.5) p.axisCenteredY = false;
     }
   }, 50);
 

@@ -72,6 +72,7 @@ export function createAthlete({
   clips = [],
 }) {
   const currentSpawn = { ...spawn };
+  const athleteIndex = id === 'p2' || id === 1 ? 1 : 0;
   let initialYaw = spawn.yaw ?? 0;
   let currentTeam = team;
   let currentVariant = variant;
@@ -134,7 +135,7 @@ export function createAthlete({
 
     restoreBindPose();
     mountMatrix(motor, targetYaw, _mount);
-    const built = buildRagdoll(characterSkeleton, characterRoot, _mount);
+    const built = buildRagdoll(characterSkeleton, characterRoot, _mount, athleteIndex);
 
     built.group = createRagdollVisuals(built.rig, {
       team: currentTeam,
@@ -456,12 +457,13 @@ export function createAthlete({
     /**
      * Post-physics mechanics & snapshots (steps 12 through 13).
      */
-    postPhysicsUpdate(tick, dt, balls) {
+    postPhysicsUpdate(tick, dt, balls, allAthletes = [], athleteIndex = 0) {
       let assistEvent = null;
       if (ragdoll) {
         applyImpacts(tracker, impactEvents, tick, dt);
         impactEvents.length = 0;
 
+        // Strikes strictly evaluate and target the ball (LAW 1 fidelity)
         const assisted = checkStrikeAssist(strikeState, ragdoll, balls, tick);
         if (assisted) {
           const kind = KIND_NAME[strikeState.lastStrikeKind] || 'volley';
@@ -514,6 +516,10 @@ export function createAthlete({
 
     get strikeState() {
       return strikeState;
+    },
+
+    get actionState() {
+      return actionState;
     },
 
     renderPose(alpha) {

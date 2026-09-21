@@ -225,6 +225,15 @@ class SoundManager {
     return TUNING.audio?.masterVolume ?? 0.8;
   }
 
+  setSfxVolume(val) {
+    TUNING.audio.sfxVolume = Math.max(0, Math.min(1, val));
+    this.updateTuning();
+  }
+
+  getSfxVolume() {
+    return TUNING.audio?.sfxVolume ?? 0.8;
+  }
+
   setMuted(muted) {
     TUNING.audio.enabled = !muted;
     this.updateTuning();
@@ -414,6 +423,21 @@ class SoundManager {
     // Distinctly softer than court floor bounces
     const norm = Math.max(0, (speed - 0.25) / 8.0);
     const volume = Math.min(0.55, Math.pow(norm, 1.1) * 0.45 + 0.08);
+    this.playSampleFromPool('body_thud', ['body_thud_1', 'body_thud_2', 'body_thud_3'], volume, 1.0, worldPos);
+  }
+
+  /**
+   * Athlete-to-Athlete Physical Impact (Tackles, Jostling, Body Bumps):
+   * Cushioned, muffled body contact. Distinctly avoids rubber ball bounce sounds.
+   */
+  playBodyCollision(intensity = 1.0, worldPos = null) {
+    if (!this.ensureRunning()) return;
+    const now = this.ctx.currentTime;
+    if (now - this.lastBodyThudTime < 0.08) return;
+    this.lastBodyThudTime = now;
+
+    const norm = Math.min(1.0, Math.max(0.15, intensity));
+    const volume = Math.min(0.65, 0.2 + norm * 0.45);
     this.playSampleFromPool('body_thud', ['body_thud_1', 'body_thud_2', 'body_thud_3'], volume, 1.0, worldPos);
   }
 

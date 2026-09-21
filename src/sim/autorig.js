@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { TUNING } from '../config/tuning.js';
 import { Interpolated } from '../core/Interpolated.js';
-import { RAPIER, getWorld, RAGDOLL_GROUPS, RAGDOLL_UPPER_GROUPS, MOTOR_GROUPS } from './physics.js';
+import { RAPIER, getWorld, RAGDOLL_GROUPS, RAGDOLL_UPPER_GROUPS, MOTOR_GROUPS, getRagdollGroups } from './physics.js';
 
 /**
  * The Auto-Rigger.
@@ -55,11 +55,11 @@ export const BONE_MAP = [
 
   { key: 'upperArmL', bone: 'mixamorig:LeftArm',      end: 'mixamorig:LeftForeArm',        parent: 'chest',     shape: 'capsule', group: 'limb',      joint: 'spherical', axis: null,       limits: null },
   { key: 'foreArmL',  bone: 'mixamorig:LeftForeArm',  end: 'mixamorig:LeftHand',           parent: 'upperArmL', shape: 'capsule', group: 'limb',      joint: 'revolute',  axis: [0, -1, 0], limits: 'elbow' },
-  { key: 'handL',     bone: 'mixamorig:LeftHand',     end: 'mixamorig:LeftHandMiddle1',    parent: 'foreArmL',  shape: 'capsule', group: 'extremity', joint: 'universal', axis: [1, 0, 0],  limits: null },
+  { key: 'handL',     bone: 'mixamorig:LeftHand',     end: 'mixamorig:LeftHandMiddle1',    parent: 'foreArmL',  shape: 'capsule', group: 'extremity', joint: 'revolute',  axis: [0, 0, 1],  limits: 'wrist' },
 
   { key: 'upperArmR', bone: 'mixamorig:RightArm',     end: 'mixamorig:RightForeArm',       parent: 'chest',     shape: 'capsule', group: 'limb',      joint: 'spherical', axis: null,       limits: null },
   { key: 'foreArmR',  bone: 'mixamorig:RightForeArm', end: 'mixamorig:RightHand',          parent: 'upperArmR', shape: 'capsule', group: 'limb',      joint: 'revolute',  axis: [0, 1, 0],  limits: 'elbow' },
-  { key: 'handR',     bone: 'mixamorig:RightHand',    end: 'mixamorig:RightHandMiddle1',   parent: 'foreArmR',  shape: 'capsule', group: 'extremity', joint: 'universal', axis: [-1, 0, 0], limits: null },
+  { key: 'handR',     bone: 'mixamorig:RightHand',    end: 'mixamorig:RightHandMiddle1',   parent: 'foreArmR',  shape: 'capsule', group: 'extremity', joint: 'revolute',  axis: [0, 0, 1],  limits: 'wrist' },
 
   { key: 'thighL',    bone: 'mixamorig:LeftUpLeg',    end: 'mixamorig:LeftLeg',            parent: 'pelvis',    shape: 'capsule', group: 'limb',      joint: 'spherical', axis: null,       limits: null },
   { key: 'calfL',     bone: 'mixamorig:LeftLeg',      end: 'mixamorig:LeftFoot',           parent: 'thighL',    shape: 'capsule', group: 'limb',      joint: 'revolute',  axis: [1, 0, 0],  limits: 'knee' },
@@ -430,7 +430,7 @@ function segmentOrientation(direction, out) {
  * @returns {{ body: object, collider: object, length: number, radius: number,
  *             halfHeight: number, shape: string, bindBodyWorld: THREE.Matrix4 }}
  */
-function buildSegment(entry, byName, characterHeight, spawn) {
+function buildSegment(entry, byName, characterHeight, spawn, athleteIndex = 0) {
   const world = getWorld();
 
   resolveBone(byName, entry.bone).getWorldPosition(_start);
@@ -513,7 +513,7 @@ function buildSegment(entry, byName, characterHeight, spawn) {
     entry.key.startsWith('upperArm') ||
     entry.key.startsWith('foreArm') ||
     entry.key.startsWith('hand');
-  desc.setCollisionGroups(isUpper ? RAGDOLL_UPPER_GROUPS : RAGDOLL_GROUPS);
+  desc.setCollisionGroups(getRagdollGroups(athleteIndex, isUpper));
   // Explicit rather than inherited. These ran on Rapier's defaults from Task 3
   // until now; see the TUNING comments for why restitution was never the cause
   // of the landing bounce and friction was the cause of the skid.
@@ -647,7 +647,7 @@ function worldDirToBodyLocal(body, dir, out) {
  * @returns {{ rig: Map<string, object>, joints: object[], characterHeight: number,
  *             order: string[] }}
  */
-export function buildRagdoll(skeleton, characterRoot, spawnTransform) {
+export function buildRagdoll(skeleton, characterRoot, spawnTransform, athleteIndex = 0) {
   const byName = auditSkeleton(skeleton);
   const characterHeight = measureCharacterHeight(skeleton, byName);
 
@@ -666,7 +666,7 @@ export function buildRagdoll(skeleton, characterRoot, spawnTransform) {
   const summary = [];
 
   for (const entry of BONE_MAP) {
-    const segment = buildSegment(entry, byName, characterHeight, spawn);
+    const segment = buildSegment(entry, byName, characterHeight, spawn, athleteIndex);
     const bone = resolveBone(byName, entry.bone);
 
     rig.set(entry.key, {

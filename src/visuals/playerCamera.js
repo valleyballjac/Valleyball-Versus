@@ -64,11 +64,19 @@ export class PlayerCamera {
 
   /**
    * Cycles this player's camera mode.
+   * In splitscreen mode, 'sports' and 'broadcast' are excluded as they require fullscreen framing.
+   * @param {boolean} isSplitscreen
    */
-  cycleMode() {
-    const modes = ['chase', 'ball', 'sports', 'broadcast', 'tactical'];
+  cycleMode(isSplitscreen = false) {
+    const modes = isSplitscreen
+      ? ['chase', 'ball', 'tactical']
+      : ['chase', 'ball', 'sports', 'broadcast', 'tactical'];
     const current = modes.indexOf(this.mode);
-    this.mode = modes[(current + 1) % modes.length];
+    if (current === -1) {
+      this.mode = 'chase';
+    } else {
+      this.mode = modes[(current + 1) % modes.length];
+    }
     console.log(`[playerCamera P${this.playerIndex + 1}] mode -> ${this.mode}`);
     return this.mode;
   }
@@ -76,8 +84,12 @@ export class PlayerCamera {
   /**
    * Sets this player's camera mode directly.
    * @param {'chase' | 'ball' | 'sports' | 'broadcast' | 'tactical'} newMode
+   * @param {boolean} isSplitscreen
    */
-  setMode(newMode) {
+  setMode(newMode, isSplitscreen = false) {
+    if (isSplitscreen && (newMode === 'sports' || newMode === 'broadcast')) {
+      newMode = 'chase';
+    }
     const modes = ['chase', 'ball', 'sports', 'broadcast', 'tactical'];
     if (modes.includes(newMode)) {
       this.mode = newMode;
@@ -103,7 +115,8 @@ export class PlayerCamera {
    * Performs Rapier raycast against arena environment geometry to avoid wall/floor clipping.
    */
   _applySpringArm(world, tuning, desiredDist, frameDelta) {
-    if (!this._smoothedTargetInit) {
+    const isReset = !this._smoothedTargetInit;
+    if (isReset) {
       this._smoothedTarget.copy(this._target);
       this._smoothedTargetInit = true;
     } else {
@@ -137,7 +150,9 @@ export class PlayerCamera {
       : desiredDist;
 
     // Smooth contraction and extension to eliminate single-frame raycast chatter
-    if (obstructed < this.currentDistance) {
+    if (isReset) {
+      this.currentDistance = obstructed;
+    } else if (obstructed < this.currentDistance) {
       const snapThreshold = 1.5;
       if (this.currentDistance - obstructed > snapThreshold) {
         // Large sudden cut (e.g. turning corner): snap closer immediately
@@ -194,10 +209,15 @@ export class PlayerCamera {
     if (this.mode === 'broadcast') {
       const tv = tuning.broadcast;
       const playerZ = targetMesh.position.z;
+      const lookY = inputSlot ? inputSlot.lookY : 0;
+      const mouse = this.playerIndex === 0 ? mouseDeltas : { dx: 0, dy: 0 };
+      this.manualPitchOffset += (lookY * tuning.orbitSpeed * frameDelta + mouse.dy / tuning.mousePixelsPerRadian) * 6.0;
+      this.manualPitchOffset *= Math.exp(-4.0 * frameDelta);
+
       const leadZ = ballPos
         ? playerZ * (1 - tv.trackZWeight) + ballPos.z * tv.trackZWeight
         : playerZ;
-      const clampedZ = Math.min(tv.maxZ, Math.max(tv.minZ, leadZ));
+      const clampedZ = Math.min(tv.maxZ, Math.max(tv.minZ, leadZ + this.manualPitchOffset));
 
       this._desiredPos.set(tv.sideX, tv.heightY, clampedZ);
       this.camera.position.lerp(
@@ -212,7 +232,7 @@ export class PlayerCamera {
           targetMesh.position.y * 0.7 +
           Math.min(3.0, ballPos.y) * 0.3 +
           0.5;
-        this._target.z = targetMesh.position.z * 0.5 + ballPos.z * 0.5;
+        this._target.z = targetMesh.position.z * 0.5 + ballPos.z * 0.5 + this.manualPitchOffset;
       }
       this._target.y = Math.max(1.0, this._target.y);
       this.camera.lookAt(this._target);
@@ -223,14 +243,23 @@ export class PlayerCamera {
     if (this.mode === 'tactical') {
       const top = tuning.tactical;
       const p = targetMesh.position;
-      this._desiredPos.set(p.x * 0.4, p.y + top.heightY, p.z + top.distanceZ);
+      const lookX = inputSlot ? inputSlot.lookX : 0;
+      const lookY = inputSlot ? inputSlot.lookY : 0;
+      const mouse = this.playerIndex === 0 ? mouseDeltas : { dx: 0, dy: 0 };
+      this.manualAzimuthOffset -= (lookX * tuning.orbitSpeed * frameDelta + mouse.dx / tuning.mousePixelsPerRadian) * 4.0;
+      this.manualPitchOffset += (lookY * tuning.orbitSpeed * frameDelta + mouse.dy / tuning.mousePixelsPerRadian) * 4.0;
+      this.manualAzimuthOffset *= Math.exp(-4.0 * frameDelta);
+      this.manualPitchOffset *= Math.exp(-4.0 * frameDelta);
+
+      this._desiredPos.set(p.x * 0.4 + this.manualAzimuthOffset, p.y + top.heightY, p.z + top.distanceZ + this.manualPitchOffset);
       this.camera.position.lerp(
         this._desiredPos,
         1 - Math.exp(-top.smoothEase * frameDelta),
       );
 
       this._target.copy(p);
-      this._target.z += top.lookAheadZ;
+      this._target.x += this.manualAzimuthOffset * 0.5;
+      this._target.z += top.lookAheadZ + this.manualPitchOffset * 0.5;
       this._target.y = 1.0;
       this.camera.lookAt(this._target);
       return;
