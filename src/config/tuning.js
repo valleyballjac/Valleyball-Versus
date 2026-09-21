@@ -1075,8 +1075,8 @@ const DEFAULTS = {
       windowOpen: 12, sweetTick: 20, windowClose: 30,
       climbRate: 1.93,        // phase/s; 0.900 in 28 ticks = 1x
       completeRate: 1.93,     // the follow-through, also 1x
-      launchSpeed: 14.0,      // m/s on a perfect contact, mass-normalised
-      elevationDeg: 55,       // above horizontal
+      launchSpeed: 24.5,      // m/s on a perfect contact, mass-normalised (tuned for 10m hoop arc)
+      elevationDeg: 46,       // above horizontal — allows full-court valley arcs into 10m hoop
       bodies: ['handL', 'handR', 'foreArmL', 'foreArmR'],
     },
     spike: {
@@ -1118,9 +1118,9 @@ const DEFAULTS = {
       windowOpen: 8, sweetTick: 14, windowClose: 17,
       climbRate: 1.71,        // phase/s; 0.400 in 14 ticks = 1x
       completeRate: 1.71,
-      launchSpeed: 10.0,      // m/s — a kick lofts a ball back up to hand height
-                              // for the next touch. It does not spike it.
-      elevationDeg: 50,       // above horizontal
+      launchSpeed: 14.5,      // m/s — a kick lofts a ball back up to hand height
+                              // for the next touch and long-court passes.
+      elevationDeg: 55,       // above horizontal
       // THE LEGS. `calf` and `foot` are the rig keys that exist; there is no
       // shin in BONE_MAP, and naming one would silently never match.
       bodies: ['footL', 'footR', 'calfL', 'calfR'],
@@ -1547,6 +1547,88 @@ const DEFAULTS = {
     spatialAudio: true,
     minBounceForce: 2.0, // N: ignore micro-contacts/resting jitters
     strikeSweetBonus: false,
+  },
+
+  // ═══ AI OPPONENT ═══
+  // Bot controller parameters. Difficulty presets scale execution quality only;
+  // all tiers have access to all moves.
+  ai: {
+    /** 'easy' | 'medium' | 'hard'. Read by botController.js at runtime. */
+    difficulty: 'medium',
+
+    // Per-difficulty parameter sets. All timing in ticks (60 Hz).
+    easy: {
+      reactionDelayTicks: 12,       // ~200 ms perception lag
+      aimAccuracy: 0.50,            // reasonable shot execution
+      interceptLeadFactor: 0.65,    // gentle trajectory prediction
+      strikeTimingJitter: 5,        // ± ticks of timing error on strikes
+      sprintUsage: 0.5,             // conservative sprint usage
+      diveAccuracy: 0.25,           // rarely attempts last-second saves
+      diveCooldownTicks: 300,       // 5.0 s cooldown between dives
+      spikeAccuracy: 0.4,           // occasionally spikes
+      defensiveAwareness: 0.35,     // threat level required to switch to DEFEND
+      strategyUpdateInterval: 12,   // ticks between strategy re-evaluations
+      positionOffset: 0.45,         // m behind ball relative to goal direction (tight pocket)
+      strikeRange: 2.2,             // m — max distance to attempt a strike
+      strikeHeightMin: -0.5,        // m below pelvis — min ball height for STRIKE strategy
+      strikeHeightMax: 3.2,         // m above pelvis — max ball height for STRIKE strategy
+      chaseToPositionDist: 10.0,    // m — switch from CHASE to POSITION below this
+      defenseDepth: 0.4,            // 0→ball, 1→goal — where to position when defending
+      arriveRadiusChase: 1.2,       // m — steering arrive radius for CHASE
+      arriveRadiusPosition: 0.7,    // m — steering arrive radius for POSITION
+      arriveRadiusStrike: 0.3,      // m — steering arrive radius for STRIKE
+      jumpHeightThreshold: 2.0,     // m above pelvis — trigger jump to reach ball
+      diveDistMin: 2.0,             // m — min distance to consider diving
+      diveDistMax: 4.2,             // m — max distance for dive
+    },
+    medium: {
+      reactionDelayTicks: 6,        // ~100 ms of perception lag
+      aimAccuracy: 0.80,            // solid, consistent shot placement
+      interceptLeadFactor: 0.85,    // strong trajectory prediction
+      strikeTimingJitter: 2,        // ± 2 ticks of timing jitter
+      sprintUsage: 0.80,            // athletic sprint frequency
+      diveAccuracy: 0.55,           // selective emergency saves
+      diveCooldownTicks: 210,       // 3.5 s cooldown between dives
+      spikeAccuracy: 0.70,          // confident overhead spikes
+      defensiveAwareness: 0.65,     // attentive defensive positioning
+      strategyUpdateInterval: 8,
+      positionOffset: 0.35,
+      strikeRange: 2.0,
+      strikeHeightMin: -0.5,
+      strikeHeightMax: 3.2,
+      chaseToPositionDist: 11.0,
+      defenseDepth: 0.45,
+      arriveRadiusChase: 1.0,
+      arriveRadiusPosition: 0.6,
+      arriveRadiusStrike: 0.25,
+      jumpHeightThreshold: 1.8,
+      diveDistMin: 2.0,
+      diveDistMax: 4.5,
+    },
+    hard: {
+      reactionDelayTicks: 1,        // Near-instantaneous perception
+      aimAccuracy: 0.96,            // Surgical, clean goal-bound strikes
+      interceptLeadFactor: 1.0,     // Exact parabolic pursuit prediction
+      strikeTimingJitter: 0,        // 0 ticks jitter — sweet spot precision
+      sprintUsage: 0.95,            // Relentless athletic sprints
+      diveAccuracy: 0.85,           // Clutch ground saves on own half
+      diveCooldownTicks: 180,       // 3.0 s cooldown between dives
+      spikeAccuracy: 0.90,          // Dominant downward spikes & jump-spikes
+      defensiveAwareness: 0.90,     // Active hoop lane blocking
+      strategyUpdateInterval: 6,    // Rapid tactical adaptation
+      positionOffset: 0.30,         // Clean tight 0.3m strike pocket directly behind ball
+      strikeRange: 2.0,
+      strikeHeightMin: -0.5,
+      strikeHeightMax: 3.2,
+      chaseToPositionDist: 12.0,
+      defenseDepth: 0.5,
+      arriveRadiusChase: 0.9,
+      arriveRadiusPosition: 0.5,
+      arriveRadiusStrike: 0.2,
+      jumpHeightThreshold: 1.7,
+      diveDistMin: 2.0,
+      diveDistMax: 4.8,
+    },
   },
 
   render: {

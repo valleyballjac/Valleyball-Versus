@@ -141,24 +141,30 @@ function isTextEntry(target) {
   return tag === 'input' || tag === 'textarea' || tag === 'select' || target.isContentEditable;
 }
 
+let currentBotSlots = [];
+
 function onKeyDown(event) {
   if (isTextEntry(event.target)) return;
   heldKeys.add(event.code);
 
   if (!event.repeat) {
-    // P1 edge keys
-    if (event.code === P1_KEYS.jump) slots[0].jumpQueued = true;
-    if (P1_KEYS.dive.includes(event.code)) slots[0].diveQueued = true;
-    if (P1_KEYS.volley.includes(event.code)) slots[0].volleyQueued = true;
-    if (P1_KEYS.spike.includes(event.code)) slots[0].spikeQueued = true;
-    if (P1_KEYS.ballReset.includes(event.code)) slots[0].ballResetQueued = true;
+    // P1 edge keys (only if P1 is not a bot)
+    if (!currentBotSlots.includes(0)) {
+      if (event.code === P1_KEYS.jump) slots[0].jumpQueued = true;
+      if (P1_KEYS.dive.includes(event.code)) slots[0].diveQueued = true;
+      if (P1_KEYS.volley.includes(event.code)) slots[0].volleyQueued = true;
+      if (P1_KEYS.spike.includes(event.code)) slots[0].spikeQueued = true;
+      if (P1_KEYS.ballReset.includes(event.code)) slots[0].ballResetQueued = true;
+    }
 
-    // P2 edge keys
-    if (event.code === P2_KEYS.jump) slots[1].jumpQueued = true;
-    if (P2_KEYS.dive.includes(event.code)) slots[1].diveQueued = true;
-    if (P2_KEYS.volley.includes(event.code)) slots[1].volleyQueued = true;
-    if (P2_KEYS.spike.includes(event.code)) slots[1].spikeQueued = true;
-    if (P2_KEYS.ballReset.includes(event.code)) slots[1].ballResetQueued = true;
+    // P2 edge keys (only if P2 is not a bot)
+    if (!currentBotSlots.includes(1)) {
+      if (event.code === P2_KEYS.jump) slots[1].jumpQueued = true;
+      if (P2_KEYS.dive.includes(event.code)) slots[1].diveQueued = true;
+      if (P2_KEYS.volley.includes(event.code)) slots[1].volleyQueued = true;
+      if (P2_KEYS.spike.includes(event.code)) slots[1].spikeQueued = true;
+      if (P2_KEYS.ballReset.includes(event.code)) slots[1].ballResetQueued = true;
+    }
   }
 
   // Tab cycles P1 camera
@@ -380,8 +386,10 @@ function getCamVectors(cam, slotIdx = 0) {
  * @param {THREE.Camera|THREE.Camera[]} cameras Single camera or array [cam1, cam2]
  * @param {number} athleteCount
  * @param {'practice' | 'match'} mode
+ * @param {number[]} botSlots  slot indices controlled by bots (skip device polling)
  */
-export function sampleAllInputs(cameras, athleteCount = 2, mode = 'match') {
+export function sampleAllInputs(cameras, athleteCount = 2, mode = 'match', botSlots = []) {
+  currentBotSlots = botSlots;
   // Hand over accumulated mouse deltas
   _mouseDX = accumDX;
   _mouseDY = accumDY;
@@ -403,17 +411,20 @@ export function sampleAllInputs(cameras, athleteCount = 2, mode = 'match') {
   let p2Pad = null;
 
   if (mode === 'practice' || athleteCount === 1) {
-    p1Pad = pads[0] || null;
-  } else if (pads.length >= 2) {
-    p1Pad = pads[0];
-    p2Pad = pads[1];
-  } else if (pads.length === 1) {
-    p1Pad = pads[0]; // P1 gets Gamepad 1 (plus WASD)
-    p2Pad = null;    // P2 gets Secondary Keyboard (IJKL)
+    p1Pad = !botSlots.includes(0) ? pads[0] || null : null;
+  } else {
+    // Route gamepads to humans in order
+    let padIdx = 0;
+    if (!botSlots.includes(0) && padIdx < pads.length) {
+      p1Pad = pads[padIdx++];
+    }
+    if (!botSlots.includes(1) && padIdx < pads.length) {
+      p2Pad = pads[padIdx++];
+    }
   }
 
   // --- SLOT 0 (P1) ---
-  {
+  if (!botSlots.includes(0)) {
     const slot = slots[0];
     let x = (heldKeys.has(P1_KEYS.moveRight) ? 1 : 0) - (heldKeys.has(P1_KEYS.moveLeft) ? 1 : 0);
     let z = (heldKeys.has(P1_KEYS.moveUp) ? 1 : 0) - (heldKeys.has(P1_KEYS.moveDown) ? 1 : 0);
@@ -511,7 +522,7 @@ export function sampleAllInputs(cameras, athleteCount = 2, mode = 'match') {
   }
 
   // --- SLOT 1 (P2) ---
-  if (athleteCount > 1) {
+  if (athleteCount > 1 && !botSlots.includes(1)) {
     const slot = slots[1];
     let x = (heldKeys.has(P2_KEYS.moveRight) ? 1 : 0) - (heldKeys.has(P2_KEYS.moveLeft) ? 1 : 0);
     let z = (heldKeys.has(P2_KEYS.moveUp) ? 1 : 0) - (heldKeys.has(P2_KEYS.moveDown) ? 1 : 0);
@@ -658,5 +669,34 @@ export function consumeMenuToggle() {
   const q = menuToggleQueued;
   menuToggleQueued = false;
   return q;
+}
+
+// ═══ BOT INJECTION API ═══
+// Used by src/ai/botController.js to drive synthetic input into a slot.
+
+/**
+ * Returns the raw input slot for bot controllers to write into directly.
+ * The bot writes moveWorld, moveX, moveZ, sprintHeld, and action queues.
+ *
+ * @param {number} index slot index (0-3)
+ * @returns {object} the input slot
+ */
+export function getBotSlot(index) {
+  return slots[index] || slots[0];
+}
+
+/**
+ * Queues a discrete action trigger for a bot-controlled slot.
+ *
+ * @param {number} index slot index
+ * @param {string} action 'jump' | 'dive' | 'volley' | 'spike' | 'ballReset'
+ */
+export function queueBotAction(index, action) {
+  const slot = slots[index] || slots[0];
+  if (action === 'jump') slot.jumpQueued = true;
+  if (action === 'dive') slot.diveQueued = true;
+  if (action === 'volley') slot.volleyQueued = true;
+  if (action === 'spike') slot.spikeQueued = true;
+  if (action === 'ballReset') slot.ballResetQueued = true;
 }
 

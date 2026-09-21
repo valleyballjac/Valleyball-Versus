@@ -1,9 +1,9 @@
 {
   "name": "valleyball",
   "private": true,
-  "version": "0.2.1",
+  "version": "0.2.2",
   "type": "module",
-  "description": "Valleyball — Iteration 2: deterministic fixed-step foundation plus the Rapier sphere motor and bowl arena.",
+  "description": "Valleyball — Physics volleyball simulation featuring deterministic ragdoll physics and AI opponents.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -11,7 +11,9 @@
     "deploy": "gh-pages -d dist",
     "package:itch": "node scripts/package_itch.mjs",
     "determinism": "node scripts/determinism.mjs",
-    "scenario": "node scripts/scenario.mjs"
+    "scenario": "node scripts/scenario.mjs",
+    "eval:match": "node scripts/evalMatch.mjs",
+    "train:bot": "node scripts/trainBot.mjs"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "0.19.3",

@@ -281,6 +281,9 @@ function quality(errorTicks) {
  * @returns {number} world yaw in radians
  */
 function aimYaw(input, ghost) {
+  if (input && input.hasAim) {
+    return wrapAngle(input.aimYaw);
+  }
   const facing = ghost ? ghost.yaw : input.cameraYaw;
   const magnitude = Math.min(1, Math.hypot(input.moveWorld.x, input.moveWorld.z));
   if (magnitude <= 0) return facing;
@@ -730,8 +733,14 @@ export function resolveStrikeContact(state, ball, rigKey, force, tick, isAssist 
   let effectiveYaw = state.lastAimYaw;
   if (TUNING.strike.aimMagnetism > 0) {
     const ballPos = ball.body.translation();
-    const targetZ = ballPos.z > 0 ? -40.0 : 40.0;
-    const targetYaw = Math.atan2(0 - ballPos.x, targetZ - ballPos.z);
+    const targetZ = Math.cos(effectiveYaw) < 0 ? -40.0 : 40.0;
+    // Hoop aperture disc is centered at (0, 10, targetZ). Aim toward X = 0 so
+    // crossing occurs inside the hoop disc.
+    let targetX = 0.0;
+    if (Math.abs(ballPos.x) < 0.1) {
+      targetX = ballPos.x >= 0 ? -0.25 : 0.25;
+    }
+    const targetYaw = Math.atan2(targetX - ballPos.x, targetZ - ballPos.z);
     effectiveYaw = wrapAngle(
       effectiveYaw + wrapAngle(targetYaw - effectiveYaw) * TUNING.strike.aimMagnetism,
     );

@@ -461,5 +461,7 @@ export function runActions({
     diveMix,
     slidePhase,
     divePhase,
+    /** The tick on which the most recent dive was launched. */
+    lastDiveTick: state.lastDiveTick,
   };
 }
