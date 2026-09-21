@@ -1380,7 +1380,7 @@ const DEFAULTS = {
     // 'practice' (all three balls, sandbox, no clock) | 'match' (clock running)
     mode: 'practice',
     durationSeconds: 300,
-    countdownSeconds: 5,
+    countdownSeconds: 3,
     ballDropHeightY: 10.0,
     pitchBoundsX: 16.0,
     pitchBoundsZ: 30.0,

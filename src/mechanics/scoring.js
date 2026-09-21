@@ -127,7 +127,9 @@ export function updateScoring(state, balls, tick) {
   // same tick gets its full span rather than one tick less.
   if (state.celebrationTicks > 0) state.celebrationTicks -= 1;
 
-  state.mode = TUNING.match?.mode || state.mode;
+  if (!state.mode) {
+    state.mode = TUNING.match?.mode || 'match';
+  }
 
   if (state.mode === 'match' && !state.matchOver) {
     if (state.isCountingDown) {

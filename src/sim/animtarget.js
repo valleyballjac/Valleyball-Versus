@@ -341,7 +341,7 @@ export function createAnimTarget(characterRoot, clips, rig) {
     /** The four override shares, written by updateAnimTarget and read by the
      *  HUD and the weight audit. Never written anywhere else. */
     shares: { stand: 0, action: 0, air: 0, loco: 0 },
-    standUpProgress: 0,
+    standUpProgress: 1,
     faceUpMix: 0,
     yaw: 0,
     targetYaw: 0,
@@ -876,7 +876,7 @@ function advanceStandUp(state, rig, floorY, dt) {
   if (!pelvis) {
     state.standUpNeed = 0;
     state.pelvisDownness = 0;
-    state.standUpProgress = 0;
+    state.standUpProgress = 1;
     return;
   }
 
@@ -1960,6 +1960,8 @@ export function weightAudit(state) {
 export function resetAnimTarget(state) {
   if (!state) return;
   state.seeded = false;
+  state.standUpProgress = 1;
+  state.standUpNeed = 0;
   for (const target of state.targets.values()) {
     target.vel.set(0, 0, 0);
     target.angvel.set(0, 0, 0);

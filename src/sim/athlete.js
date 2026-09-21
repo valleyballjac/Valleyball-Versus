@@ -169,6 +169,9 @@ export function createAthlete({
     if (!initialGrounded) {
       animTarget.airborneMix = 1.0;
       animTarget.jumpPhase = TUNING.jump.apexHold;
+    } else {
+      animTarget.airborneMix = 0.0;
+      animTarget.jumpPhase = 0;
     }
 
     updateAnimTarget(

@@ -2454,6 +2454,8 @@ function skipFlyover() {
   hideFlyoverOverlay();
 
   if (matchState) {
+    matchState.mode = 'match';
+    TUNING.match.mode = 'match';
     matchState.isCountingDown = true;
     matchState.countdownTicksRemaining = TUNING.match.countdownSeconds * TUNING.loop.fixedHz;
   }
@@ -2994,12 +2996,12 @@ function handleEnterSetup(mode = 'match') {
         for (const item of athletes[1].ragdoll.rig.values()) item.body.setEnabled(false);
       }
       setupAthleteYaw[0] = -Math.PI * 0.35;
-      athletes[0].teleportTo({ x: 1.45, y: 6.0, z: 0.2 }, setupAthleteYaw[0]);
+      athletes[0].teleportTo({ x: 1.45, y: 0.50, z: 0.2 }, setupAthleteYaw[0]);
       if (athletes[0]?.ragdoll?.group) athletes[0].ragdoll.group.visible = true;
       if (athletes[1]?.ragdoll?.group) athletes[1].ragdoll.group.visible = false;
     }
   } else {
-    // Drop athletes in from above camera at center circle flanking the menu, facing each other
+    // Stage athletes on court at center circle flanking the menu, facing each other
     if (athletes.length >= 2) {
       if (athletes[1]?.motor?.body) athletes[1].motor.body.setEnabled(true);
       if (athletes[1]?.ragdoll?.rig) {
@@ -3007,8 +3009,8 @@ function handleEnterSetup(mode = 'match') {
       }
       setupAthleteYaw[0] = Math.PI * 0.40;
       setupAthleteYaw[1] = -Math.PI * 0.40;
-      athletes[0].teleportTo({ x: -3.2, y: 6.0, z: 0.0 }, setupAthleteYaw[0]);
-      athletes[1].teleportTo({ x: 3.2, y: 6.0, z: 0.0 }, setupAthleteYaw[1]);
+      athletes[0].teleportTo({ x: -3.2, y: 0.50, z: 0.0 }, setupAthleteYaw[0]);
+      athletes[1].teleportTo({ x: 3.2, y: 0.50, z: 0.0 }, setupAthleteYaw[1]);
       if (athletes[0]?.ragdoll?.group) athletes[0].ragdoll.group.visible = true;
       if (athletes[1]?.ragdoll?.group) athletes[1].ragdoll.group.visible = true;
     }
