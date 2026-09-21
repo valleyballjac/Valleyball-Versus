@@ -155,8 +155,7 @@ async function main() {
         const bd = result.breakdowns[0]?.breakdown;
         console.log(
           `  [${String(i).padStart(2)}] fitness: ${result.avgFitness.toFixed(1).padStart(7)} ` +
-          `(goals: ${bd?.goals ?? '?'}, conceded: ${bd?.conceded ?? '?'}, ` +
-          `proximity: ${bd?.proximity?.toFixed(1) ?? '?'}, strikes: ${bd?.strikes?.toFixed(1) ?? '?'})`,
+          `(goals: ${bd?.goals ?? 0}, hits: ${bd?.strikesLanded ?? 0}, onTarget: ${bd?.onTarget ?? 0}, whiffs: ${bd?.whiffs ?? 0})`,
         );
       }
     }

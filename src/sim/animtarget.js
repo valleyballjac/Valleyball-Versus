@@ -1430,24 +1430,24 @@ export function advanceMountYaw(state, cameraYaw, dt) {
   // to press Tab during a capture. It is one more boolean in the same one-step-
   // stale channel that already carries slideMix.
   let currentEase = TUNING.facing.ease;
-  if (state.facingFollowsCamera) {
+  if (state.hasAim) {
+    // DIRECT AIM LOCK (Twin-stick right stick aiming or AI synthetic aim)
+    state.targetYaw = wrapAngle(state.aimYaw);
+    state.momentumYaw = state.targetYaw;
+    currentEase = 24.0; // Crisp twin-stick / AI responsiveness
+  } else if (state.facingFollowsCamera) {
     state.targetYaw = wrapAngle(
       cameraYaw + shortestAngleDelta(cameraYaw, state.momentumYaw) * travelMix,
     );
   } else {
     // FIXED CAMERAS (Tactical, Broadcast, Sports):
-    // 1. Right-stick direct aiming
-    if (state.hasAim) {
-      state.targetYaw = wrapAngle(state.aimYaw);
-      state.momentumYaw = state.targetYaw;
-      currentEase = 24.0; // Crisp twin-stick responsiveness
-    } else if (state.steerInput > 0.05 && (Math.abs(state.moveWorldX) > 1e-4 || Math.abs(state.moveWorldZ) > 1e-4)) {
-      // 2. Immediate left-stick movement direction without velocity lag
+    if (state.steerInput > 0.05 && (Math.abs(state.moveWorldX) > 1e-4 || Math.abs(state.moveWorldZ) > 1e-4)) {
+      // Immediate left-stick movement direction without velocity lag
       state.targetYaw = wrapAngle(Math.atan2(state.moveWorldX, state.moveWorldZ));
       state.momentumYaw = state.targetYaw;
       currentEase = 18.0; // Agile turning response
     } else {
-      // 3. Maintain last facing
+      // Maintain last facing
       state.targetYaw = wrapAngle(state.momentumYaw);
     }
   }

@@ -430,6 +430,13 @@ const playerCameras = [
 const camera = playerCameras[0].camera;
 const cameraRig = playerCameras[0]; // backward compatibility for debug capture & telemetry
 
+const spectatorCamera = new THREE.PerspectiveCamera(
+  TUNING.camera.fov,
+  window.innerWidth / window.innerHeight,
+  TUNING.camera.near,
+  TUNING.camera.far,
+);
+
 const cinematicCamera = new CinematicCamera();
 let gameState = 'menu'; // 'menu' | 'flyover' | 'match' | 'practice'
 
@@ -451,6 +458,8 @@ function applyCameraTuning() {
     pc.camera.fov = TUNING.camera.fov;
     pc.camera.updateProjectionMatrix();
   }
+  spectatorCamera.fov = TUNING.camera.fov;
+  spectatorCamera.updateProjectionMatrix();
   cinematicCamera.camera.fov = TUNING.camera.fov;
   cinematicCamera.camera.updateProjectionMatrix();
 }
@@ -477,6 +486,9 @@ function applyViewportSize() {
 
   cinematicCamera.camera.aspect = width / height;
   cinematicCamera.camera.updateProjectionMatrix();
+
+  spectatorCamera.aspect = width / height;
+  spectatorCamera.updateProjectionMatrix();
 
   const p1CamMode = playerCameras[0]?.mode;
   const p2CamMode = playerCameras[1]?.mode;
@@ -1490,14 +1502,6 @@ function fixedUpdate(dt, tick) {
     let volleyQueued = consumeAthleteVolley(i);
     let spikeQueued = consumeAthleteSpike(i);
 
-    if (diveQueued && !isAthleteHeld) {
-      if (gameState === 'match' && athleteMatchStats[i]) {
-        athleteMatchStats[i].dives++;
-      } else if (gameState === 'practice' && i === 0) {
-        practiceStats.dives++;
-      }
-    }
-
     if (isAthleteHeld) {
       inputSnapshot = {
         ...inputSnapshot,
@@ -1513,7 +1517,7 @@ function fixedUpdate(dt, tick) {
       spikeQueued = false;
     }
 
-    athlete.prePhysicsUpdate({
+    const preResult = athlete.prePhysicsUpdate({
       dt,
       tick,
       inputSnapshot,
@@ -1524,8 +1528,16 @@ function fixedUpdate(dt, tick) {
       balls,
       arenaPreset,
       facingFollowsCamera:
-        !isAthleteHeld && (playerCameras[i]?.mode === 'chase' || playerCameras[i]?.mode === 'ball'),
+        !isAthleteHeld && !activeBotSlots.includes(i) && (playerCameras[i]?.mode === 'chase' || playerCameras[i]?.mode === 'ball'),
     });
+
+    if (preResult?.actions?.lastDiveTick === tick) {
+      if (gameState === 'match' && athleteMatchStats[i]) {
+        athleteMatchStats[i].dives++;
+      } else if (gameState === 'practice' && i === 0) {
+        practiceStats.dives++;
+      }
+    }
 
     if (isAthleteHeld && athlete.motor?.body) {
       const lv = athlete.motor.body.linvel();
@@ -1726,6 +1738,11 @@ function updateCameras() {
       attackingGoal: p2Goal,
     });
   }
+
+  // Update spectator sports camera for AI vs AI match
+  if (activeBotSlots.length >= 2) {
+    updateSportsCamera(spectatorCamera, athletes, activeBall, frameDelta);
+  }
 }
 const updateSpringArm = updateCameras;
 
@@ -1856,11 +1873,20 @@ function render(alpha) {
     renderer.setScissorTest(false);
     renderer.setViewport(0, 0, width, height);
   } else {
-    // Single Viewport (Practice or single camera)
-    playerCameras[0].camera.aspect = width / height;
-    playerCameras[0].camera.updateProjectionMatrix();
+    // Single Viewport (Practice, 1 human vs AI, AI vs AI spectator, or shared camera)
+    let activeRenderCamera = playerCameras[0].camera;
+    if (activeBotSlots.length >= 2) {
+      // AI vs AI spectator broadcast camera
+      activeRenderCamera = spectatorCamera;
+    } else if (activeBotSlots.length === 1 && athletes.length >= 2) {
+      // Single human vs AI: ensure the camera renders the human player's viewport
+      const humanSlot = activeBotSlots.includes(0) ? 1 : 0;
+      activeRenderCamera = playerCameras[humanSlot].camera;
+    }
+    activeRenderCamera.aspect = width / height;
+    activeRenderCamera.updateProjectionMatrix();
     renderer.setViewport(0, 0, width, height);
-    renderer.render(scene, playerCameras[0].camera);
+    renderer.render(scene, activeRenderCamera);
   }
 
   updateHud(match);
@@ -2258,7 +2284,34 @@ function skipFlyover() {
   console.log('[flyover] skipped -> countdown started');
 }
 
-function handleStartMatch(configs, ballPreference = getSelectedMatchBall()) {
+function handleStartMatch(configs, matchRulesOrBall = {}) {
+  let ballPreference = getSelectedMatchBall();
+  let durationSeconds = 300;
+  let arenaType = activeArenaType();
+
+  if (typeof matchRulesOrBall === 'string') {
+    ballPreference = matchRulesOrBall;
+  } else if (matchRulesOrBall && typeof matchRulesOrBall === 'object') {
+    if (matchRulesOrBall.ball) ballPreference = matchRulesOrBall.ball;
+    if (matchRulesOrBall.duration) durationSeconds = matchRulesOrBall.duration;
+    if (matchRulesOrBall.arena) arenaType = matchRulesOrBall.arena;
+  }
+
+  // Check arena reload requirement
+  if (arenaType !== activeArenaType()) {
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem('pendingMatchSetup', JSON.stringify({
+        configs,
+        matchRules: { ball: ballPreference, duration: durationSeconds, arena: arenaType },
+      }));
+      const url = new URL(window.location.href);
+      url.searchParams.set('arena', arenaType);
+      url.searchParams.set('skipMenu', 'true');
+      window.location.href = url.toString();
+      return;
+    }
+  }
+
   hideMainMenu();
 
   for (const s of athleteMatchStats) {
@@ -2317,10 +2370,11 @@ function handleStartMatch(configs, ballPreference = getSelectedMatchBall()) {
     updateScoreboards(scoreboards, matchState);
   }
 
-  // 3. Select and configure match ball
+  // 3. Select and configure match ball & duration
   currentMatchBallType = ballPreference;
   setActiveMatchBall(currentMatchBallType);
 
+  TUNING.match.durationSeconds = durationSeconds;
   TUNING.match.mode = 'match';
   if (matchState) {
     matchState.mode = 'match';
@@ -2377,23 +2431,40 @@ function handleStartMatch(configs, ballPreference = getSelectedMatchBall()) {
   }
 
   // ═══ AI BOT SETUP ═══
-  // On this branch, Player 2 is always AI-controlled.
-  // TODO: Make this configurable from the main menu UI.
   botControllers = [];
   activeBotSlots = [];
-  if (athletes.length >= 2) {
-    const aiDifficulty = TUNING.ai?.difficulty || 'medium';
-    const p2Bot = createBotController({
-      difficulty: aiDifficulty,
-      slotIndex: 1,
-      seed: loop.tick + 42,  // Deterministic seed based on match start tick
-    });
-    botControllers.push(p2Bot);
-    activeBotSlots.push(1);
-    console.log(`[ai] P2 bot created — difficulty: ${aiDifficulty}`);
+  if (athletes.length > 0 && configs && configs.length > 0) {
+    let hasHuman = false;
+    for (let i = 0; i < athletes.length; i++) {
+      const pConfig = configs[i];
+      if (pConfig && pConfig.type === 'ai') {
+        const bot = createBotController({
+          difficulty: pConfig.difficulty || 'medium',
+          slotIndex: i,
+          aggressiveness: pConfig.aggressiveness ?? 0.60,
+          seed: loop.tick + 42 + i,
+        });
+        botControllers.push(bot);
+        activeBotSlots.push(i);
+        console.log(`[ai] P${i + 1} bot created — difficulty: ${pConfig.difficulty}, aggressiveness: ${(pConfig.aggressiveness ?? 0.60).toFixed(2)}`);
+      } else {
+        hasHuman = true;
+      }
+    }
 
-    // When P2 is a bot, give P1 fullscreen (disable splitscreen)
-    TUNING.camera.splitscreen = false;
+    // Fullscreen for single human vs AI, or AI vs AI
+    if (activeBotSlots.length > 0) {
+      if (!hasHuman) {
+        TUNING.camera.splitscreen = false;
+        // Focus camera on action or P1
+      } else if (configs[1]?.type === 'ai') {
+        // P1 is human, P2 is AI -> P1 gets fullscreen
+        TUNING.camera.splitscreen = false;
+      } else if (configs[0]?.type === 'ai') {
+        // P2 is human, P1 is AI -> P2 gets fullscreen
+        TUNING.camera.splitscreen = false;
+      }
+    }
   }
 
   // Start 10s flyover cutscene
@@ -3098,6 +3169,20 @@ async function boot() {
   });
 
   initMobileNotice();
+
+  const pendingMatch = (typeof window !== 'undefined') ? sessionStorage.getItem('pendingMatchSetup') : null;
+  if (pendingMatch) {
+    sessionStorage.removeItem('pendingMatchSetup');
+    try {
+      const { configs: pendingConfigs, matchRules: pendingRules } = JSON.parse(pendingMatch);
+      handleStartMatch(pendingConfigs, pendingRules);
+      applyViewportSize();
+      loop.start();
+      return;
+    } catch (e) {
+      console.error('[boot] failed to restore pending match setup', e);
+    }
+  }
 
   const skipMenuParam = urlParams.get('skipMenu');
   const shouldSkipMenu = skipMenuParam === 'true' || armedCaptureTick !== null || urlParams.has('captureTick');
