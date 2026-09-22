@@ -205,6 +205,8 @@ export function createGui({
   motor.add(TUNING.motor, 'groundedEpsilon', 0, 1, 0.01);
   motor.add(TUNING.motor, 'stickDeadzone', 0, 0.6, 0.01);
   motor.add(TUNING.motor, 'downedDragBoost', 0, 200, 1);
+  motor.add(TUNING.motor, 'sprintTurnAuthority', 0.05, 1.0, 0.05);
+  motor.add(TUNING.motor, 'reversalBiteTime', 0.05, 1.0, 0.05);
 
   // The ragdoll is derived once per R-spawn, exactly as the arena is built once
   // at boot. Nothing here rebuilds a live rig, so every control is marked

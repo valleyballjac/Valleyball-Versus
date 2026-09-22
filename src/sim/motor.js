@@ -280,6 +280,9 @@ export function updateMotor(motor, input, jumpQueued, dt, driveScale = 1, tick =
   // 1 — GROUNDED
   motor.grounded = castGroundFan(body, motor.radius);
 
+  const linear = body.linvel();
+  const horizSpeed = Math.hypot(linear.x, linear.z);
+
   // 2 — DRIVE
   const direction = input.moveWorld;
   const inputMagnitude = Math.hypot(direction.x, direction.z);
@@ -308,7 +311,29 @@ export function updateMotor(motor, input, jumpQueued, dt, driveScale = 1, tick =
 
     if (alongAxis < effectiveMax) {
       const control = motor.grounded ? 1 : TUNING.motor.airControlMultiplier;
-      const magnitude = TUNING.motor.driveTorque * inputMagnitude * control * driveScale * dt;
+
+      // STAGE 2: Sprint turning commitment (wide carving arc at high sprint speed).
+      // At run speed (3.8 m/s) or below, steerScale is 1.0 (full agility).
+      // Above run speed when sprinting, lateral turning torque scales down smoothly
+      // based on speed, carving a wide arc. As speed decreases, turning gets sharper.
+      // Forward drive along the current velocity vector is NOT attenuated, so speed does not bleed off.
+      let steerScale = 1.0;
+      if (input.sprintHeld && horizSpeed > TUNING.blend2d.runSpeed) {
+        const vRun = TUNING.blend2d.runSpeed;
+        const vSprint = TUNING.motor.maxAngularSpeed * TUNING.motor.radius;
+        const speedFactor = Math.min(1.0, (horizSpeed - vRun) / Math.max(0.1, vSprint - vRun));
+        const inDirX = direction.x / inputMagnitude;
+        const inDirZ = direction.z / inputMagnitude;
+        const curDirX = linear.x / horizSpeed;
+        const curDirZ = linear.z / horizSpeed;
+        const alignment = curDirX * inDirX + curDirZ * inDirZ;
+        const lateralAuthority = 1.0 - speedFactor * (1.0 - (TUNING.motor.sprintTurnAuthority ?? 0.35));
+        steerScale = alignment >= 0
+          ? alignment + (1.0 - alignment) * lateralAuthority
+          : lateralAuthority;
+      }
+
+      const magnitude = TUNING.motor.driveTorque * inputMagnitude * control * driveScale * steerScale * dt;
 
       _impulse.x = _axis.x * magnitude;
       _impulse.y = _axis.y * magnitude;
@@ -317,11 +342,33 @@ export function updateMotor(motor, input, jumpQueued, dt, driveScale = 1, tick =
     }
   }
 
-  // 3 — RESISTANCE. Both sites go through the one clamp, and resistanceScale
-  // multiplies the REQUESTED impulse on the way in — no second mechanism, no
-  // banned setter, and the clamp still bounds the result.
+  // 3 — RESISTANCE & NON-SPRINT REVERSAL BITE
   if (motor.grounded && inputMagnitude <= MIN_INPUT) {
     applyClampedDamping(body, TUNING.motor.brakeTorque * resistanceScale * dt, dt);
+  } else if (motor.grounded && !input.sprintHeld && horizSpeed > 0.2 && inputMagnitude > MIN_INPUT) {
+    // Non-sprint directional counter-braking bite:
+    // When the stick opposes current movement (alignment < 0), apply an active
+    // braking impulse to smoothly cancel the opposing spin in reversalBiteTime (0.25s).
+    const inDirX = direction.x / inputMagnitude;
+    const inDirZ = direction.z / inputMagnitude;
+    const curDirX = linear.x / horizSpeed;
+    const curDirZ = linear.z / horizSpeed;
+    const alignment = curDirX * inDirX + curDirZ * inDirZ;
+    if (alignment < 0) {
+      const angular = body.angvel();
+      const alongAxis = angular.x * _axis.x + angular.y * _axis.y + angular.z * _axis.z;
+      // Only bite while spin is still opposing the new stick direction:
+      if (alongAxis < 0) {
+        const reverseFactor = -alignment;
+        const angSpeed = Math.hypot(angular.x, angular.y, angular.z);
+        if (angSpeed > MIN_ANGULAR_SPEED) {
+          const maximum = angularInertia(body) * angSpeed;
+          const biteTime = Math.max(0.05, TUNING.motor.reversalBiteTime ?? 0.25);
+          const biteImpulse = maximum * (dt / biteTime) * reverseFactor * resistanceScale;
+          applyClampedDamping(body, biteImpulse, dt);
+        }
+      }
+    }
   }
   applyClampedDamping(body, TUNING.motor.rollingResistance * resistanceScale * dt, dt);
 
@@ -339,7 +386,6 @@ export function updateMotor(motor, input, jumpQueued, dt, driveScale = 1, tick =
     body.applyImpulse(_impulse, true);
   }
 
-  const linear = body.linvel();
   if (!motor.grounded && linear.y < 0) {
     // Extra downward force so the descent is fast with no float. gravityY is
     // negative, so this product is already downward.

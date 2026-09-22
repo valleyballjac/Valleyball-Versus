@@ -328,6 +328,17 @@ const DEFAULTS = {
     // it can only stop the ball sooner — never reverse it, however large this
     // gets. At weight 1 the multiplier is exactly 1 and clean play is untouched.
     downedDragBoost: 40,
+
+    // STAGE 2: Locomotion Tuning (Sprint Commitment vs. Non-Sprint Agility)
+    // Lateral steering authority multiplier at max sprint speed (12 rad/s).
+    // At run speed (7.6 rad/s / 3.8 m/s) or below, steering authority is 1.0 (full agility).
+    // Between run and sprint speed, steering authority scales down to this value,
+    // producing a wide, realistic carving turn arc when sprinting.
+    sprintTurnAuthority: 0.35,
+    // Time in seconds to bring opposing angular momentum to zero when reversing
+    // stick direction while not sprinting (counter-braking bite). 0.25s produces
+    // a snappy, athletic plant-and-pivot response.
+    reversalBiteTime: 0.25,
   },
 
   jump: {
