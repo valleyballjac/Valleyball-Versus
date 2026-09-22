@@ -546,6 +546,7 @@ function applyShadowSettings() {
   }
   renderer.shadowMap.needsUpdate = true;
 }
+applyShadowSettings();
 
 function applyRenderSettings(settings = {}) {
   if (settings.pixelRatioPreset) {

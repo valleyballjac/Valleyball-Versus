@@ -1635,7 +1635,7 @@ const DEFAULTS = {
     // 'native' | '1.25' | '1.0'
     pixelRatioPreset: 'native',
     // 'high' (4 stadium towers) | 'balanced' (1 key tower) | 'off'
-    shadowQuality: 'high',
+    shadowQuality: 'balanced',
   },
 };
 

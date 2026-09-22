@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { TUNING } from '../config/tuning.js';
 import { RAPIER, ENVIRONMENT_RAY_GROUPS } from '../sim/physics.js';
-import { updateSportsCamera } from './sportsCamera.js';
+import { updateSportsCamera, resetSportsCamera } from './sportsCamera.js';
 
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 
@@ -53,6 +53,10 @@ export class PlayerCamera {
     this._rayFrom = { x: 0, y: 0, z: 0 };
     this._rayDir = { x: 0, y: 0, z: 0 };
     this._envRay = null;
+
+    // Broadcast look-at smoother
+    this._smoothedBroadcastLookTarget = new THREE.Vector3();
+    this._broadcastLookInit = false;
   }
 
   /**
@@ -60,6 +64,8 @@ export class PlayerCamera {
    */
   resetSmoothing() {
     this._smoothedTargetInit = false;
+    this._broadcastLookInit = false;
+    resetSportsCamera();
   }
 
   /**
@@ -227,15 +233,26 @@ export class PlayerCamera {
 
       this._target.copy(targetMesh.position);
       if (ballPos) {
+        this.smoothedBallY += (ballPos.y - this.smoothedBallY) * (1 - Math.exp(-6.0 * frameDelta));
         this._target.x = targetMesh.position.x * 0.6 + ballPos.x * 0.4;
         this._target.y =
           targetMesh.position.y * 0.7 +
-          Math.min(3.0, ballPos.y) * 0.3 +
+          Math.min(3.0, this.smoothedBallY) * 0.3 +
           0.5;
         this._target.z = targetMesh.position.z * 0.5 + ballPos.z * 0.5 + this.manualPitchOffset;
       }
       this._target.y = Math.max(1.0, this._target.y);
-      this.camera.lookAt(this._target);
+
+      if (!this._broadcastLookInit) {
+        this._smoothedBroadcastLookTarget.copy(this._target);
+        this._broadcastLookInit = true;
+      } else {
+        this._smoothedBroadcastLookTarget.lerp(
+          this._target,
+          1 - Math.exp(-8.0 * frameDelta),
+        );
+      }
+      this.camera.lookAt(this._smoothedBroadcastLookTarget);
       return;
     }
 
