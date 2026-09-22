@@ -59,6 +59,14 @@ export function buildTitleScreen(rootEl, navActions = {}) {
     line-height: 1.05;
   `;
 
+  const tagRow = document.createElement('div');
+  tagRow.style.cssText = `
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 6px;
+  `;
+
   const tag = document.createElement('div');
   tag.textContent = 'VERSUS';
   tag.style.cssText = `
@@ -69,14 +77,30 @@ export function buildTitleScreen(rootEl, navActions = {}) {
     color: #000000;
     -webkit-text-stroke: 1.5px #ffffff;
     text-stroke: 1.5px #ffffff;
-    margin-top: 6px;
     filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.85));
     line-height: 1.2;
   `;
 
+  const versionBadge = document.createElement('div');
+  versionBadge.textContent = 'v0.2.3';
+  versionBadge.style.cssText = `
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    color: #00e5ff;
+    background: rgba(0, 229, 255, 0.12);
+    border: 1px solid rgba(0, 229, 255, 0.35);
+    padding: 2px 8px;
+    border-radius: 4px;
+    box-shadow: 0 0 10px rgba(0, 229, 255, 0.15);
+  `;
+
+  tagRow.appendChild(tag);
+  tagRow.appendChild(versionBadge);
+
   header.appendChild(ballContainer);
   header.appendChild(title);
-  header.appendChild(tag);
+  header.appendChild(tagRow);
 
   // Menu Options (Bottom Left)
   const menuList = document.createElement('div');

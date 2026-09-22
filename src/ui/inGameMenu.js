@@ -125,6 +125,7 @@ export function initInGameMenu({
       <span style="font-size: 12px; font-weight: 900; letter-spacing: 0.22em; color: #000000; -webkit-text-stroke: 1px #ffffff; text-stroke: 1px #ffffff;">VERSUS</span>
       <span style="color: rgba(255,255,255,0.3); font-size: 14px;">/</span>
       <span style="color: #ffffff; font-size: 15px; font-weight: 800;">SETTINGS</span>
+      <span style="font-size: 10px; font-weight: 800; color: #00e5ff; background: rgba(0, 229, 255, 0.12); border: 1px solid rgba(0, 229, 255, 0.35); padding: 2px 6px; border-radius: 4px; margin-left: 2px;">v0.2.3</span>
     </div>
     <div style="font-size: 11px; color: #fbbf24; margin-top: 2px;">
       ⚡ Play clock continues running in real time

@@ -122,4 +122,16 @@ This document governs the official rules of the sport:
 - **Match Time & Resolution**: Strictly 5-minute regulation with draw / overtime options.
 
 ---
+
+## 8. VERSION BUMPING & IN-GAME LABELING DISCIPLINE
+
+Whenever starting work on a new version or forking from a public release:
+1. **`package.json`**: Immediately bump the `"version"` field (e.g. `0.2.3`).
+2. **`index.html`**: Update the version badge on the loading screen (`<span ...>v0.2.3</span>`).
+3. **`src/features/ui/mainMenu/titleScreen.js`**: Update the version badge next to the `VERSUS` tag on the main title screen.
+4. **`src/ui/inGameMenu.js`**: Update the version badge in the in-game settings/pause menu header.
+5. Never leave stale version numbers on the active development branch so testers and developers always know the exact build they are working on.
+
+---
 *Follow the laws, verify with tests, and build upon this solid foundation.*
+
