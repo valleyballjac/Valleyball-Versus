@@ -61,6 +61,7 @@ function smoothstep01(t) {
  */
 export function createAthlete({
   id = 'p1',
+  athleteIndex: athleteIndexProp = null,
   team = 'home',
   variant = 'masculine',
   primaryColor = null,
@@ -72,7 +73,9 @@ export function createAthlete({
   clips = [],
 }) {
   const currentSpawn = { ...spawn };
-  const athleteIndex = id === 'p2' || id === 1 ? 1 : 0;
+  const athleteIndex = typeof athleteIndexProp === 'number'
+    ? athleteIndexProp
+    : (typeof id === 'number' ? id : (parseInt(String(id).replace('p', ''), 10) - 1 || 0));
   let initialYaw = spawn.yaw ?? 0;
   let currentTeam = team;
   let currentVariant = variant;
@@ -527,6 +530,20 @@ export function createAthlete({
 
     renderPose(alpha) {
       syncRagdollPose(ragdoll, alpha);
+    },
+
+    setEnabled(enabled) {
+      if (motor?.body) motor.body.setEnabled(enabled);
+      if (ragdoll?.rig) {
+        for (const item of ragdoll.rig.values()) item.body.setEnabled(enabled);
+      }
+      if (ragdoll?.group) ragdoll.group.visible = enabled;
+      if (motor?.mesh) motor.mesh.visible = enabled && !!TUNING.debug.showSphereWireframe;
+      this._enabled = !!enabled;
+    },
+
+    get isEnabled() {
+      return this._enabled !== false;
     },
 
     dispose() {

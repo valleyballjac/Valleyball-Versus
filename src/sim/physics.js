@@ -79,6 +79,10 @@ export const GROUP_BALL = 0x0008;
 export const GROUP_RAGDOLL_UPPER = 0x0010;
 export const GROUP_RAGDOLL_P2 = 0x0020;
 export const GROUP_RAGDOLL_UPPER_P2 = 0x0040;
+export const GROUP_RAGDOLL_P3 = 0x0080;
+export const GROUP_RAGDOLL_UPPER_P3 = 0x0100;
+export const GROUP_RAGDOLL_P4 = 0x0200;
+export const GROUP_RAGDOLL_UPPER_P4 = 0x0400;
 
 /** Every bit that exists. The filter half is 16 bits wide. */
 const ALL_GROUPS = 0xffff;
@@ -89,49 +93,73 @@ const ALL_GROUPS = 0xffff;
  */
 export const ENVIRONMENT_MEMBERSHIP = GROUP_ENVIRONMENT;
 
+const ALL_UPPER =
+  GROUP_RAGDOLL_UPPER |
+  GROUP_RAGDOLL_UPPER_P2 |
+  GROUP_RAGDOLL_UPPER_P3 |
+  GROUP_RAGDOLL_UPPER_P4;
+
 /** The arena: everything except upper ragdolls, which pass through it. */
 export const ENVIRONMENT_GROUPS =
-  (GROUP_ENVIRONMENT << 16) | (ALL_GROUPS & ~GROUP_RAGDOLL_UPPER & ~GROUP_RAGDOLL_UPPER_P2);
+  (GROUP_ENVIRONMENT << 16) | (ALL_GROUPS & ~ALL_UPPER);
 
-/**
- * TORSO AND LEGS (P1): hit the world, the BALL, and P2's ragdoll bodies;
- * never themselves, never the sphere motor, and never P1's own upper chain.
- */
-export const RAGDOLL_GROUPS =
-  (GROUP_RAGDOLL << 16) |
-  (ALL_GROUPS & ~GROUP_RAGDOLL & ~GROUP_RAGDOLL_UPPER & ~GROUP_MOTOR);
+const RAGDOLL_LOWER_BITS = [
+  GROUP_RAGDOLL,
+  GROUP_RAGDOLL_P2,
+  GROUP_RAGDOLL_P3,
+  GROUP_RAGDOLL_P4,
+];
 
-/**
- * HEAD AND ARMS (P1): meet the BALL and P2's ragdoll bodies, ignoring floor and motor.
- */
-export const RAGDOLL_UPPER_GROUPS =
-  (GROUP_RAGDOLL_UPPER << 16) |
-  (ALL_GROUPS & ~GROUP_ENVIRONMENT & ~GROUP_RAGDOLL & ~GROUP_RAGDOLL_UPPER & ~GROUP_MOTOR);
-
-/**
- * TORSO AND LEGS (P2): hit the world, the BALL, and P1's ragdoll bodies;
- * never themselves, never the sphere motor, and never P2's own upper chain.
- */
-export const RAGDOLL_P2_GROUPS =
-  (GROUP_RAGDOLL_P2 << 16) |
-  (ALL_GROUPS & ~GROUP_RAGDOLL_P2 & ~GROUP_RAGDOLL_UPPER_P2 & ~GROUP_MOTOR);
-
-/**
- * HEAD AND ARMS (P2): meet the BALL and P1's ragdoll bodies, ignoring floor and motor.
- */
-export const RAGDOLL_UPPER_P2_GROUPS =
-  (GROUP_RAGDOLL_UPPER_P2 << 16) |
-  (ALL_GROUPS & ~GROUP_ENVIRONMENT & ~GROUP_RAGDOLL_P2 & ~GROUP_RAGDOLL_UPPER_P2 & ~GROUP_MOTOR);
+const RAGDOLL_UPPER_BITS = [
+  GROUP_RAGDOLL_UPPER,
+  GROUP_RAGDOLL_UPPER_P2,
+  GROUP_RAGDOLL_UPPER_P3,
+  GROUP_RAGDOLL_UPPER_P4,
+];
 
 /**
  * Resolves the collision interaction word for an athlete's ragdoll bone.
+ * Supports up to 4 athletes (indices 0..3).
+ *
+ * For lower body/torso:
+ *   Collides with arena, ball, and other players' ragdolls.
+ *   Excludes own lower body, own upper body, and own sphere motor.
+ *
+ * For upper body (head, arms, hands):
+ *   Collides with ball and other players' ragdolls.
+ *   Excludes arena floor, own lower body, own upper body, and own sphere motor.
  */
 export function getRagdollGroups(athleteIndex = 0, isUpper = false) {
-  if (athleteIndex === 1) {
-    return isUpper ? RAGDOLL_UPPER_P2_GROUPS : RAGDOLL_P2_GROUPS;
+  const idx = Math.max(0, Math.min(3, athleteIndex));
+  const myLower = RAGDOLL_LOWER_BITS[idx];
+  const myUpper = RAGDOLL_UPPER_BITS[idx];
+
+  if (isUpper) {
+    return (
+      (myUpper << 16) |
+      (ALL_GROUPS & ~GROUP_ENVIRONMENT & ~myLower & ~myUpper & ~GROUP_MOTOR)
+    );
   }
-  return isUpper ? RAGDOLL_UPPER_GROUPS : RAGDOLL_GROUPS;
+  return (
+    (myLower << 16) |
+    (ALL_GROUPS & ~myLower & ~myUpper & ~GROUP_MOTOR)
+  );
 }
+
+export const RAGDOLL_GROUPS = getRagdollGroups(0, false);
+export const RAGDOLL_UPPER_GROUPS = getRagdollGroups(0, true);
+export const RAGDOLL_P2_GROUPS = getRagdollGroups(1, false);
+export const RAGDOLL_UPPER_P2_GROUPS = getRagdollGroups(1, true);
+export const RAGDOLL_P3_GROUPS = getRagdollGroups(2, false);
+export const RAGDOLL_UPPER_P3_GROUPS = getRagdollGroups(2, true);
+export const RAGDOLL_P4_GROUPS = getRagdollGroups(3, false);
+export const RAGDOLL_UPPER_P4_GROUPS = getRagdollGroups(3, true);
+
+const ALL_RAGDOLLS =
+  GROUP_RAGDOLL | GROUP_RAGDOLL_UPPER |
+  GROUP_RAGDOLL_P2 | GROUP_RAGDOLL_UPPER_P2 |
+  GROUP_RAGDOLL_P3 | GROUP_RAGDOLL_UPPER_P3 |
+  GROUP_RAGDOLL_P4 | GROUP_RAGDOLL_UPPER_P4;
 
 /**
  * The sphere hits the world only.
@@ -139,7 +167,7 @@ export function getRagdollGroups(athleteIndex = 0, isUpper = false) {
  */
 export const MOTOR_GROUPS =
   (GROUP_MOTOR << 16) |
-  (ALL_GROUPS & ~GROUP_RAGDOLL & ~GROUP_RAGDOLL_UPPER & ~GROUP_RAGDOLL_P2 & ~GROUP_RAGDOLL_UPPER_P2 & ~GROUP_BALL & ~GROUP_MOTOR);
+  (ALL_GROUPS & ~ALL_RAGDOLLS & ~GROUP_BALL & ~GROUP_MOTOR);
 
 /** The ball hits the world and athlete limbs, and passes through the sphere motors. */
 export const BALL_GROUPS = (GROUP_BALL << 16) | (ALL_GROUPS & ~GROUP_MOTOR);

@@ -39,6 +39,8 @@ import {
 } from './sim/ragdoll.js';
 import { applyClampedLinearDamping } from './sim/damping.js';
 import { createAthlete } from './sim/athlete.js';
+import { athleteManager } from './features/athletes/athleteManager.js';
+import { matchManager } from './features/match/matchManager.js';
 import {
   initInputRouter,
   sampleAllInputs,
@@ -2453,12 +2455,8 @@ function skipFlyover() {
   gameState = 'match';
   hideFlyoverOverlay();
 
-  if (matchState) {
-    matchState.mode = 'match';
-    TUNING.match.mode = 'match';
-    matchState.isCountingDown = true;
-    matchState.countdownTicksRemaining = TUNING.match.countdownSeconds * TUNING.loop.fixedHz;
-  }
+  matchManager.skipFlyover();
+  matchState = matchManager.getState();
   resetCountdownOverlay();
 
   playerCameras[0].resetSmoothing();
@@ -2557,31 +2555,20 @@ function handleStartMatch(configs, matchRulesOrBall = {}) {
   currentMatchBallType = ballPreference;
   setActiveMatchBall(currentMatchBallType);
 
-  TUNING.match.durationSeconds = durationSeconds;
-  TUNING.match.mode = 'match';
-  if (matchState) {
-    matchState.mode = 'match';
-    matchState.scoreHome = 0;
-    matchState.scoreAway = 0;
-    matchState.targetGoal = 'N';
-    matchState.celebrationTicks = 0;
-    matchState.lastScoredFor = null;
-    matchState.lastGoalId = null;
-    matchState.ticksRemaining = TUNING.match.durationSeconds * TUNING.loop.fixedHz;
-    matchState.countdownTicksRemaining = TUNING.match.countdownSeconds * TUNING.loop.fixedHz;
-    matchState.isCountingDown = true;
-    matchState.matchOver = false;
-    matchState._buzzerPlayed = false;
-    matchState.events.length = 0;
-  }
+  matchManager.startMatch(configs, { durationSeconds, ballPreference, arenaType });
+  matchState = matchManager.getState();
+  matchState.targetGoal = 'N';
+  matchState.lastScoredFor = null;
+  matchState.lastGoalId = null;
+  matchState.ticksRemaining = TUNING.match.durationSeconds * TUNING.loop.fixedHz;
+  matchState.countdownTicksRemaining = TUNING.match.countdownSeconds * TUNING.loop.fixedHz;
+  matchState.isCountingDown = true;
+  matchState.matchOver = false;
+  matchState._buzzerPlayed = false;
+  matchState.events.length = 0;
 
   // Clear strike stats
-  for (const a of athletes) {
-    if (a.strikeState) {
-      a.strikeState.resolvedCount = 0;
-      a.strikeState.whiffCount = 0;
-    }
-  }
+  athleteManager.resetStats();
 
   // Position athletes at stream heads matching chosen team (Home -> South, Away -> North)
   if (athletes.length >= 2) {
@@ -2705,23 +2692,9 @@ function handleStartPractice(playerConfig = null, ballChoice = 'all') {
     }
   }
 
-  // 2. Hide P2 and put away during practice
-  if (athletes.length >= 2 && athletes[1]) {
-    if (athletes[1].motor?.body) {
-      athletes[1].motor.body.setEnabled(false);
-    }
-    if (athletes[1].ragdoll?.rig) {
-      for (const item of athletes[1].ragdoll.rig.values()) {
-        item.body.setEnabled(false);
-      }
-    }
-    if (athletes[1].ragdoll?.group) {
-      athletes[1].ragdoll.group.visible = false;
-    }
-  }
-  if (athletes[0]?.ragdoll?.group) {
-    athletes[0].ragdoll.group.visible = true;
-  }
+  // 2. Hide extra athletes and position practice athlete at center
+  athleteManager.ensureRoster(1);
+  athleteManager.teleportToPracticeSpawn(arenaPreset);
 
   if (matchState) {
     matchState.mode = 'practice';
@@ -2879,21 +2852,9 @@ function returnToMainMenu() {
   TUNING.match.mode = 'match';
 
   // 1. Reset match state completely
-  if (matchState) {
-    matchState.mode = 'menu';
-    matchState.scoreHome = 0;
-    matchState.scoreAway = 0;
-    matchState.targetGoal = 'N';
-    matchState.celebrationTicks = 0;
-    matchState.lastScoredFor = null;
-    matchState.lastGoalId = null;
-    matchState.ticksRemaining = TUNING.match.durationSeconds * TUNING.loop.fixedHz;
-    matchState.countdownTicksRemaining = 0;
-    matchState.isCountingDown = false;
-    matchState.matchOver = false;
-    matchState._buzzerPlayed = false;
-    matchState.events.length = 0;
-  }
+  matchManager.resetForTitle();
+  matchState = matchManager.getState();
+  matchState.mode = 'menu';
 
   // 2. Reset practice drill stats
   practiceStats.goals = 0;
@@ -2989,49 +2950,13 @@ function handleEnterSetup(mode = 'match') {
     }
   }
 
-  if (mode === 'practice') {
-    if (athletes.length >= 2) {
-      if (athletes[1]?.motor?.body) athletes[1].motor.body.setEnabled(false);
-      if (athletes[1]?.ragdoll?.rig) {
-        for (const item of athletes[1].ragdoll.rig.values()) item.body.setEnabled(false);
-      }
-      setupAthleteYaw[0] = -Math.PI * 0.35;
-      athletes[0].teleportTo({ x: 1.45, y: 0.50, z: 0.2 }, setupAthleteYaw[0]);
-      if (athletes[0]?.ragdoll?.group) athletes[0].ragdoll.group.visible = true;
-      if (athletes[1]?.ragdoll?.group) athletes[1].ragdoll.group.visible = false;
-    }
-  } else {
-    // Stage athletes on court at center circle flanking the menu, facing each other
-    if (athletes.length >= 2) {
-      if (athletes[1]?.motor?.body) athletes[1].motor.body.setEnabled(true);
-      if (athletes[1]?.ragdoll?.rig) {
-        for (const item of athletes[1].ragdoll.rig.values()) item.body.setEnabled(true);
-      }
-      setupAthleteYaw[0] = Math.PI * 0.40;
-      setupAthleteYaw[1] = -Math.PI * 0.40;
-      athletes[0].teleportTo({ x: -3.2, y: 0.50, z: 0.0 }, setupAthleteYaw[0]);
-      athletes[1].teleportTo({ x: 3.2, y: 0.50, z: 0.0 }, setupAthleteYaw[1]);
-      if (athletes[0]?.ragdoll?.group) athletes[0].ragdoll.group.visible = true;
-      if (athletes[1]?.ragdoll?.group) athletes[1].ragdoll.group.visible = true;
-    }
-  }
+  athleteManager.stageForLobby(mode);
   cinematicCamera.startSetupPreview();
   console.log(`[mainMenu] entered setup (${mode}) -> 3D athlete staging active`);
 }
 
 function handleExitSetup() {
-
-  // Return to ambient title orbit and stream heads
-  if (athletes.length >= 2) {
-    if (athletes[1]?.motor?.body) athletes[1].motor.body.setEnabled(true);
-    if (athletes[1]?.ragdoll?.rig) {
-      for (const item of athletes[1].ragdoll.rig.values()) item.body.setEnabled(true);
-    }
-    athletes[0].teleportTo(TUNING.match.streamHeads.sw, 0);
-    athletes[1].teleportTo(TUNING.match.streamHeads.ne, Math.PI);
-    if (athletes[0]?.ragdoll?.group) athletes[0].ragdoll.group.visible = true;
-    if (athletes[1]?.ragdoll?.group) athletes[1].ragdoll.group.visible = true;
-  }
+  athleteManager.stageForTitle();
   launchMenuBalls();
   cinematicCamera.startTitleOrbit();
   console.log('[mainMenu] exited setup -> ambient title orbit');
@@ -3073,7 +2998,7 @@ async function boot() {
   }
 
   // THE MATCH STATE FIRST, before anything can score into it.
-  matchState = createMatchState();
+  matchState = matchManager.getState();
   matchState.mode = TUNING.match.mode;
   window.__matchState = matchState;
   await initPhysics(loop.fixedDt);
@@ -3109,33 +3034,20 @@ async function boot() {
   const p1Head = isBowl ? { ...arenaPreset.spawn, yaw: 0 } : TUNING.match.streamHeads.sw;
   const p2Head = isBowl ? { x: arenaPreset.spawn.x, y: arenaPreset.spawn.y, z: arenaPreset.spawn.z + 4, yaw: Math.PI } : TUNING.match.streamHeads.ne;
 
-  const p1 = createAthlete({
-    id: 'p1',
-    team: p1Cfg.team || 'home',
-    variant: p1Cfg.variant || 'classic',
-    primaryColor: p1Cfg.primaryColor || null,
-    colorOverride: p1Cfg.colorOverride || null,
-    spawn: { ...p1Head },
+  athleteManager.init({
     scene,
     characterSkeleton,
     characterRoot,
     clips: characterClips,
   });
-
-  const p2 = createAthlete({
-    id: 'p2',
-    team: p2Cfg.team || 'away',
-    variant: p2Cfg.variant || 'classic',
-    primaryColor: p2Cfg.primaryColor || null,
-    colorOverride: p2Cfg.colorOverride || null,
-    spawn: { ...p2Head },
-    scene,
-    characterSkeleton,
-    characterRoot,
-    clips: characterClips,
-  });
-
-  athletes = [p1, p2];
+  athletes = athleteManager.ensureRoster(2, TUNING.players);
+  if (isBowl) {
+    athletes[0].teleportTo(arenaPreset.spawn, 0);
+    athletes[1].teleportTo({ x: arenaPreset.spawn.x, y: arenaPreset.spawn.y, z: arenaPreset.spawn.z + 4 }, Math.PI);
+  } else {
+    athletes[0].teleportTo(p1Head, p1Head.yaw);
+    athletes[1].teleportTo(p2Head, p2Head.yaw);
+  }
   playerCameras[0].mode = p1Cfg.cameraMode || 'chase';
   playerCameras[1].mode = p2Cfg.cameraMode || 'chase';
   playerCameras[0].azimuth = p1Head.yaw;
@@ -3496,11 +3408,7 @@ async function boot() {
           playerCameras[0].resetSmoothing();
         }
         if (athletes[1]) {
-          if (athletes[1].motor?.body) athletes[1].motor.body.setEnabled(false);
-          if (athletes[1].ragdoll?.rig) {
-            for (const item of athletes[1].ragdoll.rig.values()) item.body.setEnabled(false);
-          }
-          if (athletes[1].ragdoll?.group) athletes[1].ragdoll.group.visible = false;
+          athletes[1].setEnabled(false);
         }
         for (let i = 0; i < balls.length; i++) {
           const spawn = arenaPreset.ballSpawns ? arenaPreset.ballSpawns[i] : null;
