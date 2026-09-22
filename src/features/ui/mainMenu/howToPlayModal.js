@@ -205,6 +205,10 @@ export function buildHowToPlayModal(rootEl) {
       <rect x="25" y="32" width="115" height="24" rx="4" fill="rgba(56,189,248,0.15)" stroke="#38bdf8" stroke-width="1"/>
       <text x="82" y="48" fill="#ffffff" font-size="10" font-weight="800" text-anchor="middle">LT · SPRINT</text>
 
+      <polyline points="230,90 140,80" fill="none" stroke="#3b82f6" stroke-width="1.5" stroke-dasharray="3,3"/>
+      <rect x="25" y="68" width="115" height="24" rx="4" fill="rgba(59,130,246,0.15)" stroke="#3b82f6" stroke-width="1"/>
+      <text x="82" y="84" fill="#93c5fd" font-size="10" font-weight="800" text-anchor="middle">LB · CUT / PLANT</text>
+
       <polyline points="348,125 310,35" fill="none" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="3,3"/>
       <rect x="220" y="22" width="150" height="24" rx="4" fill="rgba(245,158,11,0.15)" stroke="#f59e0b" stroke-width="1"/>
       <text x="295" y="38" fill="#fcd34d" font-size="10" font-weight="800" text-anchor="middle">SELECT · BALL RESET</text>
@@ -323,6 +327,10 @@ export function buildHowToPlayModal(rootEl) {
           <span style="color: #ffffff; font-weight: 900; font-size: 13px;">C</span>
           <span style="color: #7dd3fc; font-weight: 800; font-size: 8.5px;">SLIDE</span>
         </div>
+        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 72px; height: 50px; background: #0f172a; border: 1px solid #3b82f6; border-radius: 8px; box-shadow: 0 0 12px rgba(59,130,246,0.35);">
+          <span style="color: #ffffff; font-weight: 900; font-size: 13px;">F</span>
+          <span style="color: #93c5fd; font-weight: 800; font-size: 8.5px;">CUT</span>
+        </div>
         <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 200px; height: 50px; background: #0f172a; border: 2px solid #10b981; border-radius: 8px; box-shadow: 0 0 16px rgba(16,185,129,0.45);">
           <span style="color: #ffffff; font-weight: 900; font-size: 14px;">SPACEBAR</span>
           <span style="color: #34d399; font-weight: 800; font-size: 9px;">JUMP (HOLD FOR HEIGHT)</span>
@@ -331,7 +339,7 @@ export function buildHowToPlayModal(rootEl) {
 
       <!-- Sub-notice for P2 -->
       <div style="text-align: center; font-size: 10.5px; color: #64748b; font-weight: 600; margin-top: 4px;">
-        PLAYER 2 SECONDARY KEYBOARD: <span style="color: #94a3b8;">IJKL (Move) · Enter (Jump) · Slash (Sprint) · O (Slide) · U (Dive) · P (Volley) · Bracket [ (Spike)</span>
+        PLAYER 2 SECONDARY KEYBOARD: <span style="color: #94a3b8;">IJKL (Move) · Enter (Jump) · Slash (Sprint) · O (Slide) · H (Cut) · U (Dive) · P (Volley) · Bracket [ (Spike)</span>
       </div>
     </div>
   `;
@@ -352,6 +360,7 @@ export function buildHowToPlayModal(rootEl) {
     { action: 'Aim Strikes / Look', pad: 'Right Stick', key: 'Mouse Movement · Arrow Keys', color: '#38bdf8' },
     { action: 'Sprint Boost', pad: 'Left Trigger (LT)', key: 'Shift · (P2: Slash /)', color: '#38bdf8' },
     { action: 'Slide Tackle (Hold)', pad: 'Right Trigger (RT)', key: 'C · (P2: O)', color: '#38bdf8' },
+    { action: 'Directional Cut / Plant', pad: 'Left Bumper (LB / L1)', key: 'F · (P2: H)', color: '#3b82f6' },
     { action: 'Jump (Hold for Height)', pad: 'A / Cross', key: 'Space · (P2: Enter)', color: '#10b981' },
     { action: 'Ground Dive', pad: 'X / Square', key: 'Q · (P2: U)', color: '#a855f7' },
     { action: 'Volley / Kick Strike', pad: 'B / Circle', key: 'Left-Click · E · (P2: P)', color: '#38bdf8' },

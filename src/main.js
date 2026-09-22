@@ -47,6 +47,7 @@ import {
   getInputSlot,
   consumeAthleteJump,
   consumeAthleteDive,
+  consumeAthleteCut,
   consumeAthleteVolley,
   consumeAthleteSpike,
   consumeAthleteBallReset,
@@ -1682,6 +1683,7 @@ function fixedUpdate(dt, tick) {
     let inputSnapshot = getInputSlot(i);
     let jumpQueued = consumeAthleteJump(i);
     let diveQueued = consumeAthleteDive(i);
+    let cutQueued = consumeAthleteCut(i);
     let volleyQueued = consumeAthleteVolley(i);
     let spikeQueued = consumeAthleteSpike(i);
 
@@ -1696,6 +1698,7 @@ function fixedUpdate(dt, tick) {
       };
       jumpQueued = false;
       diveQueued = false;
+      cutQueued = false;
       volleyQueued = false;
       spikeQueued = false;
     }
@@ -1706,6 +1709,7 @@ function fixedUpdate(dt, tick) {
       inputSnapshot,
       jumpQueued,
       diveQueued,
+      cutQueued,
       volleyQueued,
       spikeQueued,
       balls,

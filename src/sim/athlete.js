@@ -326,6 +326,7 @@ export function createAthlete({
       inputSnapshot,
       jumpQueued,
       diveQueued,
+      cutQueued = false,
       volleyQueued,
       spikeQueued,
       balls,
@@ -372,6 +373,7 @@ export function createAthlete({
         ghost: animTarget,
         diveQueued,
         jumpQueued,
+        cutQueued,
         tick,
         dt,
       });
@@ -423,6 +425,10 @@ export function createAthlete({
 
       if (actions.actionCommitted && actionState.slideTime === 1) {
         soundManager.playAthleteAction('slide', motor.body.translation());
+      }
+
+      if (actions.cutFired) {
+        soundManager.playAthleteAction('cut', motor.body.translation());
       }
 
       const motorVel = motor.body.linvel();

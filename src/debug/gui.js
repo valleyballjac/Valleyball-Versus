@@ -313,6 +313,13 @@ export function createGui({
   action.add(TUNING.action, 'slideResistance', 0.1, 3.0, 0.05).name('slide resistance');
   action.add(TUNING.action, 'knockdownSpeed', 0.5, 5.0, 0.1).name('knockdown speed');
   action.add(TUNING.action, 'crashMuscleTone', 0.0, 1.0, 0.05).name('crash muscle tone');
+  if (TUNING.action.cut) {
+    const cutFolder = action.addFolder('cut');
+    cutFolder.add(TUNING.action.cut, 'pushImpulse', 1.0, 10.0, 0.1).name('push impulse (N·s)');
+    cutFolder.add(TUNING.action.cut, 'plantBrakeRatio', 0.5, 1.0, 0.01).name('plant brake ratio');
+    cutFolder.add(TUNING.action.cut, 'cooldownTicks', 30, 300, 1).name('cooldown (ticks)');
+    cutFolder.add(TUNING.action.cut, 'cleatAnchorTicks', 0, 60, 1).name('cleat anchor (ticks)');
+  }
 
   // THE STRIKES. Clip names and windows are reload-or-next-R; everything else
   // is live, because the whole point of authoring the windows at 1x was to give

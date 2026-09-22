@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 import { TUNING } from '../config/tuning.js';
-import { applyDiveImpulse, horizontalSpeed } from '../sim/motor.js';
+import { applyCutImpulse, applyCleatAnchor, applyDiveImpulse, horizontalSpeed } from '../sim/motor.js';
 import { queueKnockdown } from '../sim/tracker.js';
 
 /**
@@ -105,6 +105,12 @@ export function createActionState() {
     prevGrounded: true,
     /** Scratch for the dive direction. */
     diveDir: new THREE.Vector3(),
+    /** Ticks of the last cut, for the cooldown. -Infinity means "never". */
+    lastCutTick: -Infinity,
+    /** Tick until which cleat anchor traction is active on slopes. */
+    cleatAnchorUntil: -Infinity,
+    /** Scratch for the cut direction. */
+    cutDir: new THREE.Vector3(),
   };
 }
 
@@ -127,7 +133,7 @@ export function createActionState() {
  *   the stun flag the recovery ramp reads, and the four ghost inputs
  */
 export function runActions({
-  state, motor, input, tracker, ragdoll, ghost, diveQueued, jumpQueued, tick, dt,
+  state, motor, input, tracker, ragdoll, ghost, diveQueued, jumpQueued, cutQueued = false, tick, dt,
 }) {
   // Raised by the launch edge, consumed by the dive ratchet at the bottom. A
   // local, so it cannot survive the step — which is what the `if (animTarget)`
@@ -251,6 +257,29 @@ export function runActions({
     }
   }
   const sliding = state.slideTime > 0;
+
+  // ═══ THE CUT (Stage 3) ═══
+  let cutFired = false;
+  if (
+    cutQueued &&
+    motor.grounded &&
+    !state.divePending &&
+    state.slideTime === 0 &&
+    (tick - state.lastCutTick >= TUNING.action.cut.cooldownTicks)
+  ) {
+    const inputMag = Math.hypot(input.moveWorld.x, input.moveWorld.z);
+    if (inputMag > 0.15) {
+      state.cutDir.set(input.moveWorld.x / inputMag, 0, input.moveWorld.z / inputMag);
+      state.lastCutTick = tick;
+      state.cleatAnchorUntil = tick + TUNING.action.cut.cleatAnchorTicks;
+      applyCutImpulse(motor, state.cutDir, TUNING.action.cut.pushImpulse, TUNING.action.cut.plantBrakeRatio);
+      cutFired = true;
+    }
+  }
+
+  if (tick < state.cleatAnchorUntil && motor.grounded) {
+    applyCleatAnchor(motor, dt);
+  }
 
   // ═══ THE DIVE ═══
   // JUMP-DIVE PROHIBITION: A dive cannot fire if a jump is queued on the same tick,
@@ -463,5 +492,8 @@ export function runActions({
     divePhase,
     /** The tick on which the most recent dive was launched. */
     lastDiveTick: state.lastDiveTick,
+    /** Stage 3 Cut results. */
+    cutFired,
+    lastCutTick: state.lastCutTick,
   };
 }

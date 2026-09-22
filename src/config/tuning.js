@@ -990,6 +990,18 @@ const DEFAULTS = {
 
     // 1/s. How fast an action's pose takes its share of the blend.
     poseEase: 10.0,
+
+    // STAGE 3: The "Cut" Mechanic (L1 / Left Shoulder)
+    cut: {
+      // Cooldown in ticks: 150 ticks = 2.5s (deliberate tactical maneuver, cannot be spammed)
+      cooldownTicks: 150,
+      // Forward push-off impulse (N·s) in the stick direction
+      pushImpulse: 4.5,
+      // Momentum cancellation ratio (0.95 = 95% momentum absorbed on the plant foot)
+      plantBrakeRatio: 0.95,
+      // Cleat anchor window on slopes (20 ticks = 0.33s of enhanced bank grip)
+      cleatAnchorTicks: 20,
+    },
   },
 
   // ═══ THE STRIKES ═══ (G4)

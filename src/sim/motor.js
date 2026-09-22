@@ -421,6 +421,67 @@ export function applyDiveImpulse(motor, direction) {
 }
 
 /**
+ * THE CUT IMPULSE — Stage 3.
+ *
+ * An athletic plant-and-redirect maneuver.
+ * 1. Plants the outside foot, absorbing incoming horizontal momentum.
+ * 2. Applies an explosive push-off impulse along `direction`.
+ * 3. Imparts roll torque along `direction` so the athlete immediately has traction.
+ *
+ * Complies with LAW L1 (applies impulses only, never writes velocity).
+ *
+ * @param {ReturnType<typeof createMotor>} motor
+ * @param {THREE.Vector3} direction horizontal, already normalized by caller
+ * @param {number} pushImpulse push-off impulse in N·s
+ * @param {number} plantBrakeRatio fraction of incoming momentum absorbed (e.g. 0.95)
+ */
+export function applyCutImpulse(motor, direction, pushImpulse = 4.5, plantBrakeRatio = 0.95) {
+  const body = motor.body;
+  const mass = body.mass();
+  const lv = body.linvel();
+
+  // 1. Plant brake: absorb existing horizontal momentum
+  const cancelX = -lv.x * mass * plantBrakeRatio;
+  const cancelZ = -lv.z * mass * plantBrakeRatio;
+
+  // 2. Push-off impulse in stick direction
+  _impulse.x = cancelX + direction.x * pushImpulse;
+  _impulse.y = 0.2; // slight pop to clear turf
+  _impulse.z = cancelZ + direction.z * pushImpulse;
+  body.applyImpulse(_impulse, true);
+
+  // 3. Impart roll torque in the new cut direction
+  const rollSpeed = pushImpulse / mass / TUNING.motor.radius;
+  _axis.crossVectors(WORLD_UP, direction).normalize();
+  const spinImpulse = angularInertia(body) * rollSpeed;
+  _torque.set(0, 0, 0).addScaledVector(_axis, spinImpulse);
+  _impulse.x = _torque.x;
+  _impulse.y = _torque.y;
+  _impulse.z = _torque.z;
+  body.applyTorqueImpulse(_impulse, true);
+}
+
+/**
+ * CLEAT ANCHOR — Enhanced slope traction during the cut window.
+ *
+ * Counteracts gravitational slope sliding on steep banks for ~0.33s.
+ *
+ * @param {ReturnType<typeof createMotor>} motor
+ * @param {number} dt timestep
+ */
+export function applyCleatAnchor(motor, dt) {
+  const body = motor.body;
+  const translation = body.translation();
+  const rad = Math.hypot(translation.x, translation.z);
+  if (rad > 8.0) {
+    _impulse.x = 0;
+    _impulse.y = -TUNING.physics.gravityY * body.mass() * 0.65;
+    _impulse.z = 0;
+    body.addForce(_impulse, true);
+  }
+}
+
+/**
  * Snapshots the stepped body into the interpolation contract. The loop has
  * already moved curr into prev, so this writes the new curr and nothing else.
  *

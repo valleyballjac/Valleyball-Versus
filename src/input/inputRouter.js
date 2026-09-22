@@ -29,6 +29,7 @@ const P1_KEYS = {
   slide: ['KeyC'],
   dive: ['KeyQ'],
   jump: 'Space',
+  cut: ['KeyF'],
   volley: ['KeyE'],
   spike: ['KeyR'],
   ballReset: ['KeyB'],
@@ -43,6 +44,7 @@ const P2_KEYS = {
   slide: ['KeyO'],
   dive: ['KeyU'],
   jump: 'Enter',
+  cut: ['KeyH'],
   volley: ['KeyP'],
   spike: ['BracketLeft', 'KeyY'],
   ballReset: ['KeyN'],
@@ -53,6 +55,7 @@ const GAMEPAD_BUTTONS = {
   volley: 1,      // B / Circle (East)
   dive: 2,        // X / Square (West)
   spike: 3,       // Y / Triangle (North)
+  cut: 4,         // LB / L1 (Left Shoulder)
   sprint: 6,      // LT / Left Trigger
   slide: 7,       // RT / Right Trigger
   ballReset: 8,   // Select / Back / View
@@ -80,6 +83,7 @@ export function createInputSlot() {
     slideHeld: false,
     jumpQueued: false,
     diveQueued: false,
+    cutQueued: false,
     volleyQueued: false,
     spikeQueued: false,
     ballResetQueued: false,
@@ -125,6 +129,7 @@ function getPadPrev(padIndex) {
     padPrevStates.set(padIndex, {
       jump: false,
       dive: false,
+      cut: false,
       volley: false,
       spike: false,
       ballReset: false,
@@ -152,6 +157,7 @@ function onKeyDown(event) {
     if (!currentBotSlots.includes(0)) {
       if (event.code === P1_KEYS.jump) slots[0].jumpQueued = true;
       if (P1_KEYS.dive.includes(event.code)) slots[0].diveQueued = true;
+      if (P1_KEYS.cut.includes(event.code)) slots[0].cutQueued = true;
       if (P1_KEYS.volley.includes(event.code)) slots[0].volleyQueued = true;
       if (P1_KEYS.spike.includes(event.code)) slots[0].spikeQueued = true;
       if (P1_KEYS.ballReset.includes(event.code)) slots[0].ballResetQueued = true;
@@ -161,6 +167,7 @@ function onKeyDown(event) {
     if (!currentBotSlots.includes(1)) {
       if (event.code === P2_KEYS.jump) slots[1].jumpQueued = true;
       if (P2_KEYS.dive.includes(event.code)) slots[1].diveQueued = true;
+      if (P2_KEYS.cut.includes(event.code)) slots[1].cutQueued = true;
       if (P2_KEYS.volley.includes(event.code)) slots[1].volleyQueued = true;
       if (P2_KEYS.spike.includes(event.code)) slots[1].spikeQueued = true;
       if (P2_KEYS.ballReset.includes(event.code)) slots[1].ballResetQueued = true;
@@ -456,6 +463,10 @@ export function sampleAllInputs(cameras, athleteCount = 2, mode = 'match', botSl
       if (diveDown && !prev.dive) slot.diveQueued = true;
       prev.dive = diveDown;
 
+      const cutDown = padDown(p1Pad, GAMEPAD_BUTTONS.cut);
+      if (cutDown && !prev.cut) slot.cutQueued = true;
+      prev.cut = cutDown;
+
       const volleyDown = padDown(p1Pad, GAMEPAD_BUTTONS.volley);
       if (volleyDown && !prev.volley) slot.volleyQueued = true;
       prev.volley = volleyDown;
@@ -554,6 +565,10 @@ export function sampleAllInputs(cameras, athleteCount = 2, mode = 'match', botSl
       if (diveDown && !prev.dive) slot.diveQueued = true;
       prev.dive = diveDown;
 
+      const cutDown = padDown(p2Pad, GAMEPAD_BUTTONS.cut);
+      if (cutDown && !prev.cut) slot.cutQueued = true;
+      prev.cut = cutDown;
+
       const volleyDown = padDown(p2Pad, GAMEPAD_BUTTONS.volley);
       if (volleyDown && !prev.volley) slot.volleyQueued = true;
       prev.volley = volleyDown;
@@ -638,6 +653,13 @@ export function consumeAthleteDive(index) {
   return q;
 }
 
+export function consumeAthleteCut(index) {
+  const slot = slots[index] || slots[0];
+  const q = slot.cutQueued;
+  slot.cutQueued = false;
+  return q;
+}
+
 export function consumeAthleteVolley(index) {
   const slot = slots[index] || slots[0];
   const q = slot.volleyQueued;
@@ -695,6 +717,7 @@ export function queueBotAction(index, action) {
   const slot = slots[index] || slots[0];
   if (action === 'jump') slot.jumpQueued = true;
   if (action === 'dive') slot.diveQueued = true;
+  if (action === 'cut') slot.cutQueued = true;
   if (action === 'volley') slot.volleyQueued = true;
   if (action === 'spike') slot.spikeQueued = true;
   if (action === 'ballReset') slot.ballResetQueued = true;

@@ -32,6 +32,7 @@ const KEYMAP = {
   sprint: { pad: 6, keys: ['ShiftLeft', 'ShiftRight'] },
   slide: { pad: 7, keys: ['KeyC'] },
   dive: { pad: 2, keys: ['KeyQ'] },
+  cut: { pad: 4, keys: ['KeyF'] },
   // Button 9 is Start in the standard mapping. Resetting the ball is a spawn
   // event, not a verb, so it sits on a menu button rather than a face button.
   ballReset: { pad: 9, keys: ['KeyB'] },
@@ -92,6 +93,7 @@ export const input = {
   slideHeld: false,
   /** Edge-triggered and consumed, exactly like jumpQueued. */
   diveQueued: false,
+  cutQueued: false,
   /** Edge-triggered and consumed, exactly like diveQueued. The ball's reset is
    *  a SPAWN EVENT, so the flag is all input is allowed to do — fixedUpdate
    *  owns the teleport. */
@@ -116,6 +118,7 @@ export const input = {
 const heldKeys = new Set();
 let padJumpWasDown = false;
 let padDiveWasDown = false;
+let padCutWasDown = false;
 let padBallResetWasDown = false;
 let padVolleyWasDown = false;
 let padSpikeWasDown = false;
@@ -175,6 +178,7 @@ function onKeyDown(event) {
   // Edge-triggered: auto-repeat must not re-queue a jump or a dive.
   if (event.code === 'Space' && !event.repeat) input.jumpQueued = true;
   if (KEYMAP.dive.keys.includes(event.code) && !event.repeat) input.diveQueued = true;
+  if (KEYMAP.cut.keys.includes(event.code) && !event.repeat) input.cutQueued = true;
   if (KEYMAP.ballReset.keys.includes(event.code) && !event.repeat) input.ballResetQueued = true;
   if (KEYMAP.volley.keys.includes(event.code) && !event.repeat) input.volleyQueued = true;
   if (KEYMAP.spike.keys.includes(event.code) && !event.repeat) input.spikeQueued = true;
@@ -198,6 +202,7 @@ function onBlur() {
   heldKeys.clear();
   padJumpWasDown = false;
   padDiveWasDown = false;
+  padCutWasDown = false;
   // Same for a drag: losing focus mid-drag would otherwise leave the camera
   // taking pointer deltas from a button nobody is holding.
   dragging = false;
@@ -311,6 +316,10 @@ export function sampleInput(camera) {
     if (diveDown && !padDiveWasDown) input.diveQueued = true;
     padDiveWasDown = diveDown;
 
+    const cutDown = padDown(pad, KEYMAP.cut.pad);
+    if (cutDown && !padCutWasDown) input.cutQueued = true;
+    padCutWasDown = cutDown;
+
     // Same edge treatment, same reason: a held Start must serve once.
     const ballResetDown = padDown(pad, KEYMAP.ballReset.pad);
     if (ballResetDown && !padBallResetWasDown) input.ballResetQueued = true;
@@ -411,6 +420,16 @@ export function consumeJump() {
 export function consumeDive() {
   const queued = input.diveQueued;
   input.diveQueued = false;
+  return queued;
+}
+
+/**
+ * Reads and clears the queued cut.
+ * @returns {boolean}
+ */
+export function consumeCut() {
+  const queued = input.cutQueued;
+  input.cutQueued = false;
   return queued;
 }
 

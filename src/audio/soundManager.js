@@ -553,6 +553,9 @@ class SoundManager {
       this.playFootstep(worldPos);
     } else if (action === 'slide') {
       this.playProceduralWhoosh(worldPos, 0.20);
+    } else if (action === 'cut') {
+      this.playProceduralWhoosh(worldPos, 0.22);
+      this.playFootstep(worldPos);
     }
   }
 
