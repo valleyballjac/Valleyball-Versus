@@ -3,58 +3,87 @@
 Welcome to the **Valleyball Versus** codebase.
 This document provides mandatory operational context, architectural invariants, code conventions, and verification procedures for any AI assistant, autonomous agent, or engineer modifying this repository.
 
+> **Native Antigravity Skill**: If operating within Google Antigravity, activate the dedicated workspace skill:  
+> `.agents/skills/valleyball-guide/SKILL.md` (and sub-modules in `references/`).
+
 ---
 
 ## 1. PROJECT ESSENTIALS
 
-- **Title**: Valleyball Versus (v0.2.0)
+- **Title**: Valleyball Versus (v0.2.3)
 - **Stack**: Three.js (r185.1), Rapier3D (`@dimforge/rapier3d-compat` 0.19.3), Vite (8.2.2), vanilla modern JavaScript (ES modules).
-- **Core Concept**: 1v1 splitscreen arcade sports game featuring physical active ragdolls, high-velocity strikes, dynamic target goal switching, and locked 60+ FPS performance.
+- **Core Concept**: Pure physics sports simulation featuring physical active ragdolls, mass-normal strikes, zero artificial ball magnetism, dynamic target goal switching, and locked 60+ FPS performance.
 - **Working Root**: `C:\Users\portt\Dev\Valleyball\Valleyball-Demo`
+- **Canonical Arena**: The **Valley Court** (`public/models/arena.glb`) is the sole canonical arena. The procedural test bowl is **permanently retired**.
 
 ---
 
-## 2. THE 7 NON-NEGOTIABLE ARCHITECTURAL INVARIANTS
+## 2. THE SPORT DOCTRINE
+
+1. **Simulation First**: Valleyball Versus is strictly a physical simulation. It does not compromise its physics to chase arcade shortcuts. Pure Sim (`assistRadius: 0.0`, `aimMagnetism: 0.0`) is the default out-of-the-box experience.
+2. **No Out-of-Bounds**: The court is enclosed by continuous perimeter glass. The ball is **always live**. There are no throw-ins or sideline stops.
+3. **No Referee Whistles**: Play flows continuously. Player collisions are resolved physically through Rapier rigid-body impulses.
+4. **Positioning Over Aim Assist**: Physical strike exit angles depend on where the athlete makes physical contact with the ball. The **Cut mechanic** (`KeyV` / `LB`) provides the plant-and-redirect agility to position behind the ball.
+5. **Defense Must Never Lock Movement**: Any future defensive mechanic (such as blocks or braces) **must never lock the athlete into a frozen pose or restrict locomotion**. Athletes must remain agile and mobile at all times.
+
+---
+
+## 3. THE 10 NON-NEGOTIABLE ARCHITECTURAL INVARIANTS
 
 Every AI model working on this project must respect these laws. Code that violates these invariants must be rejected.
 
 1. **Law 1 — Physics owns momentum; animation owns pose**:
    - The athlete's root is a dynamic Rapier rolling sphere driven **only by torque and impulses**.
-   - **NEVER** write position or velocity directly to an athlete body during active play (`setTranslation` and `setLinvel` are forbidden outside sanctioned spawn/teleport sites).
-   - Momentum belongs to physics; pose belongs to the kinematic ghost.
+   - **NEVER** write position (`setTranslation`) or velocity (`setLinvel`) directly to an athlete body during active play.
+   - Physical strike impulses are applied **to the ball**, never directly to the striking hand or athlete root.
 2. **Law 2 — World-space PD tracking only**:
    - No joint motors or local-frame servos. Ragdoll bodies chase the ghost via mass-scaled linear and angular impulses sampled *pre-impulse*.
 3. **Law 3 — Clamped damping discipline**:
-   - All gameplay damping must pass through `applyClampedDamping` (`motor.js` / `damping.js`). Damping impulses can at most cancel motion; they can **never** inject energy or reverse direction.
+   - All gameplay damping must pass through `applyClampedLinearDamping` and `applyClampedAngularDamping` (`src/sim/damping.js`). Damping impulses can at most cancel motion; they can **never** inject energy or reverse direction.
 4. **Law 4 — One blend weight; no boolean character states**:
    - `tracker.weight` (0..1) is the sole balance authority.
    - **Never introduce boolean state machines for the character.** Use continuous phase floats (`slidePhase`, `divePhase`) and integer tick timestamps (`lastJumpTick`).
    - Blend shares must sum to 1.0 continuously: `stand-up > action > airborne > locomotion + idle`.
 5. **Law 5 — Zero root motion**:
-   - The horizontal axes of the hips bone are pinned to bind space every tick. Residual root motion must remain strictly `0.0000 m`.
+   - The horizontal axes of the hips bone are pinned to bind space every tick. Residual horizontal root motion must remain strictly `0.0000 m`.
 6. **Law 6 — Absolute determinism & no wall clocks**:
    - The simulation steps at a fixed 60 Hz dt (`fixedDt = 1/60`).
-   - **NEVER use `Date.now()`, `performance.now()`, or unseeded `Math.random()` inside `src/sim/` or `src/mechanics/`.** All timing is measured in integer ticks.
+   - **NEVER use `Date.now()`, `performance.now()`, or unseeded `Math.random()` inside `src/sim/`, `src/mechanics/`, or `src/ai/`.** All timing is measured in integer ticks.
+   - Determinism verification (`npm run determinism`) must produce byte-identical SHA-256 hashes on the Valley Court.
 7. **Law 7 — Decoupled rendering invariant**:
    - High-frequency telemetry (clocks, scores, speedometers) must **never** force canvas redraws or texture re-uploads of large static background meshes.
-   - Clocks and dynamic text must use dedicated micro-canvases, shared textures, or DOM overlays.
+8. **Law 8 — Jumbotron upload budget (Zero Goal GPU Stalls)**:
+   - Flashing scoreboards during goals must be animated via material emissive/color uniforms, **never** by triggering multi-canvas 2D redraws and synchronous `gl.texImage2D` uploads on the goal frame. Strictly observe the `displayCoordinator` upload budget (max 1 upload per frame).
+   - Pre-warm all celebration lights at boot; never toggle dynamic `PointLight.visible` at runtime to prevent shader recompilation stalls.
+9. **Law 9 — Procedural IK limitations on Mixamo armatures**:
+   - Do not attach procedural reaching IK to Mixamo shoulder bones without dedicated, authored base poses and explicit joint angle limits. Unconstrained reaching creates 180° quaternion singularities and violent ragdoll flailing.
+10. **Law 10 — Court floor trimesh weld (`FIX_INTERNAL_EDGES`)**:
+    - All playing court surface trimeshes must be initialized with `RAPIER.TriMeshFlags.FIX_INTERNAL_EDGES` to weld adjacent coplanar edges and prevent phantom deceleration/rebound spikes.
+    - Raised line decals (`M_Lines*`) must remain classified as **scenery / render-only** and excluded from physics colliders.
 
 ---
 
-## 3. FILE SYSTEM & CODE PLACEMENT RULES
+## 4. MEMORY & ZERO ALLOCATION IN TICK LOOPS
+
+- **Forbidden**: Never allocate `new THREE.Vector3()`, `new THREE.Quaternion()`, `new Array()`, or inline lambda closures inside `fixedUpdate`, `applyTracking`, `runActions`, or `runStrikes`.
+- Use module-scoped scratch variables (`_v1`, `_q1`, `_matrix`) initialized at file load time.
+
+---
+
+## 5. FILE SYSTEM & CODE PLACEMENT RULES
 
 - `src/config/tuning.js`: **The Single Source of Truth.** Every tunable parameter belongs here. Never scatter magic numbers or local constants in other modules.
 - `src/sim/`: Physics, athlete rig, motor, ball, and arena collision.
-- `src/mechanics/`: Game rules, scoring, goal switching, strike impulse delivery, watchdog.
+- `src/mechanics/`: Game rules, scoring, goal switching, strike impulse delivery, mount recovery.
 - `src/input/`: Gamepad and keyboard abstraction layer (`inputRouter.js`).
 - `src/ui/`: DOM menus, lobby, HUD overlays, pause screen, and victory stats.
-- `src/visuals/`: Cameras, jumbotrons, scoreboards, and stadium effects.
+- `src/visuals/`: Cameras, jumbotrons, scoreboards, turf particles, and goal celebration effects.
 - `src/audio/`: WebAudio sound synthesizer and positional SFX.
-- `scripts/`: Offline tools, determinism validators, and packaging scripts.
+- `scripts/`: Offline tools, determinism validators, bot training, and packaging scripts.
 
 ---
 
-## 4. ASSET & URL CONVENTIONS
+## 6. ASSET & URL CONVENTIONS
 
 Valleyball uses a dual-deployment pipeline:
 - GitHub Pages is served from base `/Valleyball-Versus/`.
@@ -69,17 +98,23 @@ const url = assetUrl('models/character.glb');
 
 ---
 
-## 5. STANDARD WORKFLOW COMMANDS
+## 7. STANDARD WORKFLOW COMMANDS
 
 ```bash
 # Run local dev server (port 5173)
 npm run dev
 
+# Build production bundle
+npm run build
+
 # Run physics determinism verification
 npm run determinism
 
-# Build production bundle for GitHub Pages
-npm run build
+# Run headless match evaluation
+npm run eval:match
+
+# Run bot evolutionary training harness
+npm run train:bot
 
 # Deploy to GitHub Pages (gh-pages branch)
 npm run deploy
@@ -90,48 +125,17 @@ npm run package:itch
 
 ---
 
-## 6. PRIMARY ROADMAP FOR INCOMING AGENTS
+## 8. PRIMARY ROADMAP FOR INCOMING AGENTS (v0.2.4 Priority)
 
-If asked to build new features, prioritize the following architecture-aligned tasks:
-
-1. **2v2 Versus Match Mode**:
-   - Add slots for P3/P4 in `src/input/inputRouter.js`.
-   - Instantiate 4 athletes via `src/sim/athlete.js` at the 4 pre-measured landmark stream heads in `tuning.js`.
-   - Add strike arbitration to prevent teammate double-impulse catapults.
-2. **Autonomous Sparring Bot / AI Opponent**:
-   - Create `src/ai/botController.js` to drive synthetic input to Player 2.
-   - Predict ball landing coordinates using Rapier linear velocity and project sphere motor torque toward the intercept point.
-3. **Camera Arena Occlusion**:
-   - Add a raycast probe from athlete pelvis to chase camera arm in `src/visuals/playerCamera.js` to prevent clipping through the bowl arena lip.
-4. **WebRTC Rollback Netcode**:
-   - Build a peer-to-peer network layer syncing discrete 60 Hz input frames.
-
----
-
-## 7. CANONICAL GAMEPLAY RULES & SPECIFICATION
-
-Before altering scoring, match flow, spawns, camera bias, or ball physics, read:
-📖 **`docs/VALLEYBALL_GAMEPLAY_SOURCE_OF_TRUTH.md`**
-
-This document governs the official rules of the sport:
-- **Continuous Momentum**: Play never pauses on a goal; the ball remains live in physics.
-- **Dynamic Goal Switching**: Ends unconditionally invert immediately after any scored goal.
-- **Spawns & Kickoff**: Elevated stream head spawns and randomized field ball drop.
-- **Tackling & Possession**: 100% legal full-contact collisions with free arcade possession.
-- **Ball Profiles**: Small (speed), Medium (official standard), Large (heavy inertia).
-- **Match Time & Resolution**: Strictly 5-minute regulation with draw / overtime options.
-
----
-
-## 8. VERSION BUMPING & IN-GAME LABELING DISCIPLINE
-
-Whenever starting work on a new version or forking from a public release:
-1. **`package.json`**: Immediately bump the `"version"` field (e.g. `0.2.3`).
-2. **`index.html`**: Update the version badge on the loading screen (`<span ...>v0.2.3</span>`).
-3. **`src/features/ui/mainMenu/titleScreen.js`**: Update the version badge next to the `VERSUS` tag on the main title screen.
-4. **`src/ui/inGameMenu.js`**: Update the version badge in the in-game settings/pause menu header.
-5. Never leave stale version numbers on the active development branch so testers and developers always know the exact build they are working on.
-
----
-*Follow the laws, verify with tests, and build upon this solid foundation.*
-
+1. **AI Retraining & Valley Court Parity (#1 Priority for v0.2.4)**:
+   - Ensure `src/ai/headlessSim.js` and `scripts/trainBot.mjs` evaluate on the exact Valley Court trimesh.
+   - Teach bot perception about court slopes, basin elevation, and hoop apertures.
+   - Integrate the **Cut mechanic** (`KeyV` / `LB`) into bot decision trees for rapid slope braking and reversal.
+2. **Performance Polish on Goals**:
+   - Refactor `src/visuals/scoreboards.js` celebration flashing to use emissive material uniforms instead of multi-jumbotron 2D canvas redraws.
+   - Pre-warm `goalCelebration.js` point light to eliminate shader recompilation hitches.
+3. **Sport Ceremony & Match Presentation**:
+   - Implement kickoff ritual (players setting up on their respective halves, camera framing, ball spawning from high stream drop).
+   - Match conclusion presentation (athletes transitioning into post-match postures, broadcast camera wide shot, victory telemetry).
+4. **Defensive Mechanics (When Offensive Positioning is Ready)**:
+   - Re-approach defense as an agile physical brace that **never locks player locomotion**.
