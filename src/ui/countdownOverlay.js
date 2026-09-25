@@ -83,7 +83,7 @@ export function updateCountdownOverlay(countdownSeconds, isCountingDown, delta =
     if (countdownSeconds !== lastDisplayedSec) {
       lastDisplayedSec = countdownSeconds;
       numberEl.textContent = String(countdownSeconds);
-      labelEl.textContent = 'GET READY';
+      labelEl.textContent = countdownSeconds > 3 ? 'SERVICE' : 'GET READY';
 
       // Pulse animation
       numberEl.style.transform = 'scale(1.35)';
@@ -102,11 +102,11 @@ export function updateCountdownOverlay(countdownSeconds, isCountingDown, delta =
       }
     }
   } else if (goTimer > 0) {
-    // Show "GO!" flash
+    // Show "PLAY!" flash
     overlayEl.style.display = 'flex';
     goTimer -= delta;
     labelEl.textContent = 'VALLEYBALL';
-    numberEl.textContent = 'GO!';
+    numberEl.textContent = 'PLAY!';
     numberEl.style.color = '#ffffff';
     numberEl.style.textShadow = '0 4px 24px rgba(0, 0, 0, 0.9), 0 0 40px rgba(255, 255, 255, 0.95), 0 0 60px rgba(74, 222, 128, 0.6)';
     numberEl.style.transform = 'scale(1.2)';

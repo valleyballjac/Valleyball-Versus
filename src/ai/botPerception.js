@@ -1,5 +1,8 @@
 import * as THREE from 'three';
 import { TUNING } from '../config/tuning.js';
+import { getCourtFloorY, getCourtSlopeNormal } from './courtHeightmap.js';
+
+export { getCourtFloorY, getCourtSlopeNormal };
 
 // Pre-allocated scratch objects for zero-allocation hot path
 const _vec1 = new THREE.Vector3();
@@ -116,6 +119,12 @@ export function createPerception() {
             angleToDefendGoal: 0.0,
             facingDefendGoal: false,
         },
+        terrain: {
+            elevation: 0.0,
+            slopeGradient: 0.0,
+            slopeNormal: new THREE.Vector3(0, 1, 0),
+            isDownhillFacing: false,
+        },
         ballPhysicsProfile: {
             decelFactor: 1.0,
             maxApproachSpeed: 1.0,
@@ -164,23 +173,6 @@ export function projectBallPosition(ballPos, ballVel, ticks, gravityY, outVec = 
     outVec.y += ballVel.y * time + 0.5 * gravityY * time * time;
     outVec.z += ballVel.z * time;
     return outVec;
-}
-
-/**
- * Approximates the valley court terrain surface height (Y in meters) given Z coordinate.
- * Measured directly from arena.glb COL_Court collision mesh:
- *   |Z| <= 10: Y = 0.0m (flat central basin)
- *   |Z| = 20:  Y ≈ 1.5m
- *   |Z| = 30:  Y ≈ 4.0m
- *   |Z| = 40:  Y ≈ 7.8m (Hoop aperture at Y = 10.0m)
- *   |Z| >= 50: Y ≈ 10.0 - 10.8m (high corner boundaries)
- */
-export function getCourtFloorY(z) {
-    const az = Math.abs(z);
-    if (az <= 10.0) return 0.0;
-    if (az >= 50.0) return 10.0;
-    const u = (az - 10.0) / 40.0;
-    return 10.0 * Math.pow(u, 1.35);
 }
 
 const _simPos = new THREE.Vector3();
@@ -258,14 +250,8 @@ export function simulateLongHorizonTrajectory(ballPos, ballVel, ballRadius, ball
         }
 
         // Terrain collision check
-        const floorY = getCourtFloorY(_simPos.z) + ballRadius;
-        const az = Math.abs(_simPos.z);
-        const slopeYPerZ = (az > 10.0 && az < 50.0)
-            ? Math.sign(_simPos.z) * 0.3375 * Math.pow((az - 10.0) / 40.0, 0.35)
-            : 0;
-        
-        const normLen = Math.hypot(1.0, slopeYPerZ);
-        _simNormal.set(0, 1.0 / normLen, -slopeYPerZ / normLen);
+        const floorY = getCourtFloorY(_simPos.x, _simPos.z) + ballRadius;
+        getCourtSlopeNormal(_simPos.x, _simPos.z, _simNormal);
 
         if (_simPos.y <= floorY) {
             _simPos.y = floorY;
@@ -284,7 +270,9 @@ export function simulateLongHorizonTrajectory(ballPos, ballVel, ballRadius, ball
                 } else {
                     // Rolling contact along terrain
                     _simVel.addScaledVector(_simNormal, -vDotN);
+                    const slopeAccX = -gravityY * _simNormal.x;
                     const slopeAccZ = -gravityY * _simNormal.z;
+                    _simVel.x += slopeAccX * dt;
                     _simVel.z += slopeAccZ * dt;
                     _simVel.multiplyScalar(Math.max(0, 1.0 - 0.05 * dt * 60));
                     sample.isGrounded = true;
@@ -399,7 +387,7 @@ export function evaluateOpponentContest(selfPos, selfVel, oppPos, oppVel, defend
             ? Math.min(36.0, Math.max(16.0, oppPosTarget.z + 0.55 * (defendGoalPos.z - oppPosTarget.z)))
             : Math.max(-36.0, Math.min(-16.0, oppPosTarget.z + 0.55 * (defendGoalPos.z - oppPosTarget.z)));
         const blockX = oppPosTarget.x * 0.45;
-        trajectory.defensiveBlockTarget.set(blockX, getCourtFloorY(blockZ), blockZ);
+        trajectory.defensiveBlockTarget.set(blockX, getCourtFloorY(blockX, blockZ), blockZ);
     } else {
         trajectory.firstTouchBy = 'contested';
         trajectory.trajectoryInvalidatedTick = Math.min(earliestSelfTick, earliestOppTick);
@@ -474,6 +462,15 @@ export function buildPerception(ownAthlete, opponentAthlete, activeBalls, matchS
     const toDefZ = perception.hoops.defendGoalPos.z - selfZ;
     const defLen = Math.hypot(toDefX, toDefZ) || 1.0;
     perception.hoops.vecToDefendGoal.set(toDefX / defLen, 0, toDefZ / defLen);
+
+    // Terrain perception at athlete location
+    perception.terrain.elevation = getCourtFloorY(selfX, selfZ);
+    getCourtSlopeNormal(selfX, selfZ, perception.terrain.slopeNormal);
+    perception.terrain.slopeGradient = Math.hypot(perception.terrain.slopeNormal.x, perception.terrain.slopeNormal.z);
+    const facingDirX = Math.sin(perception.self.facingYaw);
+    const facingDirZ = Math.cos(perception.self.facingYaw);
+    const downhillDot = facingDirX * (-perception.terrain.slopeNormal.x) + facingDirZ * (-perception.terrain.slopeNormal.z);
+    perception.terrain.isDownhillFacing = downhillDot > 0.3;
 
     // Ball
     let nearestBall = null;

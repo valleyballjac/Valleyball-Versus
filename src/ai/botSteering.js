@@ -349,3 +349,45 @@ export function steerIdle(inputSlot) {
     inputSlot.sprintHeld = false;
     inputSlot.slideHeld = false;
 }
+
+/**
+ * Evaluates whether the bot should execute a Cut maneuver (KeyV / LB) to plant-and-redirect.
+ *
+ * Checks:
+ * 1. Current horizontal speed is high (> 3.0 m/s).
+ * 2. Desired direction sharply diverges from current velocity (angle > 75 degrees, or dot < 0.25).
+ * 3. Or when descending steep slopes (> 2.8 m/s downhill) and needing to reverse or cut laterally.
+ *
+ * @param {THREE.Vector3|{x: number, y: number, z: number}} currentVel
+ * @param {THREE.Vector3|{x: number, y: number, z: number}} desiredDir
+ * @param {Object} [options] - { minSpeed, minAngleDeg, isDownhill }
+ * @returns {boolean}
+ */
+export function shouldExecuteCut(currentVel, desiredDir, options = {}) {
+    if (!currentVel || !desiredDir) return false;
+    const hSpeed = Math.hypot(currentVel.x, currentVel.z);
+    const minSpeed = options.minSpeed ?? 3.0;
+    if (hSpeed < minSpeed) return false;
+
+    const dirLen = Math.hypot(desiredDir.x, desiredDir.z);
+    if (dirLen < 0.1) return false;
+
+    const vNormX = currentVel.x / hSpeed;
+    const vNormZ = currentVel.z / hSpeed;
+    const dNormX = desiredDir.x / dirLen;
+    const dNormZ = desiredDir.z / dirLen;
+
+    const alignment = vNormX * dNormX + vNormZ * dNormZ;
+
+    // Dot product < 0.25 corresponds to angle > ~75 degrees (sharp redirect / reversal)
+    if (alignment < 0.25) {
+        return true;
+    }
+
+    // Downhill slope descent check: lower threshold if sliding downhill fast
+    if (options.isDownhill && hSpeed > 2.8 && alignment < 0.5) {
+        return true;
+    }
+
+    return false;
+}

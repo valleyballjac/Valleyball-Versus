@@ -323,7 +323,7 @@ export function updateScoreboards(handle, probe) {
   // 2. BACKPLATES UPDATE ONLY ON SCORE/GOAL/SIDE EVENTS (Zero uploads on standard second ticks)
   for (const board of handle.boards) {
     const key = `${board.key}|${probe.scoreHome}|${probe.scoreAway}|${probe.targetGoal}|` +
-      `${probe.matchOver ? 1 : 0}|${flashing ? phase + 1 : 0}|${probe.lastGoalId || ''}|${probe.lastScoredFor || ''}|${INK.home}|${INK.away}`;
+      `${probe.matchOver ? 1 : 0}|${flashing ? 1 : 0}|${probe.lastGoalId || ''}|${probe.lastScoredFor || ''}|${INK.home}|${INK.away}`;
 
     board.pendingKey = key;
     board.pendingView = { flashing, phase };
@@ -332,21 +332,19 @@ export function updateScoreboards(handle, probe) {
     }
   }
 
-  // If celebration flashing or match over, update all dirty boards immediately
-  if (flashing || probe.matchOver) {
-    for (const board of handle.boards) {
-      if (board.dirty) {
-        if (board.side === 'end') {
-          drawEndBoard(board, probe, board.pendingView);
-        } else {
-          drawSideBoard(board, probe, board.pendingView);
-        }
-        board.texture.needsUpdate = true;
-        board.lastKey = board.pendingKey;
-        board.dirty = false;
+  // 3. MATERIAL UNIFORM-DRIVEN CELEBRATION FLASHING (Zero GPU texture uploads, LAW 8)
+  for (const board of handle.boards) {
+    if (flashing) {
+      if (phase === 1) {
+        // Radiant gold flash pulse
+        board.screenMaterial.color.setRGB(1.65, 1.45, 0.45);
+      } else {
+        // Clean baseline tone
+        board.screenMaterial.color.setRGB(1.0, 1.0, 1.0);
       }
+    } else {
+      board.screenMaterial.color.setRGB(1.0, 1.0, 1.0);
     }
-    return;
   }
 
   // Smooth round-robin: redraw and upload at most 1 dirty scoreboard per frame within budget
@@ -385,12 +383,11 @@ function drawEndBoard(board, probe, view) {
   const W = board.canvas.width;
   const H = board.canvas.height;
 
-  const lit = view.flashing && view.phase === 1;
-  ctx.fillStyle = lit ? INK.panelFlash : INK.panelIdle;
+  ctx.fillStyle = INK.panelIdle;
   ctx.fillRect(0, 0, W, H);
 
   // Recessed architectural border frame with clean 8px inset
-  ctx.strokeStyle = lit ? INK.flashInk : INK.screenBorder;
+  ctx.strokeStyle = INK.screenBorder;
   ctx.lineWidth = 5;
   ctx.strokeRect(8, 8, W - 16, H - 16);
 
@@ -400,12 +397,13 @@ function drawEndBoard(board, probe, view) {
   if (view.flashing) {
     const scoredAt = probe.lastGoalId || (probe.targetGoal === 'N' ? 'S' : 'N');
     const scoringTeam = probe.lastScoredFor ? probe.lastScoredFor.toUpperCase() : 'GOAL';
-    const ink = lit ? INK.flashInk : INK.panelFlash;
+    const ink = INK.panelFlash;
 
     ctx.fillStyle = ink;
     ctx.font = `bold ${Math.round(H * 0.18)}px ui-monospace, Consolas, monospace`;
     ctx.fillText('★  GOAL!  ★', W / 2, H * 0.22);
 
+    ctx.fillStyle = '#ffffff';
     ctx.font = `bold ${Math.round(H * 0.10)}px ui-monospace, Consolas, monospace`;
     ctx.fillText(
       `${scoringTeam} SCORED AT GOAL ${scoredAt === 'N' ? 'NORTH' : 'SOUTH'}`,
@@ -414,6 +412,7 @@ function drawEndBoard(board, probe, view) {
     );
 
     // Score on bottom
+    ctx.fillStyle = ink;
     ctx.font = `bold ${Math.round(H * 0.24)}px ui-monospace, Consolas, monospace`;
     ctx.fillText(`${probe.scoreHome} - ${probe.scoreAway}`, W / 2, H * 0.76);
     return;
@@ -488,12 +487,11 @@ function drawSideBoard(board, probe, view) {
   const W = board.canvas.width;
   const H = board.canvas.height;
 
-  const lit = view.flashing && view.phase === 1;
-  ctx.fillStyle = lit ? INK.panelFlash : INK.panelIdle;
+  ctx.fillStyle = INK.panelIdle;
   ctx.fillRect(0, 0, W, H);
 
   // Recessed architectural border frame
-  ctx.strokeStyle = lit ? INK.flashInk : INK.screenBorder;
+  ctx.strokeStyle = INK.screenBorder;
   ctx.lineWidth = 5;
   ctx.strokeRect(2.5, 2.5, W - 5, H - 5);
 
@@ -503,12 +501,13 @@ function drawSideBoard(board, probe, view) {
   if (view.flashing) {
     const scoredAt = probe.lastGoalId || (probe.targetGoal === 'N' ? 'S' : 'N');
     const scoringTeam = probe.lastScoredFor ? probe.lastScoredFor.toUpperCase() : 'GOAL';
-    const ink = lit ? INK.flashInk : INK.panelFlash;
+    const ink = INK.panelFlash;
 
     ctx.fillStyle = ink;
     ctx.font = `bold ${Math.round(H * 0.28)}px ui-monospace, Consolas, monospace`;
     ctx.fillText(`★  GOAL SCORED BY ${scoringTeam}  ★`, W / 2, H * 0.32);
 
+    ctx.fillStyle = '#ffffff';
     ctx.font = `bold ${Math.round(H * 0.32)}px ui-monospace, Consolas, monospace`;
     ctx.fillText(
       `SCORED AT GOAL ${scoredAt === 'N' ? 'NORTH' : 'SOUTH'}  |  HOME ${probe.scoreHome} - ${probe.scoreAway} AWAY`,

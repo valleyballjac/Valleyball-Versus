@@ -22,9 +22,10 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { TUNING } from '../config/tuning.js';
 import { createBotController, updateBot } from './botController.js';
 import { testHoopCrossing } from '../mechanics/scoring.js';
+import { toTrimeshArrays } from '../sim/arena.js';
 import { getCourtFloorY } from './botPerception.js';
 
-let cachedCourtMesh = null;
+let cachedCollisionMeshes = null;
 
 // ═══ CONSTANTS ═══
 const DT = 1 / 60;
@@ -73,7 +74,7 @@ const _moveWorld = new THREE.Vector3();
 export async function initHeadless() {
   await RAPIER.init();
 
-  if (!cachedCourtMesh) {
+  if (!cachedCollisionMeshes) {
     try {
       const __filename = fileURLToPath(import.meta.url);
       const __dirname = path.dirname(__filename);
@@ -83,29 +84,36 @@ export async function initHeadless() {
 
       await new Promise((resolve) => {
         new GLTFLoader().parse(arrayBuffer, '', (gltf) => {
-          let courtObj = null;
+          gltf.scene.updateMatrixWorld(true);
+          const meshes = [];
           gltf.scene.traverse((obj) => {
-            if (obj.name === 'COL_Court') courtObj = obj;
-          });
-          if (courtObj) {
-            const geom = courtObj.geometry.clone();
-            geom.applyMatrix4(courtObj.matrixWorld);
-            const pos = geom.attributes.position;
-            const vertices = new Float32Array(pos.array);
-            let indices;
-            if (geom.index) {
-              indices = new Uint32Array(geom.index.array);
-            } else {
-              indices = new Uint32Array(pos.count);
-              for (let i = 0; i < pos.count; i++) indices[i] = i;
+            if (obj.isMesh && obj.name && obj.name.startsWith('COL_')) {
+              const geom = obj.geometry.clone();
+              geom.applyMatrix4(obj.matrixWorld);
+              const isCourtSurface = obj.name === 'COL_Court';
+              const { vertices, indices } = toTrimeshArrays(geom, {
+                filterInverted: isCourtSurface,
+                maxInvertedY: 4.0,
+              });
+              geom.dispose();
+              if (indices && indices.length > 0) {
+                meshes.push({
+                  name: obj.name,
+                  vertices,
+                  indices,
+                  fixInternalEdges: isCourtSurface,
+                });
+              }
             }
-            cachedCourtMesh = { vertices, indices };
+          });
+          if (meshes.length > 0) {
+            cachedCollisionMeshes = meshes;
           }
           resolve();
         });
       });
     } catch (e) {
-      console.warn('[headlessSim] Note: arena.glb court mesh not loaded, using cuboid ground', e);
+      console.warn('[headlessSim] Note: arena.glb collision meshes not loaded, using cuboid ground', e);
     }
   }
 
@@ -121,6 +129,7 @@ function createInputSlot() {
     moveWorld: new THREE.Vector3(),
     sprintHeld: false, slideHeld: false,
     jumpQueued: false, diveQueued: false,
+    cutQueued: false,
     volleyQueued: false, spikeQueued: false,
     ballResetQueued: false,
     lookX: 0, lookY: 0,
@@ -136,6 +145,7 @@ function clearSlot(slot) {
   slot.moveWorld.set(0, 0, 0);
   slot.sprintHeld = false; slot.slideHeld = false;
   slot.jumpQueued = false; slot.diveQueued = false;
+  slot.cutQueued = false;
   slot.volleyQueued = false; slot.spikeQueued = false;
   slot.ballResetQueued = false;
   slot.hasAim = false; slot.aimYaw = 0; slot.cameraYaw = 0;
@@ -180,12 +190,22 @@ export function createHeadlessMatch(paramsA, paramsB, opts = {}) {
 
   const groundBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
 
-  // Court surface collider: real 3D valley trimesh or fallback cuboid
-  if (cachedCourtMesh) {
-    const desc = RAPIER.ColliderDesc.trimesh(cachedCourtMesh.vertices, cachedCourtMesh.indices, RAPIER.TriMeshFlags.FIX_INTERNAL_EDGES)
-      .setFriction(0.3)
-      .setRestitution(0.75);
-    world.createCollider(desc, groundBody);
+  // Court surface & barrier colliders: real 3D valley trimeshes or fallback cuboids
+  if (cachedCollisionMeshes && cachedCollisionMeshes.length > 0) {
+    for (const m of cachedCollisionMeshes) {
+      const flags = m.fixInternalEdges ? RAPIER.TriMeshFlags.FIX_INTERNAL_EDGES : 0;
+      const desc = flags
+        ? RAPIER.ColliderDesc.trimesh(m.vertices, m.indices, flags)
+        : RAPIER.ColliderDesc.trimesh(m.vertices, m.indices);
+      if (m.name.includes('Court')) {
+        desc.setFriction(0.3).setRestitution(0.75);
+      } else if (m.name.includes('Barrier')) {
+        desc.setFriction(0.2).setRestitution(0.6);
+      } else if (m.name.includes('Goal')) {
+        desc.setFriction(0.3).setRestitution(0.8);
+      }
+      world.createCollider(desc, groundBody);
+    }
   } else {
     world.createCollider(
       RAPIER.ColliderDesc.cuboid(ARENA_HALF_X, 0.5, ARENA_HALF_Z)
@@ -194,40 +214,39 @@ export function createHeadlessMatch(paramsA, paramsB, opts = {}) {
         .setRestitution(0.0),
       groundBody,
     );
+    // Court perimeter barriers fallback
+    world.createCollider(
+      RAPIER.ColliderDesc.cuboid(0.5, 12.0, COURT_WALL_Z)
+        .setTranslation(-COURT_WALL_X, 10.0, 0)
+        .setRestitution(0.6)
+        .setFriction(0.2),
+      groundBody,
+    );
+    world.createCollider(
+      RAPIER.ColliderDesc.cuboid(0.5, 12.0, COURT_WALL_Z)
+        .setTranslation(COURT_WALL_X, 10.0, 0)
+        .setRestitution(0.6)
+        .setFriction(0.2),
+      groundBody,
+    );
+    world.createCollider(
+      RAPIER.ColliderDesc.cuboid(COURT_WALL_X, 12.0, 0.5)
+        .setTranslation(0, 10.0, -COURT_WALL_Z)
+        .setRestitution(0.6)
+        .setFriction(0.2),
+      groundBody,
+    );
+    world.createCollider(
+      RAPIER.ColliderDesc.cuboid(COURT_WALL_X, 12.0, 0.5)
+        .setTranslation(0, 10.0, COURT_WALL_Z)
+        .setRestitution(0.6)
+        .setFriction(0.2),
+      groundBody,
+    );
   }
 
-  // Court perimeter barriers (matching arena bowl/court walls)
-  world.createCollider(
-    RAPIER.ColliderDesc.cuboid(0.5, 12.0, COURT_WALL_Z)
-      .setTranslation(-COURT_WALL_X, 10.0, 0)
-      .setRestitution(0.6)
-      .setFriction(0.2),
-    groundBody,
-  );
-  world.createCollider(
-    RAPIER.ColliderDesc.cuboid(0.5, 12.0, COURT_WALL_Z)
-      .setTranslation(COURT_WALL_X, 10.0, 0)
-      .setRestitution(0.6)
-      .setFriction(0.2),
-    groundBody,
-  );
-  world.createCollider(
-    RAPIER.ColliderDesc.cuboid(COURT_WALL_X, 12.0, 0.5)
-      .setTranslation(0, 10.0, -COURT_WALL_Z)
-      .setRestitution(0.6)
-      .setFriction(0.2),
-    groundBody,
-  );
-  world.createCollider(
-    RAPIER.ColliderDesc.cuboid(COURT_WALL_X, 12.0, 0.5)
-      .setTranslation(0, 10.0, COURT_WALL_Z)
-      .setRestitution(0.6)
-      .setFriction(0.2),
-    groundBody,
-  );
-
   // ═══ MOTOR SPHERES ═══
-  const spawnYA = getCourtFloorY(20) + MOTOR_RADIUS + 0.3;
+  const spawnYA = getCourtFloorY(-3.0, 20) + MOTOR_RADIUS + 0.3;
   const motorBodyA = world.createRigidBody(
     RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(-3.0, spawnYA, 20)
@@ -241,7 +260,7 @@ export function createHeadlessMatch(paramsA, paramsB, opts = {}) {
     motorBodyA,
   );
 
-  const spawnYB = getCourtFloorY(-20) + MOTOR_RADIUS + 0.3;
+  const spawnYB = getCourtFloorY(3.0, -20) + MOTOR_RADIUS + 0.3;
   const motorBodyB = world.createRigidBody(
     RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(3.0, spawnYB, -20)
@@ -608,11 +627,12 @@ function checkBallRespawn(match) {
 }
 
 /**
- * Check if a motor is grounded (simplified: sphere touching ground).
+ * Check if a motor is grounded (relative to 3D court floor).
  */
 function updateGrounded(athlete, motorBody) {
-  const y = motorBody.translation().y;
-  athlete.motor.grounded = y < (MOTOR_RADIUS + 0.15);
+  const p = motorBody.translation();
+  const floorY = getCourtFloorY(p.x, p.z);
+  athlete.motor.grounded = (p.y - floorY) < (MOTOR_RADIUS + 0.25);
 }
 
 /**
@@ -636,9 +656,9 @@ export function stepHeadlessMatch(match) {
   const balls = [ballObj];
 
   // Clear action queues (keep movement from last tick)
-  slotA.jumpQueued = false; slotA.diveQueued = false;
+  slotA.jumpQueued = false; slotA.diveQueued = false; slotA.cutQueued = false;
   slotA.volleyQueued = false; slotA.spikeQueued = false;
-  slotB.jumpQueued = false; slotB.diveQueued = false;
+  slotB.jumpQueued = false; slotB.diveQueued = false; slotB.cutQueued = false;
   slotB.volleyQueued = false; slotB.spikeQueued = false;
 
   // ═══ BOT DECISIONS ═══
@@ -648,6 +668,36 @@ export function stepHeadlessMatch(match) {
   // ═══ MOTOR FORCES ═══
   applyMotorForces(match.motorBodyA, slotA, athleteA.motor.grounded, DT);
   applyMotorForces(match.motorBodyB, slotB, athleteB.motor.grounded, DT);
+
+  // ═══ CUTS (Stage 3 Athletic Redirects) ═══
+  if (slotA.cutQueued && athleteA.motor.grounded) {
+    if (!match.cuts) match.cuts = { home: 0, away: 0 };
+    match.cuts.home++;
+    const dirX = slotA.moveWorld ? slotA.moveWorld.x : 0;
+    const dirZ = slotA.moveWorld ? slotA.moveWorld.z : 0;
+    const len = Math.hypot(dirX, dirZ) || 1.0;
+    const lv = match.motorBodyA.linvel();
+    const mass = match.motorBodyA.mass();
+    match.motorBodyA.applyImpulse({
+      x: -lv.x * mass * 0.95 + (dirX / len) * 4.5,
+      y: 0.2,
+      z: -lv.z * mass * 0.95 + (dirZ / len) * 4.5,
+    }, true);
+  }
+  if (slotB.cutQueued && athleteB.motor.grounded) {
+    if (!match.cuts) match.cuts = { home: 0, away: 0 };
+    match.cuts.away++;
+    const dirX = slotB.moveWorld ? slotB.moveWorld.x : 0;
+    const dirZ = slotB.moveWorld ? slotB.moveWorld.z : 0;
+    const len = Math.hypot(dirX, dirZ) || 1.0;
+    const lv = match.motorBodyB.linvel();
+    const mass = match.motorBodyB.mass();
+    match.motorBodyB.applyImpulse({
+      x: -lv.x * mass * 0.95 + (dirX / len) * 4.5,
+      y: 0.2,
+      z: -lv.z * mass * 0.95 + (dirZ / len) * 4.5,
+    }, true);
+  }
 
   // ═══ JUMPS ═══
   if (slotA.jumpQueued && athleteA.motor.grounded &&
@@ -712,7 +762,8 @@ export function stepHeadlessMatch(match) {
   for (const [mb, spawnZ] of [[match.motorBodyA, 20], [match.motorBodyB, -20]]) {
     const p = mb.translation();
     if (p.y < KILL_PLANE_Y || Math.abs(p.x) > ARENA_HALF_X || Math.abs(p.z) > ARENA_HALF_Z) {
-      mb.setTranslation({ x: 0, y: MOTOR_RADIUS + 0.1, z: spawnZ }, true);
+      const spawnY = getCourtFloorY(0, spawnZ) + MOTOR_RADIUS + 0.3;
+      mb.setTranslation({ x: 0, y: spawnY, z: spawnZ }, true);
       mb.setLinvel({ x: 0, y: 0, z: 0 }, true);
       mb.setAngvel({ x: 0, y: 0, z: 0 }, true);
     }

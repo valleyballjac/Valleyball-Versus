@@ -11,6 +11,7 @@ import {
   computeStreamHeadAimYaw,
   steerStageRunway,
   steerGoalAlignedApproach,
+  shouldExecuteCut,
 } from './botSteering.js';
 
 /**
@@ -192,6 +193,8 @@ export function createBotController({
     lastJumpTick: -Infinity,
     jumpCooldownTicks: 90,    // match player jump cooldown
     pendingJumpTick: -Infinity, // for jump-spike synchronization
+    lastCutTick: -Infinity,
+    cutCooldownTicks: 70,     // min cooldown between athletic cuts (~1.16s)
 
     // Statistics
     stats: {
@@ -200,6 +203,8 @@ export function createBotController({
       positionTime: 0,
       defendTime: 0,
       recoverTime: 0,
+      cutCount: 0,
+      hoopBlocks: 0,
     },
 
     // Override params for training — when set, these replace TUNING.ai values
@@ -395,6 +400,7 @@ function selectStrategy(bot, perception, params, tick) {
  * @param {number} dt         fixed timestep (1/60)
  */
 export function updateBot(bot, athlete, opponent, balls, matchState, inputSlot, tick, dt) {
+  if (inputSlot) inputSlot.cutQueued = false;
   if (!athlete || !balls || balls.length === 0) {
     steerIdle(inputSlot);
     return;
@@ -522,6 +528,12 @@ function executeChase(bot, perception, params, slot, tick) {
       currentVel: selfVel,
     });
     slot.hasAim = false;
+    if (tick - bot.lastCutTick >= bot.cutCooldownTicks &&
+        shouldExecuteCut(selfVel, slot.moveWorld, { minSpeed: 2.8, isDownhill: perception.terrain?.isDownhillFacing })) {
+      slot.cutQueued = true;
+      bot.lastCutTick = tick;
+      bot.stats.cutCount = (bot.stats.cutCount || 0) + 1;
+    }
     return;
   }
 
@@ -570,6 +582,14 @@ function executeChase(bot, perception, params, slot, tick) {
     });
     slot.hasAim = false;
   }
+
+  // Check cut execution when redirecting sharply toward intercept
+  if (tick - bot.lastCutTick >= bot.cutCooldownTicks &&
+      shouldExecuteCut(selfVel, slot.moveWorld, { minSpeed: 3.2, isDownhill: perception.terrain?.isDownhillFacing })) {
+    slot.cutQueued = true;
+    bot.lastCutTick = tick;
+    bot.stats.cutCount = (bot.stats.cutCount || 0) + 1;
+  }
 }
 
 /**
@@ -594,6 +614,12 @@ function executePosition(bot, perception, params, slot, tick) {
       currentVel: selfVel,
     });
     slot.hasAim = false;
+    if (tick - bot.lastCutTick >= bot.cutCooldownTicks &&
+        shouldExecuteCut(selfVel, slot.moveWorld, { minSpeed: 2.8, isDownhill: perception.terrain?.isDownhillFacing })) {
+      slot.cutQueued = true;
+      bot.lastCutTick = tick;
+      bot.stats.cutCount = (bot.stats.cutCount || 0) + 1;
+    }
     return;
   }
 
@@ -631,6 +657,14 @@ function executePosition(bot, perception, params, slot, tick) {
       currentVel: selfVel,
     });
     slot.hasAim = false;
+  }
+
+  // Check cut execution when decelerating or turning into position pocket
+  if (tick - bot.lastCutTick >= bot.cutCooldownTicks &&
+      shouldExecuteCut(selfVel, slot.moveWorld, { minSpeed: 3.0, isDownhill: perception.terrain?.isDownhillFacing })) {
+    slot.cutQueued = true;
+    bot.lastCutTick = tick;
+    bot.stats.cutCount = (bot.stats.cutCount || 0) + 1;
   }
 }
 
@@ -951,16 +985,18 @@ function executeDefend(bot, perception, params, slot, tick) {
     if (oppHasFirstTouch && perception.trajectory.defensiveBlockTarget.lengthSq() > 0) {
       _defenseTarget.copy(perception.trajectory.defensiveBlockTarget);
     } else {
-      const distBallToDef = Math.abs(defendPos.z - ballPos.z);
-      // Dynamic pitch compression: scale defensive line with ball proximity
-      const depthRatio = Math.max(0.35, Math.min(0.75, 1.0 - (distBallToDef / 75.0) + (1.0 - agg) * 0.15));
-      const blockZ = defendPos.z * depthRatio;
-      const blockX = Math.max(-7.5, Math.min(7.5, ballPos.x * 0.55));
-      _defenseTarget.set(blockX, 0, blockZ);
+      // HOOP APERTURE & MOUND DEFENSE:
+      // Position on the goal mound rim (Z ≈ ±36.5m to ±38.0m, elevation Y ≈ 7.5m - 8.5m)
+      // directly under the aperture mouth (Z = ±40.0m, Y = 10.0m) to swat any descending shot!
+      const signDef = Math.sign(defendPos.z) || 1;
+      const rimZ = signDef * 36.5;
+      const rimX = Math.max(-4.5, Math.min(4.5, ballPos.x * 0.45));
+      const rimY = getCourtFloorY(rimX, rimZ);
+      _defenseTarget.set(rimX, rimY, rimZ);
     }
 
     const distToTarget = Math.hypot(_defenseTarget.x - selfPos.x, _defenseTarget.z - selfPos.z);
-    const shouldSprint = distToTarget > 2.5;
+    const shouldSprint = distToTarget > 2.0;
 
     steerToward(slot, selfPos, _defenseTarget, {
       sprint: shouldSprint,
@@ -973,6 +1009,16 @@ function executeDefend(bot, perception, params, slot, tick) {
     slot.aimYaw = computeClearanceAimYaw(selfPos, attackGoalPos, defendPos);
     slot.hasAim = true;
     slot.cameraYaw = slot.aimYaw;
+
+    // Anchor at the rim with Cut: when sliding down the mound slope or stopping at the rim
+    if (tick - bot.lastCutTick >= bot.cutCooldownTicks) {
+      const az = Math.abs(selfPos.z);
+      if (az >= 32.0 && distToTarget <= 2.5 && shouldExecuteCut(selfVel, slot.moveWorld, { minSpeed: 2.2, isDownhill: true })) {
+        slot.cutQueued = true;
+        bot.lastCutTick = tick;
+        bot.stats.cutCount = (bot.stats.cutCount || 0) + 1;
+      }
+    }
   }
 }
 
@@ -1058,8 +1104,11 @@ function evaluatePredictiveStrikes(bot, freshPerception, params, slot, tick) {
   // Finishing range spike eligibility:
   // Spikes angle -18° downward, so they can be attempted from finishing range (distToGoalZ <= 18.0m or stream head)
   // or aggressive bots from up to 22m out!
+  // DEFENSIVE HOOP BLOCK: when guarding the defending rim aperture (|Z| >= 32m, distToDefendZ <= 10m),
+  // high arc shots approaching the hoop mouth can be blocked/swatted down!
+  const isDefendingRim = distToDefendZ <= 10.0 && Math.abs(selfPos.z) >= 32.0 && freshPerception.threat > 0.25;
   const maxSpikeDistZ = 16.0 + (agg - 0.5) * 12.0;
-  const canSpikeHere = distToDefendZ > 12.0 && (distToGoalZ <= maxSpikeDistZ || isFinishing);
+  const canSpikeHere = (distToDefendZ > 12.0 && (distToGoalZ <= maxSpikeDistZ || isFinishing)) || isDefendingRim;
 
   const liveDistXZ = Math.hypot(ballPos.x - selfPos.x, ballPos.z - selfPos.z);
   const canSpikePrediction = canSpikeHere && isHighBall &&
@@ -1091,6 +1140,9 @@ function evaluatePredictiveStrikes(bot, freshPerception, params, slot, tick) {
       bot.lastStrikeTick = tick;
       bot.lastStrikeKind = 'spike';
       bot.stats.strikeAttempts++;
+      if (isDefendingRim) {
+        bot.stats.hoopBlocks = (bot.stats.hoopBlocks || 0) + 1;
+      }
 
       const aimYaw = isFinishing
         ? computeStreamHeadAimYaw(selfPos, goalPos)
@@ -1124,6 +1176,9 @@ function evaluatePredictiveStrikes(bot, freshPerception, params, slot, tick) {
         bot.lastStrikeTick = tick;
         bot.lastStrikeKind = 'volley';
         bot.stats.strikeAttempts++;
+        if (isDefendingRim) {
+          bot.stats.hoopBlocks = (bot.stats.hoopBlocks || 0) + 1;
+        }
 
         const aimYaw = isFinishing
           ? computeStreamHeadAimYaw(selfPos, goalPos)

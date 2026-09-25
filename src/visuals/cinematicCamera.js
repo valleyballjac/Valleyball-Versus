@@ -19,6 +19,7 @@ export class CinematicCamera {
 
     this._target = new THREE.Vector3();
     this._pos = new THREE.Vector3();
+    this.winnerPos = new THREE.Vector3();
   }
 
   startTitleOrbit() {
@@ -38,6 +39,25 @@ export class CinematicCamera {
     this.mode = 'setup';
     this.elapsedTime = 0;
     this.isComplete = false;
+  }
+
+  startKickoffRitual(duration = 4.0) {
+    this.mode = 'kickoff';
+    this.elapsedTime = 0;
+    this.duration = duration;
+    this.isComplete = false;
+  }
+
+  startVictoryPresentation(winnerPos = null, duration = 8.0) {
+    this.mode = 'victory';
+    this.elapsedTime = 0;
+    this.duration = duration;
+    this.isComplete = false;
+    if (winnerPos) {
+      this.winnerPos.copy(winnerPos);
+    } else {
+      this.winnerPos.set(0, 0, 0);
+    }
   }
 
   update(delta) {
@@ -79,6 +99,44 @@ export class CinematicCamera {
       const breatheY = Math.cos(this.elapsedTime * 0.6) * 0.04;
       this._pos.set(breatheX, 1.35 + breatheY, 5.2);
       this._target.set(0, 1.15, 0);
+
+      this.camera.position.lerp(this._pos, 1 - Math.exp(-6.0 * delta));
+      this.camera.lookAt(this._target);
+
+    } else if (this.mode === 'kickoff') {
+      const progress = Math.min(1.0, this.elapsedTime / this.duration);
+      if (progress >= 1.0) {
+        this.isComplete = true;
+      }
+      // Sideline standoff camera: dynamic low-angle tracking shot framing athletes and dropping ball
+      const t = progress;
+      const posX = 15.0 - t * 3.5;
+      const posY = 1.6 + t * 1.0;
+      const posZ = -3.0 + t * 6.0;
+      this._pos.set(posX, posY, posZ);
+
+      // Tilts from center basin pelvis up toward the dropping ball
+      const targetY = 1.1 + t * 3.0;
+      this._target.set(0, targetY, 0);
+
+      this.camera.position.lerp(this._pos, 1 - Math.exp(-6.0 * delta));
+      this.camera.lookAt(this._target);
+
+    } else if (this.mode === 'victory') {
+      // Orbiting hero presentation framing the victorious athlete
+      const angle = (this.elapsedTime * 0.45);
+      const radius = 4.2;
+      const height = 1.35 + Math.sin(this.elapsedTime * 0.5) * 0.15;
+      const wx = this.winnerPos ? this.winnerPos.x : 0;
+      const wy = this.winnerPos ? this.winnerPos.y : 0;
+      const wz = this.winnerPos ? this.winnerPos.z : 0;
+
+      this._pos.set(
+        wx + radius * Math.sin(angle),
+        wy + height,
+        wz + radius * Math.cos(angle)
+      );
+      this._target.set(wx, wy + 1.25, wz);
 
       this.camera.position.lerp(this._pos, 1 - Math.exp(-6.0 * delta));
       this.camera.lookAt(this._target);

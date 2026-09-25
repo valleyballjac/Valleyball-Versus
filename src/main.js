@@ -469,6 +469,7 @@ const spectatorCamera = new THREE.PerspectiveCamera(
 
 const cinematicCamera = new CinematicCamera();
 let gameState = 'menu'; // 'menu' | 'flyover' | 'match' | 'practice'
+let victoryCameraActive = false;
 
 const _camTarget = new THREE.Vector3();
 const _camOffset = new THREE.Vector3();
@@ -2085,11 +2086,23 @@ function fixedUpdate(dt, tick) {
         soundManager.playSample('arena_buzzer', 0.95, 1.0, null, soundManager.uiGain);
         const p1Strike = athletes[0]?.getStrikeStats() || { hits: 0, whiffs: 0, accuracy: 0 };
         const p2Strike = athletes[1]?.getStrikeStats() || { hits: 0, whiffs: 0, accuracy: 0 };
-        showVictoryScreen(
-          matchProbe(matchState),
-          { ...p1Strike, ...athleteMatchStats[0] },
-          { ...p2Strike, ...athleteMatchStats[1] },
-        );
+
+        // Post-match victory presentation camera & ceremony
+        const homeScore = matchState.scoreHome || 0;
+        const awayScore = matchState.scoreAway || 0;
+        const winnerIdx = (awayScore > homeScore && athletes[1]) ? 1 : 0;
+        const winnerAthlete = athletes[winnerIdx];
+        const winnerPos = winnerAthlete?.motor?.body?.translation() || { x: 0, y: 0, z: 0 };
+        cinematicCamera.startVictoryPresentation(new THREE.Vector3(winnerPos.x, winnerPos.y, winnerPos.z), 12.0);
+        victoryCameraActive = true;
+
+        setTimeout(() => {
+          showVictoryScreen(
+            matchProbe(matchState),
+            { ...p1Strike, ...athleteMatchStats[0] },
+            { ...p2Strike, ...athleteMatchStats[1] },
+          );
+        }, 1200);
       }
     }
   }
@@ -2266,6 +2279,9 @@ function render(alpha) {
     }
   }
 
+  const isKickoffActive = (gameState === 'match') && !!(matchState && matchState.isCountingDown) && !cinematicCamera.isComplete;
+  const isVictoryActive = (gameState === 'match') && !!(matchState && matchState.matchOver) && victoryCameraActive;
+
   if (gameState === 'flyover') {
     cinematicCamera.update(frameDelta);
     // Check if connected gamepad pressed button 0 (A / Cross) to skip flyover
@@ -2279,7 +2295,14 @@ function render(alpha) {
     if (cinematicCamera.isComplete) {
       skipFlyover();
     }
-  } else if (gameState === 'menu') {
+  } else if (gameState === 'menu' || isKickoffActive || isVictoryActive) {
+    if (isVictoryActive && athletes) {
+      const homeScore = matchState ? (matchState.scoreHome || 0) : 0;
+      const awayScore = matchState ? (matchState.scoreAway || 0) : 0;
+      const winnerIdx = (awayScore > homeScore && athletes[1]) ? 1 : 0;
+      const wt = athletes[winnerIdx]?.motor?.body?.translation();
+      if (wt) cinematicCamera.winnerPos.set(wt.x, wt.y, wt.z);
+    }
     cinematicCamera.update(frameDelta);
   } else {
     updateCameras();
@@ -2330,7 +2353,7 @@ function render(alpha) {
   const p2CamMode = playerCameras[1]?.mode;
   const isSharedCam = (p1CamMode === 'broadcast' && p2CamMode === 'broadcast') ||
                       (p1CamMode === 'sports' && p2CamMode === 'sports');
-  const isSplitscreen = (gameState === 'match') && !!TUNING.camera.splitscreen && athletes.length >= 2 && !isSharedCam;
+  const isSplitscreen = (gameState === 'match') && !!TUNING.camera.splitscreen && athletes.length >= 2 && !isSharedCam && !isKickoffActive && !isVictoryActive;
   const dividerEl = document.getElementById('splitscreen-divider');
   if (dividerEl) {
     dividerEl.style.display = isSplitscreen ? 'block' : 'none';
@@ -2341,7 +2364,7 @@ function render(alpha) {
   // Render stadium shadow maps once per frame across all viewports
   renderer.shadowMap.needsUpdate = true;
 
-  if (gameState === 'menu' || gameState === 'flyover') {
+  if (gameState === 'menu' || gameState === 'flyover' || isKickoffActive || isVictoryActive) {
     cinematicCamera.camera.aspect = width / height;
     cinematicCamera.camera.updateProjectionMatrix();
     renderer.setViewport(0, 0, width, height);
@@ -2761,7 +2784,9 @@ function handleRematch() {
   resetCountdownOverlay();
   hideVictoryScreen();
   hideInGameMenu();
-  console.log('[match] rematch started!');
+  victoryCameraActive = false;
+  cinematicCamera.startKickoffRitual(TUNING.match.countdownSeconds || 4.0);
+  console.log('[match] rematch started with kickoff ritual!');
 }
 
 function skipFlyover() {
@@ -2772,11 +2797,15 @@ function skipFlyover() {
   matchManager.skipFlyover();
   matchState = matchManager.getState();
   resetCountdownOverlay();
+  victoryCameraActive = false;
+
+  // Standoff kickoff ritual framing athletes taking positions
+  cinematicCamera.startKickoffRitual(TUNING.match.countdownSeconds || 4.0);
 
   playerCameras[0].resetSmoothing();
   playerCameras[1].resetSmoothing();
   applyViewportSize();
-  console.log('[flyover] skipped -> countdown started');
+  console.log('[flyover] skipped -> kickoff ritual started');
 }
 
 function handleStartMatch(configs, matchRulesOrBall = {}) {
@@ -2971,6 +3000,7 @@ function handleStartPractice(playerConfig = null, ballChoice = 'all') {
   hideVictoryScreen();
   turfParticles.reset();
   goalCelebration.reset();
+  victoryCameraActive = false;
   gameState = 'practice';
   TUNING.match.mode = 'practice';
   selectedPracticeBallType = ballChoice;
@@ -3245,6 +3275,7 @@ function returnToMainMenu() {
     pc.resetSmoothing();
   }
 
+  victoryCameraActive = false;
   cinematicCamera.startTitleOrbit();
   showTitleScreen();
   launchMenuBalls();
