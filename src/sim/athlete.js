@@ -25,7 +25,6 @@ import {
   updateAthletePalette,
 } from './ragdoll.js';
 import { applyClampedLinearDamping } from './damping.js';
-import { createWatchdogState, runWatchdog } from '../mechanics/watchdog.js';
 import { createMountFollowerState, runMountFollower } from '../mechanics/mountFollower.js';
 import { createActionState, runActions } from '../mechanics/actions.js';
 import {
@@ -33,6 +32,7 @@ import {
   runStrikes,
   resolveStrikeContact,
   checkStrikeAssist,
+  applyStrikeAssistPreset,
   KIND_NAME,
 } from '../mechanics/strikes.js';
 import { soundManager } from '../audio/soundManager.js';
@@ -67,6 +67,7 @@ export function createAthlete({
   primaryColor = null,
   colorOverride = null,
   spawn = { x: 0, y: 1.5, z: 0, yaw: 0 },
+  assistPreset = 'pureSim',
   scene,
   characterSkeleton,
   characterRoot,
@@ -92,10 +93,10 @@ export function createAthlete({
   motor.mesh.visible = !!TUNING.debug.showSphereWireframe;
 
   // 2. Mechanics state
-  const watchdogState = createWatchdogState();
   const mountFollowerState = createMountFollowerState();
   const actionState = createActionState();
   const strikeState = createStrikeState();
+  applyStrikeAssistPreset(strikeState, assistPreset);
   const tracker = createTracker();
 
   let groundedRun = 0;
@@ -262,10 +263,12 @@ export function createAthlete({
     get ragdoll() { return ragdoll; },
     get animTarget() { return animTarget; },
     tracker,
-    watchdogState,
     mountFollowerState,
     actionState,
     strikeState,
+    setAssistPreset(presetKey) {
+      applyStrikeAssistPreset(strikeState, presetKey);
+    },
     impactByHandle,
     impactEvents,
 
@@ -332,7 +335,11 @@ export function createAthlete({
       balls,
       arenaPreset,
       facingFollowsCamera,
+      targetGoalZ = null,
     }) {
+      if (Number.isFinite(targetGoalZ)) {
+        strikeState.targetGoalZ = targetGoalZ;
+      }
       if (respawnRequested) {
         respawnRequested = false;
         buildMountedRagdoll(animTarget ? animTarget.yaw : (currentSpawn.yaw || 0));
@@ -374,6 +381,7 @@ export function createAthlete({
         diveQueued,
         jumpQueued,
         cutQueued,
+        balls,
         tick,
         dt,
       });

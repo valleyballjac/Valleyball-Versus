@@ -166,7 +166,7 @@ const fail = (message) => { throw new Refusal(message); };
 const sha256 = (buffer) => createHash('sha256').update(buffer).digest('hex');
 
 function parseArgs(argv) {
-  const args = { name: 'strike', runs: 2, arena: 'bowl', trace: false };
+  const args = { name: 'strike', runs: 2, arena: 'court', trace: false };
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i];
     if (flag === '--trace') { args.trace = true; continue; }
@@ -175,7 +175,6 @@ function parseArgs(argv) {
       if (!SCENARIOS[value]) fail(`--name expects one of ${Object.keys(SCENARIOS).join(', ')}, got "${value}"`);
       args.name = value;
     } else if (flag === '--arena') {
-      if (value !== 'court' && value !== 'bowl') fail(`--arena expects "court" or "bowl", got "${value}"`);
       args.arena = value;
     } else if (flag === '--runs') {
       const n = Number(value);

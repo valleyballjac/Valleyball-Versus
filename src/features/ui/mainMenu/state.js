@@ -31,6 +31,7 @@ export const state = {
       variant: 'classic',
       primaryColor: 0xd90429,
       cameraMode: 'chase',
+      assistPreset: 'pureSim',
     },
     {
       name: 'Player 2',
@@ -41,6 +42,7 @@ export const state = {
       variant: 'classic',
       primaryColor: 0x1d4ed8,
       cameraMode: 'chase',
+      assistPreset: 'pureSim',
     },
   ],
 
@@ -49,7 +51,7 @@ export const state = {
   currentBallOptions: MATCH_BALL_OPTIONS,
   selectedMatchBall: 'random',
   selectedMatchDuration: 300,
-  selectedMatchArena: (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('arena')) === 'bowl' ? 'bowl' : 'court',
+  selectedMatchArena: 'court',
   matchBallCards: [],
   matchDurationButtons: [],
   arenaButtons: [],

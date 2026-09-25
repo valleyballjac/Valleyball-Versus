@@ -33,99 +33,7 @@ export function getArenaColliderType(handle) {
   return arenaColliderTypes.get(handle) || null;
 }
 
-/**
- * Profile for THREE.LatheGeometry, in (radius, height) pairs.
- *
- * Three sections, in order:
- *
- *   FLOOR — flat from the centre out to floorRadius.
- *   WALL  — a curve to (rimRadius, rimHeight) whose slope starts at exactly
- *           zero, so the floor and the wall meet without a crease for the ball
- *           to catch on.
- *   LIP   — an inward-curling overhang. Past the rim the profile turns BACK
- *           toward the axis, losing lipInset in radius while gaining lipHeight
- *           in height. A ball arriving with real speed meets an overhang and is
- *           turned back down instead of being launched out of the world.
- *
- * THE LIP IS A QUADRATIC BEZIER, and that is the whole reason it is not three
- * lines of lerp. Joining an inward curl to an outward-climbing wall with a
- * straight segment, or with an ease that starts at zero slope, puts a crease at
- * the rim — exactly the feature the floor-to-wall join was carefully built to
- * avoid, at exactly the place the ball is travelling fastest. Anchoring the
- * Bezier's control point along the wall's own outgoing tangent makes the join
- * tangent-continuous by construction: the curve leaves the rim in the direction
- * the wall was already going and rotates from there.
- *
- * @returns {THREE.Vector2[]}
- */
-const LIP_TANGENT_FRACTION = 0.6;
 
-export function buildProfile() {
-  const { floorRadius, rimRadius, rimHeight, profilePoints, wallCurvePower } = TUNING.arena.bowl;
-
-  const total = Math.max(4, Math.round(profilePoints));
-  const flatCount = Math.max(2, Math.round(total / 4));
-  const wallCount = Math.max(2, total - flatCount);
-
-  const points = [];
-
-  for (let i = 0; i < flatCount; i++) {
-    points.push(new THREE.Vector2((i / (flatCount - 1)) * floorRadius, 0));
-  }
-
-  for (let i = 1; i <= wallCount; i++) {
-    const t = i / wallCount;
-    points.push(
-      new THREE.Vector2(
-        floorRadius + (rimRadius - floorRadius) * t,
-        rimHeight * Math.pow(t, wallCurvePower),
-      ),
-    );
-  }
-
-  appendLip(points);
-  return points;
-}
-
-/**
- * Appends the overhang, starting from whatever the wall's last point is.
- *
- * The wall's outgoing tangent at t = 1 is d(radius)/dt = rimRadius - floorRadius
- * and d(height)/dt = rimHeight * wallCurvePower, straight from the derivative of
- * the profile above. The Bezier control point sits along that direction, so the
- * lip is C1-continuous with the wall.
- *
- * @param {THREE.Vector2[]} points mutated in place
- */
-function appendLip(points) {
-  const { floorRadius, rimRadius, rimHeight, wallCurvePower, lipInset, lipHeight, lipPoints } =
-    TUNING.arena.bowl;
-
-  const count = Math.max(2, Math.round(lipPoints));
-
-  const start = points[points.length - 1];
-  const end = new THREE.Vector2(rimRadius - lipInset, rimHeight + lipHeight);
-
-  // The wall's outgoing tangent, normalised.
-  const tangent = new THREE.Vector2(rimRadius - floorRadius, rimHeight * wallCurvePower).normalize();
-
-  // Control point along that tangent. The fraction sets how far the curve
-  // carries on outward before turning; it is a shape constant of this curve,
-  // not a feel value, so it lives here rather than in TUNING.
-  const control = start.clone().addScaledVector(tangent, start.distanceTo(end) * LIP_TANGENT_FRACTION);
-
-  for (let i = 1; i <= count; i++) {
-    const u = i / count;
-    const v = 1 - u;
-
-    points.push(
-      new THREE.Vector2(
-        v * v * start.x + 2 * v * u * control.x + u * u * end.x,
-        v * v * start.y + 2 * v * u * control.y + u * u * end.y,
-      ),
-    );
-  }
-}
 
 /**
  * Twice the area below which a triangle is treated as having no surface at all.
@@ -544,118 +452,25 @@ async function loadCourtArena(scene) {
 }
 
 /**
- * Which arena this run is using.
+ * The active arena type. Valley Court is the authentic arena.
  *
- * The query parameter wins over TUNING for the same reason ?captureTick does:
- * it is per-run harness configuration, and a script must be able to pick an
- * arena without editing saved tuning state. Read ONCE, at boot.
- *
- * @returns {'court'|'bowl'}
+ * @returns {'court'}
  */
 export function activeArenaType() {
-  const requested =
-    typeof window !== 'undefined'
-      ? new URLSearchParams(window.location.search).get('arena')
-      : null;
-  const type = requested || TUNING.arena.type;
-  if (type !== 'court' && type !== 'bowl') {
-    console.warn(`[arena] unknown arena "${type}" — falling back to bowl`);
-    return 'bowl';
-  }
-  return type;
+  return 'court';
 }
 
 /** The active arena's preset block. @returns {object} */
 export function activeArenaPreset() {
-  return TUNING.arena[activeArenaType()];
+  return TUNING.arena.court;
 }
 
 /**
- * Builds whichever arena this run asked for and puts it in the scene.
+ * Builds the Valley Court arena and puts it in the scene.
  *
  * @param {THREE.Scene} scene
  * @returns {Promise<object>} the arena handle
  */
 export async function createArena(scene) {
-  if (activeArenaType() === 'court') return loadCourtArena(scene);
-  return createBowlArena(scene);
-}
-
-/**
- * The procedural test bowl — unchanged in shape, geometry and collider from the
- * rig every determinism pair to date was measured on.
- *
- * @param {THREE.Scene} scene
- * @returns {object}
- */
-function createBowlArena(scene) {
-  const geometry = new THREE.LatheGeometry(buildProfile(), TUNING.arena.bowl.latheSegments);
-  geometry.computeVertexNormals();
-
-  const surface = new THREE.Mesh(
-    geometry,
-    new THREE.MeshStandardMaterial({
-      color: 0x2c3a49,
-      roughness: 0.95,
-      metalness: 0.0,
-      side: THREE.DoubleSide,
-    }),
-  );
-  surface.name = 'arena-surface';
-
-  // Shares the same geometry object, so the overlay can never describe a
-  // different surface from the one underneath it.
-  const wire = new THREE.Mesh(
-    geometry,
-    new THREE.MeshBasicMaterial({
-      color: 0x5f86a8,
-      wireframe: true,
-      transparent: true,
-      opacity: 0.22,
-      side: THREE.DoubleSide,
-    }),
-  );
-  wire.name = 'arena-wireframe';
-
-  const group = new THREE.Group();
-  group.name = 'arena';
-  group.add(surface, wire);
-
-  // The floor RECEIVES and never casts. A self-shadowing lathe at grazing light
-  // angles is all acne and no information, and nothing below the floor can see a
-  // shadow anyway.
-  group.traverse((object) => {
-    if (!object.isMesh) return;
-    object.receiveShadow = true;
-    object.castShadow = false;
-  });
-
-  const world = getWorld();
-  const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
-
-  const { vertices, indices, degenerateCount } = toTrimeshArrays(geometry);
-  const collider = world.createCollider(RAPIER.ColliderDesc.trimesh(vertices, indices), body);
-  // Stamped here now that this file is no longer frozen. It used to be applied
-  // from main.js with a comment explaining that it could not live here; the
-  // reason has gone, so the stamp has moved to the collider it describes.
-  collider.setCollisionGroups(ENVIRONMENT_GROUPS);
-  arenaColliderTypes.set(collider.handle, 'court');
-
-  scene.add(group);
-
-  console.log(
-    `[arena] bowl built: ${indices.length / 3} collider triangles ` +
-      `(${degenerateCount} degenerate lathe-pole triangles removed)`,
-  );
-
-  return {
-    type: 'bowl',
-    group,
-    geometry,
-    body,
-    colliders: [collider],
-    collider,
-    triangleCount: indices.length / 3,
-    degenerateCount,
-  };
+  return loadCourtArena(scene);
 }

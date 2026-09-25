@@ -6,6 +6,34 @@ import { updateSportsCamera, resetSportsCamera } from './sportsCamera.js';
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 
 /**
+ * Resolves the camera focus anchor for an athlete.
+ * Normally follows the motor sphere (+ targetHeight).
+ * When the athlete is knocked down, diving, or separated from the motor,
+ * smoothly blends toward the physical ragdoll pelvis so the camera never ghosts away.
+ */
+export function getAthleteFocusTarget(athlete, tuning, outTarget) {
+  const motorPos = athlete.motor.mesh.position;
+  outTarget.set(motorPos.x, motorPos.y + tuning.targetHeight, motorPos.z);
+
+  if (athlete.ragdoll && athlete.tracker) {
+    const pelvisItem = athlete.ragdoll.rig.get('pelvis');
+    if (pelvisItem && pelvisItem.mesh) {
+      const p = pelvisItem.mesh.position;
+      const weight = athlete.tracker.weight;
+      const dist = Math.hypot(p.x - motorPos.x, p.z - motorPos.z);
+      // When character is down or pelvis has separated from the motor sphere:
+      if (weight < 0.92 || dist > 0.35) {
+        const blend = Math.min(1.0, Math.max(1.0 - weight, (dist - 0.35) / 0.8));
+        outTarget.x = motorPos.x + (p.x - motorPos.x) * blend;
+        outTarget.y = (motorPos.y + (p.y - motorPos.y) * blend) + tuning.targetHeight * Math.max(0.3, weight);
+        outTarget.z = motorPos.z + (p.z - motorPos.z) * blend;
+      }
+    }
+  }
+  return outTarget;
+}
+
+/**
  * Encapsulated Player Camera Rig.
  *
  * Supports independent viewports (for splitscreen) and single screen.
@@ -40,7 +68,15 @@ export class PlayerCamera {
     // Ball height smoother
     this.smoothedBallY = 1.5;
 
+    // Camera trauma shake state
+    this.trauma = 0;
+    this.shakeTime = 0;
+
+    // Dynamic lens FOV punch (offset in degrees)
+    this.fovPunch = 0;
+
     // Internal scratch vectors
+    this._athleteFocus = new THREE.Vector3();
     this._target = new THREE.Vector3();
     this._smoothedTarget = new THREE.Vector3();
     this._smoothedTargetInit = false;
@@ -85,6 +121,63 @@ export class PlayerCamera {
     }
     console.log(`[playerCamera P${this.playerIndex + 1}] mode -> ${this.mode}`);
     return this.mode;
+  }
+
+  /**
+   * Adds trauma (0..1) to induce micro-screenshake.
+   * Intensity scales with trauma^2 for natural smooth falloff.
+   * @param {number} amount Trauma amount (0.1 to 0.6)
+   */
+  addTrauma(amount) {
+    if (this.tuning?.shake?.enabled === false) return;
+    this.trauma = Math.min(1.0, this.trauma + amount);
+  }
+
+  /**
+   * Pulses lens FOV (negative = contract/zoom in on hits, springs back).
+   * @param {number} degrees FOV offset in degrees (e.g. -2.5)
+   */
+  punchFov(degrees) {
+    this.fovPunch = Math.min(0, this.fovPunch + degrees);
+  }
+
+  /**
+   * Applies post-process trauma screenshake and dynamic FOV recovery.
+   */
+  _applyCameraEffects(tuning, frameDelta) {
+    // 1. Camera trauma shake
+    if (this.trauma > 0) {
+      if (tuning.shake?.enabled === false) {
+        this.trauma = 0;
+      } else {
+        const mult = tuning.shake?.multiplier ?? 1.0;
+        this.shakeTime += frameDelta * (tuning.shake?.frequency ?? 25.0);
+        const shakeAmount = this.trauma * this.trauma * mult;
+        const maxTrans = tuning.shake?.maxTranslation ?? 0.04;
+        const maxRot = tuning.shake?.maxRotation ?? 0.02;
+
+        this.camera.position.x += Math.sin(this.shakeTime * 1.7) * maxTrans * shakeAmount;
+        this.camera.position.y += Math.cos(this.shakeTime * 2.3) * maxTrans * shakeAmount;
+        this.camera.position.z += Math.sin(this.shakeTime * 1.1) * maxTrans * shakeAmount;
+
+        this.camera.rotation.z += Math.sin(this.shakeTime * 3.1) * maxRot * shakeAmount;
+
+        const decay = tuning.shake?.traumaDecay ?? 3.5;
+        this.trauma = Math.max(0, this.trauma - decay * frameDelta);
+      }
+    }
+
+    // 2. Dynamic FOV punch
+    const baseFov = tuning.fov ?? 52;
+    if (Math.abs(this.fovPunch) > 0.01) {
+      this.camera.fov = baseFov + this.fovPunch;
+      this.camera.updateProjectionMatrix();
+      const fovDecay = 1 - Math.exp(-(tuning.fovPunch?.recoverySpeed ?? 16.0) * frameDelta);
+      this.fovPunch += (0 - this.fovPunch) * fovDecay;
+    } else if (this.camera.fov !== baseFov) {
+      this.camera.fov = baseFov;
+      this.camera.updateProjectionMatrix();
+    }
   }
 
   /**
@@ -202,19 +295,21 @@ export class PlayerCamera {
     if (!athlete || !athlete.motor || !athlete.motor.mesh) return;
     if (this.mode === 'custom' || this.mode === 'manual') return;
     const tuning = TUNING.camera;
+    const focusTarget = getAthleteFocusTarget(athlete, tuning, this._athleteFocus);
     const targetMesh = athlete.motor.mesh;
     const ballPos = activeBall && activeBall.mesh ? activeBall.mesh.position : null;
 
     // 1. SPORTS CAMERA
     if (this.mode === 'sports') {
       updateSportsCamera(this.camera, allAthletes, activeBall, frameDelta);
+      this._applyCameraEffects(tuning, frameDelta);
       return;
     }
 
     // 2. BROADCAST SIDELINE CAMERA
     if (this.mode === 'broadcast') {
       const tv = tuning.broadcast;
-      const playerZ = targetMesh.position.z;
+      const playerZ = focusTarget.z;
       const lookY = inputSlot ? inputSlot.lookY : 0;
       const mouse = this.playerIndex === 0 ? mouseDeltas : { dx: 0, dy: 0 };
       this.manualPitchOffset += (lookY * tuning.orbitSpeed * frameDelta + mouse.dy / tuning.mousePixelsPerRadian) * 6.0;
@@ -231,15 +326,15 @@ export class PlayerCamera {
         1 - Math.exp(-tv.smoothEase * frameDelta),
       );
 
-      this._target.copy(targetMesh.position);
+      this._target.copy(focusTarget);
       if (ballPos) {
         this.smoothedBallY += (ballPos.y - this.smoothedBallY) * (1 - Math.exp(-6.0 * frameDelta));
-        this._target.x = targetMesh.position.x * 0.6 + ballPos.x * 0.4;
+        this._target.x = focusTarget.x * 0.6 + ballPos.x * 0.4;
         this._target.y =
-          targetMesh.position.y * 0.7 +
+          focusTarget.y * 0.7 +
           Math.min(3.0, this.smoothedBallY) * 0.3 +
           0.5;
-        this._target.z = targetMesh.position.z * 0.5 + ballPos.z * 0.5 + this.manualPitchOffset;
+        this._target.z = focusTarget.z * 0.5 + ballPos.z * 0.5 + this.manualPitchOffset;
       }
       this._target.y = Math.max(1.0, this._target.y);
 
@@ -253,13 +348,14 @@ export class PlayerCamera {
         );
       }
       this.camera.lookAt(this._smoothedBroadcastLookTarget);
+      this._applyCameraEffects(tuning, frameDelta);
       return;
     }
 
     // 3. TACTICAL OVERHEAD CAMERA
     if (this.mode === 'tactical') {
       const top = tuning.tactical;
-      const p = targetMesh.position;
+      const p = focusTarget;
       const lookX = inputSlot ? inputSlot.lookX : 0;
       const lookY = inputSlot ? inputSlot.lookY : 0;
       const mouse = this.playerIndex === 0 ? mouseDeltas : { dx: 0, dy: 0 };
@@ -268,7 +364,7 @@ export class PlayerCamera {
       this.manualAzimuthOffset *= Math.exp(-4.0 * frameDelta);
       this.manualPitchOffset *= Math.exp(-4.0 * frameDelta);
 
-      this._desiredPos.set(p.x * 0.4 + this.manualAzimuthOffset, p.y + top.heightY, p.z + top.distanceZ + this.manualPitchOffset);
+      this._desiredPos.set(p.x * 0.4 + this.manualAzimuthOffset, p.y - tuning.targetHeight + top.heightY, p.z + top.distanceZ + this.manualPitchOffset);
       this.camera.position.lerp(
         this._desiredPos,
         1 - Math.exp(-top.smoothEase * frameDelta),
@@ -279,6 +375,7 @@ export class PlayerCamera {
       this._target.z += top.lookAheadZ + this.manualPitchOffset * 0.5;
       this._target.y = 1.0;
       this.camera.lookAt(this._target);
+      this._applyCameraEffects(tuning, frameDelta);
       return;
     }
 
@@ -293,9 +390,9 @@ export class PlayerCamera {
       const goalCenter = attackingGoal || { x: 0, y: hoopCenterY, z: defaultGoalZ };
 
       // 1. Spring Arm Anchor: ALWAYS physically anchored to the controlled athlete's torso
-      const pAthlete = targetMesh.position;
-      const athleteTorsoY = pAthlete.y + tuning.targetHeight;
-      this._target.set(pAthlete.x, athleteTorsoY, pAthlete.z);
+      const pAthlete = focusTarget;
+      const athleteTorsoY = focusTarget.y;
+      this._target.copy(focusTarget);
 
       let pBall = ballPos;
       if (pBall) {
@@ -418,6 +515,7 @@ export class PlayerCamera {
         this._smoothedTarget.z + dirZ * lookLead,
       );
       this.camera.lookAt(this._lookTarget);
+      this._applyCameraEffects(tuning, frameDelta);
       return;
     }
 
@@ -436,8 +534,7 @@ export class PlayerCamera {
         Math.max(tuning.minPitch, this.pitch),
       );
 
-      this._target.copy(targetMesh.position);
-      this._target.y += tuning.targetHeight;
+      this._target.copy(focusTarget);
 
       // Dynamic pull-back when pitching down/looking up into the sky
       let desiredDistance = tuning.radius;
@@ -458,6 +555,7 @@ export class PlayerCamera {
       this._computeArmDirection(desiredDistance, this.azimuth, this.pitch);
       if (world) this._applySpringArm(world, tuning, desiredDistance, frameDelta);
       this.camera.lookAt(this._smoothedTarget);
+      this._applyCameraEffects(tuning, frameDelta);
     }
   }
 }

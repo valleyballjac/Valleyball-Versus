@@ -474,10 +474,22 @@ export function applyCleatAnchor(motor, dt) {
   const translation = body.translation();
   const rad = Math.hypot(translation.x, translation.z);
   if (rad > 8.0) {
+    // 1. Firm normal adhesion into the turf (gravityY is negative, e.g. -12.0, so this pushes DOWN onto slope)
     _impulse.x = 0;
-    _impulse.y = -TUNING.physics.gravityY * body.mass() * 0.65;
+    _impulse.y = TUNING.physics.gravityY * body.mass() * 0.45;
     _impulse.z = 0;
     body.addForce(_impulse, true);
+
+    // 2. Downhill slope sliding resistance (cleats digging into the turf)
+    const lv = body.linvel();
+    const radialVel = (lv.x * translation.x + lv.z * translation.z) / rad;
+    if (radialVel < 0) { // sliding downhill toward center
+      const brakeMag = -radialVel * body.mass() * 10.0;
+      _impulse.x = (translation.x / rad) * brakeMag * dt;
+      _impulse.y = 0;
+      _impulse.z = (translation.z / rad) * brakeMag * dt;
+      body.applyImpulse(_impulse, true);
+    }
   }
 }
 

@@ -1,5 +1,6 @@
 import { TUNING } from '../../../config/tuning.js';
 import { soundManager } from '../../../audio/soundManager.js';
+import { setVibrationEnabled, isVibrationEnabled } from '../../../input/inputRouter.js';
 import { CAMERA_OPTIONS } from './constants.js';
 
 /**
@@ -233,6 +234,90 @@ export function buildMainMenuSettingsModal(rootEl, playerConfigs = [], callbacks
   camRow.appendChild(camLabel);
   camRow.appendChild(camSelect);
   box.appendChild(camRow);
+
+  // Screen Shake Preference (Off / Subtle / Full)
+  const shakeRow = document.createElement('div');
+  shakeRow.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;';
+  const shakeLabel = document.createElement('span');
+  shakeLabel.style.cssText = 'font-size: 12px; font-weight: 700; color: #cbd5e1;';
+  shakeLabel.textContent = 'Screen Shake';
+  const shakeGroup = document.createElement('div');
+  shakeGroup.style.cssText = 'display: flex; gap: 6px;';
+  const shakeOpts = [
+    { id: 'off', label: 'Off', enabled: false, mult: 0.0 },
+    { id: 'subtle', label: 'Subtle', enabled: true, mult: 0.6 },
+    { id: 'full', label: 'Full', enabled: true, mult: 1.0 },
+  ];
+  const shakeBtns = [];
+  const currentShakeMode = TUNING.camera?.shake?.mode || (TUNING.camera?.shake?.enabled === false ? 'off' : 'subtle');
+  shakeOpts.forEach((opt) => {
+    const b = document.createElement('button');
+    b.textContent = opt.label;
+    const isSel = (opt.id === currentShakeMode);
+    b.style.cssText = `
+      padding: 6px 14px; font-size: 11px; font-weight: 700; font-family: inherit;
+      border-radius: 4px; cursor: pointer; border: 1px solid rgba(120, 170, 210, 0.3); transition: all 0.12s ease;
+      background: ${isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)'};
+      color: ${isSel ? '#ffffff' : '#94a3b8'};
+    `;
+    b.onclick = () => {
+      if (!TUNING.camera) TUNING.camera = {};
+      if (!TUNING.camera.shake) TUNING.camera.shake = {};
+      TUNING.camera.shake.enabled = opt.enabled;
+      TUNING.camera.shake.mode = opt.id;
+      TUNING.camera.shake.multiplier = opt.mult;
+      shakeBtns.forEach((btn, idx) => {
+        const s = shakeOpts[idx].id === opt.id;
+        btn.style.background = s ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
+        btn.style.color = s ? '#ffffff' : '#94a3b8';
+      });
+    };
+    shakeBtns.push(b);
+    shakeGroup.appendChild(b);
+  });
+  shakeRow.appendChild(shakeLabel);
+  shakeRow.appendChild(shakeGroup);
+  box.appendChild(shakeRow);
+
+  // 4. CONTROLS & HAPTICS SECTION
+  box.appendChild(createSectionHeader('🎮 Controls & Haptics'));
+
+  const vibRow = document.createElement('div');
+  vibRow.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;';
+  const vibLabel = document.createElement('span');
+  vibLabel.style.cssText = 'font-size: 12px; font-weight: 700; color: #cbd5e1;';
+  vibLabel.textContent = 'Controller Vibration';
+  const vibGroup = document.createElement('div');
+  vibGroup.style.cssText = 'display: flex; gap: 6px;';
+  const vibOpts = [
+    { id: true, label: 'On' },
+    { id: false, label: 'Off' },
+  ];
+  const vibBtns = [];
+  vibOpts.forEach((opt) => {
+    const b = document.createElement('button');
+    b.textContent = opt.label;
+    const isSel = (opt.id === isVibrationEnabled());
+    b.style.cssText = `
+      padding: 6px 14px; font-size: 11px; font-weight: 700; font-family: inherit;
+      border-radius: 4px; cursor: pointer; border: 1px solid rgba(120, 170, 210, 0.3); transition: all 0.12s ease;
+      background: ${isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)'};
+      color: ${isSel ? '#ffffff' : '#94a3b8'};
+    `;
+    b.onclick = () => {
+      setVibrationEnabled(opt.id);
+      vibBtns.forEach((btn, idx) => {
+        const s = vibOpts[idx].id === opt.id;
+        btn.style.background = s ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
+        btn.style.color = s ? '#ffffff' : '#94a3b8';
+      });
+    };
+    vibBtns.push(b);
+    vibGroup.appendChild(b);
+  });
+  vibRow.appendChild(vibLabel);
+  vibRow.appendChild(vibGroup);
+  box.appendChild(vibRow);
 
   // Close Button
   const closeBtn = document.createElement('button');

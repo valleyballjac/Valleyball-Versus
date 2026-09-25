@@ -29,7 +29,7 @@ const P1_KEYS = {
   slide: ['KeyC'],
   dive: ['KeyQ'],
   jump: 'Space',
-  cut: ['KeyF'],
+  cut: ['KeyV'],
   volley: ['KeyE'],
   spike: ['KeyR'],
   ballReset: ['KeyB'],
@@ -44,10 +44,10 @@ const P2_KEYS = {
   slide: ['KeyO'],
   dive: ['KeyU'],
   jump: 'Enter',
-  cut: ['KeyH'],
+  cut: ['KeyN'],
   volley: ['KeyP'],
   spike: ['BracketLeft', 'KeyY'],
-  ballReset: ['KeyN'],
+  ballReset: ['KeyM'],
 };
 
 const GAMEPAD_BUTTONS = {
@@ -660,6 +660,7 @@ export function consumeAthleteCut(index) {
   return q;
 }
 
+
 export function consumeAthleteVolley(index) {
   const slot = slots[index] || slots[0];
   const q = slot.volleyQueued;
@@ -722,4 +723,45 @@ export function queueBotAction(index, action) {
   if (action === 'spike') slot.spikeQueued = true;
   if (action === 'ballReset') slot.ballResetQueued = true;
 }
+
+/**
+ * Triggers physical vibration actuator (dual-rumble) on the gamepad assigned to an athlete slot.
+ *
+ * @param {number} slotIndex 0 (P1) or 1 (P2)
+ * @param {object} options
+ * @param {number} [options.weakMagnitude=0.3] High-frequency motor intensity (0.0 to 1.0)
+ * @param {number} [options.strongMagnitude=0.0] Low-frequency motor intensity (0.0 to 1.0)
+ * @param {number} [options.duration=80] Vibration duration in milliseconds
+ */
+export function triggerHaptic(slotIndex = 0, { weakMagnitude = 0.3, strongMagnitude = 0.0, duration = 80 } = {}) {
+  if (TUNING.input && TUNING.input.vibrationEnabled === false) return;
+  const pads = getConnectedGamepads();
+  if (!pads || pads.length === 0) return;
+  const pad = pads[slotIndex] || (slotIndex === 0 ? pads[0] : null);
+  if (!pad || !pad.vibrationActuator) return;
+
+  try {
+    if (typeof pad.vibrationActuator.playEffect === 'function') {
+      pad.vibrationActuator.playEffect('dual-rumble', {
+        startDelay: 0,
+        duration: Math.max(10, Math.min(1000, duration)),
+        weakMagnitude: Math.max(0, Math.min(1, weakMagnitude)),
+        strongMagnitude: Math.max(0, Math.min(1, strongMagnitude)),
+      }).catch(() => {});
+    }
+  } catch (err) {
+    // Ignore unsupported browser edge cases
+  }
+}
+
+export function setVibrationEnabled(enabled) {
+  if (!TUNING.input) TUNING.input = {};
+  TUNING.input.vibrationEnabled = Boolean(enabled);
+}
+
+export function isVibrationEnabled() {
+  return TUNING.input?.vibrationEnabled ?? true;
+}
+
+
 

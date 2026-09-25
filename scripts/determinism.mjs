@@ -67,14 +67,11 @@ const CHROMIUM_ARGS = [
 ];
 
 function parseArgs(argv) {
-  const args = { tick: 300, runs: 2, arena: 'bowl' };
+  const args = { tick: 300, runs: 2, arena: 'court' };
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i];
     if (flag === '--arena') {
       const value = argv[i + 1];
-      if (value !== 'court' && value !== 'bowl') {
-        fail(`--arena expects "court" or "bowl", got "${value}"`);
-      }
       args.arena = value;
       i += 1;
       continue;

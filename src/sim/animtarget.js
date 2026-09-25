@@ -58,6 +58,8 @@ const _mount = new THREE.Matrix4();
 const _standQuat = new THREE.Quaternion();
 const _standAxis = new THREE.Vector3();
 const _mountPos = new THREE.Vector3();
+const _axisX = new THREE.Vector3(1, 0, 0);
+const _pitchQuat = new THREE.Quaternion();
 
 /** The literal that means "run the blend space" rather than pin a clip. */
 const AUTO = 'auto';
@@ -317,6 +319,7 @@ export function createAnimTarget(characterRoot, clips, rig) {
     aimYaw: 0,
     moveWorldX: 0,
     moveWorldZ: 0,
+    slopePitch: 0,
     /** True when an action's clip was missing and the held-apex pose stands in.
      *  Reported once at boot; not read per-step by anything. */
     slideIsFallback: false,
@@ -869,7 +872,7 @@ function standUpHold(state) {
  * the ceiling goes to 0 and carries progress to the front of the take. No edge,
  * no latch, no boolean of character state (RULING GF-2.0).
  */
-function advanceStandUp(state, rig, floorY, dt) {
+export function advanceStandUp(state, rig, floorY, dt) {
   const tuning = TUNING.standUp;
   const pelvis = rig && rig.get('pelvis');
 
@@ -906,9 +909,11 @@ function advanceStandUp(state, rig, floorY, dt) {
   _standAxis.set(0, 0, 1).applyQuaternion(_standQuat);
   const faceUpness = _standAxis.dot(WORLD_UP);
 
-  const band = Math.max(1e-3, tuning.faceBlendBand);
-  const rawMix = Math.min(1, Math.max(0, (faceUpness + band) / (2 * band)));
-  state.faceUpMix = ease(state.faceUpMix, rawMix, tuning.ease, dt);
+  // HYSTERESIS: Prevents 50/50 opposing getup blend when landing on side/oblique.
+  // faceUpness >= 0.02 commits to faceUp; <= -0.02 commits to faceDown.
+  // In the tiny deadband, preserves previous orientation so bones never twist inside-out.
+  const rawMix = faceUpness >= 0.02 ? 1 : (faceUpness <= -0.02 ? 0 : (state.faceUpMix >= 0.5 ? 1 : 0));
+  state.faceUpMix = ease(state.faceUpMix, rawMix, 18.0, dt);
 
   // THE SCRUB. See the deadlock note above the function: the ceiling comes from
   // the recovery, which the clip cannot influence, and the ratchet is what
@@ -969,7 +974,11 @@ function advanceBlend(state, motor, yaw, dt) {
   const linear = motor.body.linvel();
   state.smoothedVelX = ease(state.smoothedVelX, linear.x, blend.speedSmoothing, dt);
   state.smoothedVelZ = ease(state.smoothedVelZ, linear.z, blend.speedSmoothing, dt);
-  state.smoothedSpeed = Math.hypot(state.smoothedVelX, state.smoothedVelZ);
+  // Stride-sync 3D surface speed matching: eliminates foot sliding / moonwalking across slopes & mounds
+  const contactSpeed = motor.grounded
+    ? Math.hypot(linear.x, linear.y, linear.z)
+    : Math.hypot(linear.x, linear.z);
+  state.smoothedSpeed = ease(state.smoothedSpeed, contactSpeed, blend.speedSmoothing, dt);
 
   // 2 — INTO THE YAW FRAME.
   //
@@ -1315,9 +1324,13 @@ function writeClipTimes(state) {
 
 /** Where the target rig stands: sphere centre, dropped by the sphere radius so
  *  the feet sit at the bottom of the ball. */
-export function mountMatrix(motor, yaw, out) {
+export function mountMatrix(motor, yaw, out, slopePitch = 0) {
   const translation = motor.body.translation();
   _mountQuat.setFromAxisAngle(WORLD_UP, yaw);
+  if (Math.abs(slopePitch) > 1e-4) {
+    _pitchQuat.setFromAxisAngle(_axisX, slopePitch);
+    _mountQuat.multiply(_pitchQuat);
+  }
   _pos.set(translation.x, translation.y - motor.radius, translation.z);
   return out.compose(_pos, _mountQuat, _unitScale);
 }
@@ -1581,17 +1594,15 @@ export function updateAnimTarget(
     const actionShare = actionDemand;
     const afterAction = 1 - actionDemand;
 
-    // THE STAND-UP'S DEMAND IS NOT JUST standUpNeed ANY MORE.
-    //
-    // need is 1 - weight, so it was the RECOVERY RAMP deciding how much of the
-    // take to show — while the take's scrub runs on its own clock. The two
-    // finish seconds apart: measured, progress hit 1.000 while need was still
-    // 0.60, which left the get-up sharing the pose with a walk cycle the whole
-    // way through and put 40% of a locomotion pose on an athlete lying on the
-    // floor. Taking the max with a term that is 1 while the take is playing
-    // gives the clip the pose outright until it has actually finished, then
-    // hands back to need for the tail.
-    const standDemand = Math.max(state.standUpNeed, standUpHold(state));
+    // THE STAND-UP DEMAND:
+    // Once the stand-up clip has completed (progress >= 0.95) and the pelvis is
+    // upright (pelvisDownness <= 0.08), release standDemand to zero immediately.
+    // This prevents holding the crouched head-down frame 0.70 ("Haaland" posture)
+    // at 50-60% weight while running for 2 seconds.
+    const standComplete = state.standUpProgress >= 0.95 && state.pelvisDownness <= 0.08;
+    const standDemand = standComplete
+      ? 0
+      : Math.max(state.pelvisDownness, standUpHold(state));
     const standShare = afterAction * standDemand;
     const afterStand = afterAction * (1 - standDemand);
 
@@ -1739,11 +1750,22 @@ export function updateAnimTarget(
       TUNING.action.diveHipDrop * diveOnly * state.hipsUnitsPerMetre;
   }
 
+  // Slope posture lean: smoothed along-track inclination when grounded (clamped to +/- 10 degrees)
+  const linear = motor.body.linvel();
+  const horizSpeed = Math.hypot(linear.x, linear.z);
+  let targetPitch = 0;
+  if (motor.grounded && horizSpeed > 0.8 && state.slideMix === 0 && state.diveMix === 0) {
+    const sign = state.localVelZ < 0 ? -1 : 1;
+    const rawPitch = sign * Math.atan2(linear.y, horizSpeed);
+    targetPitch = Math.max(-0.174, Math.min(0.174, rawPitch));
+  }
+  state.slopePitch = ease(state.slopePitch || 0, targetPitch, 8.0, dt);
+
   // mount ∘ armature-local. With the clone root at mount * bindRootLocal, a
   // bone standing in bind pose has targetBoneWorld = mount * bindBoneWorld, so
   // the formula below collapses to targetBodyWorld = mount * bindBodyWorld —
   // exactly where autorig placed that body when it spawned at the same mount.
-  mountMatrix(motor, yaw, _mount);
+  mountMatrix(motor, yaw, _mount, state.slopePitch);
 
   // A DOWNED ATHLETE GETS UP WHERE HE FELL. Past mountSlack the ghost's
   // horizontal position eases off the sphere and onto the pelvis body's own

@@ -154,14 +154,7 @@ export function createGui({
   locked(athlete.add(preset.spawn, 'z'), 'reload');
   athlete.close();
 
-  const bowl = arena.addFolder('bowl geometry (reload)');
-  for (const key of [
-    'floorRadius', 'rimRadius', 'rimHeight', 'profilePoints',
-    'latheSegments', 'wallCurvePower', 'lipInset', 'lipHeight', 'lipPoints',
-  ]) {
-    locked(bowl.add(TUNING.arena.bowl, key), 'reload');
-  }
-  bowl.close();
+
 
   // THE BALL FIXTURE — one folder for the shared settings, then one per ball,
   // built by walking TUNING.balls rather than by hand. Add a fourth ball to the

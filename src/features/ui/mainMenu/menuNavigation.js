@@ -238,7 +238,7 @@ export function startMenuGamepadPolling() {
     }
     if (e.code === 'ArrowDown') {
       e.preventDefault();
-      navCallbacks.playerSetup.playerFocusRow[navCallbacks.playerSetup.focusedColumn] = Math.min(5, navCallbacks.playerSetup.playerFocusRow[navCallbacks.playerSetup.focusedColumn] + 1);
+      navCallbacks.playerSetup.playerFocusRow[navCallbacks.playerSetup.focusedColumn] = Math.min(6, navCallbacks.playerSetup.playerFocusRow[navCallbacks.playerSetup.focusedColumn] + 1);
       navCallbacks.playerSetup.updateFocusUI();
       return;
     }
@@ -264,7 +264,7 @@ export function startMenuGamepadPolling() {
     if (e.code === 'KeyS') {
       e.preventDefault();
       navCallbacks.playerSetup.focusedColumn = 0;
-      navCallbacks.playerSetup.playerFocusRow[0] = Math.min(5, navCallbacks.playerSetup.playerFocusRow[0] + 1);
+      navCallbacks.playerSetup.playerFocusRow[0] = Math.min(6, navCallbacks.playerSetup.playerFocusRow[0] + 1);
       navCallbacks.playerSetup.updateFocusUI();
       return;
     }
@@ -282,7 +282,7 @@ export function startMenuGamepadPolling() {
     }
     if (e.code === 'Space') {
       e.preventDefault();
-      if (navCallbacks.playerSetup.playerFocusRow[0] === 5) {
+      if (navCallbacks.playerSetup.playerFocusRow[0] === 6) {
         navCallbacks.playerSetup.setupPage = 2;
         window._updateSetupPage();
       } else {
@@ -302,7 +302,7 @@ export function startMenuGamepadPolling() {
     if (e.code === 'KeyK') {
       e.preventDefault();
       navCallbacks.playerSetup.focusedColumn = 1;
-      navCallbacks.playerSetup.playerFocusRow[1] = Math.min(5, navCallbacks.playerSetup.playerFocusRow[1] + 1);
+      navCallbacks.playerSetup.playerFocusRow[1] = Math.min(6, navCallbacks.playerSetup.playerFocusRow[1] + 1);
       navCallbacks.playerSetup.updateFocusUI();
       return;
     }
@@ -321,7 +321,7 @@ export function startMenuGamepadPolling() {
     if (e.code === 'Enter') {
       e.preventDefault();
       const targetIdx = navCallbacks.playerSetup.focusedColumn;
-      if (navCallbacks.playerSetup.playerFocusRow[targetIdx] === 5) {
+      if (navCallbacks.playerSetup.playerFocusRow[targetIdx] === 6) {
         navCallbacks.playerSetup.setupPage = 2;
         window._updateSetupPage();
       } else {
@@ -723,7 +723,7 @@ export function startMenuGamepadPolling() {
         navCallbacks.playerSetup.updateFocusUI();
       }
       if (down && !prev.down) {
-        navCallbacks.playerSetup.playerFocusRow[navCallbacks.playerSetup.focusedColumn] = Math.min(5, navCallbacks.playerSetup.playerFocusRow[navCallbacks.playerSetup.focusedColumn] + 1);
+        navCallbacks.playerSetup.playerFocusRow[navCallbacks.playerSetup.focusedColumn] = Math.min(6, navCallbacks.playerSetup.playerFocusRow[navCallbacks.playerSetup.focusedColumn] + 1);
         navCallbacks.playerSetup.updateFocusUI();
       }
 
@@ -746,7 +746,7 @@ export function startMenuGamepadPolling() {
       }
 
       if (btnA && !prev.a) {
-        if (navCallbacks.playerSetup.playerFocusRow[navCallbacks.playerSetup.focusedColumn] === 5) {
+        if (navCallbacks.playerSetup.playerFocusRow[navCallbacks.playerSetup.focusedColumn] === 6) {
           navCallbacks.playerSetup.setupPage = 2;
           window._updateSetupPage();
         } else {
@@ -793,7 +793,7 @@ export function startMenuGamepadPolling() {
         navCallbacks.playerSetup.updateFocusUI();
       }
       if (down && !prev.down) {
-        navCallbacks.playerSetup.playerFocusRow[playerIdx] = Math.min(5, navCallbacks.playerSetup.playerFocusRow[playerIdx] + 1);
+        navCallbacks.playerSetup.playerFocusRow[playerIdx] = Math.min(6, navCallbacks.playerSetup.playerFocusRow[playerIdx] + 1);
         navCallbacks.playerSetup.updateFocusUI();
       }
 
@@ -805,7 +805,7 @@ export function startMenuGamepadPolling() {
       }
 
       if (btnA && !prev.a) {
-        if (navCallbacks.playerSetup.playerFocusRow[playerIdx] === 5) {
+        if (navCallbacks.playerSetup.playerFocusRow[playerIdx] === 6) {
           navCallbacks.playerSetup.setupPage = 2;
           window._updateSetupPage();
         } else {

@@ -442,6 +442,17 @@ class SoundManager {
   }
 
   /**
+   * Defensive Block Impact:
+   * Heavy athletic impact thud combining low-frequency body contact with ball compression pop.
+   */
+  playBlockImpact(worldPos = null) {
+    if (!this.ensureRunning()) return;
+    this.playBodyCollision(1.0, worldPos);
+    this.playSweetSpotPop(worldPos, false);
+    this.playSampleFromPool('rubber_med', ['rubber_med_1', 'rubber_med_2', 'rubber_med_3'], 0.85, 1.05, worldPos);
+  }
+
+  /**
    * Human Vocal Exertion (Tennis Grunts & Karate Kiais):
    * Authentic athletic effort vocals accompanying strikes.
    */
@@ -491,6 +502,39 @@ class SoundManager {
 
     // 2. Play Human Player Vocal Exertion Grunt (Tennis grunt / Karate kiai)
     this.playPlayerGrunt(kindName, q, worldPos);
+  }
+
+  /**
+   * Resonant low-frequency sub-thud for high-impact clean strikes & spikes.
+   * Produces a physical "chest thump" sensation without harsh or clicky audio transients.
+   */
+  playSweetSpotPop(worldPos = null, isSpike = false) {
+    if (!this.ensureRunning()) return;
+    const now = this.ctx.currentTime;
+
+    const { input } = this.createSpatialPanner(worldPos, this.sfxGain);
+    if (!input) return;
+
+    const osc = this.ctx.createOscillator();
+    const gainNode = this.ctx.createGain();
+
+    const startFreq = isSpike ? 95 : 85;
+    const endFreq = isSpike ? 34 : 35;
+    const duration = isSpike ? 0.12 : 0.09;
+    const peakVol = isSpike ? 0.50 : 0.35;
+
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(startFreq, now);
+    osc.frequency.exponentialRampToValueAtTime(endFreq, now + duration);
+
+    gainNode.gain.setValueAtTime(peakVol, now);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, now + duration);
+
+    osc.connect(gainNode);
+    gainNode.connect(input);
+
+    osc.start(now);
+    osc.stop(now + duration);
   }
 
   /**

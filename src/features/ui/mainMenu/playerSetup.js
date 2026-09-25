@@ -10,6 +10,7 @@ import {
   MATCH_DURATION_OPTIONS,
   ARENA_OPTIONS,
   PRACTICE_BALL_OPTIONS,
+  ASSIST_OPTIONS,
 } from './constants.js';
 
 let rootEl = null;
@@ -45,6 +46,7 @@ let playerConfigs = [
     variant: 'classic',
     primaryColor: 0xd90429,
     cameraMode: 'chase',
+    assistPreset: 'pureSim',
   },
   {
     name: 'Player 2',
@@ -55,6 +57,7 @@ let playerConfigs = [
     variant: 'classic',
     primaryColor: 0x1d4ed8,
     cameraMode: 'chase',
+    assistPreset: 'pureSim',
   },
 ];
 
@@ -63,7 +66,7 @@ let setupPage = 1;
 let currentBallOptions = MATCH_BALL_OPTIONS;
 let selectedMatchBall = 'random';
 let selectedMatchDuration = 300;
-let selectedMatchArena = (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('arena')) === 'bowl' ? 'bowl' : 'court';
+let selectedMatchArena = 'court';
 let matchBallCards = [];
 let matchDurationButtons = [];
 let arenaButtons = [];
@@ -86,6 +89,8 @@ let playerTeamButtons = [[], []];
 let playerSwatchButtons = [[], []];
 let playerPhysiqueButtons = [[], []];
 let playerCameraSelects = [null, null];
+let playerAssistButtons = [[], []];
+let playerAssistDescEls = [null, null];
 let playerReadyButtons = [null, null];
 let playerInputBadges = [null, null];
 let playerRowElements = [[], []];
@@ -680,7 +685,7 @@ export function buildArenaSelector() {
 
   const arenaRowEl = document.createElement('div');
   arenaRowEl.id = 'arena-selector-row';
-  arenaRowEl.style.cssText = 'display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px;';
+  arenaRowEl.style.cssText = 'display: grid; grid-template-columns: 1fr; gap: 8px;';
 
   arenaButtons = [];
   ARENA_OPTIONS.forEach((opt) => {
@@ -936,6 +941,50 @@ export function setPlayerCamera(idx, cameraMode) {
   notifyPlayerUpdate(idx);
 }
 
+export function setPlayerAssist(idx, assistId) {
+  if (!playerConfigs[idx]) return;
+  playerConfigs[idx].assistPreset = assistId;
+  playerReadyState[idx] = false;
+  updateReadyUI();
+
+  const btns = playerAssistButtons[idx] || [];
+  btns.forEach(({ btn, id }) => {
+    const isSelected = id === assistId;
+    btn.style.color = isSelected ? '#000000' : '#94a3b8';
+    btn.style.background = isSelected ? '#38bdf8' : 'rgba(255, 255, 255, 0.06)';
+    btn.style.borderColor = isSelected ? '#38bdf8' : 'rgba(255, 255, 255, 0.15)';
+    btn.style.boxShadow = isSelected ? '0 0 12px rgba(56, 189, 248, 0.5)' : 'none';
+  });
+
+  const descEl = playerAssistDescEls[idx];
+  const opt = ASSIST_OPTIONS.find((o) => o.id === assistId);
+  if (descEl && opt) {
+    descEl.textContent = opt.desc;
+  }
+
+  notifyPlayerUpdate(idx);
+  soundManager.playTone(360, 0.08, 'sine', 0.2);
+}
+
+export function updateAssistButtonsUI() {
+  [0, 1].forEach((idx) => {
+    const curPreset = playerConfigs[idx]?.assistPreset || 'pureSim';
+    const btns = playerAssistButtons[idx] || [];
+    btns.forEach(({ btn, id }) => {
+      const isSelected = id === curPreset;
+      btn.style.color = isSelected ? '#000000' : '#94a3b8';
+      btn.style.background = isSelected ? '#38bdf8' : 'rgba(255, 255, 255, 0.06)';
+      btn.style.borderColor = isSelected ? '#38bdf8' : 'rgba(255, 255, 255, 0.15)';
+      btn.style.boxShadow = isSelected ? '0 0 12px rgba(56, 189, 248, 0.5)' : 'none';
+    });
+    const descEl = playerAssistDescEls[idx];
+    const opt = ASSIST_OPTIONS.find((o) => o.id === curPreset);
+    if (descEl && opt) {
+      descEl.textContent = opt.desc;
+    }
+  });
+}
+
 export function cycleOption(playerIdx, rowIdx, direction = 1) {
   if (rowIdx === 0) {
     const types = ['human', 'ai-easy', 'ai-medium', 'ai-hard'];
@@ -963,6 +1012,11 @@ export function cycleOption(playerIdx, rowIdx, direction = 1) {
     const nextIdx = (curIdx + direction + CAMERA_OPTIONS.length) % CAMERA_OPTIONS.length;
     setPlayerCamera(playerIdx, CAMERA_OPTIONS[nextIdx].id);
   } else if (rowIdx === 5) {
+    const curPreset = playerConfigs[playerIdx].assistPreset || 'pureSim';
+    const curIdx = ASSIST_OPTIONS.findIndex((a) => a.id === curPreset);
+    const nextIdx = (curIdx + direction + ASSIST_OPTIONS.length) % ASSIST_OPTIONS.length;
+    setPlayerAssist(playerIdx, ASSIST_OPTIONS[nextIdx].id);
+  } else if (rowIdx === 6) {
     setupPage = 2;
     window._updateSetupPage();
   }
@@ -1654,8 +1708,57 @@ export function buildPlayerColumn(idx, label, themeColor) {
   charCard.appendChild(cameraRow);
   playerRowElements[idx][4] = cameraRow;
 
-  // Row 5: Next Button
-  playerRowElements[idx][5] = btnNext;
+  // Row 5: Strike Assist Preset
+  const assistRow = document.createElement('div');
+  assistRow.id = `row-assist-p${idx + 1}`;
+  assistRow.style.cssText = 'display: flex; flex-direction: column; gap: 4px; padding: 4px; border-radius: 6px; transition: all 0.15s ease;';
+  assistRow.innerHTML = '<div style="font-size: 10px; font-weight: 700; color: #94a3b8;">STRIKE ASSIST</div>';
+
+  const assistBtnRow = document.createElement('div');
+  assistBtnRow.style.cssText = 'display: flex; gap: 6px;';
+
+  playerAssistButtons[idx] = [];
+  ASSIST_OPTIONS.forEach((opt) => {
+    const btn = document.createElement('button');
+    btn.textContent = opt.label.replace(' [DEFAULT]', '');
+    const isSelected = (playerConfigs[idx].assistPreset || 'pureSim') === opt.id;
+    btn.style.cssText = `
+      flex: 1;
+      padding: 6px 2px;
+      font-size: 9.5px;
+      font-weight: 800;
+      font-family: inherit;
+      color: ${isSelected ? '#000000' : '#94a3b8'};
+      background: ${isSelected ? '#38bdf8' : 'rgba(255, 255, 255, 0.06)'};
+      border: 1px solid ${isSelected ? '#38bdf8' : 'rgba(255, 255, 255, 0.15)'};
+      border-radius: 5px;
+      box-shadow: ${isSelected ? '0 0 12px rgba(56, 189, 248, 0.5)' : 'none'};
+      cursor: pointer;
+      transition: all 0.15s ease;
+    `;
+    btn.onclick = () => {
+      playerFocusRow[idx] = 5;
+      focusedColumn = idx;
+      updateFocusUI();
+      setPlayerAssist(idx, opt.id);
+    };
+    playerAssistButtons[idx].push({ btn, id: opt.id });
+    assistBtnRow.appendChild(btn);
+  });
+  assistRow.appendChild(assistBtnRow);
+
+  const assistDescEl = document.createElement('div');
+  assistDescEl.style.cssText = 'font-size: 9.5px; color: #7dd3fc; margin-top: 2px; font-weight: 600; min-height: 14px;';
+  const curOpt = ASSIST_OPTIONS.find((o) => o.id === (playerConfigs[idx].assistPreset || 'pureSim'));
+  assistDescEl.textContent = curOpt?.desc || '';
+  playerAssistDescEls[idx] = assistDescEl;
+  assistRow.appendChild(assistDescEl);
+
+  charCard.appendChild(assistRow);
+  playerRowElements[idx][5] = assistRow;
+
+  // Row 6: Next Button
+  playerRowElements[idx][6] = btnNext;
 
   col.appendChild(charCard);
 
@@ -1832,8 +1935,8 @@ export function updateFocusUI() {
     const activeRow = playerFocusRow[idx];
     const isThisColActive = !isSingleController || focusedColumn === idx;
 
-    // Rows 0..4: Type, Team, Color, Physique, Camera
-    [0, 1, 2, 3, 4].forEach((rIdx) => {
+    // Rows 0..5: Type, Team, Color, Physique, Camera, Strike Assist
+    [0, 1, 2, 3, 4, 5].forEach((rIdx) => {
       const el = playerRowElements[idx]?.[rIdx];
       if (!el) return;
       if (rIdx === activeRow && isThisColActive) {
@@ -1849,11 +1952,11 @@ export function updateFocusUI() {
     });
   });
 
-  // Row 5: Next Button
+  // Row 6: Next Button
   if (btnNext) {
     const isNextFocused = isSingleController
-      ? (playerFocusRow[focusedColumn] === 5)
-      : (playerFocusRow[0] === 5 || playerFocusRow[1] === 5);
+      ? (playerFocusRow[focusedColumn] === 6)
+      : (playerFocusRow[0] === 6 || playerFocusRow[1] === 6);
     if (isNextFocused) {
       btnNext.style.outline = '2px solid #ffffff';
       btnNext.style.outlineOffset = '2px';

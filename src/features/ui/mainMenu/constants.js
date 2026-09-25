@@ -46,8 +46,7 @@ export const MATCH_DURATION_OPTIONS = [
 ];
 
 export const ARENA_OPTIONS = [
-  { id: 'court', label: 'VALLEY COURT (DEFAULT)', desc: '50x120m valley basin with goal hoops' },
-  { id: 'bowl', label: 'PHYSICS BOWL', desc: 'Procedural physics lathe & determinism anchor' },
+  { id: 'court', label: 'VALLEY ARENA [DEFAULT]', desc: '50x120m valley basin with stream-heads & goal hoops' },
 ];
 
 export const PRACTICE_BALL_OPTIONS = [
@@ -58,3 +57,9 @@ export const PRACTICE_BALL_OPTIONS = [
 ];
 
 export const BALL_OPTIONS = MATCH_BALL_OPTIONS;
+
+export const ASSIST_OPTIONS = [
+  { id: 'pureSim', label: 'PURE SIM [DEFAULT]', desc: 'True physics · 0% forgiveness' },
+  { id: 'standard', label: 'STANDARD', desc: 'Gamepad buffer · 0.30m hit forgiveness' },
+  { id: 'casual', label: 'CASUAL', desc: 'Accessible · 0.45m hit + 25% target pull' },
+];

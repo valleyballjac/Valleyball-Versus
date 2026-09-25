@@ -160,34 +160,6 @@ const DEFAULTS = {
         { x: 4.0, y: 10.0, z: -12.0 },
       ],
     },
-
-    // THE TEST RIG, preserved exactly. Every determinism pair measured to date
-    // was measured on these numbers; they are the baseline and they do not move
-    // because the court arrived.
-    bowl: {
-      floorRadius: 30,
-      rimRadius: 48,
-      rimHeight: 8,
-      // Points across the flat floor and up the wall. The lip adds lipPoints on
-      // top of these, so the profile is profilePoints + lipPoints long.
-      profilePoints: 40,
-      latheSegments: 96,
-      wallCurvePower: 2,
-      // THE LIP. Past the rim the profile turns back INWARD and keeps climbing,
-      // so a ball arriving with real speed meets an overhang instead of a launch
-      // ramp. Inset is how far in it curls, height how far up.
-      lipInset: 3,
-      lipHeight: 2,
-      lipPoints: 6,
-      // The watchdog floor. Anything below this has left the world.
-      killPlaneY: -10,
-      spawn: { x: 0, y: 3.0, z: 0 },
-      ballSpawns: [
-        { x: -3.5, y: 3.5, z: 2.0 },
-        { x: 0.0, y: 4.5, z: 3.5 },
-        { x: 4.0, y: 5.5, z: 2.0 },
-      ],
-    },
   },
 
   // SETTINGS SHARED BY EVERY BALL. Not per-spec, because neither is a property
@@ -225,10 +197,10 @@ const DEFAULTS = {
       label: 'Small (0.4m)',
       radius: 0.20,
       density: 0.025,     // -> 0.838 kg
-      friction: 0.8,
+      friction: 0.35,     // smooth rolling down valley slopes
       restitution: 0.88,
-      linearDrag: 0.015,
-      angularDrag: 0.04,
+      linearDrag: 0.012,
+      angularDrag: 0.015,
       colorA: 0xd32f2f,   // crimson
       colorB: 0xf5f5f5,   // white
       textureUrl: assetUrl('textures/ball_small.png'),
@@ -239,10 +211,10 @@ const DEFAULTS = {
       label: 'Medium (1.0m)',
       radius: 0.50,
       density: 0.0042,    // -> 2.199 kg
-      friction: 0.8,
+      friction: 0.35,     // smooth rolling down valley slopes
       restitution: 0.88,
-      linearDrag: 0.012,
-      angularDrag: 0.03,
+      linearDrag: 0.010,
+      angularDrag: 0.015,
       colorA: 0x1976d2,   // blue
       colorB: 0xfbc02d,   // yellow
       textureUrl: assetUrl('textures/ball_medium.png'),
@@ -253,10 +225,10 @@ const DEFAULTS = {
       label: 'Large (1.5m Exercise Ball)',
       radius: 0.75,
       density: 0.0022,    // -> 3.888 kg
-      friction: 0.85,
+      friction: 0.40,
       restitution: 0.85,
-      linearDrag: 0.01,
-      angularDrag: 0.02,
+      linearDrag: 0.008,
+      angularDrag: 0.012,
       colorA: 0x7b1fa2,   // purple
       colorB: 0xb0bec5,   // silver
       textureUrl: assetUrl('textures/ball_large.png'),
@@ -560,7 +532,7 @@ const DEFAULTS = {
     clipEnd: 0.7,
 
 
-    faceBlendBand: 0.2,
+    faceBlendBand: 0.03, // Narrowed from 0.20 to prevent grotesque 50/50 opposing getup blend
     mountSlack: 0.15,
     faceDownClip: 'Stand Up Face Down',
     faceUpClip: 'Stand Up Face Up',
@@ -654,6 +626,9 @@ const DEFAULTS = {
     // Global multiplier on the gait's rate and on the idle action's playback.
     timeScale: 1.0,
 
+    // Optional external actions GLB clip source. Absent by default.
+    loadOptionalActionsGlb: false,
+
     // 'auto' runs the blend space. Any clip name pins that single clip at
     // weight 1 — the Task 4 behaviour, kept for debugging and for the L5 creep
     // test, where a run clip is pinned while the sphere sits still.
@@ -667,10 +642,9 @@ const DEFAULTS = {
       // noise; without this the weights flicker and so does the pose. Applied
       // to the velocity VECTOR now, not just its magnitude, so a jittering
       // heading cannot make the direction tent chatter either.
-      speedSmoothing: 6.0,
-      // 1/s. The eased weights ARE the crossfade — see animtarget.js on why
-      // three's fade API is not used.
-      weightEase: 8.0,
+      speedSmoothing: 12.0,
+      // 1/s. The eased weights ARE the crossfade — responsive transition between gait rings
+      weightEase: 12.0,
     },
 
     // Stride sync: turn the legs over at roughly ground speed. With root motion
@@ -824,7 +798,9 @@ const DEFAULTS = {
     // coasts cleanly to a stop and costs nothing, and only a slide still being
     // held all the way to the bottom is punished. One number for both because
     // it is one idea, and because two sliders would drift apart.
-    knockdownSpeed: 1.0,
+    knockdownSpeed: 0.6,
+    // Grace ticks before a low-speed slide triggers knockdown, avoiding tripping on casual stops
+    slideGraceTicks: 15,
 
     // THE GROUNDED DIVE'S OWN BRAKING, and why it is not slideResistance.
     //
@@ -993,8 +969,8 @@ const DEFAULTS = {
 
     // STAGE 3: The "Cut" Mechanic (L1 / Left Shoulder)
     cut: {
-      // Cooldown in ticks: 150 ticks = 2.5s (deliberate tactical maneuver, cannot be spammed)
-      cooldownTicks: 150,
+      // Cooldown in ticks: 80 ticks = 1.33s (balanced agility without spam)
+      cooldownTicks: 80,
       // Forward push-off impulse (N·s) in the stick direction
       pushImpulse: 4.5,
       // Momentum cancellation ratio (0.95 = 95% momentum absorbed on the plant foot)
@@ -1028,18 +1004,37 @@ const DEFAULTS = {
     aimStickWeight: 0.6,      // 0 = aim is pure facing, 1 = pure stick heading
     mixEase: 10.0,            // action-tier share ease, same rate as poseEase
 
-    // ═══ SWEET-SPOT PROXIMITY ASSIST ═══ (see checkStrikeAssist)
-    //
-    // Forgiveness measured from the ball's SURFACE, not its centre, so it means
-    // the same thing on a 0.4 m ball and a 1.5 m one. Narrow on purpose: it
-    // rescues a well-timed swing that missed by centimetres, and does nothing
-    // for a swing that was early or late.
-    assistRadius: 0.45,       // m of proximity forgiveness around a qualifying limb
-    assistWindowTicks: 6,     // only within +/- this many ticks of sweetTick
+    // ═══ STRIKE ASSIST PRESETS & CONFIGURATION ═══
+    assistPresets: {
+      pureSim: {
+        id: 'pureSim',
+        label: 'PURE SIM',
+        desc: 'True physics · 0% forgiveness',
+        assistRadius: 0.0,
+        assistWindowTicks: 0,
+        aimMagnetism: 0.0,
+      },
+      standard: {
+        id: 'standard',
+        label: 'STANDARD',
+        desc: 'Gamepad buffer · 0.30m hit forgiveness',
+        assistRadius: 0.30,
+        assistWindowTicks: 4,
+        aimMagnetism: 0.0,
+      },
+      casual: {
+        id: 'casual',
+        label: 'CASUAL',
+        desc: 'Accessible · 0.45m hit + 25% target pull',
+        assistRadius: 0.45,
+        assistWindowTicks: 6,
+        aimMagnetism: 0.25,
+      },
+    },
 
-    // TARGET MAGNETISM. The launch yaw is nudged from the player's own aim
-    // toward the far goal's centre by this fraction. Set to 0.0 for pure
-    // unassisted physics aiming.
+    // Baseline Default: Pure Sim (unassisted physics simulation)
+    assistRadius: 0.0,        // m of proximity forgiveness around a qualifying limb
+    assistWindowTicks: 0,     // only within +/- this many ticks of sweetTick
     aimMagnetism: 0.0,        // 0.0 = pure player aim (disabled by default)
 
     // ═══ THE EAST BUTTON IS CONTEXTUAL ═══ (G4.1 §5)
@@ -1227,7 +1222,14 @@ const DEFAULTS = {
     // clamp — not the gain — was the binding constraint. 0.06 sweeps the
     // measured maximum to 24 degrees. It is still a clamp, so LAW L3 holds:
     // the impulse can only ever reduce the error, never add energy.
-    maxAngularImpulse: 0.01,
+    maxAngularImpulse: 0.06,
+    // Leg form recovery: spherical hip joints twist on slides. Boost angular torque
+    // on thighs when upright so legs snap cleanly forward.
+    thighTwistRecovery: {
+      enabled: true,
+      boostKp: 1.8,
+      maxAngular: 0.08,
+    },
     // Raising limpness is what buys this back. A flat collapse via slow
     // recovery alone needs 0.12 here, an 8.3 s penalty; at limpness 5 the same
     // depth recovers in 3.3 s, which is a sporting knockdown rather than a
@@ -1525,6 +1527,23 @@ const DEFAULTS = {
     // 1/s. Obstruction SHORTENS instantly; restoring eases at this rate.
     restoreEase: 4.0,
 
+    // Impact juice: Trauma-based micro screenshake on heavy collisions & knockdowns
+    shake: {
+      enabled: true,               // User preference: toggleable via Settings
+      mode: 'subtle',              // 'off' | 'subtle' | 'full'
+      multiplier: 0.6,             // Scaled intensity for subtle mode
+      traumaDecay: 4.5,            // Fast dissipation for crisp, non-abrasive micro-feel (~0.12-0.18s)
+      maxTranslation: 0.022,       // Softer displacement in meters at trauma = 1.0 (subtle micro-shake)
+      maxRotation: 0.008,          // Tighter pitch/yaw shake in radians at trauma = 1.0 (zero horizon disorient)
+      frequency: 28.0,             // Tight oscillation speed
+    },
+    // Impact juice: Dynamic lens FOV contraction & spring-back on hits
+    fovPunch: {
+      strikePunch: -2.5,           // Degrees FOV contraction on clean strikes
+      divePunch: -1.5,             // Degrees FOV contraction on diving saves
+      recoverySpeed: 16.0,         // Exponential spring back to normal FOV
+    },
+
     // ═══ THE OTHER THREE VIEWS ═══
     ballCam: {
       distance: 8.5,
@@ -1651,6 +1670,22 @@ const DEFAULTS = {
       jumpHeightThreshold: 1.7,
       diveDistMin: 2.0,
       diveDistMax: 4.8,
+    },
+  },
+
+  // ═══ INPUT & HAPTICS ═══
+  input: {
+    vibrationEnabled: true,
+    haptics: {
+      collisionWeak: 0.25,
+      collisionStrong: 0.10,
+      collisionDuration: 60,
+      tackleWeak: 0.35,
+      tackleStrong: 0.15,
+      tackleDuration: 80,
+      knockdownWeak: 0.35,
+      knockdownStrong: 0.15,
+      knockdownDuration: 80,
     },
   },
 

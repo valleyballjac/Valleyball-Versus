@@ -30,7 +30,7 @@ let cachedCourtMesh = null;
 const DT = 1 / 60;
 const MOTOR_RADIUS = 0.5;
 const MOTOR_MASS = 2.618;   // 4/3 * π * 0.5³ * density 2.0
-const MAX_SPEED = 6.0;      // m/s horizontal sprint cap
+const MAX_SPEED = 5.0;      // m/s horizontal sprint cap (aligned with TUNING.blend2d.sprintSpeed)
 const MOTOR_FORCE = 35.0;   // Tuned to reach MAX_SPEED in ~1s on flat ground
 const BRAKE_DECEL = 12.0;   // m/s² braking deceleration
 const JUMP_IMPULSE = 7.0;
@@ -38,7 +38,7 @@ const JUMP_COOLDOWN = 90;   // ticks
 const AIR_CONTROL = 0.15;
 
 const BALL_RADIUS = 0.50;   // Medium ball
-const BALL_DENSITY = 0.0042;
+const BALL_DENSITY = 0.0042; // g/cm³; converted to kg/m³ (* 1000) when passed to Rapier
 const BALL_FRICTION = 0.8;
 const BALL_RESTITUTION = 0.88;
 const BALL_DRAG = 0.012;
@@ -279,7 +279,7 @@ export function createHeadlessMatch(paramsA, paramsB, opts = {}) {
   );
   const ballCollider = world.createCollider(
     RAPIER.ColliderDesc.ball(ballRadius)
-      .setDensity(ballDensity)
+      .setDensity(ballDensity * 1000) // LESSON 12: g/cm³ -> kg/m³ (2.199 kg regulation mass)
       .setFriction(ballCfg.friction || 0.8)
       .setRestitution(ballRestitution),
     ballBody,

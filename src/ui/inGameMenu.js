@@ -8,6 +8,7 @@
 import { getColorName } from './mainMenu.js';
 import { TUNING } from '../config/tuning.js';
 import { soundManager } from '../audio/soundManager.js';
+import { setVibrationEnabled, isVibrationEnabled } from '../input/inputRouter.js';
 
 let menuOverlayEl = null;
 let isOpen = false;
@@ -477,7 +478,60 @@ export function initInGameMenu({
     const valSpan = volLabel.querySelector('#ingame-volume-val');
     if (valSpan) valSpan.textContent = `${vol}%`;
     updateMuteBtnState(soundManager.isMuted());
+    const vibEnabled = isVibrationEnabled();
+    vibrationButtons.forEach((b, idx) => {
+      const isSel = vibrationOptions[idx].id === vibEnabled;
+      b.style.background = isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
+      b.style.color = isSel ? '#ffffff' : '#94a3b8';
+    });
   };
+
+  // 3b. Controls & Haptics Section
+  container.appendChild(createSectionHeading('CONTROLS & HAPTICS'));
+
+  // Controller Vibration Row
+  const vibrationRow = document.createElement('div');
+  vibrationRow.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;';
+  const vibrationLabel = document.createElement('div');
+  vibrationLabel.textContent = 'Controller Vibration';
+  vibrationLabel.style.cssText = 'font-size: 12px; color: #cbd5e1;';
+  const vibrationButtonGroup = document.createElement('div');
+  vibrationButtonGroup.style.cssText = 'display: flex; gap: 6px;';
+
+  const vibrationOptions = [
+    { id: true, label: 'On' },
+    { id: false, label: 'Off' },
+  ];
+  const vibrationButtons = [];
+  vibrationOptions.forEach((opt) => {
+    const btn = document.createElement('button');
+    btn.textContent = opt.label;
+    btn.style.cssText = `
+      padding: 6px 14px;
+      font-size: 11px;
+      font-weight: 700;
+      font-family: inherit;
+      border-radius: 4px;
+      cursor: pointer;
+      border: 1px solid rgba(120, 170, 210, 0.3);
+      transition: all 0.12s ease;
+      background: ${isVibrationEnabled() === opt.id ? '#2563eb' : 'rgba(255, 255, 255, 0.06)'};
+      color: ${isVibrationEnabled() === opt.id ? '#ffffff' : '#94a3b8'};
+    `;
+    btn.onclick = () => {
+      setVibrationEnabled(opt.id);
+      vibrationButtons.forEach((b, idx) => {
+        const isSel = vibrationOptions[idx].id === opt.id;
+        b.style.background = isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
+        b.style.color = isSel ? '#ffffff' : '#94a3b8';
+      });
+    };
+    vibrationButtons.push(btn);
+    vibrationButtonGroup.appendChild(btn);
+  });
+  vibrationRow.appendChild(vibrationLabel);
+  vibrationRow.appendChild(vibrationButtonGroup);
+  container.appendChild(vibrationRow);
 
   // 4. Camera Modes Section
   container.appendChild(createSectionHeading('CAMERAS'));

@@ -95,6 +95,8 @@ export function createActionState() {
      * the 4.0 m/s gate before the jump landed.
      */
     slideNeedsRelease: false,
+    /** Consecutive ticks slide is held below knockdownSpeed before triggering collapse. */
+    slideLowSpeedTicks: 0,
     /** True between a dive firing and its crash. Consumed by the grounded edge. */
     divePending: false,
     /** Ticks of the last dive, for the cooldown. -Infinity means "never". */
@@ -127,13 +129,15 @@ export function createActionState() {
  * @param {boolean} args.diveQueued the consumed dive press, consumed by the caller
  * @param {boolean} args.jumpQueued the consumed jump press — READ ONLY here, and
  *   passed on unchanged to updateMotor, which is what actually fires the jump
+ * @param {boolean} args.cutQueued
+ * @param {Array} [args.balls]
  * @param {number} args.tick
  * @param {number} args.dt
  * @returns {object} what fixedUpdate hands on: the two scales updateMotor takes,
  *   the stun flag the recovery ramp reads, and the four ghost inputs
  */
 export function runActions({
-  state, motor, input, tracker, ragdoll, ghost, diveQueued, jumpQueued, cutQueued = false, tick, dt,
+  state, motor, input, tracker, ragdoll, ghost, diveQueued, jumpQueued, cutQueued = false, balls = [], tick, dt,
 }) {
   // Raised by the launch edge, consumed by the dive ratchet at the bottom. A
   // local, so it cannot survive the step — which is what the `if (animTarget)`
@@ -229,31 +233,27 @@ export function runActions({
     if (!committed && !input.slideHeld) {
       // Released after the commitment window: control returns, weight intact.
       state.slideTime = 0;
+      state.slideLowSpeedTicks = 0;
     } else if (input.slideHeld && speedNow < TUNING.action.knockdownSpeed) {
-      // RODE IT INTO THE GROUND. Still holding the button with the momentum
-      // spent: the commitment is what is being paid for, so this resolves into
-      // the ordinary knockdown chain — same weight, same drag, same stand-up.
-      //
-      // NOT the old maxSlideTicks timer wearing a new hat. That fired on a
-      // clock and cut a 5 m/s slide off mid-flight; this fires on the athlete
-      // having nothing left, which is a thing the player can see coming and
-      // avoid by letting go. Releasing above knockdownSpeed always costs
-      // nothing, at any point past minSlideTicks.
-      state.slideTime = 0;
-      state.slideNeedsRelease = true;
-      queueKnockdown(tracker);
+      // RODE IT INTO THE GROUND WITH GRACE BUFFER.
+      // Casual braking / deceleration gives a buffer of slideGraceTicks before triggering knockdown.
+      state.slideLowSpeedTicks = (state.slideLowSpeedTicks || 0) + 1;
+      const grace = TUNING.action.slideGraceTicks ?? 15;
+      if (state.slideLowSpeedTicks >= grace) {
+        state.slideTime = 0;
+        state.slideNeedsRelease = true;
+        state.slideLowSpeedTicks = 0;
+        queueKnockdown(tracker);
+      }
     } else if (speedNow < TUNING.action.stopSpeed) {
       // SLID TO A STOP WITH THE BUTTON ALREADY RELEASED (inside the commitment
       // window, or the frame after a release). Ends the slide and nothing else.
-      //
-      // THE LOCKOUT IS SET HERE TOO, and it costs nothing when the trigger is
-      // already up: the release clause at the top of this function clears it on
-      // the same tick it would be read. It matters only for the case the comment
-      // above calls "inside the commitment window" — trigger still down, speed
-      // spent — where without it the athlete would chatter into a new slide the
-      // instant he crept back over minSlideSpeed.
       state.slideTime = 0;
       state.slideNeedsRelease = true;
+      state.slideLowSpeedTicks = 0;
+    } else {
+      // Healthy sliding speed resets low-speed counter
+      state.slideLowSpeedTicks = 0;
     }
   }
   const sliding = state.slideTime > 0;
@@ -494,6 +494,7 @@ export function runActions({
     lastDiveTick: state.lastDiveTick,
     /** Stage 3 Cut results. */
     cutFired,
+    cutDir: state.cutDir,
     lastCutTick: state.lastCutTick,
   };
 }

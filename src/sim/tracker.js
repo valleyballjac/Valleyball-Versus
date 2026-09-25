@@ -270,6 +270,7 @@ export function applyTracking(tracker, rig, animTarget, motor, dt, tumbling = fa
   }
 }
 
+
 function applyGains(tracker, rig, animTarget, motor, dt) {
   const weight = tracker.weight;
 
@@ -364,6 +365,7 @@ function applyGains(tracker, rig, animTarget, motor, dt) {
       groupScale = groupScale + (dead - groupScale) * animTarget.diveMix;
     }
 
+
     // THE INVERTED PENDULUM. The pelvis is the position servo that carries the
     // body; everything else is along for the ride and is held in place by the
     // joints plus its own much weaker servo. This is a MULTIPLIER on the same
@@ -430,7 +432,9 @@ function applyGains(tracker, rig, animTarget, motor, dt) {
     _impulse.x = _impulseVec.x;
     _impulse.y = _impulseVec.y;
     _impulse.z = _impulseVec.z;
-    body.applyImpulse(_impulse, true);
+    if (Number.isFinite(_impulse.x) && Number.isFinite(_impulse.y) && Number.isFinite(_impulse.z)) {
+      body.applyImpulse(_impulse, true);
+    }
 
     // ---- LINEAR DAMPING, against RELATIVE velocity ----
     _relVel.subVectors(_preLinvel, target.vel);
@@ -455,22 +459,41 @@ function applyGains(tracker, rig, animTarget, motor, dt) {
       _errorQuat.set(-_errorQuat.x, -_errorQuat.y, -_errorQuat.z, -_errorQuat.w);
     }
 
-    const angle = 2 * Math.acos(Math.min(1, _errorQuat.w));
+    const angle = 2 * Math.acos(Math.min(1, Math.max(-1, _errorQuat.w)));
     if (angle > MIN_ANGLE) {
       const sin = Math.sqrt(Math.max(0, 1 - _errorQuat.w * _errorQuat.w));
-      _axis.set(_errorQuat.x, _errorQuat.y, _errorQuat.z).divideScalar(sin);
+      if (sin > 1e-5) {
+        _axis.set(_errorQuat.x, _errorQuat.y, _errorQuat.z).divideScalar(sin);
+      } else {
+        _axis.set(0, 1, 0);
+      }
+
+      let angKp = TUNING.tracking.angularKp;
+      let maxAngular = TUNING.tracking.maxAngularImpulse;
+
+      // Leg form recovery: spherical hip joints twist on slides. Boost angular torque
+      // on thighs when upright so legs snap cleanly forward.
+      const isThigh = (key === 'thighL' || key === 'thighR');
+      if (isThigh && TUNING.tracking.thighTwistRecovery?.enabled) {
+        const slideMix = animTarget?.slideMix || 0;
+        if (slideMix < 0.25) {
+          angKp *= (TUNING.tracking.thighTwistRecovery.boostKp || 1.8);
+          maxAngular = Math.max(maxAngular, TUNING.tracking.thighTwistRecovery.maxAngular || 0.08);
+        }
+      }
 
       _impulseVec
         .copy(_axis)
-        .multiplyScalar(angle * TUNING.tracking.angularKp * kpScale * groupScale * dt);
+        .multiplyScalar(angle * angKp * kpScale * groupScale * dt);
 
-      const maxAngular = TUNING.tracking.maxAngularImpulse;
       if (_impulseVec.lengthSq() > maxAngular * maxAngular) _impulseVec.setLength(maxAngular);
 
       _impulse.x = _impulseVec.x;
       _impulse.y = _impulseVec.y;
       _impulse.z = _impulseVec.z;
-      body.applyTorqueImpulse(_impulse, true);
+      if (Number.isFinite(_impulse.x) && Number.isFinite(_impulse.y) && Number.isFinite(_impulse.z)) {
+        body.applyTorqueImpulse(_impulse, true);
+      }
     }
 
     // ---- ANGULAR DAMPING, against RELATIVE angular velocity ----

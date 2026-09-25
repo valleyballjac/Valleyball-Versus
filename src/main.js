@@ -56,11 +56,14 @@ import {
   getMouseDeltas,
   getControllerAssignments,
   exitGamePointerLock,
+  triggerHaptic,
 } from './input/inputRouter.js';
 import { updateSportsCamera } from './visuals/sportsCamera.js';
 import { createBotController, updateBot } from './ai/botController.js';
 import { PlayerCamera } from './visuals/playerCamera.js';
 import { CinematicCamera } from './visuals/cinematicCamera.js';
+import { createTurfParticleSystem, getPitchSurfaceColor } from './visuals/turfParticles.js';
+import { createGoalCelebrationSystem } from './visuals/goalCelebration.js';
 import { initVictoryScreen, showVictoryScreen, hideVictoryScreen, showPracticeSummary } from './ui/victoryScreen.js';
 import { initCountdownOverlay, updateCountdownOverlay, resetCountdownOverlay } from './ui/countdownOverlay.js';
 import { initInGameMenu, toggleInGameMenu, hideInGameMenu, updateInGameMenuBanner, isInGameMenuOpen } from './ui/inGameMenu.js';
@@ -77,8 +80,7 @@ import {
   getPlayerConfigs,
   getSelectedMatchBall,
   getColorName,
-} from './ui/mainMenu.js';
-import { createWatchdogState, runWatchdog } from './mechanics/watchdog.js';
+} from './features/ui/mainMenu/index.js';
 import { createMountFollowerState, runMountFollower } from './mechanics/mountFollower.js';
 import { createActionState, runActions } from './mechanics/actions.js';
 import {
@@ -235,7 +237,6 @@ let knockdownRequested = false;
  * instantiates N athletes and a module-level slide clock is one clock for all
  * of them. Nothing outside this file reaches them; the HUD reads them here.
  */
-const watchdogState = createWatchdogState();
 const mountFollowerState = createMountFollowerState();
 const actionState = createActionState();
 const strikeState = createStrikeState();
@@ -293,8 +294,8 @@ function installRespawnHotkey() {
     if (isHotkey(event, 'KeyT')) {
       for (const a of athletes) a.requestKnockdown();
     }
-    // "H" — TOGGLE DEVELOPER TELEMETRY HUD
-    if (isHotkey(event, 'KeyH')) {
+    // "Shift+H" or F3 — TOGGLE DEVELOPER TELEMETRY HUD
+    if (isHotkey(event, 'F3') || (isHotkey(event, 'KeyH') && event.shiftKey)) {
       TUNING.debug.showHud = !TUNING.debug.showHud;
       setHudVisible(TUNING.debug.showHud);
     }
@@ -334,8 +335,8 @@ function installRespawnHotkey() {
         if (guiInstance) guiInstance.controllersRecursive().forEach((c) => c.updateDisplay());
       }
     }
-    // "V" — TOGGLE SPLITSCREEN MODE
-    if (isHotkey(event, 'KeyV')) {
+    // "V" — TOGGLE SPLITSCREEN MODE (Shift+V or F8 to avoid conflict with P1 Cut 'KeyV')
+    if (isHotkey(event, 'F8') || (isHotkey(event, 'KeyV') && event.shiftKey)) {
       TUNING.camera.splitscreen = !TUNING.camera.splitscreen;
       applyViewportSize();
       if (guiInstance) guiInstance.controllersRecursive().forEach((c) => c.updateDisplay());
@@ -432,6 +433,28 @@ const playerCameras = [
   new PlayerCamera(0, TUNING.players[0]?.cameraMode || 'chase'),
   new PlayerCamera(1, TUNING.players[1]?.cameraMode || 'chase'),
 ];
+const turfParticles = createTurfParticleSystem(scene);
+const goalCelebration = createGoalCelebrationSystem(scene);
+
+const _pitchRayOrigin = { x: 0, y: 0, z: 0 };
+const _pitchRayDown = { x: 0, y: -1, z: 0 };
+let _pitchRay = null;
+
+function queryPitchSurfaceY(x, z, refY = 1.0) {
+  const world = getWorld();
+  if (!world) return Math.max(0, refY - 0.5);
+  if (!_pitchRay) _pitchRay = new RAPIER.Ray(_pitchRayOrigin, _pitchRayDown);
+  _pitchRayOrigin.x = x;
+  _pitchRayOrigin.y = Math.max(refY + 1.5, 2.0);
+  _pitchRayOrigin.z = z;
+  const hit = world.castRay(
+    _pitchRay, 5.0, true, undefined, ENVIRONMENT_RAY_GROUPS,
+  );
+  if (hit) {
+    return _pitchRayOrigin.y - hit.timeOfImpact;
+  }
+  return Math.max(0, refY - 0.5);
+}
 const camera = playerCameras[0].camera;
 const cameraRig = playerCameras[0]; // backward compatibility for debug capture & telemetry
 
@@ -788,8 +811,8 @@ let botControllers = [];
 /** Which input slot indices are bot-controlled (passed to sampleAllInputs). */
 let activeBotSlots = [];
 const athleteMatchStats = [
-  { totalTouches: 0, sweetSpotHits: 0, spikes: 0, dives: 0, divingHits: 0, ownCircleTouches: 0, oppCircleTouches: 0 },
-  { totalTouches: 0, sweetSpotHits: 0, spikes: 0, dives: 0, divingHits: 0, ownCircleTouches: 0, oppCircleTouches: 0 },
+  { totalTouches: 0, sweetSpotHits: 0, spikes: 0, dives: 0, divingHits: 0, defensiveBlocks: 0, ownCircleTouches: 0, oppCircleTouches: 0 },
+  { totalTouches: 0, sweetSpotHits: 0, spikes: 0, dives: 0, divingHits: 0, defensiveBlocks: 0, ownCircleTouches: 0, oppCircleTouches: 0 },
 ];
 let motor = null;
 
@@ -873,6 +896,7 @@ export const practiceStats = {
   spikes: 0,
   dives: 0,
   divingHits: 0,
+  defensiveBlocks: 0,
   totalTouches: 0,
 };
 let practiceSessionTicks = 0;
@@ -1273,10 +1297,43 @@ function drainImpacts(tick, dt) {
 
         if (didStrike) {
           const kind = KIND_NAME[athleteHit.strikeState.lastStrikeKind] || 'volley';
-          soundManager.playStrike(kind, athleteHit.strikeState.lastContactQuality, athleteHit.strikeState.lastLaunchSpeed, ballPos, hitBall.radius || 0.5);
+          const quality = athleteHit.strikeState.lastContactQuality || 0.5;
+          const isSpike = (kind === 'spike');
+          const isSweetSpot = (quality >= 0.75);
+
+          soundManager.playStrike(kind, quality, athleteHit.strikeState.lastLaunchSpeed, ballPos, hitBall.radius || 0.5);
+          if (isSweetSpot || isSpike) {
+            soundManager.playSweetSpotPop(ballPos, isSpike);
+          }
+
+          // Camera juice: FOV lens punch and softened micro-screenshake scaled by strike impact
+          // Routine volleys, kicks, and underhand touches have ZERO trauma (no screenshake)
+          let fovPunch = -0.6;
+          let trauma = 0.0;
+          if (isSpike) {
+            fovPunch = TUNING.camera.fovPunch?.strikePunch ?? -2.5;
+            trauma = 0.22;
+          } else if (isSweetSpot) {
+            fovPunch = -1.5;
+            trauma = 0.12;
+          }
+
+          if (athleteIdx >= 0 && playerCameras[athleteIdx]) {
+            playerCameras[athleteIdx].punchFov(fovPunch);
+            if (trauma > 0) playerCameras[athleteIdx].addTrauma(trauma);
+          } else {
+            for (const pc of playerCameras) {
+              pc.punchFov(fovPunch);
+              if (trauma > 0) pc.addTrauma(trauma);
+            }
+          }
+
+          // Non-abrasive juice 1: Dual-tier warm gold ball emissive bloom pulse
+          hitBall._emissiveFlash = isSpike ? 2.5 : (isSweetSpot ? 1.5 : 0.6);
         } else {
           const vel = hitBall.body.linvel();
           const speed = Math.hypot(vel.x, vel.y, vel.z);
+
           soundManager.playPlayerBallImpact(speed, ballPos, hitBall.radius || 0.5);
 
           // High-speed ball impact knockdown
@@ -1286,6 +1343,16 @@ function drainImpacts(tick, dt) {
           if (isTorsoOrHead && (speed > 14.0 || momentum > 32.0)) {
             queueKnockdown(athleteHit.tracker, 0.18);
             soundManager.playAthleteAction('land', athleteHit.motor.body.translation());
+            for (const pc of playerCameras) {
+              pc.addTrauma(0.24);
+            }
+            if (athleteIdx >= 0) {
+              triggerHaptic(athleteIdx, {
+                weakMagnitude: TUNING.input?.haptics?.knockdownWeak ?? 0.35,
+                strongMagnitude: TUNING.input?.haptics?.knockdownStrong ?? 0.15,
+                duration: TUNING.input?.haptics?.knockdownDuration ?? 80,
+              });
+            }
           }
         }
       } else {
@@ -1365,6 +1432,9 @@ function drainImpacts(tick, dt) {
 function handleAthleteCollision(a1, a2, hit1, hit2, totalForce, tick) {
   if (!a1 || !a2 || !a1.motor?.body || !a2.motor?.body) return;
 
+  const idx1 = athletes.indexOf(a1);
+  const idx2 = athletes.indexOf(a2);
+
   const isA1Sliding = a1.actionState && a1.actionState.slideTime > 0;
   const isA2Sliding = a2.actionState && a2.actionState.slideTime > 0;
 
@@ -1395,6 +1465,21 @@ function handleAthleteCollision(a1, a2, hit1, hit2, totalForce, tick) {
       const midPos = { x: (p1.x + p2.x) * 0.5, y: (p1.y + p2.y) * 0.5, z: (p1.z + p2.z) * 0.5 };
       soundManager.playAthleteAction('slide', midPos);
       soundManager.playBodyCollision(1.0, midPos);
+      for (const pc of playerCameras) pc.addTrauma(0.22);
+      if (idx1 >= 0) {
+        triggerHaptic(idx1, {
+          weakMagnitude: TUNING.input?.haptics?.tackleWeak ?? 0.35,
+          strongMagnitude: TUNING.input?.haptics?.tackleStrong ?? 0.15,
+          duration: TUNING.input?.haptics?.tackleDuration ?? 80,
+        });
+      }
+      if (idx2 >= 0) {
+        triggerHaptic(idx2, {
+          weakMagnitude: TUNING.input?.haptics?.tackleWeak ?? 0.35,
+          strongMagnitude: TUNING.input?.haptics?.tackleStrong ?? 0.15,
+          duration: TUNING.input?.haptics?.tackleDuration ?? 80,
+        });
+      }
       return;
     }
   } else if (isA2Sliding && !isA1Sliding) {
@@ -1423,6 +1508,21 @@ function handleAthleteCollision(a1, a2, hit1, hit2, totalForce, tick) {
       const midPos = { x: (p1.x + p2.x) * 0.5, y: (p1.y + p2.y) * 0.5, z: (p1.z + p2.z) * 0.5 };
       soundManager.playAthleteAction('slide', midPos);
       soundManager.playBodyCollision(1.0, midPos);
+      for (const pc of playerCameras) pc.addTrauma(0.22);
+      if (idx1 >= 0) {
+        triggerHaptic(idx1, {
+          weakMagnitude: TUNING.input?.haptics?.tackleWeak ?? 0.35,
+          strongMagnitude: TUNING.input?.haptics?.tackleStrong ?? 0.15,
+          duration: TUNING.input?.haptics?.tackleDuration ?? 80,
+        });
+      }
+      if (idx2 >= 0) {
+        triggerHaptic(idx2, {
+          weakMagnitude: TUNING.input?.haptics?.tackleWeak ?? 0.35,
+          strongMagnitude: TUNING.input?.haptics?.tackleStrong ?? 0.15,
+          duration: TUNING.input?.haptics?.tackleDuration ?? 80,
+        });
+      }
       return;
     }
   } else if (isA1Sliding && isA2Sliding) {
@@ -1442,6 +1542,21 @@ function handleAthleteCollision(a1, a2, hit1, hit2, totalForce, tick) {
       const p2 = a2.motor.body.translation();
       const midPos = { x: (p1.x + p2.x) * 0.5, y: (p1.y + p2.y) * 0.5, z: (p1.z + p2.z) * 0.5 };
       soundManager.playBodyCollision(1.0, midPos);
+      for (const pc of playerCameras) pc.addTrauma(0.26);
+      if (idx1 >= 0) {
+        triggerHaptic(idx1, {
+          weakMagnitude: (TUNING.input?.haptics?.tackleWeak ?? 0.35) * 1.1,
+          strongMagnitude: (TUNING.input?.haptics?.tackleStrong ?? 0.15) * 1.2,
+          duration: 90,
+        });
+      }
+      if (idx2 >= 0) {
+        triggerHaptic(idx2, {
+          weakMagnitude: (TUNING.input?.haptics?.tackleWeak ?? 0.35) * 1.1,
+          strongMagnitude: (TUNING.input?.haptics?.tackleStrong ?? 0.15) * 1.2,
+          duration: 90,
+        });
+      }
       return;
     }
   }
@@ -1477,6 +1592,23 @@ function handleAthleteCollision(a1, a2, hit1, hit2, totalForce, tick) {
     const impulseMag = Math.min(5.0, approachImpulse + overlapImpulse);
 
     if (impulseMag > 0.05) {
+      if (impulseMag > 1.2) {
+        for (const pc of playerCameras) pc.addTrauma(Math.min(0.14, impulseMag * 0.035));
+        if (idx1 >= 0) {
+          triggerHaptic(idx1, {
+            weakMagnitude: TUNING.input?.haptics?.collisionWeak ?? 0.25,
+            strongMagnitude: TUNING.input?.haptics?.collisionStrong ?? 0.10,
+            duration: TUNING.input?.haptics?.collisionDuration ?? 60,
+          });
+        }
+        if (idx2 >= 0) {
+          triggerHaptic(idx2, {
+            weakMagnitude: TUNING.input?.haptics?.collisionWeak ?? 0.25,
+            strongMagnitude: TUNING.input?.haptics?.collisionStrong ?? 0.10,
+            duration: TUNING.input?.haptics?.collisionDuration ?? 60,
+          });
+        }
+      }
       // Pure ground plane impulse: NEVER launch athletes into the air (y = 0.0)
       a1.motor.body.applyImpulse({ x: -nx * impulseMag, y: 0.0, z: -nz * impulseMag }, true);
       a2.motor.body.applyImpulse({ x: nx * impulseMag, y: 0.0, z: nz * impulseMag }, true);
@@ -1647,16 +1779,13 @@ function fixedUpdate(dt, tick) {
   // 2 — BALL WATCHDOG & SERVE (B / Start or fall out of bounds)
   const serveQueued = consumeAthleteBallReset(0);
   const armedBallSpawn = armedCaptureTick !== null && tick === TUNING.ball.captureSpawnTick;
-  const isCourt = (TUNING.arena && TUNING.arena.type !== 'bowl') || (arenaPreset && arenaPreset.killPlaneY === -15);
   const isDeterministic = armedCaptureTick !== null;
 
   for (let i = 0; i < balls.length; i += 1) {
     const b = balls[i];
     const belowWorld = b.body.translation().y < arenaPreset.killPlaneY;
     if (serveQueued || armedBallSpawn || belowWorld) {
-      const dropPos = isCourt
-        ? getCourtBallDropSpawn(i, balls.length, tick, isDeterministic)
-        : (arenaPreset && arenaPreset.ballSpawns ? arenaPreset.ballSpawns[i] : null);
+      const dropPos = getCourtBallDropSpawn(i, balls.length, tick, isDeterministic);
       resetBall(b, tick, dropPos);
       if (belowWorld && !serveQueued && !armedBallSpawn) {
         console.log(`[ball:${b.id}] out of bounds — reset at tick ${tick}`);
@@ -1677,6 +1806,13 @@ function fixedUpdate(dt, tick) {
   const isCountingDown = (gameState === 'match') && !!(matchState && matchState.isCountingDown);
   const isAthleteHeld = isCountingDown || (gameState === 'menu') || (gameState === 'flyover');
   const isBallHeld = (gameState === 'match' && isCountingDown) || (gameState === 'flyover');
+  const hoopNorthZ = TUNING.match?.hoopNorthZ ?? -40.0;
+  const hoopSouthZ = TUNING.match?.hoopSouthZ ?? 40.0;
+  const p1IsHome = (TUNING.players?.[0]?.team || 'home') === 'home';
+  const p1AttacksNorth = p1IsHome ? (matchState?.targetGoal === 'N') : (matchState?.targetGoal === 'S');
+  const targetGoalZ_P1 = p1AttacksNorth ? hoopNorthZ : hoopSouthZ;
+  const targetGoalZ_P2 = p1AttacksNorth ? hoopSouthZ : hoopNorthZ;
+
   for (let i = 0; i < athletes.length; i++) {
     if (gameState === 'practice' && i > 0) continue;
     const athlete = athletes[i];
@@ -1714,16 +1850,155 @@ function fixedUpdate(dt, tick) {
       spikeQueued,
       balls,
       arenaPreset,
+      targetGoalZ: (i === 0 ? targetGoalZ_P1 : targetGoalZ_P2),
       facingFollowsCamera:
         !isAthleteHeld && !activeBotSlots.includes(i) && (playerCameras[i]?.mode === 'chase' || playerCameras[i]?.mode === 'ball'),
     });
 
-    if (preResult?.actions?.lastDiveTick === tick) {
-      if (gameState === 'match' && athleteMatchStats[i]) {
-        athleteMatchStats[i].dives++;
-      } else if (gameState === 'practice' && i === 0) {
-        practiceStats.dives++;
+    if (preResult?.actions) {
+      const act = preResult.actions;
+      const pos = athlete.motor?.body ? athlete.motor.body.translation() : null;
+
+      // 1. Dive launch juice & turf puff
+      if (act.lastDiveTick === tick && pos) {
+        if (gameState === 'match' && athleteMatchStats[i]) {
+          athleteMatchStats[i].dives++;
+        } else if (gameState === 'practice' && i === 0) {
+          practiceStats.dives++;
+        }
+        if (playerCameras[i]) {
+          playerCameras[i].punchFov(TUNING.camera.fovPunch?.divePunch ?? -1.2);
+          playerCameras[i].addTrauma(0.14);
+        }
+
+        const vel = athlete.motor?.body ? athlete.motor.body.linvel() : null;
+        let kickX = 0;
+        let kickZ = 0;
+        if (vel) {
+          const len = Math.hypot(vel.x, vel.z);
+          if (len > 1e-4) {
+            kickX = -vel.x / len;
+            kickZ = -vel.z / len;
+          }
+        }
+        const plantX = pos.x + kickX * 0.45;
+        const plantZ = pos.z + kickZ * 0.45;
+        const plantY = queryPitchSurfaceY(plantX, plantZ, pos.y);
+        const plantPos = { x: plantX, y: plantY, z: plantZ };
+        const plantCol = getPitchSurfaceColor(plantPos, activeArenaType());
+
+        turfParticles.spawnTurfPuff({
+          position: plantPos,
+          direction: vel,
+          speed: 5.5,
+          count: 5,
+          surfaceColor: plantCol,
+          trailOffset: 0,
+        });
       }
+
+      // 2. Cut action: pronounced directional turf spray kicking backward from plant foot
+      if (act.cutFired && pos) {
+        const vel = athlete.motor?.body ? athlete.motor.body.linvel() : null;
+        const cutDir = act.cutDir || vel;
+        let kickX = 0;
+        let kickZ = 0;
+        if (cutDir) {
+          const len = Math.hypot(cutDir.x, cutDir.z);
+          if (len > 1e-4) {
+            kickX = -cutDir.x / len;
+            kickZ = -cutDir.z / len;
+          }
+        }
+        const plantX = pos.x + kickX * 0.32;
+        const plantZ = pos.z + kickZ * 0.32;
+        const plantY = queryPitchSurfaceY(plantX, plantZ, pos.y);
+        const plantPos = { x: plantX, y: plantY, z: plantZ };
+        const plantCol = getPitchSurfaceColor(plantPos, activeArenaType());
+
+        turfParticles.spawnCutSpray({
+          position: plantPos,
+          cutDir: cutDir,
+          speed: 7.5,
+          count: 10,
+          surfaceColor: plantCol,
+          trailOffset: 0,
+        });
+      }
+
+      // 3. Slide continuous turf spray (satisfying lateral spray & increased particle count)
+      if (act.sliding && athlete.motor?.body && pos) {
+        const vel = athlete.motor.body.linvel();
+        const spd = Math.hypot(vel.x, vel.z);
+        if (spd > 2.0 && (tick % 3 === 0)) {
+          let kickX = 0;
+          let kickZ = 0;
+          if (spd > 1e-4) {
+            kickX = -vel.x / spd;
+            kickZ = -vel.z / spd;
+          }
+          const plantX = pos.x + kickX * 0.40;
+          const plantZ = pos.z + kickZ * 0.40;
+          const plantY = queryPitchSurfaceY(plantX, plantZ, pos.y);
+          const plantPos = { x: plantX, y: plantY, z: plantZ };
+          const plantCol = getPitchSurfaceColor(plantPos, activeArenaType());
+
+          turfParticles.spawnTurfPuff({
+            position: plantPos,
+            direction: vel,
+            speed: spd * 0.85,
+            count: 5,
+            surfaceColor: plantCol,
+            trailOffset: 0,
+            isSlide: true,
+          });
+        }
+      }
+
+      // 4. Locomotion turf kick: sparse, clean, and strictly 1 particle per puff at high speeds
+      if (athlete.motor?.grounded && !act.sliding && athlete.motor?.body && pos) {
+        const vel = athlete.motor.body.linvel();
+        const spd = Math.hypot(vel.x, vel.z);
+        if (spd > 3.2) {
+          const isSprint = spd > 5.2;
+          const cadence = isSprint ? 5 : 8;
+          if (tick % cadence === 0) {
+            let kickX = 0;
+            let kickZ = 0;
+            if (spd > 1e-4) {
+              kickX = -vel.x / spd;
+              kickZ = -vel.z / spd;
+            }
+            const plantX = pos.x + kickX * 0.35;
+            const plantZ = pos.z + kickZ * 0.35;
+            const plantY = queryPitchSurfaceY(plantX, plantZ, pos.y);
+            const plantPos = { x: plantX, y: plantY, z: plantZ };
+            const plantCol = getPitchSurfaceColor(plantPos, activeArenaType());
+            const kickSpeed = spd * (isSprint ? 0.35 : 0.25);
+
+            turfParticles.spawnTurfPuff({
+              position: plantPos,
+              direction: vel,
+              speed: kickSpeed,
+              count: 1,
+              surfaceColor: plantCol,
+              trailOffset: 0,
+            });
+          }
+        }
+      }
+    }
+
+    // Single-fire knockdown haptic feedback (slide exhaustion, crash, or hard impact)
+    if (athlete.tracker?.knockdownQueued && !athlete._knockdownHapticPlayed) {
+      athlete._knockdownHapticPlayed = true;
+      triggerHaptic(i, {
+        weakMagnitude: TUNING.input?.haptics?.knockdownWeak ?? 0.35,
+        strongMagnitude: TUNING.input?.haptics?.knockdownStrong ?? 0.15,
+        duration: TUNING.input?.haptics?.knockdownDuration ?? 80,
+      });
+    } else if (!athlete.tracker?.knockdownQueued) {
+      athlete._knockdownHapticPlayed = false;
     }
 
     if (isAthleteHeld && athlete.motor?.body) {
@@ -1792,6 +2067,7 @@ function fixedUpdate(dt, tick) {
         z: lastGoal.goal === 'N' ? TUNING.match.hoopNorthZ : TUNING.match.hoopSouthZ,
       };
       soundManager.playGoal(lastGoal.scoredFor, lastGoal.goal, hoopPos);
+      goalCelebration.triggerGoal(lastGoal.scoredFor, hoopPos, { y: lastGoal.y, z: lastGoal.z });
       if (gameState === 'practice') {
         practiceStats.goals++;
       }
@@ -1958,6 +2234,30 @@ function render(alpha) {
   }
 
   const frameDelta = Math.min(loop.frameTimeMs / 1000, TUNING.loop.maxFrameTime);
+  turfParticles.update(frameDelta);
+  goalCelebration.update(frameDelta);
+
+  // Ball impact emissive pulse decay
+  for (let i = 0; i < balls.length; i++) {
+    const b = balls[i];
+    if (b._emissiveFlash > 0.001) {
+      b._emissiveFlash *= Math.exp(-frameDelta * 14.0);
+      if (b.mesh?.material) {
+        if (!b.mesh.material.emissiveMap) {
+          b.mesh.material.emissive.setHex(0xffe680);
+        }
+        b.mesh.material.emissiveIntensity = (b.mesh.material.emissiveMap ? 1.0 : 0.0) + b._emissiveFlash;
+      }
+    } else if (b._emissiveFlash !== undefined && b._emissiveFlash !== 0) {
+      b._emissiveFlash = 0;
+      if (b.mesh?.material) {
+        if (!b.mesh.material.emissiveMap) {
+          b.mesh.material.emissive.setHex(0x000000);
+        }
+        b.mesh.material.emissiveIntensity = b.mesh.material.emissiveMap ? 1.0 : 0.0;
+      }
+    }
+  }
 
   if (gameState === 'flyover') {
     cinematicCamera.update(frameDelta);
@@ -2360,6 +2660,7 @@ function logClipInventory() {
  * reports a problem. Checking first turns that into a named rejection.
  */
 async function loadActionClips() {
+  if (!TUNING.anim?.loadOptionalActionsGlb) return;
   let gltf;
   try {
     gltf = await new GLTFLoader().loadAsync(ACTIONS_URL);
@@ -2415,6 +2716,7 @@ function handleRematch() {
     s.spikes = 0;
     s.dives = 0;
     s.divingHits = 0;
+    s.defensiveBlocks = 0;
     s.ownCircleTouches = 0;
     s.oppCircleTouches = 0;
   }
@@ -2506,6 +2808,7 @@ function handleStartMatch(configs, matchRulesOrBall = {}) {
     s.spikes = 0;
     s.dives = 0;
     s.divingHits = 0;
+    s.defensiveBlocks = 0;
     s.ownCircleTouches = 0;
     s.oppCircleTouches = 0;
   }
@@ -2572,8 +2875,10 @@ function handleStartMatch(configs, matchRulesOrBall = {}) {
   matchState._buzzerPlayed = false;
   matchState.events.length = 0;
 
-  // Clear strike stats
+  // Clear strike stats and visual turf particles
   athleteManager.resetStats();
+  turfParticles.reset();
+  goalCelebration.reset();
 
   // Position athletes at stream heads matching chosen team (Home -> South, Away -> North)
   if (athletes.length >= 2) {
@@ -2657,6 +2962,8 @@ function handleStartPractice(playerConfig = null, ballChoice = 'all') {
   hideMainMenu();
   hideInGameMenu();
   hideVictoryScreen();
+  turfParticles.reset();
+  goalCelebration.reset();
   gameState = 'practice';
   TUNING.match.mode = 'practice';
   selectedPracticeBallType = ballChoice;
@@ -2669,6 +2976,7 @@ function handleStartPractice(playerConfig = null, ballChoice = 'all') {
   practiceStats.spikes = 0;
   practiceStats.dives = 0;
   practiceStats.divingHits = 0;
+  practiceStats.defensiveBlocks = 0;
   practiceStats.totalTouches = 0;
   practiceSessionTicks = 0;
 
@@ -2771,23 +3079,16 @@ function handleStartPractice(playerConfig = null, ballChoice = 'all') {
   }
 
   // Drop P1 from above center court
-  const isCourt = (arenaPreset && arenaPreset.killPlaneY === -15) || (TUNING.arena && TUNING.arena.type !== 'bowl');
   const isDeterministic = armedCaptureTick !== null || urlParams.has('captureTick');
   if (athletes[0]) {
-    if (isCourt) {
-      const spawnPos = (arenaPreset && arenaPreset.spawn) || { x: 0, y: 1.2, z: 0 };
-      athletes[0].teleportTo({ x: spawnPos.x, y: 12.0, z: spawnPos.z }, 0);
-    } else {
-      athletes[0].teleportTo(arenaPreset.spawn, 0);
-    }
+    const spawnPos = (arenaPreset && arenaPreset.spawn) || { x: 0, y: 1.2, z: 0 };
+    athletes[0].teleportTo({ x: spawnPos.x, y: 12.0, z: spawnPos.z }, 0);
     playerCameras[0].resetSmoothing();
   }
 
   // Drop balls
   for (let i = 0; i < balls.length; i++) {
-    const dropPos = isCourt
-      ? getCourtBallDropSpawn(i, balls.length, loop.tick, isDeterministic)
-      : (arenaPreset && arenaPreset.ballSpawns ? arenaPreset.ballSpawns[i] : null);
+    const dropPos = getCourtBallDropSpawn(i, balls.length, loop.tick, isDeterministic);
     resetBall(balls[i], loop.tick, dropPos);
   }
 
@@ -2869,6 +3170,7 @@ function returnToMainMenu() {
   practiceStats.spikes = 0;
   practiceStats.dives = 0;
   practiceStats.divingHits = 0;
+  practiceStats.defensiveBlocks = 0;
   practiceStats.totalTouches = 0;
   practiceSessionTicks = 0;
 
@@ -2878,6 +3180,7 @@ function returnToMainMenu() {
     s.spikes = 0;
     s.dives = 0;
     s.divingHits = 0;
+    s.defensiveBlocks = 0;
     s.ownCircleTouches = 0;
     s.oppCircleTouches = 0;
   }
@@ -3035,9 +3338,8 @@ async function boot() {
   if (loadingStatus) loadingStatus.textContent = 'SPAWNING ATHLETES & EQUIPMENT...';
   const p1Cfg = TUNING.players[0] || { team: 'home', variant: 'classic' };
   const p2Cfg = TUNING.players[1] || { team: 'away', variant: 'classic' };
-  const isBowl = activeArenaType() === 'bowl';
-  const p1Head = isBowl ? { ...arenaPreset.spawn, yaw: 0 } : TUNING.match.streamHeads.sw;
-  const p2Head = isBowl ? { x: arenaPreset.spawn.x, y: arenaPreset.spawn.y, z: arenaPreset.spawn.z + 4, yaw: Math.PI } : TUNING.match.streamHeads.ne;
+  const p1Head = TUNING.match.streamHeads.sw;
+  const p2Head = TUNING.match.streamHeads.ne;
 
   athleteManager.init({
     scene,
@@ -3046,13 +3348,8 @@ async function boot() {
     clips: characterClips,
   });
   athletes = athleteManager.ensureRoster(2, TUNING.players);
-  if (isBowl) {
-    athletes[0].teleportTo(arenaPreset.spawn, 0);
-    athletes[1].teleportTo({ x: arenaPreset.spawn.x, y: arenaPreset.spawn.y, z: arenaPreset.spawn.z + 4 }, Math.PI);
-  } else {
-    athletes[0].teleportTo(p1Head, p1Head.yaw);
-    athletes[1].teleportTo(p2Head, p2Head.yaw);
-  }
+  athletes[0].teleportTo(p1Head, p1Head.yaw);
+  athletes[1].teleportTo(p2Head, p2Head.yaw);
   playerCameras[0].mode = p1Cfg.cameraMode || 'chase';
   playerCameras[1].mode = p2Cfg.cameraMode || 'chase';
   playerCameras[0].azimuth = p1Head.yaw;
@@ -3407,31 +3704,18 @@ async function boot() {
         matchState.mode = 'practice';
         matchState.isCountingDown = false;
       }
-      if (activeArenaType() === 'bowl') {
-        if (athletes[0]) {
-          athletes[0].teleportTo(arenaPreset.spawn, 0);
-          playerCameras[0].resetSmoothing();
-        }
-        if (athletes[1]) {
-          athletes[1].setEnabled(false);
-        }
-        for (let i = 0; i < balls.length; i++) {
-          const spawn = arenaPreset.ballSpawns ? arenaPreset.ballSpawns[i] : null;
-          resetBall(balls[i], 0, spawn);
-          balls[i].body.setEnabled(true);
-          balls[i].mesh.visible = true;
-        }
-      } else {
-        if (athletes[0]) {
-          athletes[0].teleportTo((arenaPreset && arenaPreset.spawn) || { x: 0, y: 1.2, z: 0 }, 0);
-          playerCameras[0].resetSmoothing();
-        }
-        for (let i = 0; i < balls.length; i++) {
-          const dropPos = getCourtBallDropSpawn(i, balls.length, 0, true);
-          resetBall(balls[i], 0, dropPos);
-          balls[i].body.setEnabled(true);
-          balls[i].mesh.visible = true;
-        }
+      if (athletes[0]) {
+        athletes[0].teleportTo((arenaPreset && arenaPreset.spawn) || { x: 0, y: 1.2, z: 0 }, 0);
+        playerCameras[0].resetSmoothing();
+      }
+      if (athletes[1]) {
+        athletes[1].setEnabled(false);
+      }
+      for (let i = 0; i < balls.length; i++) {
+        const dropPos = getCourtBallDropSpawn(i, balls.length, 0, true);
+        resetBall(balls[i], 0, dropPos);
+        balls[i].body.setEnabled(true);
+        balls[i].mesh.visible = true;
       }
       applyViewportSize();
     } else if (TUNING.match.mode === 'practice') {

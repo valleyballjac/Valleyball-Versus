@@ -191,6 +191,8 @@ export async function createBall(scene, options = {}) {
       // means the ball's own bounciness wins against dead surfaces, which is
       // the only reading under which TUNING.ball.restitution means what it says.
       .setRestitutionCombineRule(RAPIER.CoefficientCombineRule.Max)
+      // Friction combine Min ensures the ball does not stall on sloped turf or basin banks
+      .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Min)
       .setCollisionGroups(BALL_GROUPS)
       .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
       .setContactForceEventThreshold(eventThreshold),

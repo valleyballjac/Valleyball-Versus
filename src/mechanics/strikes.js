@@ -180,6 +180,13 @@ export function createStrikeState() {
     assistedResolvedCount: 0,
     /** One-shot guard for the climbRate check. Per athlete, never a module flag. */
     ratesChecked: false,
+
+    // Per-athlete assist configuration & target goal
+    assistPreset: 'pureSim',
+    assistRadius: 0.0,
+    assistWindowTicks: 0,
+    aimMagnetism: 0.0,
+    targetGoalZ: null,
   };
 }
 
@@ -731,9 +738,12 @@ export function resolveStrikeContact(state, ball, rigKey, force, tick, isAssist 
   // is the same angle rotated by pi and would aim every assisted shot at the
   // striker's own goal.
   let effectiveYaw = state.lastAimYaw;
-  if (TUNING.strike.aimMagnetism > 0) {
+  const magnetism = state.aimMagnetism ?? TUNING.strike.aimMagnetism ?? 0.0;
+  if (magnetism > 0) {
     const ballPos = ball.body.translation();
-    const targetZ = Math.cos(effectiveYaw) < 0 ? -40.0 : 40.0;
+    // Use the player's true attacking hoop targetGoalZ. Fallback to facing-based hoop if unset.
+    const defaultHoopZ = TUNING.match ? (Math.cos(effectiveYaw) < 0 ? TUNING.match.hoopNorthZ : TUNING.match.hoopSouthZ) : -40.0;
+    const targetZ = Number.isFinite(state.targetGoalZ) ? state.targetGoalZ : defaultHoopZ;
     // Hoop aperture disc is centered at (0, 10, targetZ). Aim toward X = 0 so
     // crossing occurs inside the hoop disc.
     let targetX = 0.0;
@@ -742,7 +752,7 @@ export function resolveStrikeContact(state, ball, rigKey, force, tick, isAssist 
     }
     const targetYaw = Math.atan2(targetX - ballPos.x, targetZ - ballPos.z);
     effectiveYaw = wrapAngle(
-      effectiveYaw + wrapAngle(targetYaw - effectiveYaw) * TUNING.strike.aimMagnetism,
+      effectiveYaw + wrapAngle(targetYaw - effectiveYaw) * magnetism,
     );
   }
 
@@ -845,13 +855,17 @@ export function checkStrikeAssist(state, ragdoll, balls, tick) {
   const windowOpen = elapsed >= row.windowOpen && elapsed <= row.windowClose;
   if (!windowOpen) return false;
   if (state.lastResolvedStrikeTick === state.lastStrikeTick) return false;
+  const assistRadius = state.assistRadius ?? TUNING.strike.assistRadius ?? 0.0;
+  const assistWindowTicks = state.assistWindowTicks ?? TUNING.strike.assistWindowTicks ?? 0;
+  if (assistRadius <= 0 || assistWindowTicks <= 0) return false;
+
   // Only active within the sweet-spot band.
-  if (Math.abs(elapsed - row.sweetTick) > TUNING.strike.assistWindowTicks) return false;
+  if (Math.abs(elapsed - row.sweetTick) > assistWindowTicks) return false;
 
   for (const ball of balls) {
     const ballPos = ball.body.translation();
     const ballRadius = ball.radius || 0.5;
-    const thresholdDist = ballRadius + TUNING.strike.assistRadius;
+    const thresholdDist = ballRadius + assistRadius;
     for (const rigKey of row.bodies) {
       const item = ragdoll.rig.get(rigKey);
       if (!item) continue;
@@ -921,4 +935,21 @@ export function strikeProbe(state) {
       : NaN,
     sidedResolved: state.sidedResolved,
   };
+}
+
+/**
+ * Applies a named assist preset ('pureSim' | 'standard' | 'casual') to an athlete's strike state.
+ *
+ * @param {ReturnType<typeof createStrikeState>} state
+ * @param {string} presetKey
+ */
+export function applyStrikeAssistPreset(state, presetKey) {
+  if (!state) return;
+  const presets = TUNING.strike?.assistPresets;
+  const preset = presets?.[presetKey] || presets?.pureSim;
+  if (!preset) return;
+  state.assistPreset = preset.id;
+  state.assistRadius = preset.assistRadius;
+  state.assistWindowTicks = preset.assistWindowTicks;
+  state.aimMagnetism = preset.aimMagnetism;
 }
