@@ -80,6 +80,8 @@ async function runEval() {
     onTarget: 0,
     dives: 0,
     divingHits: 0,
+    cuts: 0,
+    hoopBlocks: 0,
     oppCircle: 0,
     ownCircle: 0,
     defBlocks: 0,
@@ -97,6 +99,8 @@ async function runEval() {
     onTarget: 0,
     dives: 0,
     divingHits: 0,
+    cuts: 0,
+    hoopBlocks: 0,
     oppCircle: 0,
     ownCircle: 0,
     defBlocks: 0,
@@ -159,6 +163,8 @@ async function runEval() {
     homeTotals.onTarget += resHome.breakdown.onTarget;
     homeTotals.dives += resHome.breakdown.divesAttempted || 0;
     homeTotals.divingHits += resHome.breakdown.divingHits || 0;
+    homeTotals.cuts += resHome.breakdown.cutsAttempted || 0;
+    homeTotals.hoopBlocks += resHome.breakdown.hoopBlocks || 0;
     homeTotals.oppCircle += resHome.breakdown.oppCircleTouches || 0;
     homeTotals.ownCircle += resHome.breakdown.ownCircleTouches || 0;
     homeTotals.fitness += resHome.fitness;
@@ -170,6 +176,8 @@ async function runEval() {
     awayTotals.onTarget += resAway.breakdown.onTarget;
     awayTotals.dives += resAway.breakdown.divesAttempted || 0;
     awayTotals.divingHits += resAway.breakdown.divingHits || 0;
+    awayTotals.cuts += resAway.breakdown.cutsAttempted || 0;
+    awayTotals.hoopBlocks += resAway.breakdown.hoopBlocks || 0;
     awayTotals.oppCircle += resAway.breakdown.oppCircleTouches || 0;
     awayTotals.ownCircle += resAway.breakdown.ownCircleTouches || 0;
     awayTotals.fitness += resAway.fitness;
@@ -203,6 +211,8 @@ async function runEval() {
   const homeDiveEff = formatPercent(homeTotals.divingHits, homeTotals.dives);
   const awayDiveEff = formatPercent(awayTotals.divingHits, awayTotals.dives);
   console.log(`│ Diving Save Efficiency %            │ ${homeDiveEff.padStart(12)} │ ${awayDiveEff.padStart(12)} │`);
+  console.log(`│ Athletic Cuts Executed              │ ${String(avg(homeTotals.cuts)).padStart(12)} │ ${String(avg(awayTotals.cuts)).padStart(12)} │`);
+  console.log(`│ Hoop Aperture Blocks (Rim Defense)  │ ${String(avg(homeTotals.hoopBlocks)).padStart(12)} │ ${String(avg(awayTotals.hoopBlocks)).padStart(12)} │`);
   console.log('├─────────────────────────────────────┼──────────────┼──────────────┤');
   console.log(`│ Opp Circle Touches (Attack Threat)  │ ${String(avg(homeTotals.oppCircle)).padStart(12)} │ ${String(avg(awayTotals.oppCircle)).padStart(12)} │`);
   console.log(`│ Own Circle Touches (Defensive Hold) │ ${String(avg(homeTotals.ownCircle)).padStart(12)} │ ${String(avg(awayTotals.ownCircle)).padStart(12)} │`);

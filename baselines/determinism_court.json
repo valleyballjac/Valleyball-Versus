@@ -1,0 +1,9 @@
+{
+  "note": "PNG pairs from `npm run determinism`, headless SwiftShader (cloud, Chromium 1194). Renderer-bound: a GPU run on the laptop will produce different PNG hashes and is compared only against itself. Recorded on rebuild/core, Phase 0, from e34833f + harness-only changes; t300 equals the pre-change hash, proving the Phase 0 code is a no-op when unarmed.",
+  "renderer": "swiftshader",
+  "court": {
+    "t90": "2ac97d92247dd204447bf037fd1b7cb7459080b76b14d0a2dbf5393f9ba760e1",
+    "t300": "d5ecfd866acc3c71142b26d872e296fc5092b2e60737a3088eda859903357795",
+    "t600": "fc1febea4aed6760e95dbd18777f7c7be95d250e2d462e23ed2d9af8c488041a"
+  }
+}

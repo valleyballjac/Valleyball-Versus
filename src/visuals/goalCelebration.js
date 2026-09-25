@@ -47,9 +47,10 @@ export function createGoalCelebrationSystem(scene) {
   ringMesh.visible = false;
   group.add(ringMesh);
 
-  // 2. Atmospheric Point Light
+  // 2. Atmospheric Point Light — pre-warmed at boot (LAW 8).
+  // Kept permanently visible with intensity modulated at runtime to prevent WebGL shader recompilation hitches.
   const goalLight = new THREE.PointLight(0xffffff, 0, 24, 1.8);
-  goalLight.visible = false;
+  goalLight.visible = true;
   group.add(goalLight);
 
   // 3. Shimmering Spark Cascade (InstancedMesh)
@@ -111,11 +112,10 @@ export function createGoalCelebrationSystem(scene) {
     ringMesh.visible = true;
     ringTime = ringDuration;
 
-    // 2. Position & ignite atmospheric point light
+    // 2. Position & ignite atmospheric point light (intensity-only modulation, LAW 8)
     goalLight.position.set(hoopPos.x, hoopPos.y, hoopPos.z);
     goalLight.color.copy(_color);
     goalLight.intensity = 3.5;
-    goalLight.visible = true;
 
     // 3. Spawn spark cascade through the hoop
     const spawnCount = Math.min(36, MAX_SPARKS);
@@ -176,7 +176,7 @@ export function createGoalCelebrationSystem(scene) {
 
       if (ringTime <= 0) {
         ringMesh.visible = false;
-        goalLight.visible = false;
+        goalLight.intensity = 0;
       }
     }
 
@@ -233,7 +233,7 @@ export function createGoalCelebrationSystem(scene) {
   function reset() {
     ringTime = 0;
     ringMesh.visible = false;
-    goalLight.visible = false;
+    goalLight.intensity = 0;
     activeSparks = 0;
     sparkMesh.count = 0;
     sparkMesh.instanceMatrix.needsUpdate = true;

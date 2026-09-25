@@ -23,6 +23,8 @@ export function createFitnessAccumulator(side) {
     defensiveBlocks: 0,
     divingHits: 0,
     divesAttempted: 0,
+    cutsAttempted: 0,
+    hoopBlocks: 0,
     oppCircleTouches: 0,
     ownCircleTouches: 0,
     whiffs: 0,
@@ -116,6 +118,13 @@ export function accumulateTick(acc, match) {
     acc.ownCircleTouches = match.ownCircleTouches[acc.side] || 0;
   }
 
+  // Cuts and hoop blocks from bot stats
+  const bot = isHome ? match.botA : match.botB;
+  if (bot && bot.stats) {
+    acc.cutsAttempted = bot.stats.cutCount || 0;
+    acc.hoopBlocks = bot.stats.hoopBlocks || 0;
+  }
+
   // Drain hits that landed this tick for our side
   if (match.lastHits && match.lastHits.length > 0) {
     for (let i = match.lastHits.length - 1; i >= 0; i--) {
@@ -177,6 +186,8 @@ export function computeFitness(acc, matchState) {
   const scoreOppCircle = acc.oppCircleTouches * 15.0;
   const scoreOwnCircle = acc.ownCircleTouches * 10.0;
   const scoreDefBlocks = Math.min(20, acc.defensiveBlocks) * 2.0;
+  const scoreHoopBlocks = (acc.hoopBlocks || 0) * 45.0; // Reward for rim defense swats
+  const scoreCuts = Math.min(20, acc.cutsAttempted || 0) * 3.0; // Reward for athletic plant-and-redirect agility
   const scoreFacing = acc.ticksFacingPlay * 0.01;
   const scoreWhiffs = acc.whiffs * -15.0;
   const scoreProximity = acc.ticksNearBall * 0.01;
@@ -187,8 +198,8 @@ export function computeFitness(acc, matchState) {
 
   const fitness = scoreGoals + scoreConceded + scoreLanded + scoreSweet + scoreQuality +
                   scoreOnTarget + scoreDivingHits + scoreWhiffedDives + scoreOppCircle +
-                  scoreOwnCircle + scoreDefBlocks + scoreFacing + scoreWhiffs +
-                  scoreProximity + scoreTerritory + scoreAvgDist;
+                  scoreOwnCircle + scoreDefBlocks + scoreHoopBlocks + scoreCuts +
+                  scoreFacing + scoreWhiffs + scoreProximity + scoreTerritory + scoreAvgDist;
 
   return {
     fitness: Math.max(0, fitness),
@@ -201,6 +212,8 @@ export function computeFitness(acc, matchState) {
       onTarget: acc.onTargetShots,
       divingHits: acc.divingHits,
       divesAttempted: acc.divesAttempted,
+      cutsAttempted: acc.cutsAttempted,
+      hoopBlocks: acc.hoopBlocks,
       oppCircleTouches: acc.oppCircleTouches,
       ownCircleTouches: acc.ownCircleTouches,
       whiffs: acc.whiffs,

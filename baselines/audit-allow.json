@@ -1,0 +1,93 @@
+{
+  "clock": {
+    "src/sim/ball.js": 2
+  },
+  "teleport": {
+    "src/ai/headlessSim.js": 20,
+    "src/debug/fixture.js": 1,
+    "src/main.js": 21,
+    "src/mechanics/mountFollower.js": 1,
+    "src/sim/athlete.js": 5,
+    "src/sim/autorig.js": 2,
+    "src/sim/ball.js": 5,
+    "src/sim/motor.js": 1
+  },
+  "layering": {
+    "src/sim/athlete.js": 1
+  },
+  "tuning-write": {
+    "src/audio/soundManager.js": 3,
+    "src/features/match/matchManager.js": 5,
+    "src/features/ui/mainMenu/settingsModal.js": 8,
+    "src/input/inputRouter.js": 2,
+    "src/main.js": 54
+  },
+  "dead-module": {
+    "src/features/athletes/index.js": 1,
+    "src/features/camera/index.js": 1,
+    "src/features/camera/viewportManager.js": 1,
+    "src/features/match/index.js": 1,
+    "src/features/physics/index.js": 1,
+    "src/features/ui/index.js": 1
+  },
+  "dead-import": {
+    "src/ai/botController.js :: projectBallPosition": 1,
+    "src/ai/botSteering.js :: TUNING": 1,
+    "src/features/ui/mainMenu/index.js :: ARENA_OPTIONS": 1,
+    "src/features/ui/mainMenu/index.js :: BALL_OPTIONS": 1,
+    "src/features/ui/mainMenu/index.js :: CAMERA_OPTIONS": 1,
+    "src/features/ui/mainMenu/index.js :: MATCH_DURATION_OPTIONS": 1,
+    "src/features/ui/mainMenu/index.js :: PALETTE_SWATCHES": 1,
+    "src/features/ui/mainMenu/index.js :: PHYSIQUE_OPTIONS": 1,
+    "src/features/ui/mainMenu/index.js :: buildControlsModal": 1,
+    "src/features/ui/mainMenu/index.js :: createMenuButton": 1,
+    "src/features/ui/mainMenu/index.js :: getColorName": 1,
+    "src/features/ui/mainMenu/index.js :: getControlsModalEl": 1,
+    "src/features/ui/mainMenu/index.js :: getMainMenuSettingsModalEl": 1,
+    "src/features/ui/mainMenu/index.js :: getSelectedMatchArena": 1,
+    "src/features/ui/mainMenu/index.js :: getSelectedMatchDuration": 1,
+    "src/features/ui/mainMenu/index.js :: hideFlyoverOverlay": 1,
+    "src/features/ui/mainMenu/index.js :: showControlsModal": 1,
+    "src/features/ui/mainMenu/index.js :: showFlyoverOverlay": 1,
+    "src/features/ui/mainMenu/index.js :: showToast": 1,
+    "src/features/ui/mainMenu/playerSetup.js :: PRACTICE_BALL_OPTIONS": 1,
+    "src/features/ui/mainMenu/playerSetup.js :: TUNING": 1,
+    "src/features/ui/mainMenu/playerSetup.js :: getColorName": 1,
+    "src/features/ui/mainMenu/playerSetup.js :: getControllerAssignments": 1,
+    "src/main.js :: applyTracking": 1,
+    "src/main.js :: checkStrikeAssist": 1,
+    "src/main.js :: createAthlete": 1,
+    "src/main.js :: createMatchState": 1,
+    "src/main.js :: createMotor": 1,
+    "src/main.js :: detachMotorFromRagdoll": 1,
+    "src/main.js :: isMainMenuActive": 1,
+    "src/main.js :: runActions": 1,
+    "src/main.js :: runMountFollower": 1,
+    "src/main.js :: runStrikes": 1,
+    "src/main.js :: saveRagdollPrevious": 1,
+    "src/main.js :: snapshotRagdoll": 1,
+    "src/main.js :: syncMotorSnapshot": 1,
+    "src/main.js :: syncRagdollPose": 1,
+    "src/main.js :: updateAthletePalette": 1,
+    "src/main.js :: updateAthleteVariant": 1,
+    "src/main.js :: updateMotor": 1,
+    "src/sim/athlete.js :: ENVIRONMENT_RAY_GROUPS": 1,
+    "src/sim/athlete.js :: horizontalSpeed": 1,
+    "src/sim/athlete.js :: resolveStrikeContact": 1,
+    "src/sim/autorig.js :: RAGDOLL_GROUPS": 1,
+    "src/sim/autorig.js :: RAGDOLL_UPPER_GROUPS": 1,
+    "src/visuals/sportsCamera.js :: TUNING": 1
+  },
+  "assets": {
+    "src/main.js -> models/actions.glb": 1
+  },
+  "clips": {
+    "action.crashClip = \"Crash\"": 1
+  },
+  "size": {
+    "src/config/tuning.js": 1719,
+    "src/main.js": 3764,
+    "src/mechanics/strikes.js": 956,
+    "src/sim/animtarget.js": 1992
+  }
+}
