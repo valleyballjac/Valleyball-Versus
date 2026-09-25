@@ -125,17 +125,19 @@ npm run package:itch
 
 ---
 
-## 8. PRIMARY ROADMAP FOR INCOMING AGENTS (v0.2.4 Priority)
+## 8. PRIMARY ROADMAP FOR INCOMING AGENTS (v0.2.5 Status)
 
-1. **AI Retraining & Valley Court Parity (#1 Priority for v0.2.4)**:
-   - Ensure `src/ai/headlessSim.js` and `scripts/trainBot.mjs` evaluate on the exact Valley Court trimesh.
-   - Teach bot perception about court slopes, basin elevation, and hoop apertures.
-   - Integrate the **Cut mechanic** (`KeyV` / `LB`) into bot decision trees for rapid slope braking and reversal.
-2. **Performance Polish on Goals**:
-   - Refactor `src/visuals/scoreboards.js` celebration flashing to use emissive material uniforms instead of multi-jumbotron 2D canvas redraws.
-   - Pre-warm `goalCelebration.js` point light to eliminate shader recompilation hitches.
-3. **Sport Ceremony & Match Presentation**:
-   - Implement kickoff ritual (players setting up on their respective halves, camera framing, ball spawning from high stream drop).
-   - Match conclusion presentation (athletes transitioning into post-match postures, broadcast camera wide shot, victory telemetry).
-4. **Defensive Mechanics (When Offensive Positioning is Ready)**:
-   - Re-approach defense as an agile physical brace that **never locks player locomotion**.
+1. **AI Retraining, Valley Court Parity & Combat Competency (COMPLETE in v0.2.4 - v0.2.5)**:
+   - Evaluated on exact Valley Court trimesh (`COL_Court`, `COL_Barriers`, `COL_Goals`).
+   - 3D ball intercept solver restricted to striking envelope ($0.15\text{m} \le h_{\text{turf}} \le 3.6\text{m}$), ending high-altitude intercept delusions.
+   - De-locked rigid multi-stage attack scripts and unmuted strikes; synchronized aerial spikes with jump apex.
+   - Dynamic diving saves unlocked for uncatchable ground bounces on defensive halves; athletic Cuts integrated.
+2. **Performance Polish on Goals (COMPLETE in v0.2.4)**:
+   - `src/visuals/scoreboards.js` celebration flashing uses emissive material uniforms without 2D canvas redraw bottlenecks.
+   - Pre-warmed `goalCelebration.js` point light eliminates WebGL shader recompilation hitches.
+3. **Sport Ceremony & Match Presentation (COMPLETE in v0.2.4)**:
+   - Kickoff ritual with low-angle sideline cinematic tracking shot and countdown cues.
+   - Match conclusion presentation with orbiting heroic camera framing and delayed telemetry overlay.
+4. **Next Roadmap Focus**:
+   - Defensive Mechanics: Agile physical brace that never locks player locomotion.
+   - Dynamic crowd audio reaction based on shot power and near-miss hoop trajectories.

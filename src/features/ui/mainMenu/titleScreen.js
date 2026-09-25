@@ -82,7 +82,7 @@ export function buildTitleScreen(rootEl, navActions = {}) {
   `;
 
   const versionBadge = document.createElement('div');
-  versionBadge.textContent = 'v0.2.4';
+  versionBadge.textContent = 'v0.2.5';
   versionBadge.style.cssText = `
     font-size: 11px;
     font-weight: 800;
