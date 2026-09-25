@@ -94,6 +94,8 @@ import { displayCoordinator } from './visuals/displayCoordinator.js';
 import { soundManager } from './audio/soundManager.js';
 import { createGui } from './debug/gui.js';
 import { initCapture } from './debug/capture.js';
+import { initStateTrace } from './debug/stateTrace.js';
+import { readFixture, applyFixtureServes, fixtureParksBall } from './debug/fixture.js';
 
 /**
  * Scene construction, wiring, and the render pass.
@@ -925,6 +927,8 @@ let arenaPreset = null;
  * which is frozen — so it reads the armed tick here and gates on it itself.
  */
 let armedCaptureTick = null;
+/** Harness-only ball fixture (?balls=, ?serve=), read at boot for armed runs. See debug/fixture.js. */
+let captureFixture = null;
 const tracker = createTracker();
 
 /** gltf.animations, kept so the GUI can offer the clip list. */
@@ -1783,6 +1787,7 @@ function fixedUpdate(dt, tick) {
 
   for (let i = 0; i < balls.length; i += 1) {
     const b = balls[i];
+    if (captureFixture && fixtureParksBall(captureFixture, i)) continue;
     const belowWorld = b.body.translation().y < arenaPreset.killPlaneY;
     if (serveQueued || armedBallSpawn || belowWorld) {
       const dropPos = getCourtBallDropSpawn(i, balls.length, tick, isDeterministic);
@@ -1792,6 +1797,8 @@ function fixedUpdate(dt, tick) {
       }
     }
   }
+
+  if (captureFixture) applyFixtureServes(captureFixture, tick, balls, resetBall);
 
   // ─── AI BOT DECISION & SYNTHETIC INPUT EXECUTION ───
   for (const bc of botControllers) {
@@ -3452,6 +3459,9 @@ async function boot() {
     requestRagdollSpawn,
   });
 
+  // Phase 0: renderer-independent per-tick state hash, armed only by ?stateTrace=1.
+  initStateTrace({ loop, getWorld, getAthletes: () => athletes });
+
   window.__vb = window.__vb || {};
   window.__vb.matchState = matchState;
   Object.defineProperty(window.__vb, 'balls', { get: () => balls, configurable: true });
@@ -3711,11 +3721,13 @@ async function boot() {
       if (athletes[1]) {
         athletes[1].setEnabled(false);
       }
+      captureFixture = readFixture();
       for (let i = 0; i < balls.length; i++) {
         const dropPos = getCourtBallDropSpawn(i, balls.length, 0, true);
         resetBall(balls[i], 0, dropPos);
-        balls[i].body.setEnabled(true);
-        balls[i].mesh.visible = true;
+        const parked = fixtureParksBall(captureFixture, i);
+        balls[i].body.setEnabled(!parked);
+        balls[i].mesh.visible = !parked;
       }
       applyViewportSize();
     } else if (TUNING.match.mode === 'practice') {

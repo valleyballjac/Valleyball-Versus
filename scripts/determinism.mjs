@@ -1,18 +1,19 @@
 /**
  * THE DETERMINISM PAIR, AUTOMATED.
  *
- *   npm run determinism                    two runs at tick 300, in the BOWL
+ *   npm run determinism                    two runs at tick 300, on the COURT
  *   npm run determinism -- --tick 600      two runs at tick 600
  *   npm run determinism -- --runs 3        three runs
- *   npm run determinism -- --arena court   the authored court instead
  *
- * THE ANCHOR IS THE BOWL, and the default says so out loud rather than
- * inheriting it. TUNING.arena.type selects what a human gets when they open the
- * page, and it is 'court' — but the regression test must not move worlds
- * because the designer changed which one they are playing in. Every pair
- * measured to date was measured in the bowl; the bowl is the baseline, and the
- * script pins it with ?arena=bowl. Pass --arena court to test the court too,
- * which is a different measurement and not a substitute for this one.
+ * THE ANCHOR IS THE COURT. The procedural bowl was the anchor from August until
+ * e34833f (Sep 24) retired it; every hash before that commit was a bowl hash and
+ * is not comparable with anything after it. The court anchor was re-recorded on
+ * the rebuild/core branch in Phase 0 (see baselines/).
+ *
+ * This compares PNGs, so it is renderer-bound: a SwiftShader pair and a GPU
+ * pair are each compared only against themselves. For a renderer-INDEPENDENT
+ * check that a cloud run and a laptop run agree, use `npm run trace`, which
+ * compares a per-tick digest of the simulation state instead of a picture.
  *
  * It starts the Vite dev server itself (so the capture middleware is present),
  * drives headless Chromium at `?captureTick=N` once per run, waits for the
