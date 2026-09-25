@@ -3086,7 +3086,7 @@ function handleStartPractice(playerConfig = null, ballChoice = 'all') {
   }
 
   // Drop P1 from above center court
-  const isDeterministic = armedCaptureTick !== null || urlParams.has('captureTick');
+  const isDeterministic = armedCaptureTick !== null; // read boot-local `urlParams` before: threw on every practice start since v0.2.0
   if (athletes[0]) {
     const spawnPos = (arenaPreset && arenaPreset.spawn) || { x: 0, y: 1.2, z: 0 };
     athletes[0].teleportTo({ x: spawnPos.x, y: 12.0, z: spawnPos.z }, 0);
