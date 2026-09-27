@@ -30,15 +30,25 @@ export function createBrandBall(container, options = {}) {
   `;
   container.appendChild(canvas);
 
-  const renderer = new THREE.WebGLRenderer({
-    canvas,
-    alpha: true,
-    antialias: true,
-    powerPreference: 'low-power',
-  });
-  renderer.setSize(size, size, false);
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-  renderer.toneMapping = THREE.NoToneMapping;
+  let renderer = null;
+  try {
+    renderer = new THREE.WebGLRenderer({
+      canvas,
+      alpha: true,
+      antialias: true,
+      powerPreference: 'low-power',
+    });
+    renderer.setSize(size, size, false);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.toneMapping = THREE.NoToneMapping;
+  } catch (err) {
+    return {
+      canvas,
+      start: () => {},
+      stop: () => {},
+      dispose: () => {},
+    };
+  }
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 10);

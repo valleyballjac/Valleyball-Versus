@@ -51,9 +51,10 @@ export class PlayerCamera {
     this.camera = new THREE.PerspectiveCamera(
       TUNING.camera.fov,
       16 / 9,
-      0.1,
+      0.08,
       400,
     );
+    this._lastPlayerMode = 'chase';
 
     // Initial heading: P1 faces North (behind South goal, yaw 0), P2 faces South (yaw PI)
     this.azimuth = playerIndex === 0 ? 0 : Math.PI;
@@ -93,6 +94,13 @@ export class PlayerCamera {
     // Broadcast look-at smoother
     this._smoothedBroadcastLookTarget = new THREE.Vector3();
     this._broadcastLookInit = false;
+
+    // Ball-tracking look-at smoother
+    this._smoothedBallLookTarget = new THREE.Vector3();
+    this._ballLookInit = false;
+
+    // Callback invoked when camera mode changes: (newMode, prevMode, playerIndex)
+    this.onModeChange = null;
   }
 
   /**
@@ -101,6 +109,7 @@ export class PlayerCamera {
   resetSmoothing() {
     this._smoothedTargetInit = false;
     this._broadcastLookInit = false;
+    this._ballLookInit = false;
     resetSportsCamera();
   }
 
@@ -111,15 +120,56 @@ export class PlayerCamera {
    */
   cycleMode(isSplitscreen = false) {
     const modes = isSplitscreen
-      ? ['chase', 'ball', 'tactical']
-      : ['chase', 'ball', 'sports', 'broadcast', 'tactical'];
+      ? ['chase', 'thirdPerson', 'firstPerson', 'tactical']
+      : ['chase', 'thirdPerson', 'firstPerson', 'tactical', 'broadcast'];
     const current = modes.indexOf(this.mode);
     if (current === -1) {
       this.mode = 'chase';
     } else {
-      this.mode = modes[(current + 1) % modes.length];
+      this.setMode(modes[(current + 1) % modes.length], isSplitscreen);
     }
     console.log(`[playerCamera P${this.playerIndex + 1}] mode -> ${this.mode}`);
+    return this.mode;
+  }
+
+  /**
+   * Horizontal D-pad / Tab cycle for player-centric views.
+   * Cycles: ['firstPerson', 'chase', 'thirdPerson'].
+   * @param {number} delta -1 for Left, +1 for Right
+   */
+  cyclePlayerView(delta = 1) {
+    const PLAYER_MODES = ['firstPerson', 'chase', 'thirdPerson'];
+    if (PLAYER_MODES.includes(this.mode)) {
+      const idx = PLAYER_MODES.indexOf(this.mode);
+      const next = PLAYER_MODES[(idx + delta + PLAYER_MODES.length) % PLAYER_MODES.length];
+      this.setMode(next);
+    } else {
+      this.setMode(this._lastPlayerMode || 'chase');
+    }
+    console.log(`[playerCamera P${this.playerIndex + 1}] player view -> ${this.mode}`);
+    return this.mode;
+  }
+
+  /**
+   * Vertical D-pad / V-key cycle for arena overview views.
+   * Cycles: ['tactical', 'broadcast'].
+   * @param {number} delta -1 for Up (tactical), +1 for Down (broadcast)
+   * @param {boolean} isSplitscreen
+   */
+  cycleArenaView(delta = 1, isSplitscreen = false) {
+    if (isSplitscreen) {
+      this.setMode('tactical', isSplitscreen);
+      return this.mode;
+    }
+    const ARENA_MODES = ['tactical', 'broadcast'];
+    if (ARENA_MODES.includes(this.mode)) {
+      const idx = ARENA_MODES.indexOf(this.mode);
+      const next = ARENA_MODES[(idx + delta + ARENA_MODES.length) % ARENA_MODES.length];
+      this.setMode(next);
+    } else {
+      this.setMode(delta < 0 ? 'tactical' : 'broadcast');
+    }
+    console.log(`[playerCamera P${this.playerIndex + 1}] arena view -> ${this.mode}`);
     return this.mode;
   }
 
@@ -182,17 +232,24 @@ export class PlayerCamera {
 
   /**
    * Sets this player's camera mode directly.
-   * @param {'chase' | 'ball' | 'sports' | 'broadcast' | 'tactical'} newMode
+   * @param {'chase' | 'thirdPerson' | 'firstPerson' | 'ball' | 'sports' | 'broadcast' | 'tactical'} newMode
    * @param {boolean} isSplitscreen
    */
   setMode(newMode, isSplitscreen = false) {
     if (isSplitscreen && (newMode === 'sports' || newMode === 'broadcast')) {
       newMode = 'chase';
     }
-    const modes = ['chase', 'ball', 'sports', 'broadcast', 'tactical'];
+    const modes = ['chase', 'thirdPerson', 'firstPerson', 'ball', 'sports', 'broadcast', 'tactical'];
     if (modes.includes(newMode)) {
+      const prevMode = this.mode;
       this.mode = newMode;
+      if (newMode === 'firstPerson' || newMode === 'chase' || newMode === 'thirdPerson' || newMode === 'ball') {
+        this._lastPlayerMode = newMode;
+      }
       console.log(`[playerCamera P${this.playerIndex + 1}] set mode -> ${this.mode}`);
+      if (prevMode !== newMode && typeof this.onModeChange === 'function') {
+        this.onModeChange(newMode, prevMode, this.playerIndex);
+      }
     }
     return this.mode;
   }
@@ -225,28 +282,31 @@ export class PlayerCamera {
       );
     }
 
-    if (!this._envRay) {
-      this._envRay = new RAPIER.Ray(this._rayFrom, this._rayDir);
+    let obstructed = desiredDist;
+    if (world && typeof world.castRay === 'function') {
+      if (!this._envRay) {
+        this._envRay = new RAPIER.Ray(this._rayFrom, this._rayDir);
+      }
+      this._rayFrom.x = this._smoothedTarget.x;
+      this._rayFrom.y = this._smoothedTarget.y;
+      this._rayFrom.z = this._smoothedTarget.z;
+
+      this._rayDir.x = this._dir.x;
+      this._rayDir.y = this._dir.y;
+      this._rayDir.z = this._dir.z;
+
+      const hit = world.castRay(
+        this._envRay,
+        desiredDist,
+        true,
+        undefined,
+        ENVIRONMENT_RAY_GROUPS,
+      );
+
+      obstructed = hit
+        ? Math.max(tuning.minDistance, hit.timeOfImpact - tuning.collisionMargin)
+        : desiredDist;
     }
-    this._rayFrom.x = this._smoothedTarget.x;
-    this._rayFrom.y = this._smoothedTarget.y;
-    this._rayFrom.z = this._smoothedTarget.z;
-
-    this._rayDir.x = this._dir.x;
-    this._rayDir.y = this._dir.y;
-    this._rayDir.z = this._dir.z;
-
-    const hit = world.castRay(
-      this._envRay,
-      desiredDist,
-      true,
-      undefined,
-      ENVIRONMENT_RAY_GROUPS,
-    );
-
-    const obstructed = hit
-      ? Math.max(tuning.minDistance, hit.timeOfImpact - tuning.collisionMargin)
-      : desiredDist;
 
     // Smooth contraction and extension to eliminate single-frame raycast chatter
     if (isReset) {
@@ -298,6 +358,59 @@ export class PlayerCamera {
     const focusTarget = getAthleteFocusTarget(athlete, tuning, this._athleteFocus);
     const targetMesh = athlete.motor.mesh;
     const ballPos = activeBall && activeBall.mesh ? activeBall.mesh.position : null;
+
+    // 0. FIRST PERSON CAMERA (Eye-Level from Athlete's Head/Eyes)
+    if (this.mode === 'firstPerson') {
+      const fp = tuning.firstPerson || { eyeHeight: 1.15, forwardOffset: 0.14, minPitch: -1.25, maxPitch: 1.25 };
+      const lookX = inputSlot ? inputSlot.lookX : 0;
+      const lookY = inputSlot ? inputSlot.lookY : 0;
+      const mouse = (this.playerIndex === 0) ? mouseDeltas : { dx: 0, dy: 0 };
+
+      this.azimuth -= lookX * tuning.orbitSpeed * frameDelta;
+      this.azimuth -= mouse.dx / tuning.mousePixelsPerRadian;
+      this.pitch += lookY * tuning.orbitSpeed * frameDelta;
+      this.pitch += mouse.dy / tuning.mousePixelsPerRadian;
+      this.pitch = Math.min(
+        fp.maxPitch ?? 1.25,
+        Math.max(fp.minPitch ?? -1.25, this.pitch),
+      );
+
+      // Anchor to athlete head/eye position
+      let eyeX, eyeY, eyeZ;
+      const headItem = athlete.ragdoll?.rig?.get('head');
+      if (headItem?.mesh) {
+        const hp = headItem.mesh.position;
+        eyeX = hp.x;
+        eyeY = hp.y + 0.06;
+        eyeZ = hp.z;
+      } else {
+        const motorPos = targetMesh.position;
+        eyeX = motorPos.x;
+        eyeY = motorPos.y + (fp.eyeHeight ?? 1.15);
+        eyeZ = motorPos.z;
+      }
+
+      const cosP = Math.cos(this.pitch);
+      const fwdX = Math.sin(this.azimuth) * cosP;
+      const fwdY = -Math.sin(this.pitch);
+      const fwdZ = Math.cos(this.azimuth) * cosP;
+
+      const fOffset = fp.forwardOffset ?? 0.12;
+      this.camera.position.set(
+        eyeX + fwdX * fOffset,
+        eyeY + fwdY * 0.04,
+        eyeZ + fwdZ * fOffset,
+      );
+
+      this._target.set(
+        this.camera.position.x + fwdX * 5.0,
+        this.camera.position.y + fwdY * 5.0,
+        this.camera.position.z + fwdZ * 5.0,
+      );
+      this.camera.lookAt(this._target);
+      this._applyCameraEffects(tuning, frameDelta);
+      return;
+    }
 
     // 1. SPORTS CAMERA
     if (this.mode === 'sports') {
@@ -358,7 +471,7 @@ export class PlayerCamera {
       const p = focusTarget;
       const lookX = inputSlot ? inputSlot.lookX : 0;
       const lookY = inputSlot ? inputSlot.lookY : 0;
-      const mouse = this.playerIndex === 0 ? mouseDeltas : { dx: 0, dy: 0 };
+      const mouse = (this.playerIndex === 0) ? mouseDeltas : { dx: 0, dy: 0 };
       this.manualAzimuthOffset -= (lookX * tuning.orbitSpeed * frameDelta + mouse.dx / tuning.mousePixelsPerRadian) * 4.0;
       this.manualPitchOffset += (lookY * tuning.orbitSpeed * frameDelta + mouse.dy / tuning.mousePixelsPerRadian) * 4.0;
       this.manualAzimuthOffset *= Math.exp(-4.0 * frameDelta);
@@ -379,10 +492,9 @@ export class PlayerCamera {
       return;
     }
 
-    // 4. BALL-FOLLOWING CAMERA (Framing Athlete, Ball, and Attacking Goal Center)
-    // 4. BALL-FOLLOWING CAMERA (Anchored to Athlete, Tracking Ball & Goal ahead)
-    if (this.mode === 'ball') {
-      const cam = tuning.ballCam;
+    // 4. 3RD PERSON BALL-FOLLOWING CAMERA (Framing Athlete, Ball, and Attacking Goal Center)
+    if (this.mode === 'thirdPerson' || this.mode === 'ball') {
+      const cam = tuning.thirdPerson || tuning.ballCam || {};
       const hoopCenterY = TUNING.match?.hoopCenterY ?? 10.0;
       const hoopNorthZ = TUNING.match?.hoopNorthZ ?? -40.0;
       const hoopSouthZ = TUNING.match?.hoopSouthZ ?? 40.0;
@@ -446,7 +558,7 @@ export class PlayerCamera {
       );
 
       // Smooth azimuth easing (shortest angle path)
-      const easeAzimuth = 1 - Math.exp(-cam.smoothEase * frameDelta);
+      const easeAzimuth = 1 - Math.exp(-(cam.smoothEase ?? 6.0) * frameDelta);
       let dAzimuth = (targetAzimuth - this.azimuth) % (Math.PI * 2);
       if (dAzimuth > Math.PI) dAzimuth -= Math.PI * 2;
       if (dAzimuth < -Math.PI) dAzimuth += Math.PI * 2;
@@ -455,12 +567,12 @@ export class PlayerCamera {
       // Smooth pitch easing
       this.pitch +=
         (baseTargetPitch - this.pitch) *
-        (1 - Math.exp(-cam.pitchEase * frameDelta));
+        (1 - Math.exp(-(cam.pitchEase ?? 3.5) * frameDelta));
 
       // Right stick manual override (nudge & snap-back)
       const lookX = inputSlot ? inputSlot.lookX : 0;
       const lookY = inputSlot ? inputSlot.lookY : 0;
-      const mouse = this.playerIndex === 0 ? mouseDeltas : { dx: 0, dy: 0 };
+      const mouse = (this.playerIndex === 0) ? mouseDeltas : { dx: 0, dy: 0 };
       const hasManualInput =
         Math.hypot(lookX, lookY) > 0.08 ||
         Math.abs(mouse.dx) > 1 ||
@@ -474,8 +586,9 @@ export class PlayerCamera {
         this.manualIdleTimer = 0;
       } else {
         this.manualIdleTimer += frameDelta;
-        if (this.manualIdleTimer > cam.manualReturnDelay) {
-          const returnEase = 1 - Math.exp(-cam.manualReturnSpeed * frameDelta);
+        const returnDelay = cam.manualReturnDelay ?? 0.35;
+        if (this.manualIdleTimer > returnDelay) {
+          const returnEase = 1 - Math.exp(-(cam.manualReturnSpeed ?? 3.5) * frameDelta);
           this.manualAzimuthOffset += (0 - this.manualAzimuthOffset) * returnEase;
           this.manualPitchOffset += (0 - this.manualPitchOffset) * returnEase;
         }
@@ -484,16 +597,19 @@ export class PlayerCamera {
       // Combine automatic tracking with manual stick nudges
       const effAzimuth = this.azimuth + this.manualAzimuthOffset;
       let effPitch = this.pitch + this.manualPitchOffset;
-      effPitch = Math.min(cam.maxPitch, Math.max(cam.minPitch, effPitch));
+      const minPitch = cam.minPitch ?? -0.35;
+      const maxPitch = cam.maxPitch ?? 1.25;
+      effPitch = Math.min(maxPitch, Math.max(minPitch, effPitch));
 
       // 4. Dynamic distance: gently expand when ball is far/high to keep everything framed
+      const baseDistance = cam.distance ?? (tuning.thirdPerson?.distance ?? 7.2);
       const spanExpansion = Math.min(2.5, Math.max(0, (distBallXZ - 4.0) * 0.18) + Math.max(0, dy * 0.15));
-      let desiredDistance = THREE.MathUtils.clamp(5.5 + spanExpansion, 5.2, 8.2);
+      let desiredDistance = THREE.MathUtils.clamp(baseDistance + spanExpansion, 5.0, 9.5);
 
       if (effPitch < 0) {
         const pullFraction = Math.max(
           0,
-          Math.min(1, effPitch / cam.minPitch),
+          Math.min(1, effPitch / minPitch),
         );
         desiredDistance = THREE.MathUtils.lerp(
           desiredDistance,
@@ -503,7 +619,7 @@ export class PlayerCamera {
       }
 
       this._computeArmDirection(desiredDistance, effAzimuth, effPitch);
-      if (world) this._applySpringArm(world, tuning, desiredDistance, frameDelta);
+      this._applySpringArm(world, tuning, desiredDistance, frameDelta);
 
       // 5. Look-At Target: Look slightly forward over athlete's shoulder towards the ball
       // Ensures the athlete is reliably framed in lower-middle screen while tracking the ball
@@ -514,16 +630,56 @@ export class PlayerCamera {
         this._smoothedTarget.y + 0.4 + lookElevation,
         this._smoothedTarget.z + dirZ * lookLead,
       );
-      this.camera.lookAt(this._lookTarget);
+
+      // Low-pass filter look target to eliminate single-frame twitching during spikes or bounces
+      if (!this._ballLookInit) {
+        this._smoothedBallLookTarget.copy(this._lookTarget);
+        this._ballLookInit = true;
+      } else {
+        this._smoothedBallLookTarget.lerp(
+          this._lookTarget,
+          1 - Math.exp(-18.0 * frameDelta),
+        );
+      }
+      this.camera.lookAt(this._smoothedBallLookTarget);
       this._applyCameraEffects(tuning, frameDelta);
       return;
     }
 
-    // 5. FREE CHASE CAMERA (Fallback & standard 3rd person)
-    {
+    // 5. 3RD PERSON CHASE (Tight action camera)
+    if (this.mode === 'chase') {
+      const chaseTuning = tuning.chase || { radius: 4.8, targetHeight: 1.1 };
       const lookX = inputSlot ? inputSlot.lookX : 0;
       const lookY = inputSlot ? inputSlot.lookY : 0;
-      const mouse = this.playerIndex === 0 ? mouseDeltas : { dx: 0, dy: 0 };
+      const mouse = (this.playerIndex === 0) ? mouseDeltas : { dx: 0, dy: 0 };
+
+      this.azimuth -= lookX * tuning.orbitSpeed * frameDelta;
+      this.azimuth -= mouse.dx / tuning.mousePixelsPerRadian;
+      this.pitch += lookY * tuning.orbitSpeed * frameDelta;
+      this.pitch += mouse.dy / tuning.mousePixelsPerRadian;
+      this.pitch = Math.min(tuning.maxPitch, Math.max(tuning.minPitch, this.pitch));
+
+      this._target.copy(focusTarget);
+      let desiredDistance = chaseTuning.radius || 4.8;
+      if (this.pitch < 0) {
+        const pullFraction = Math.max(0, Math.min(1, this.pitch / tuning.minPitch));
+        desiredDistance = THREE.MathUtils.lerp(desiredDistance, 2.5, pullFraction);
+        this._target.y += 0.25 * pullFraction;
+      }
+
+      this._computeArmDirection(desiredDistance, this.azimuth, this.pitch);
+      this._applySpringArm(world, tuning, desiredDistance, frameDelta);
+      this.camera.lookAt(this._smoothedTarget);
+      this._applyCameraEffects(tuning, frameDelta);
+      return;
+    }
+
+    // 6. FALLBACK ORBIT CAMERA (Fallback for unhandled modes)
+    {
+      const tpTuning = tuning.thirdPerson || { radius: 8.0, targetHeight: 1.2 };
+      const lookX = inputSlot ? inputSlot.lookX : 0;
+      const lookY = inputSlot ? inputSlot.lookY : 0;
+      const mouse = (this.playerIndex === 0) ? mouseDeltas : { dx: 0, dy: 0 };
 
       this.azimuth -= lookX * tuning.orbitSpeed * frameDelta;
       this.azimuth -= mouse.dx / tuning.mousePixelsPerRadian;
@@ -537,14 +693,14 @@ export class PlayerCamera {
       this._target.copy(focusTarget);
 
       // Dynamic pull-back when pitching down/looking up into the sky
-      let desiredDistance = tuning.radius;
+      let desiredDistance = tpTuning.radius || tuning.radius || 8.0;
       if (this.pitch < 0) {
         const pullFraction = Math.max(
           0,
           Math.min(1, this.pitch / tuning.minPitch),
         );
         desiredDistance = THREE.MathUtils.lerp(
-          tuning.radius,
+          desiredDistance,
           tuning.pullbackMinDistance,
           pullFraction,
         );
@@ -553,7 +709,7 @@ export class PlayerCamera {
       }
 
       this._computeArmDirection(desiredDistance, this.azimuth, this.pitch);
-      if (world) this._applySpringArm(world, tuning, desiredDistance, frameDelta);
+      this._applySpringArm(world, tuning, desiredDistance, frameDelta);
       this.camera.lookAt(this._smoothedTarget);
       this._applyCameraEffects(tuning, frameDelta);
     }

@@ -88,6 +88,16 @@ class SoundManager {
     this.ambienceGain.gain.setValueAtTime(TUNING.audio.ambienceVolume, this.ctx.currentTime);
     this.ambienceGain.connect(this.masterGain);
 
+    // Pre-bake shared 2.0-second white noise buffer to eliminate runtime heap allocations and GC spikes
+    try {
+      const noiseSamples = Math.floor(this.ctx.sampleRate * 2.0);
+      this.sharedNoiseBuffer = this.ctx.createBuffer(1, noiseSamples, this.ctx.sampleRate);
+      const noiseData = this.sharedNoiseBuffer.getChannelData(0);
+      for (let i = 0; i < noiseSamples; i++) {
+        noiseData[i] = Math.random() * 2 - 1;
+      }
+    } catch (_) {}
+
     this.setupUnlockListeners();
     this.preloadSamples();
     console.log('[audio] Hybrid SoundManager initialized.');
@@ -634,17 +644,9 @@ class SoundManager {
     const { input } = this.createSpatialPanner(worldPos);
     if (!input) return;
 
-    // Non-tonal noise burst for dead rubber physical smack
     const dur = ballRadius <= 0.3 ? 0.07 : ballRadius >= 0.65 ? 0.11 : 0.085;
-    const buf = this.ctx.createBuffer(1, Math.floor(this.ctx.sampleRate * dur), this.ctx.sampleRate);
-    const data = buf.getChannelData(0);
-    for (let i = 0; i < data.length; i++) {
-      const t = i / this.ctx.sampleRate;
-      data[i] = (Math.random() * 2 - 1) * Math.exp(-t / 0.014);
-    }
-
     const src = this.ctx.createBufferSource();
-    src.buffer = buf;
+    src.buffer = this.sharedNoiseBuffer;
 
     const filter = this.ctx.createBiquadFilter();
     filter.type = 'lowpass';
@@ -659,6 +661,7 @@ class SoundManager {
     filter.connect(gain);
     gain.connect(input);
     src.start(now);
+    src.stop(now + dur + 0.01);
   }
 
   playProceduralSqueak() {}
@@ -689,13 +692,8 @@ class SoundManager {
     const { input } = this.createSpatialPanner(worldPos);
     if (!input) return;
 
-    const buf = this.ctx.createBuffer(1, Math.floor(this.ctx.sampleRate * dur), this.ctx.sampleRate);
-    const d = buf.getChannelData(0);
-    for (let i = 0; i < d.length; i++) {
-      d[i] = (Math.random() * 2 - 1) * Math.sin((Math.PI * i) / d.length);
-    }
     const src = this.ctx.createBufferSource();
-    src.buffer = buf;
+    src.buffer = this.sharedNoiseBuffer;
 
     const filter = this.ctx.createBiquadFilter();
     filter.type = 'bandpass';
@@ -703,13 +701,15 @@ class SoundManager {
     filter.frequency.exponentialRampToValueAtTime(750, now + dur);
 
     const gain = this.ctx.createGain();
-    gain.gain.setValueAtTime(0.2, now);
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(0.2, now + dur * 0.35);
     gain.gain.exponentialRampToValueAtTime(0.001, now + dur);
 
     src.connect(filter);
     filter.connect(gain);
     gain.connect(input);
     src.start(now);
+    src.stop(now + dur + 0.01);
   }
 
   playSplash(startTime, worldPos, intensity) {
@@ -717,13 +717,8 @@ class SoundManager {
     if (!input) return;
 
     const dur = 0.18;
-    const buf = this.ctx.createBuffer(1, Math.floor(this.ctx.sampleRate * dur), this.ctx.sampleRate);
-    const d = buf.getChannelData(0);
-    for (let i = 0; i < d.length; i++) {
-      d[i] = (Math.random() * 2 - 1) * Math.exp(-i / (d.length * 0.4));
-    }
     const src = this.ctx.createBufferSource();
-    src.buffer = buf;
+    src.buffer = this.sharedNoiseBuffer;
 
     const filter = this.ctx.createBiquadFilter();
     filter.type = 'bandpass';
@@ -738,6 +733,7 @@ class SoundManager {
     filter.connect(gain);
     gain.connect(input);
     src.start(startTime);
+    src.stop(startTime + dur + 0.01);
   }
 
   startAmbience() {

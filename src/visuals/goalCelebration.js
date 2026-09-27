@@ -149,6 +149,9 @@ export function createGoalCelebrationSystem(scene) {
       } else {
         _tempColor.copy(_color).multiplyScalar(1.1);
       }
+      sparkColors[i * 3 + 0] = _tempColor.r;
+      sparkColors[i * 3 + 1] = _tempColor.g;
+      sparkColors[i * 3 + 2] = _tempColor.b;
       sparkMesh.setColorAt(i, _tempColor);
     }
 
@@ -184,6 +187,7 @@ export function createGoalCelebrationSystem(scene) {
     if (activeSparks > 0) {
       const gravity = 7.0; // gentle, floating ember gravity
       let alive = 0;
+      let colorsCompacted = false;
 
       for (let i = 0; i < activeSparks; i++) {
         life[i] -= dt;
@@ -208,8 +212,10 @@ export function createGoalCelebrationSystem(scene) {
           maxLife[alive] = maxLife[i];
           baseScale[alive] = baseScale[i];
 
-          sparkMesh.getColorAt(i, _tempColor);
-          sparkMesh.setColorAt(alive, _tempColor);
+          sparkColors[alive * 3 + 0] = sparkColors[i * 3 + 0];
+          sparkColors[alive * 3 + 1] = sparkColors[i * 3 + 1];
+          sparkColors[alive * 3 + 2] = sparkColors[i * 3 + 2];
+          colorsCompacted = true;
         }
 
         const progress = 1.0 - (life[alive] / maxLife[alive]);
@@ -226,7 +232,9 @@ export function createGoalCelebrationSystem(scene) {
       activeSparks = alive;
       sparkMesh.count = activeSparks;
       sparkMesh.instanceMatrix.needsUpdate = true;
-      sparkMesh.instanceColor.needsUpdate = true;
+      if (colorsCompacted) {
+        sparkMesh.instanceColor.needsUpdate = true;
+      }
     }
   }
 

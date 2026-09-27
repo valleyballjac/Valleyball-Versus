@@ -88,6 +88,11 @@ export function createPerception() {
             angularVelocity: new THREE.Vector3(),
             speed: 0,
             heightAboveGround: 0,
+            altitude: 0,
+            isGrounded: false,
+            isGroundBall: false,
+            isMidBall: false,
+            isAerialBall: false,
             radius: 0.5,
             mass: 2.0,
             id: 'medium',
@@ -326,19 +331,25 @@ export function evaluateOpponentContest(selfPos, selfVel, oppPos, oppVel, defend
         const sample = trajectory.samples[i];
         const t = sample.time;
 
+        const sampleFloorY = getCourtFloorY(sample.pos.x, sample.pos.z);
+        const sampleRelY = sample.pos.y - sampleFloorY;
+        const isReachableHeight = sampleRelY >= 0.1 && sampleRelY <= 3.4;
+
         // Self reachability
-        const distSelf = Math.hypot(sample.pos.x - selfPos.x, sample.pos.z - selfPos.z);
-        const timeToReachSelf = 0.12 + distSelf / selfSpeed;
-        if (timeToReachSelf <= t && earliestSelfTick === Infinity) {
-            earliestSelfTick = sample.tick;
-            selfNodeIdx = i;
+        if (isReachableHeight && earliestSelfTick === Infinity) {
+            const distSelf = Math.hypot(sample.pos.x - selfPos.x, sample.pos.z - selfPos.z);
+            const timeToReachSelf = 0.12 + distSelf / selfSpeed;
+            if (timeToReachSelf <= t) {
+                earliestSelfTick = sample.tick;
+                selfNodeIdx = i;
+            }
         }
 
         // Opponent reachability
-        if (hasOpponent) {
+        if (hasOpponent && isReachableHeight && earliestOppTick === Infinity) {
             const distOpp = Math.hypot(sample.pos.x - oppPos.x, sample.pos.z - oppPos.z);
             const timeToReachOpp = 0.12 + distOpp / oppSpeed;
-            if (timeToReachOpp <= t && earliestOppTick === Infinity) {
+            if (timeToReachOpp <= t) {
                 earliestOppTick = sample.tick;
                 oppNodeIdx = i;
             }
@@ -505,8 +516,13 @@ export function buildPerception(ownAthlete, opponentAthlete, activeBalls, matchS
         perception.ball.id = nearestBall.id || (nearestBall.radius <= 0.3 ? 'small' : (nearestBall.radius >= 0.6 ? 'large' : 'medium'));
         perception.ball.radius = nearestBall.radius || 0.5;
         perception.ball.mass = nearestBall.body.mass ? nearestBall.body.mass() : (nearestBall.mass || 2.0);
-        perception.ball.speed = perception.ball.velocity.length();
-        perception.ball.heightAboveGround = perception.ball.position.y - perception.ball.radius;
+        const ballFloorY = getCourtFloorY(t.x, t.z);
+        perception.ball.altitude = Math.max(0, perception.ball.position.y - (ballFloorY + perception.ball.radius));
+        perception.ball.heightAboveGround = perception.ball.altitude;
+        perception.ball.isGrounded = perception.ball.altitude < 0.15;
+        perception.ball.isGroundBall = perception.ball.altitude < 0.65;
+        perception.ball.isMidBall = perception.ball.altitude >= 0.65 && perception.ball.altitude < 1.75;
+        perception.ball.isAerialBall = perception.ball.altitude >= 1.75;
 
         // Trajectory apex and vertical state
         const peakTime = perception.ball.velocity.y > 0 ? perception.ball.velocity.y / 12.0 : 0;

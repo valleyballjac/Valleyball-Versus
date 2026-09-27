@@ -499,8 +499,11 @@ function resolveStrikes(match, strikeState, motorBody, side) {
     const dz = bPos.z - mPos.z;
     const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
 
-    // Physical strike reach: limb reach + ball radius + proximity assist
-    const reach = 0.95 + match.ballObj.radius + 0.45;
+    // Physical strike reach: modeled on animation limb extension toward sweetTick
+    const swingProgress = elapsed < strikeState.sweetTick
+      ? Math.max(0.25, (elapsed - strikeState.windowOpen) / Math.max(1, strikeState.sweetTick - strikeState.windowOpen))
+      : 1.0;
+    const reach = (0.95 * swingProgress) + match.ballObj.radius + (0.45 * swingProgress);
     if (dist <= reach) {
       strikeState.resolvedTick = strikeState.pressTick;
       const strikeCfg = STRIKE[strikeState.pendingKind] || STRIKE.volley;

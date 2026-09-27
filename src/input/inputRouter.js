@@ -98,8 +98,25 @@ export function createInputSlot() {
 
 const heldKeys = new Set();
 let installed = false;
-const cameraCyclesQueued = [false, false, false, false];
+const cameraCyclePlayerQueued = [0, 0, 0, 0]; // -1 (left), +1 (right)
+const cameraCycleArenaQueued = [0, 0, 0, 0];  // -1 (up: tactical), +1 (down: broadcast)
 let menuToggleQueued = false;
+
+export function consumeCameraCyclePlayer(slotIdx = 0) {
+  const val = cameraCyclePlayerQueued[slotIdx] || 0;
+  cameraCyclePlayerQueued[slotIdx] = 0;
+  return val;
+}
+
+export function consumeCameraCycleArena(slotIdx = 0) {
+  const val = cameraCycleArenaQueued[slotIdx] || 0;
+  cameraCycleArenaQueued[slotIdx] = 0;
+  return val;
+}
+
+export function consumeCameraCycle(slotIdx = 0) {
+  return consumeCameraCyclePlayer(slotIdx) !== 0;
+}
 
 // Mouse drag state
 let dragging = false;
@@ -134,7 +151,10 @@ function getPadPrev(padIndex) {
       spike: false,
       ballReset: false,
       pauseMenu: false,
-      dpad: false,
+      dpadLeft: false,
+      dpadRight: false,
+      dpadUp: false,
+      dpadDown: false,
     });
   }
   return padPrevStates.get(padIndex);
@@ -174,15 +194,25 @@ function onKeyDown(event) {
     }
   }
 
-  // Tab cycles P1 camera
-  if (event.code === 'Tab') {
+  // Tab or 'C' cycles P1 player camera (1st person <-> chase <-> 3rd person)
+  if (event.code === 'Tab' || event.code === 'KeyC') {
     event.preventDefault();
-    if (!event.repeat) cameraCyclesQueued[0] = true;
+    if (!event.repeat) cameraCyclePlayerQueued[0] = 1;
   }
-  // ']' or '\' cycles P2 camera
-  if (event.code === 'BracketRight' || event.code === 'Backslash') {
+  // 'V' cycles P1 arena camera (tactical <-> broadcast)
+  if (event.code === 'KeyV') {
     event.preventDefault();
-    if (!event.repeat) cameraCyclesQueued[1] = true;
+    if (!event.repeat) cameraCycleArenaQueued[0] = 1;
+  }
+  // ']' cycles P2 player camera
+  if (event.code === 'BracketRight') {
+    event.preventDefault();
+    if (!event.repeat) cameraCyclePlayerQueued[1] = 1;
+  }
+  // '\' cycles P2 arena camera
+  if (event.code === 'Backslash') {
+    event.preventDefault();
+    if (!event.repeat) cameraCycleArenaQueued[1] = 1;
   }
 
   if (event.code === 'Escape') {
@@ -338,10 +368,66 @@ function getConnectedGamepads() {
   return _connectedGamepads;
 }
 
+let explicitDeviceMappings = null;
+
+export function setExplicitDeviceMappings(mappings) {
+  explicitDeviceMappings = mappings;
+}
+
+export function getExplicitDeviceMappings() {
+  return explicitDeviceMappings;
+}
+
+export function assignDefaultDeviceForSlot(slotIndex) {
+  if (!explicitDeviceMappings) {
+    explicitDeviceMappings = {};
+  }
+  const pads = getConnectedGamepads();
+  const usedPadIndices = Object.entries(explicitDeviceMappings)
+    .filter(([s, d]) => Number(s) !== slotIndex && d && d.type === 'gamepad')
+    .map(([s, d]) => d.padIndex);
+
+  const freePad = pads.find((p) => p && !usedPadIndices.includes(p.index));
+  if (freePad) {
+    explicitDeviceMappings[slotIndex] = {
+      type: 'gamepad',
+      padIndex: freePad.index,
+      name: `Gamepad ${freePad.index + 1}`,
+      id: freePad.id,
+    };
+  } else {
+    explicitDeviceMappings[slotIndex] = {
+      type: 'keyboard',
+      keyId: slotIndex === 0 ? 'kb1' : 'kb2',
+      name: slotIndex === 0 ? 'Keyboard 1 (WASD)' : 'Secondary Keyboard (IJKL)',
+    };
+  }
+}
+
+export function clearDeviceMappingForSlot(slotIndex) {
+  if (explicitDeviceMappings) {
+    delete explicitDeviceMappings[slotIndex];
+  }
+}
+
 /**
  * Returns human-readable routing assignments for UI display.
  */
 export function getControllerAssignments(athleteCount = 2, mode = 'match') {
+  if (explicitDeviceMappings) {
+    const formatDev = (m) => {
+      if (!m) return 'AI Bot';
+      if (m.type === 'gamepad') return `${m.name || `Gamepad ${m.padIndex + 1}`}`;
+      return `${m.name || 'Keyboard'}`;
+    };
+    return {
+      p1: formatDev(explicitDeviceMappings[0]),
+      p2: formatDev(explicitDeviceMappings[1]),
+      p3: formatDev(explicitDeviceMappings[2]),
+      p4: formatDev(explicitDeviceMappings[3]),
+    };
+  }
+
   const pads = getConnectedGamepads();
   if (mode === 'practice' || athleteCount === 1) {
     return {
@@ -417,7 +503,16 @@ export function sampleAllInputs(cameras, athleteCount = 2, mode = 'match', botSl
   let p1Pad = null;
   let p2Pad = null;
 
-  if (mode === 'practice' || athleteCount === 1) {
+  if (explicitDeviceMappings) {
+    const m0 = explicitDeviceMappings[0];
+    const m1 = explicitDeviceMappings[1];
+    if (m0 && m0.type === 'gamepad' && typeof m0.padIndex === 'number') {
+      p1Pad = pads.find((p) => p && p.index === m0.padIndex) || pads[m0.padIndex] || null;
+    }
+    if (m1 && m1.type === 'gamepad' && typeof m1.padIndex === 'number') {
+      p2Pad = pads.find((p) => p && p.index === m1.padIndex) || pads[m1.padIndex] || null;
+    }
+  } else if (mode === 'practice' || athleteCount === 1) {
     p1Pad = !botSlots.includes(0) ? pads[0] || null : null;
   } else {
     // Route gamepads to humans in order
@@ -491,23 +586,22 @@ export function sampleAllInputs(cameras, athleteCount = 2, mode = 'match', botSl
       }
       prev.ballReset = ballResetDown;
 
-      const dpadDown = padDown(p1Pad, 12) || padDown(p1Pad, 13) || padDown(p1Pad, 14) || padDown(p1Pad, 15);
-      if (dpadDown && !prev.dpad) cameraCyclesQueued[0] = true;
-      prev.dpad = dpadDown;
-    } else if (mode === 'practice' || athleteCount === 1 || p2Pad) {
-      // Secondary keyboard camera / aim control: Arrow keys
+      const dLeft = padDown(p1Pad, 14);
+      const dRight = padDown(p1Pad, 15);
+      const dUp = padDown(p1Pad, 12);
+      const dDown = padDown(p1Pad, 13);
+      if (dLeft && !prev.dpadLeft) cameraCyclePlayerQueued[0] = -1;
+      if (dRight && !prev.dpadRight) cameraCyclePlayerQueued[0] = 1;
+      if (dUp && !prev.dpadUp) cameraCycleArenaQueued[0] = -1;
+      if (dDown && !prev.dpadDown) cameraCycleArenaQueued[0] = 1;
+      prev.dpadLeft = dLeft;
+      prev.dpadRight = dRight;
+      prev.dpadUp = dUp;
+      prev.dpadDown = dDown;
+    } else if (mode === 'practice' || athleteCount === 1 || p2Pad || botSlots.includes(1)) {
+      // Secondary keyboard camera control: Arrow keys
       lookX = (heldKeys.has('ArrowRight') ? 1 : 0) - (heldKeys.has('ArrowLeft') ? 1 : 0);
       lookY = (heldKeys.has('ArrowUp') ? 1 : 0) - (heldKeys.has('ArrowDown') ? 1 : 0);
-    }
-
-    const lookMag = Math.hypot(lookX, lookY);
-    let hasAim = false;
-    let aimYaw = 0;
-    if (lookMag > 0.15 && cam1Data.valid) {
-      hasAim = true;
-      const aimWorldX = cam1Data.right.x * lookX + cam1Data.forward.x * (-lookY);
-      const aimWorldZ = cam1Data.right.z * lookX + cam1Data.forward.z * (-lookY);
-      aimYaw = Math.atan2(aimWorldX, aimWorldZ);
     }
 
     const mag = Math.hypot(x, z);
@@ -519,8 +613,8 @@ export function sampleAllInputs(cameras, athleteCount = 2, mode = 'match', botSl
     slot.slideHeld = slideHeld;
     slot.lookX = lookX;
     slot.lookY = lookY;
-    slot.hasAim = hasAim;
-    slot.aimYaw = aimYaw;
+    slot.hasAim = false;
+    slot.aimYaw = 0;
     slot.cameraYaw = cam1Data.yaw;
 
     if (cam1Data.valid) {
@@ -593,23 +687,22 @@ export function sampleAllInputs(cameras, athleteCount = 2, mode = 'match', botSl
       }
       prev.ballReset = ballResetDown;
 
-      const dpadDown = padDown(p2Pad, 12) || padDown(p2Pad, 13) || padDown(p2Pad, 14) || padDown(p2Pad, 15);
-      if (dpadDown && !prev.dpad) cameraCyclesQueued[1] = true;
-      prev.dpad = dpadDown;
+      const dLeft = padDown(p2Pad, 14);
+      const dRight = padDown(p2Pad, 15);
+      const dUp = padDown(p2Pad, 12);
+      const dDown = padDown(p2Pad, 13);
+      if (dLeft && !prev.dpadLeft) cameraCyclePlayerQueued[1] = -1;
+      if (dRight && !prev.dpadRight) cameraCyclePlayerQueued[1] = 1;
+      if (dUp && !prev.dpadUp) cameraCycleArenaQueued[1] = -1;
+      if (dDown && !prev.dpadDown) cameraCycleArenaQueued[1] = 1;
+      prev.dpadLeft = dLeft;
+      prev.dpadRight = dRight;
+      prev.dpadUp = dUp;
+      prev.dpadDown = dDown;
     } else {
       // Secondary keyboard camera control: Arrow keys
       lookX = (heldKeys.has('ArrowRight') ? 1 : 0) - (heldKeys.has('ArrowLeft') ? 1 : 0);
       lookY = (heldKeys.has('ArrowUp') ? 1 : 0) - (heldKeys.has('ArrowDown') ? 1 : 0);
-    }
-
-    const lookMag = Math.hypot(lookX, lookY);
-    let hasAim = false;
-    let aimYaw = 0;
-    if (lookMag > 0.15 && cam2Data.valid) {
-      hasAim = true;
-      const aimWorldX = cam2Data.right.x * lookX + cam2Data.forward.x * (-lookY);
-      const aimWorldZ = cam2Data.right.z * lookX + cam2Data.forward.z * (-lookY);
-      aimYaw = Math.atan2(aimWorldX, aimWorldZ);
     }
 
     const mag = Math.hypot(x, z);
@@ -621,8 +714,8 @@ export function sampleAllInputs(cameras, athleteCount = 2, mode = 'match', botSl
     slot.slideHeld = slideHeld;
     slot.lookX = lookX;
     slot.lookY = lookY;
-    slot.hasAim = hasAim;
-    slot.aimYaw = aimYaw;
+    slot.hasAim = false;
+    slot.aimYaw = 0;
     slot.cameraYaw = cam2Data.yaw;
 
     if (cam2Data.valid) {
@@ -682,11 +775,6 @@ export function consumeAthleteBallReset(index) {
   return q;
 }
 
-export function consumeCameraCycle(playerIndex = 0) {
-  const q = cameraCyclesQueued[playerIndex] || false;
-  cameraCyclesQueued[playerIndex] = false;
-  return q;
-}
 
 export function consumeMenuToggle() {
   const q = menuToggleQueued;

@@ -229,21 +229,45 @@ export function steerGoalAlignedApproach(inputSlot, selfPos, selfVel, ballPos, a
         return;
     }
 
-    // CASE 3: Inside runway corridor behind ball — DRIVE FORWARD THROUGH THE BALL!
-    _scratchApproachTarget.set(
-        ballPos.x + _scratchShotDir.x * 1.2,
-        0,
-        ballPos.z + _scratchShotDir.z * 1.2
-    );
-
-    steerToward(inputSlot, selfPos, _scratchApproachTarget, {
-        sprint: options.sprint ?? true,
-        arrive: false,
-        maxSpeed: options.maxSpeed ?? 1.0,
-        minDrive: 0.90,
-        aimYaw,
-        currentVel: selfVel,
-    });
+    // CASE 3: Inside runway corridor behind ball.
+    // When far, sprint to close the distance.
+    // When close (within 2.5m), decelerate into the 1.15m stand-off striking pocket
+    // without ramming the ball with rolling sphere momentum!
+    const distToBall = Math.hypot(ballPos.x - selfPos.x, ballPos.z - selfPos.z);
+    if (distToBall < 2.5) {
+        // Paced approach: target the hitting pocket 1.15m behind the ball along the shot line
+        // (outside the 0.95m physical contact boundary of athlete sphere + ball)
+        const pocketDist = 1.15;
+        _scratchApproachTarget.set(
+            ballPos.x - _scratchShotDir.x * pocketDist,
+            0,
+            ballPos.z - _scratchShotDir.z * pocketDist
+        );
+        steerToward(inputSlot, selfPos, _scratchApproachTarget, {
+            sprint: false,
+            arrive: true,
+            arriveRadius: 0.7,
+            maxSpeed: (options.maxSpeed ?? 1.0) * 0.70,
+            minDrive: 0.0,
+            aimYaw,
+            currentVel: selfVel,
+        });
+    } else {
+        // Fast approach: close corridor targeting 1.20m pocket
+        _scratchApproachTarget.set(
+            ballPos.x - _scratchShotDir.x * 1.20,
+            0,
+            ballPos.z - _scratchShotDir.z * 1.20
+        );
+        steerToward(inputSlot, selfPos, _scratchApproachTarget, {
+            sprint: options.sprint ?? true,
+            arrive: false,
+            maxSpeed: options.maxSpeed ?? 1.0,
+            minDrive: 0.85,
+            aimYaw,
+            currentVel: selfVel,
+        });
+    }
 }
 
 /**
@@ -279,15 +303,42 @@ export function computeAimYaw(ownPos, targetPos) {
  * 
  * @param {Object} ownPos - Current position { x, y, z }
  * @param {Object} goalPos - Goal position { x: 0, y: 10, z: ±40 }
- * @param {number} lateralOffset - Entry offset across X = 0 (default 1.2m)
  * @returns {number} Yaw angle in radians
  */
-export function computeGoalAimYaw(ownPos, goalPos) {
-    let dx = -ownPos.x;
-    const dz = goalPos.z - ownPos.z;
-    if (Math.abs(ownPos.x) < 0.25) {
-        dx = ownPos.x >= 0 ? -0.8 : 0.8;
+export function computeGoalAimYaw(originPos, goalPos) {
+    const signZ = Math.sign(goalPos.z - originPos.z) || 1;
+    const distToGoalZ = Math.abs(goalPos.z - originPos.z);
+    const absX = Math.abs(originPos.x);
+
+    // 1. FLANK SCORING ARCS (|X| >= 3.5m):
+    // From any flank or stream lane position (distances 8m to 48m), a volley crossing X = 0
+    // into the hoop aperture scores cleanly through the open side without hitting the front arch.
+    if (absX >= 3.5 && distToGoalZ <= 48.0) {
+        const targetZ = goalPos.z;
+        const dx = -originPos.x;
+        const dz = targetZ - originPos.z;
+        return Math.atan2(dx, dz);
     }
+
+    // 2. CLOSE-RANGE CENTER FINISH (distToGoalZ <= 12.0m):
+    // Angle sharply across X = 0 so crossing occurs safely inside the circular opening.
+    if (distToGoalZ <= 12.0) {
+        const crossDir = originPos.x >= 0 ? -1 : 1;
+        const targetX = crossDir * 2.5;
+        const targetZ = goalPos.z;
+        const dx = targetX - originPos.x;
+        const dz = targetZ - originPos.z;
+        return Math.atan2(dx, dz);
+    }
+
+    // 3. MID-RANGE / TRANSITION FROM CENTER CHANNEL (|X| < 3.5m, distToGoalZ > 12.0m):
+    // Direct shots down the center line collide with the front metal arch at Z = ±35.33.
+    // Set the ball into the attacking flank / stream lane (X = ±8.5m, Z = 75% to goal)
+    // to establish the optimal flank scoring angle!
+    const flankX = originPos.x >= 0 ? 8.5 : -8.5;
+    const flankZ = goalPos.z * 0.75;
+    const dx = flankX - originPos.x;
+    const dz = flankZ - originPos.z;
     return Math.atan2(dx, dz);
 }
 
@@ -315,24 +366,23 @@ export function computeStreamHeadAimYaw(ownPos, goalPos) {
  * @param {Object} defendGoalPos - Own hoop position { x: 0, y: 10, z: ∓40 }
  * @returns {number} Yaw angle in radians
  */
-export function computeClearanceAimYaw(ownPos, attackGoalPos, defendGoalPos) {
-    const distToDefendZ = Math.abs(ownPos.z - defendGoalPos.z);
+export function computeClearanceAimYaw(originPos, attackGoalPos, defendGoalPos) {
+    const distToDefendZ = Math.abs(originPos.z - defendGoalPos.z);
     if (distToDefendZ <= 15.0) {
         // DEFENSIVE FLANK CLEARANCE:
-        // Clear wide down the sideline into the opponent's corner (|X| >= 8.0m).
+        // Clear wide down the sideline into the opponent's corner (|X| >= 8.5m).
         // NEVER aim across the center line (X = 0) near the defending goal mouth.
-        const clearX = ownPos.x >= 0 ? Math.max(8.0, ownPos.x + 1.5) : Math.min(-8.0, ownPos.x - 1.5);
-        const clearZ = attackGoalPos.z * 0.85;
-        const dx = clearX - ownPos.x;
-        const dz = clearZ - ownPos.z;
+        const clearX = originPos.x >= 0 ? Math.max(8.5, originPos.x + 1.5) : Math.min(-8.5, originPos.x - 1.5);
+        const clearZ = attackGoalPos.z * 0.75;
+        const dx = clearX - originPos.x;
+        const dz = clearZ - originPos.z;
         return Math.atan2(dx, dz);
     }
     // Stream head finish zone: clean aperture piercing
-    if (Math.abs(ownPos.z - attackGoalPos.z) <= 12.0 && Math.abs(ownPos.x) >= 6.0) {
-        return computeStreamHeadAimYaw(ownPos, attackGoalPos);
+    if (Math.abs(originPos.z - attackGoalPos.z) <= 17.0 && Math.abs(originPos.x) >= 3.5) {
+        return computeStreamHeadAimYaw(originPos, attackGoalPos);
     }
-    // Offensive shooting range: aim directly at the attack hoop
-    return computeGoalAimYaw(ownPos, attackGoalPos);
+    return computeGoalAimYaw(originPos, attackGoalPos);
 }
 
 /**

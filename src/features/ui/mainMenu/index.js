@@ -34,6 +34,12 @@ import {
   getControlsModalEl,
 } from './howToPlayModal.js';
 import {
+  buildControllerAssignmentScreen,
+  showControllerAssignment,
+  hideControllerAssignment,
+  getControllerAssignmentEl,
+} from './controllerAssignment.js';
+import {
   buildTitleScreen,
   updateTitleFocusUI,
   createMenuButton,
@@ -76,6 +82,8 @@ import {
   setFocusedColumn,
   getPlayerReadyState,
   getPlayerFocusRow,
+  applyControllerAssignments,
+  updateInputBadgesUI,
 } from './playerSetup.js';
 import {
   startMenuGamepadPolling,
@@ -89,12 +97,15 @@ export * from './mobileNotice.js';
 export * from './flyoverOverlay.js';
 export * from './settingsModal.js';
 export * from './howToPlayModal.js';
+export * from './controllerAssignment.js';
 export {
   getPlayerConfigs,
   getSelectedMatchBall,
   getAggressivenessBadge,
   setPlayerAggressiveness,
   updateAggressivenessUI,
+  applyControllerAssignments,
+  updateInputBadgesUI,
 } from './playerSetup.js';
 
 let rootEl = null;
@@ -137,10 +148,21 @@ export function initMainMenu(cbs = {}) {
   buildFlyoverOverlay(rootEl, callbacks.onSkipFlyover);
 
   // Build Screens
+  buildControllerAssignmentScreen(rootEl, {
+    onProceed: () => showPlayerSetup('match'),
+    onBack: () => showTitleScreen(),
+  });
   buildPlayerSetupScreen(rootEl, callbacks, { showTitleScreen, hidePlayerSetup });
   buildTitleScreen(rootEl, {
     onPractice: () => showPlayerSetup('practice'),
-    onPlayMatch: () => showPlayerSetup('match'),
+    onPlayMatch: () => showControllerAssignment('1v1', {
+      onProceed: (data) => showPlayerSetup('match', data),
+      onBack: () => showTitleScreen(),
+    }),
+    onPlayMatch2v2: () => showControllerAssignment('2v2', {
+      onProceed: (data) => showPlayerSetup('match', data),
+      onBack: () => showTitleScreen(),
+    }),
     onSettings: () => showMainMenuSettingsModal(),
     onHowToPlay: () => showHowToPlayModal(),
   });
@@ -157,11 +179,13 @@ export function initMainMenu(cbs = {}) {
   });
 
   initMobileNotice();
+  if (typeof window !== 'undefined') window.playerSetup = playerSetup;
   showTitleScreen();
 }
 
 export function showTitleScreen() {
   cancelMatchCountdown();
+  hideControllerAssignment();
   if (!rootEl) return;
   const playerSetupEl = getPlayerSetupEl();
   if (playerSetupEl && playerSetupEl.style.display === 'flex' && callbacks.onExitSetup) {
@@ -179,8 +203,9 @@ export function showTitleScreen() {
   state.titleBrandBall?.start();
 }
 
-export function showPlayerSetup(mode = 'match') {
+export function showPlayerSetup(mode = 'match', options = {}) {
   if (!rootEl) return;
+  hideControllerAssignment();
   state.titleBrandBall?.stop();
   setCurrentSetupMode(mode);
   rootEl.style.pointerEvents = 'auto';
@@ -285,9 +310,14 @@ export function showPlayerSetup(mode = 'match') {
   setSetupPage(1);
   setMatchRulesFocusRow(0);
   setFocusedColumn(0);
-  const readyStates = getPlayerReadyState();
-  readyStates[0] = false;
-  readyStates[1] = false;
+
+  // Apply controller assignment configuration to athlete slots
+  if (mode === 'match') {
+    applyControllerAssignments(options?.assignments || null, 'match');
+  } else {
+    applyControllerAssignments(null, 'practice');
+  }
+
   const focusRows = getPlayerFocusRow();
   focusRows[0] = (mode === 'practice') ? 1 : 0;
   focusRows[1] = 0;
@@ -297,6 +327,7 @@ export function showPlayerSetup(mode = 'match') {
   updateTeamButtonsUI();
   enforceColorExclusivity();
   updateMatchBallUI();
+  updateInputBadgesUI();
   updateFocusUI();
   startMenuGamepadPolling();
 }

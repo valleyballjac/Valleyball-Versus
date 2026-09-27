@@ -285,7 +285,7 @@ export function updateHustleBoards(
     outlineColorHome = homeColor;
   }
 
-  const keyHome = `home|${dataHome.mode}|${outlineColorHome}|${dataHome.goals}|${dataHome.hits}|${dataHome.whiffs}|${dataHome.sweetSpots}|${dataHome.spikes}|${dataHome.dives}|${dataHome.divingHits}|${dataHome.touches}|${dataHome.badgeText}|${flashing ? phase + 1 : 0}`;
+  const keyHome = `home|${dataHome.mode}|${outlineColorHome}|${dataHome.goals}|${dataHome.hits}|${dataHome.whiffs}|${dataHome.sweetSpots}|${dataHome.spikes}|${dataHome.dives}|${dataHome.divingHits}|${dataHome.touches}|${dataHome.badgeText}`;
   handle.channels.home.pendingData = dataHome;
   handle.channels.home.pendingOutlineColor = outlineColorHome;
   handle.channels.home.pendingKey = keyHome;
@@ -343,7 +343,7 @@ export function updateHustleBoards(
       outlineColorAway = awayColor;
     }
 
-    const keyAway = `away|${dataAway.mode}|${outlineColorAway}|${dataAway.goals}|${dataAway.hits}|${dataAway.whiffs}|${dataAway.sweetSpots}|${dataAway.spikes}|${dataAway.dives}|${dataAway.divingHits}|${dataAway.touches}|${dataAway.badgeText}|${flashing ? phase + 1 : 0}`;
+    const keyAway = `away|${dataAway.mode}|${outlineColorAway}|${dataAway.goals}|${dataAway.hits}|${dataAway.whiffs}|${dataAway.sweetSpots}|${dataAway.spikes}|${dataAway.dives}|${dataAway.divingHits}|${dataAway.touches}|${dataAway.badgeText}`;
     handle.channels.away.pendingData = dataAway;
     handle.channels.away.pendingOutlineColor = outlineColorAway;
     handle.channels.away.pendingKey = keyAway;
@@ -354,21 +354,21 @@ export function updateHustleBoards(
     handle.channels.away.dirty = false;
   }
 
-  // 3. Goal Flashing: update dirty immediately for synchronized celebration
-  if (flashing) {
-    if (handle.channels.home.dirty) {
-      drawHustleBoard(handle.channels.home.context, handle.channels.home.canvas.width, handle.channels.home.canvas.height, handle.channels.home.pendingData, handle.channels.home.pendingOutlineColor);
-      handle.channels.home.texture.needsUpdate = true;
-      handle.channels.home.lastKey = handle.channels.home.pendingKey;
-      handle.channels.home.dirty = false;
+  // 3. MATERIAL UNIFORM-DRIVEN CELEBRATION FLASHING (Zero GPU texture uploads, LAW 8)
+  const flashChannels = [handle.channels.home, handle.channels.away];
+  for (const ch of flashChannels) {
+    if (ch?.material?.color) {
+      if (flashing) {
+        if (phase === 1) {
+          // Radiant gold flash pulse
+          ch.material.color.setRGB(1.65, 1.45, 0.45);
+        } else {
+          ch.material.color.setRGB(1.0, 1.0, 1.0);
+        }
+      } else {
+        ch.material.color.setRGB(1.0, 1.0, 1.0);
+      }
     }
-    if (isMatch && handle.channels.away.dirty) {
-      drawHustleBoard(handle.channels.away.context, handle.channels.away.canvas.width, handle.channels.away.canvas.height, handle.channels.away.pendingData, handle.channels.away.pendingOutlineColor);
-      handle.channels.away.texture.needsUpdate = true;
-      handle.channels.away.lastKey = handle.channels.away.pendingKey;
-      handle.channels.away.dirty = false;
-    }
-    return;
   }
 
   // 4. Smooth upload scheduled within displayCoordinator budget (at most 1 per frame)
@@ -408,12 +408,11 @@ function drawHustleBoard(ctx, W, H, data, outlineColor) {
   const scale = H / 800;
 
   // Background
-  const isGoalLit = data.flashing && data.phase === 1;
-  ctx.fillStyle = isGoalLit ? '#f59e0b' : '#060a12';
+  ctx.fillStyle = '#060a12';
   ctx.fillRect(0, 0, W, H);
 
   // Subtle angled stadium speedlines
-  ctx.strokeStyle = isGoalLit ? 'rgba(0, 0, 0, 0.08)' : 'rgba(255, 255, 255, 0.025)';
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.025)';
   ctx.lineWidth = 1.5;
   for (let x = -H; x < W + H; x += 40 * scale) {
     ctx.beginPath();
@@ -423,15 +422,15 @@ function drawHustleBoard(ctx, W, H, data, outlineColor) {
   }
 
   // Outer glowing architectural border in dynamic team color (no CPU shadowBlur)
-  ctx.strokeStyle = isGoalLit ? '#1c1917' : effectiveOutline;
+  ctx.strokeStyle = effectiveOutline;
   ctx.lineWidth = Math.max(4, Math.round(8 * scale));
   ctx.strokeRect(6, 6, W - 12, H - 12);
 
   // HEADER BAR (Maximized)
   const headerH = Math.round(96 * scale);
-  ctx.fillStyle = isGoalLit ? 'rgba(0, 0, 0, 0.15)' : 'rgba(10, 16, 28, 0.96)';
+  ctx.fillStyle = 'rgba(10, 16, 28, 0.96)';
   ctx.fillRect(16, 16, W - 32, headerH);
-  ctx.strokeStyle = isGoalLit ? '#1c1917' : effectiveOutline;
+  ctx.strokeStyle = effectiveOutline;
   ctx.lineWidth = 2;
   ctx.strokeRect(16, 16, W - 32, headerH);
 
@@ -439,12 +438,12 @@ function drawHustleBoard(ctx, W, H, data, outlineColor) {
   ctx.textBaseline = 'middle';
   ctx.textAlign = 'left';
   ctx.font = `900 ${Math.round(46 * scale)}px ui-monospace, SFMono-Regular, Consolas, monospace`;
-  if (darkOutline && !isGoalLit) {
+  if (darkOutline) {
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
     ctx.lineWidth = 4;
     ctx.strokeText('⚡ HUSTLE BOARD', 38, 16 + headerH / 2);
   }
-  ctx.fillStyle = isGoalLit ? '#1c1917' : outlineColor;
+  ctx.fillStyle = outlineColor;
   ctx.fillText('⚡ HUSTLE BOARD', 38, 16 + headerH / 2);
 
   // Telemetry Badge Pill in Header (right-aligned, enlarged and bold)
@@ -455,13 +454,13 @@ function drawHustleBoard(ctx, W, H, data, outlineColor) {
   const badgeX = W - 32 - badgeWidth;
   const badgeY = 16 + (headerH - badgeHeight) / 2;
 
-  ctx.fillStyle = isGoalLit ? 'rgba(0, 0, 0, 0.2)' : 'rgba(255, 255, 255, 0.12)';
-  ctx.strokeStyle = isGoalLit ? '#1c1917' : effectiveOutline;
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
+  ctx.strokeStyle = effectiveOutline;
   ctx.lineWidth = 2;
   ctx.fillRect(badgeX, badgeY, badgeWidth, badgeHeight);
   ctx.strokeRect(badgeX, badgeY, badgeWidth, badgeHeight);
 
-  ctx.fillStyle = isGoalLit ? '#1c1917' : '#ffffff';
+  ctx.fillStyle = '#ffffff';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(badge, badgeX + badgeWidth / 2, badgeY + badgeHeight / 2);
@@ -470,7 +469,7 @@ function drawHustleBoard(ctx, W, H, data, outlineColor) {
   if (data.flashing) {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillStyle = isGoalLit ? '#1c1917' : '#f59e0b';
+    ctx.fillStyle = '#f59e0b';
     ctx.font = `900 ${Math.round(52 * scale)}px ui-monospace, SFMono-Regular, Consolas, monospace`;
     ctx.fillText('★  TARGET GOAL SCORED!  ★', W / 2, H * 0.40);
 

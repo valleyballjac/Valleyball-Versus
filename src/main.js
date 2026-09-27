@@ -52,6 +52,8 @@ import {
   consumeAthleteSpike,
   consumeAthleteBallReset,
   consumeCameraCycle,
+  consumeCameraCyclePlayer,
+  consumeCameraCycleArena,
   consumeMenuToggle,
   getMouseDeltas,
   getControllerAssignments,
@@ -435,6 +437,70 @@ const playerCameras = [
   new PlayerCamera(0, TUNING.players[0]?.cameraMode || 'chase'),
   new PlayerCamera(1, TUNING.players[1]?.cameraMode || 'chase'),
 ];
+
+const CAMERA_MODE_DISPLAY_NAMES = {
+  firstPerson: '1ST PERSON (POV)',
+  thirdPerson: '3RD PERSON (BALL TRACK)',
+  ball: '3RD PERSON (BALL TRACK)',
+  chase: 'CHASE (ACTION)',
+  tactical: 'TACTICAL (OVERHEAD)',
+  broadcast: 'BROADCAST (SIDELINE)',
+  sports: 'BROADCAST (DYNAMIC)',
+};
+
+let cameraToastTimeout = null;
+let cameraToastFadeTimeout = null;
+
+export function showCameraNotification(playerIndex, mode) {
+  if (typeof document === 'undefined') return;
+  const loadingScreen = document.getElementById('loading-screen');
+  if (loadingScreen && loadingScreen.style.display !== 'none') return;
+
+  let toast = document.getElementById('camera-toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'camera-toast';
+    document.body.appendChild(toast);
+  }
+
+  const isSplitscreen = (gameState === 'match') && !!TUNING.camera.splitscreen && athletes.length >= 2;
+  const displayName = CAMERA_MODE_DISPLAY_NAMES[mode] || mode.toUpperCase();
+  const playerPrefix = isSplitscreen
+    ? `<span style="color: ${playerIndex === 0 ? '#ef4444' : '#3b82f6'}; font-weight: 800; margin-right: 6px;">P${playerIndex + 1}</span>`
+    : '';
+
+  toast.innerHTML = `${playerPrefix}<span style="color: #7dd3fc; margin-right: 6px;">CAMERA:</span><span style="color: #ffffff; font-weight: 800;">${displayName}</span>`;
+
+  if (isSplitscreen) {
+    toast.style.left = playerIndex === 0 ? '25%' : '75%';
+  } else {
+    toast.style.left = '50%';
+  }
+
+  toast.style.display = 'block';
+  void toast.offsetWidth;
+  toast.classList.remove('fade-out');
+  toast.classList.add('visible');
+
+  if (cameraToastTimeout) clearTimeout(cameraToastTimeout);
+  if (cameraToastFadeTimeout) clearTimeout(cameraToastFadeTimeout);
+
+  cameraToastTimeout = setTimeout(() => {
+    toast.classList.remove('visible');
+    toast.classList.add('fade-out');
+    cameraToastFadeTimeout = setTimeout(() => {
+      toast.style.display = 'none';
+      cameraToastFadeTimeout = null;
+    }, 350);
+  }, 1300);
+}
+
+playerCameras.forEach((pc) => {
+  pc.onModeChange = (newMode, prevMode, playerIndex) => {
+    showCameraNotification(playerIndex, newMode);
+  };
+});
+
 const turfParticles = createTurfParticleSystem(scene);
 const goalCelebration = createGoalCelebrationSystem(scene);
 
@@ -480,6 +546,23 @@ function cycleCameraMode(playerIndex = 0) {
   const pc = playerCameras[playerIndex] || playerCameras[0];
   const isSplitscreen = (gameState === 'match') && !!TUNING.camera.splitscreen && athletes.length >= 2;
   const mode = pc.cycleMode(isSplitscreen);
+  if (TUNING.players[playerIndex]) TUNING.players[playerIndex].cameraMode = mode;
+  if (playerIndex === 0) TUNING.camera.mode = mode;
+  applyViewportSize();
+}
+
+function cyclePlayerCameraView(playerIndex = 0, delta = 1) {
+  const pc = playerCameras[playerIndex] || playerCameras[0];
+  const mode = pc.cyclePlayerView(delta);
+  if (TUNING.players[playerIndex]) TUNING.players[playerIndex].cameraMode = mode;
+  if (playerIndex === 0) TUNING.camera.mode = mode;
+  applyViewportSize();
+}
+
+function cycleArenaCameraView(playerIndex = 0, delta = 1) {
+  const pc = playerCameras[playerIndex] || playerCameras[0];
+  const isSplitscreen = (gameState === 'match') && !!TUNING.camera.splitscreen && athletes.length >= 2;
+  const mode = pc.cycleArenaView(delta, isSplitscreen);
   if (TUNING.players[playerIndex]) TUNING.players[playerIndex].cameraMode = mode;
   if (playerIndex === 0) TUNING.camera.mode = mode;
   applyViewportSize();
@@ -1193,7 +1276,7 @@ function buildGhostInputs(actions, strikes) {
     // rather than silently inheriting camera-relative facing, which is wrong in
     // every camera but these two.
     facingFollowsCamera:
-      TUNING.camera.mode === 'chase' || TUNING.camera.mode === 'ball',
+      TUNING.camera.mode === 'chase' || TUNING.camera.mode === 'ball' || TUNING.camera.mode === 'thirdPerson' || TUNING.camera.mode === 'firstPerson',
     hasAim: input.hasAim || false,
     aimYaw: input.aimYaw || 0,
     moveWorldX: input.moveWorld ? input.moveWorld.x : 0,
@@ -1860,7 +1943,7 @@ function fixedUpdate(dt, tick) {
       arenaPreset,
       targetGoalZ: (i === 0 ? targetGoalZ_P1 : targetGoalZ_P2),
       facingFollowsCamera:
-        !isAthleteHeld && !activeBotSlots.includes(i) && (playerCameras[i]?.mode === 'chase' || playerCameras[i]?.mode === 'ball'),
+        !isAthleteHeld && !activeBotSlots.includes(i) && (playerCameras[i]?.mode === 'chase' || playerCameras[i]?.mode === 'ball' || playerCameras[i]?.mode === 'thirdPerson' || playerCameras[i]?.mode === 'firstPerson'),
     });
 
     if (preResult?.actions) {
@@ -2177,12 +2260,16 @@ function updateCameras() {
   const frameDelta = Math.min(loop.frameTimeMs / 1000, TUNING.loop.maxFrameTime);
   const activeBall = ball || (balls && balls[0]) || null;
 
-  // Check per-player camera cycle triggers
-  if (consumeCameraCycle(0)) {
-    cycleCameraMode(0);
-  }
-  if (consumeCameraCycle(1)) {
-    cycleCameraMode(1);
+  // Check per-player camera cycle triggers (Dual-axis D-pad & keys)
+  for (let i = 0; i < 2; i++) {
+    const pDelta = consumeCameraCyclePlayer(i);
+    if (pDelta !== 0) {
+      cyclePlayerCameraView(i, pDelta);
+    }
+    const aDelta = consumeCameraCycleArena(i);
+    if (aDelta !== 0) {
+      cycleArenaCameraView(i, aDelta);
+    }
   }
 
   const hoopCenterY = TUNING.match?.hoopCenterY ?? 10.0;
@@ -2279,7 +2366,10 @@ function render(alpha) {
     }
   }
 
-  const isKickoffActive = (gameState === 'match') && !!(matchState && matchState.isCountingDown) && !cinematicCamera.isComplete;
+  // Pre-match pause: freezes simulation and match clock only during the pre-match countdown stage.
+  // During live match play post-countdown, opening pause menu does not freeze simulation.
+  loop.paused = isInGameMenuOpen() && (gameState === 'match' && !!(matchState && matchState.isCountingDown));
+
   const isVictoryActive = (gameState === 'match') && !!(matchState && matchState.matchOver) && victoryCameraActive;
 
   if (gameState === 'flyover') {
@@ -2295,7 +2385,7 @@ function render(alpha) {
     if (cinematicCamera.isComplete) {
       skipFlyover();
     }
-  } else if (gameState === 'menu' || isKickoffActive || isVictoryActive) {
+  } else if (gameState === 'menu' || isVictoryActive) {
     if (isVictoryActive && athletes) {
       const homeScore = matchState ? (matchState.scoreHome || 0) : 0;
       const awayScore = matchState ? (matchState.scoreAway || 0) : 0;
@@ -2353,7 +2443,7 @@ function render(alpha) {
   const p2CamMode = playerCameras[1]?.mode;
   const isSharedCam = (p1CamMode === 'broadcast' && p2CamMode === 'broadcast') ||
                       (p1CamMode === 'sports' && p2CamMode === 'sports');
-  const isSplitscreen = (gameState === 'match') && !!TUNING.camera.splitscreen && athletes.length >= 2 && !isSharedCam && !isKickoffActive && !isVictoryActive;
+  const isSplitscreen = (gameState === 'match') && !!TUNING.camera.splitscreen && athletes.length >= 2 && !isSharedCam && !isVictoryActive;
   const dividerEl = document.getElementById('splitscreen-divider');
   if (dividerEl) {
     dividerEl.style.display = isSplitscreen ? 'block' : 'none';
@@ -2364,7 +2454,7 @@ function render(alpha) {
   // Render stadium shadow maps once per frame across all viewports
   renderer.shadowMap.needsUpdate = true;
 
-  if (gameState === 'menu' || gameState === 'flyover' || isKickoffActive || isVictoryActive) {
+  if (gameState === 'menu' || gameState === 'flyover' || isVictoryActive) {
     cinematicCamera.camera.aspect = width / height;
     cinematicCamera.camera.updateProjectionMatrix();
     renderer.setViewport(0, 0, width, height);
@@ -2375,6 +2465,12 @@ function render(alpha) {
     renderer.setScissorTest(true);
 
     // Left Viewport (Player 1)
+    if (athletes[0]?.setHeadVisible) {
+      athletes[0].setHeadVisible(playerCameras[0].mode !== 'firstPerson');
+    }
+    if (athletes[1]?.setHeadVisible) {
+      athletes[1].setHeadVisible(true);
+    }
     playerCameras[0].camera.aspect = halfW / height;
     playerCameras[0].camera.updateProjectionMatrix();
     renderer.setViewport(0, 0, halfW, height);
@@ -2382,29 +2478,52 @@ function render(alpha) {
     renderer.render(scene, playerCameras[0].camera);
 
     // Right Viewport (Player 2)
+    if (athletes[0]?.setHeadVisible) {
+      athletes[0].setHeadVisible(true);
+    }
+    if (athletes[1]?.setHeadVisible) {
+      athletes[1].setHeadVisible(playerCameras[1].mode !== 'firstPerson');
+    }
     playerCameras[1].camera.aspect = (width - halfW) / height;
     playerCameras[1].camera.updateProjectionMatrix();
     renderer.setViewport(halfW, 0, width - halfW, height);
     renderer.setScissor(halfW, 0, width - halfW, height);
     renderer.render(scene, playerCameras[1].camera);
 
+    // Restore head visibility after viewports
+    if (athletes[0]?.setHeadVisible) athletes[0].setHeadVisible(true);
+    if (athletes[1]?.setHeadVisible) athletes[1].setHeadVisible(true);
+
     renderer.setScissorTest(false);
     renderer.setViewport(0, 0, width, height);
   } else {
     // Single Viewport (Practice, 1 human vs AI, AI vs AI spectator, or shared camera)
     let activeRenderCamera = playerCameras[0].camera;
+    let activeAthleteSlot = 0;
     if (activeBotSlots.length >= 2) {
       // AI vs AI spectator broadcast camera
       activeRenderCamera = spectatorCamera;
+      activeAthleteSlot = -1;
     } else if (activeBotSlots.length === 1 && athletes.length >= 2) {
       // Single human vs AI: ensure the camera renders the human player's viewport
       const humanSlot = activeBotSlots.includes(0) ? 1 : 0;
       activeRenderCamera = playerCameras[humanSlot].camera;
+      activeAthleteSlot = humanSlot;
     }
+
+    const isFp = activeAthleteSlot >= 0 && playerCameras[activeAthleteSlot]?.mode === 'firstPerson';
+    if (activeAthleteSlot >= 0 && athletes[activeAthleteSlot]?.setHeadVisible) {
+      athletes[activeAthleteSlot].setHeadVisible(!isFp);
+    }
+
     activeRenderCamera.aspect = width / height;
     activeRenderCamera.updateProjectionMatrix();
     renderer.setViewport(0, 0, width, height);
     renderer.render(scene, activeRenderCamera);
+
+    if (activeAthleteSlot >= 0 && athletes[activeAthleteSlot]?.setHeadVisible) {
+      athletes[activeAthleteSlot].setHeadVisible(true);
+    }
   }
 
   updateHud(match);
@@ -3181,6 +3300,7 @@ function launchMenuBalls() {
 }
 
 function returnToMainMenu() {
+  loop.paused = false;
   exitGamePointerLock();
   hideInGameMenu();
   hideVictoryScreen();
@@ -3426,7 +3546,9 @@ async function boot() {
   );
 
   initInputRouter(canvas);
-  loop.onFrame(() => sampleAllInputs([playerCameras[0].camera, playerCameras[1].camera], gameState === 'practice' ? 1 : athletes.length, TUNING.match.mode, activeBotSlots));
+  loop.onFrame(() => {
+    sampleAllInputs([playerCameras[0].camera, playerCameras[1].camera], gameState === 'practice' ? 1 : athletes.length, TUNING.match.mode, activeBotSlots);
+  });
 
   applyViewportSize();
   applyCameraTuning();

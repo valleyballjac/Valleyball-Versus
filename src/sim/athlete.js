@@ -67,7 +67,7 @@ export function createAthlete({
   primaryColor = null,
   colorOverride = null,
   spawn = { x: 0, y: 1.5, z: 0, yaw: 0 },
-  assistPreset = 'pureSim',
+  assistPreset = 'standard',
   scene,
   characterSkeleton,
   characterRoot,
@@ -266,6 +266,7 @@ export function createAthlete({
     mountFollowerState,
     actionState,
     strikeState,
+    get assistPreset() { return strikeState.assistPreset; },
     setAssistPreset(presetKey) {
       applyStrikeAssistPreset(strikeState, presetKey);
     },
@@ -554,6 +555,15 @@ export function createAthlete({
       if (ragdoll?.group) ragdoll.group.visible = enabled;
       if (motor?.mesh) motor.mesh.visible = enabled && !!TUNING.debug.showSphereWireframe;
       this._enabled = !!enabled;
+    },
+
+    setHeadVisible(visible) {
+      if (ragdoll?.rig) {
+        const headItem = ragdoll.rig.get('head');
+        if (headItem?.mesh) {
+          headItem.mesh.visible = !!visible;
+        }
+      }
     },
 
     get isEnabled() {
