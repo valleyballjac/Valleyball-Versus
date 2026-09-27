@@ -3,6 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="data:," />
     <title>Valleyball Versus</title>
     <style>
       html,
@@ -159,6 +160,39 @@
 
 
 
+      #camera-toast {
+        display: none;
+        position: fixed;
+        top: 24px;
+        left: 50%;
+        transform: translate(-50%, 0);
+        padding: 8px 18px;
+        background: rgba(6, 12, 22, 0.85);
+        border: 1px solid rgba(0, 229, 255, 0.4);
+        border-radius: 20px;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5), 0 0 14px rgba(0, 229, 255, 0.2);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        color: #ffffff;
+        pointer-events: none;
+        user-select: none;
+        z-index: 9999;
+        opacity: 0;
+        transition: opacity 0.35s ease, transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+        white-space: nowrap;
+      }
+      #camera-toast.visible {
+        opacity: 1;
+        transform: translate(-50%, 0);
+      }
+      #camera-toast.fade-out {
+        opacity: 0;
+        transform: translate(-50%, -6px);
+      }
+
       #splitscreen-divider {
         display: none;
         position: fixed;
@@ -179,7 +213,7 @@
         z-index: 5;
       }
     </style>
-    <script type="module" crossorigin src="/Valleyball-Versus/assets/index-ByCRCeD7.js"></script>
+    <script type="module" crossorigin src="/Valleyball-Versus/assets/index-DFhpA5wD.js"></script>
   </head>
   <body>
     <!-- Dedicated Boot Loading Screen -->
@@ -197,7 +231,7 @@
     ">
       <div style="display: flex; flex-direction: column; align-items: center; gap: 14px;">
         <div style="font-size: 36px; font-weight: 900; letter-spacing: 0.16em; color: #ffffff; text-shadow: 0 0 30px rgba(255,255,255,0.4);">
-          VALLEYBALL<span style="font-size: 16px; vertical-align: top; margin-left: 8px; padding: 3px 8px; border-radius: 4px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.25); color: #00e5ff; letter-spacing: 0.1em; font-weight: 800;">v0.2.5</span>
+          VALLEYBALL<span style="font-size: 16px; vertical-align: top; margin-left: 8px; padding: 3px 8px; border-radius: 4px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.25); color: #00e5ff; letter-spacing: 0.1em; font-weight: 800;">v0.3.0</span>
         </div>
         <div style="font-size: 11px; letter-spacing: 0.28em; text-transform: uppercase; color: #7d97ad; font-weight: 600;">
           ARCADE ARENA E-SPORT
@@ -302,6 +336,7 @@
     </div>
 
     <div id="splitscreen-divider"></div>
+    <div id="camera-toast"></div>
 
   </body>
 </html>
