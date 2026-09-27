@@ -44,6 +44,9 @@ let volRowEl = null;
 let volSliderEl = null;
 let muteRowEl = null;
 let muteBtnEl = null;
+let vibrationRowEl = null;
+let vibrationButtons = [];
+let vibrationOptions = [];
 let p1CamSelObj = null;
 let p2CamSelObj = null;
 let resumeBtnEl = null;
@@ -126,7 +129,7 @@ export function initInGameMenu({
       <span style="font-size: 12px; font-weight: 900; letter-spacing: 0.22em; color: #000000; -webkit-text-stroke: 1px #ffffff; text-stroke: 1px #ffffff;">VERSUS</span>
       <span style="color: rgba(255,255,255,0.3); font-size: 14px;">/</span>
       <span style="color: #ffffff; font-size: 15px; font-weight: 800;">SETTINGS</span>
-      <span style="font-size: 10px; font-weight: 800; color: #00e5ff; background: rgba(0, 229, 255, 0.12); border: 1px solid rgba(0, 229, 255, 0.35); padding: 2px 6px; border-radius: 4px; margin-left: 2px;">v0.2.5</span>
+      <span style="font-size: 10px; font-weight: 800; color: #00e5ff; background: rgba(0, 229, 255, 0.12); border: 1px solid rgba(0, 229, 255, 0.35); padding: 2px 6px; border-radius: 4px; margin-left: 2px;">v0.3.0</span>
     </div>
     <div style="font-size: 11px; color: #fbbf24; margin-top: 2px;">
       ⚡ Play clock continues running in real time
@@ -531,6 +534,7 @@ export function initInGameMenu({
   });
   vibrationRow.appendChild(vibrationLabel);
   vibrationRow.appendChild(vibrationButtonGroup);
+  vibrationRowEl = vibrationRow;
   container.appendChild(vibrationRow);
 
   // 4. Camera Modes Section
@@ -548,12 +552,12 @@ export function initInGameMenu({
     sel.style.cssText = 'width: 100%; padding: 6px 8px; font-family: inherit; font-size: 12px; background: #0f172a; color: #f8fafc; border: 1px solid rgba(120, 170, 210, 0.3); border-radius: 4px; cursor: pointer;';
     const camLabels = {
       chase: '3RD PERSON CHASE',
-      ball: 'BALL TRACKING CAM',
-      sports: 'SPORTS CAM [FULLSCREEN]',
+      thirdPerson: '3RD PERSON (BALL TRACK)',
+      firstPerson: '1ST PERSON (EYE-LEVEL)',
+      tactical: 'TACTICAL OVERHEAD',
       broadcast: 'BROADCAST CAM [FULLSCREEN]',
-      tactical: 'TACTICAL CAM',
     };
-    ['chase', 'ball', 'sports', 'broadcast', 'tactical'].forEach((m) => {
+    ['chase', 'thirdPerson', 'firstPerson', 'tactical', 'broadcast'].forEach((m) => {
       const opt = document.createElement('option');
       opt.value = m;
       opt.textContent = camLabels[m] || (m.toUpperCase() + ' CAM');
@@ -698,9 +702,21 @@ function toggleMute() {
   muteBtnEl?.click();
 }
 
+function toggleVibration() {
+  const nextVal = !isVibrationEnabled();
+  setVibrationEnabled(nextVal);
+  vibrationButtons.forEach((b, idx) => {
+    const isSel = vibrationOptions[idx].id === nextVal;
+    b.style.background = isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
+    b.style.color = isSel ? '#ffffff' : '#94a3b8';
+  });
+  soundManager.playTone(nextVal ? 520 : 360, 0.05, 'sine', 0.2);
+  updateInGameFocusUI();
+}
+
 function cycleCam(playerIdx, sel, dir = 1) {
   if (!sel) return;
-  const modes = ['chase', 'ball', 'sports', 'broadcast', 'tactical'];
+  const modes = ['chase', 'thirdPerson', 'firstPerson', 'tactical', 'broadcast'];
   const curIdx = modes.indexOf(sel.value);
   const nextIdx = (curIdx + dir + modes.length) % modes.length;
   sel.value = modes[nextIdx];
@@ -767,6 +783,14 @@ function getActiveInGameRows() {
       onAction: () => toggleMute(),
     });
   }
+  if (vibrationRowEl) {
+    rows.push({
+      el: vibrationRowEl,
+      onLeft: () => toggleVibration(),
+      onRight: () => toggleVibration(),
+      onAction: () => toggleVibration(),
+    });
+  }
   if (p1CamBox) {
     rows.push({
       el: p1CamBox,
@@ -788,24 +812,38 @@ function getActiveInGameRows() {
       el: resumeBtnEl,
       isButton: true,
       onAction: () => resumeBtnEl.click(),
-      onLeft: () => {},
+      onLeft: () => {
+        if (mainMenuBtnEl) {
+          const mIdx = rows.findIndex((r) => r.el === mainMenuBtnEl);
+          if (mIdx !== -1) {
+            inGameFocusIndex = mIdx;
+            updateInGameFocusUI();
+            soundManager.playTone(400, 0.04, 'sine', 0.15);
+          }
+        }
+      },
       onRight: () => {
         if (mainMenuBtnEl) {
           const mIdx = rows.findIndex((r) => r.el === mainMenuBtnEl);
           if (mIdx !== -1) {
             inGameFocusIndex = mIdx;
             updateInGameFocusUI();
+            soundManager.playTone(400, 0.04, 'sine', 0.15);
           }
         }
       },
-      onDown: () => {
-        if (mainMenuBtnEl) {
-          const mIdx = rows.findIndex((r) => r.el === mainMenuBtnEl);
-          if (mIdx !== -1) {
-            inGameFocusIndex = mIdx;
-            updateInGameFocusUI();
-          }
+      onUp: () => {
+        const rIdx = rows.findIndex((r) => r.el === resumeBtnEl);
+        if (rIdx > 0) {
+          inGameFocusIndex = rIdx - 1;
+          updateInGameFocusUI();
+          soundManager.playTone(400, 0.04, 'sine', 0.15);
         }
+      },
+      onDown: () => {
+        inGameFocusIndex = 0;
+        updateInGameFocusUI();
+        soundManager.playTone(400, 0.04, 'sine', 0.15);
       },
     });
   }
@@ -820,16 +858,32 @@ function getActiveInGameRows() {
           if (rIdx !== -1) {
             inGameFocusIndex = rIdx;
             updateInGameFocusUI();
+            soundManager.playTone(400, 0.04, 'sine', 0.15);
           }
         }
       },
-      onRight: () => {},
+      onRight: () => {
+        if (resumeBtnEl) {
+          const rIdx = rows.findIndex((r) => r.el === resumeBtnEl);
+          if (rIdx !== -1) {
+            inGameFocusIndex = rIdx;
+            updateInGameFocusUI();
+            soundManager.playTone(400, 0.04, 'sine', 0.15);
+          }
+        }
+      },
       onUp: () => {
         const rIdx = rows.findIndex((r) => r.el === resumeBtnEl);
         if (rIdx > 0) {
           inGameFocusIndex = rIdx - 1;
           updateInGameFocusUI();
+          soundManager.playTone(400, 0.04, 'sine', 0.15);
         }
+      },
+      onDown: () => {
+        inGameFocusIndex = 0;
+        updateInGameFocusUI();
+        soundManager.playTone(400, 0.04, 'sine', 0.15);
       },
     });
   }
@@ -1165,6 +1219,10 @@ export function updateInGameMenuBanner(match) {
   if (!isOpen || !clockBannerEl || !match) return;
   if (match.mode !== 'match') {
     clockBannerEl.textContent = 'PRACTICE SANDBOX';
+    return;
+  }
+  if (match.isCountingDown) {
+    clockBannerEl.textContent = `PRE-MATCH · PAUSED (${match.countdownSecondsRemaining ?? 3}s)`;
     return;
   }
   const min = Math.floor(match.ticksRemaining / (60 * 60));

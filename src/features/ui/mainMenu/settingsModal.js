@@ -336,12 +336,217 @@ export function buildMainMenuSettingsModal(rootEl, playerConfigs = [], callbacks
   mainMenuSettingsModalEl.appendChild(box);
   if (rootEl) rootEl.appendChild(mainMenuSettingsModalEl);
 
+  // Navigation rows for controller & keyboard support
+  let settingsFocusIndex = 0;
+  const navRows = [
+    {
+      el: masterRow,
+      onLeft: () => {
+        const val = Math.max(0, parseInt(masterSlider.value, 10) - 5);
+        masterSlider.value = String(val);
+        masterSlider.dispatchEvent(new Event('input'));
+        soundManager.playTone(360, 0.04, 'sine', 0.15);
+      },
+      onRight: () => {
+        const val = Math.min(100, parseInt(masterSlider.value, 10) + 5);
+        masterSlider.value = String(val);
+        masterSlider.dispatchEvent(new Event('input'));
+        soundManager.playTone(480, 0.04, 'sine', 0.15);
+      },
+      onAction: () => {},
+    },
+    {
+      el: sfxRow,
+      onLeft: () => {
+        const val = Math.max(0, parseInt(sfxSlider.value, 10) - 5);
+        sfxSlider.value = String(val);
+        sfxSlider.dispatchEvent(new Event('input'));
+        soundManager.playTone(360, 0.04, 'sine', 0.15);
+      },
+      onRight: () => {
+        const val = Math.min(100, parseInt(sfxSlider.value, 10) + 5);
+        sfxSlider.value = String(val);
+        sfxSlider.dispatchEvent(new Event('input'));
+        soundManager.playTone(480, 0.04, 'sine', 0.15);
+      },
+      onAction: () => {},
+    },
+    {
+      el: shadowRow,
+      onLeft: () => {
+        const curIdx = shadowOpts.findIndex((o) => (TUNING.render?.shadowQuality || 'high') === o.id);
+        const nextIdx = (curIdx - 1 + shadowOpts.length) % shadowOpts.length;
+        shadowBtns[nextIdx]?.click();
+        soundManager.playTone(440, 0.05, 'sine', 0.15);
+      },
+      onRight: () => {
+        const curIdx = shadowOpts.findIndex((o) => (TUNING.render?.shadowQuality || 'high') === o.id);
+        const nextIdx = (curIdx + 1) % shadowOpts.length;
+        shadowBtns[nextIdx]?.click();
+        soundManager.playTone(520, 0.05, 'sine', 0.15);
+      },
+      onAction: () => {
+        const curIdx = shadowOpts.findIndex((o) => (TUNING.render?.shadowQuality || 'high') === o.id);
+        const nextIdx = (curIdx + 1) % shadowOpts.length;
+        shadowBtns[nextIdx]?.click();
+        soundManager.playTone(520, 0.05, 'sine', 0.15);
+      },
+    },
+    {
+      el: overlayRow,
+      onLeft: () => {
+        const target = overlayBtns.find((_, idx) => overlayOpts[idx].id === !overlayOpts[0].id);
+        target?.click();
+        soundManager.playTone(440, 0.05, 'sine', 0.15);
+      },
+      onRight: () => {
+        const target = overlayBtns.find((_, idx) => overlayOpts[idx].id === !overlayOpts[0].id);
+        target?.click();
+        soundManager.playTone(520, 0.05, 'sine', 0.15);
+      },
+      onAction: () => {
+        const isCurrentlyHidden = overlayBtns[0].style.color === 'rgb(255, 255, 255)' || overlayBtns[0].style.color === '#ffffff';
+        overlayBtns[isCurrentlyHidden ? 1 : 0]?.click();
+        soundManager.playTone(520, 0.05, 'sine', 0.15);
+      },
+    },
+    {
+      el: camRow,
+      onLeft: () => {
+        const curIdx = CAMERA_OPTIONS.findIndex((o) => o.id === camSelect.value);
+        const nextIdx = (curIdx - 1 + CAMERA_OPTIONS.length) % CAMERA_OPTIONS.length;
+        camSelect.value = CAMERA_OPTIONS[nextIdx].id;
+        camSelect.dispatchEvent(new Event('change'));
+        soundManager.playTone(440, 0.05, 'sine', 0.15);
+      },
+      onRight: () => {
+        const curIdx = CAMERA_OPTIONS.findIndex((o) => o.id === camSelect.value);
+        const nextIdx = (curIdx + 1) % CAMERA_OPTIONS.length;
+        camSelect.value = CAMERA_OPTIONS[nextIdx].id;
+        camSelect.dispatchEvent(new Event('change'));
+        soundManager.playTone(520, 0.05, 'sine', 0.15);
+      },
+      onAction: () => {
+        const curIdx = CAMERA_OPTIONS.findIndex((o) => o.id === camSelect.value);
+        const nextIdx = (curIdx + 1) % CAMERA_OPTIONS.length;
+        camSelect.value = CAMERA_OPTIONS[nextIdx].id;
+        camSelect.dispatchEvent(new Event('change'));
+        soundManager.playTone(520, 0.05, 'sine', 0.15);
+      },
+    },
+    {
+      el: shakeRow,
+      onLeft: () => {
+        const curMode = TUNING.camera?.shake?.mode || 'subtle';
+        const curIdx = shakeOpts.findIndex((o) => o.id === curMode);
+        const nextIdx = (curIdx - 1 + shakeOpts.length) % shakeOpts.length;
+        shakeBtns[nextIdx]?.click();
+        soundManager.playTone(440, 0.05, 'sine', 0.15);
+      },
+      onRight: () => {
+        const curMode = TUNING.camera?.shake?.mode || 'subtle';
+        const curIdx = shakeOpts.findIndex((o) => o.id === curMode);
+        const nextIdx = (curIdx + 1) % shakeOpts.length;
+        shakeBtns[nextIdx]?.click();
+        soundManager.playTone(520, 0.05, 'sine', 0.15);
+      },
+      onAction: () => {
+        const curMode = TUNING.camera?.shake?.mode || 'subtle';
+        const curIdx = shakeOpts.findIndex((o) => o.id === curMode);
+        const nextIdx = (curIdx + 1) % shakeOpts.length;
+        shakeBtns[nextIdx]?.click();
+        soundManager.playTone(520, 0.05, 'sine', 0.15);
+      },
+    },
+    {
+      el: vibRow,
+      onLeft: () => {
+        const cur = isVibrationEnabled();
+        const target = vibBtns.find((_, idx) => vibOpts[idx].id === !cur);
+        target?.click();
+        soundManager.playTone(440, 0.05, 'sine', 0.15);
+      },
+      onRight: () => {
+        const cur = isVibrationEnabled();
+        const target = vibBtns.find((_, idx) => vibOpts[idx].id === !cur);
+        target?.click();
+        soundManager.playTone(520, 0.05, 'sine', 0.15);
+      },
+      onAction: () => {
+        const cur = isVibrationEnabled();
+        const target = vibBtns.find((_, idx) => vibOpts[idx].id === !cur);
+        target?.click();
+        soundManager.playTone(520, 0.05, 'sine', 0.15);
+      },
+    },
+    {
+      el: closeBtn,
+      isButton: true,
+      onLeft: () => {},
+      onRight: () => {},
+      onAction: () => {
+        soundManager.playTone(330, 0.08, 'sine', 0.2);
+        hideMainMenuSettingsModal();
+      },
+    },
+  ];
+
+  function updateSettingsFocusUI() {
+    navRows.forEach((row, idx) => {
+      const isSel = idx === settingsFocusIndex;
+      if (row.isButton) {
+        if (isSel) {
+          row.el.style.outline = '2px solid #ffffff';
+          row.el.style.outlineOffset = '2px';
+          row.el.style.background = 'rgba(255, 255, 255, 0.25)';
+          row.el.style.borderColor = '#ffffff';
+          row.el.style.boxShadow = '0 0 16px rgba(255, 255, 255, 0.5)';
+          row.el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        } else {
+          row.el.style.outline = 'none';
+          row.el.style.background = 'rgba(255, 255, 255, 0.1)';
+          row.el.style.borderColor = 'rgba(255, 255, 255, 0.25)';
+          row.el.style.boxShadow = 'none';
+        }
+      } else {
+        if (isSel) {
+          row.el.style.outline = '2px solid #ffffff';
+          row.el.style.outlineOffset = '3px';
+          row.el.style.background = 'rgba(255, 255, 255, 0.08)';
+          row.el.style.borderRadius = '6px';
+          row.el.style.boxShadow = '0 0 16px rgba(255, 255, 255, 0.35)';
+          row.el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        } else {
+          row.el.style.outline = 'none';
+          row.el.style.background = 'transparent';
+          row.el.style.boxShadow = 'none';
+        }
+      }
+    });
+  }
+
+  mainMenuSettingsModalEl._moveFocus = (delta) => {
+    settingsFocusIndex = (settingsFocusIndex + delta + navRows.length) % navRows.length;
+    soundManager.playTone(400, 0.04, 'sine', 0.15);
+    updateSettingsFocusUI();
+  };
+  mainMenuSettingsModalEl._handleLeft = () => navRows[settingsFocusIndex]?.onLeft?.();
+  mainMenuSettingsModalEl._handleRight = () => navRows[settingsFocusIndex]?.onRight?.();
+  mainMenuSettingsModalEl._handleAction = () => navRows[settingsFocusIndex]?.onAction?.();
+  mainMenuSettingsModalEl._updateFocusUI = () => {
+    settingsFocusIndex = 0;
+    updateSettingsFocusUI();
+  };
+
   return mainMenuSettingsModalEl;
 }
 
 export function showMainMenuSettingsModal() {
   if (mainMenuSettingsModalEl) {
     mainMenuSettingsModalEl.style.display = 'flex';
+    if (mainMenuSettingsModalEl._updateFocusUI) {
+      mainMenuSettingsModalEl._updateFocusUI();
+    }
   }
 }
 
@@ -354,3 +559,4 @@ export function hideMainMenuSettingsModal() {
 export function getMainMenuSettingsModalEl() {
   return mainMenuSettingsModalEl;
 }
+

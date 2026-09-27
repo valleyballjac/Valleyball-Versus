@@ -8,6 +8,7 @@ export const state = {
   flyoverOverlayEl: null,
   controlsModalEl: null,
   mainMenuSettingsModalEl: null,
+  controllerAssignmentEl: null,
   titleBrandBall: null,
 
   callbacks: {
@@ -31,7 +32,7 @@ export const state = {
       variant: 'classic',
       primaryColor: 0xd90429,
       cameraMode: 'chase',
-      assistPreset: 'pureSim',
+      assistPreset: 'standard',
     },
     {
       name: 'Player 2',
@@ -42,7 +43,7 @@ export const state = {
       variant: 'classic',
       primaryColor: 0x1d4ed8,
       cameraMode: 'chase',
-      assistPreset: 'pureSim',
+      assistPreset: 'standard',
     },
   ],
 

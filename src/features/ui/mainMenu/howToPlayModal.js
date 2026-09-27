@@ -1,6 +1,8 @@
 /**
  * 4. How To Play Modal (Controls, Match Basics, Scoring & Pro Tips)
  */
+import { soundManager } from '../../../audio/soundManager.js';
+
 let rootContainer = null;
 let controlsModalEl = null;
 
@@ -569,9 +571,22 @@ export function buildHowToPlayModal(rootEl) {
   controlsModalEl.appendChild(box);
   if (rootContainer) rootContainer.appendChild(controlsModalEl);
 
+  function cycleDeviceTab() {
+    const next = currentControlsDevice === 'gamepad' ? 'keyboard' : 'gamepad';
+    setDeviceTab(next);
+    soundManager.playTone(480, 0.05, 'sine', 0.2);
+  }
+
+  function scrollContent(pixels) {
+    box.scrollTop += pixels;
+  }
+
   controlsModalEl._setTab = setHowToPlayTab;
   controlsModalEl._setDevice = setDeviceTab;
   controlsModalEl._cycleTab = cycleHowToPlayTab;
+  controlsModalEl._cycleDevice = cycleDeviceTab;
+  controlsModalEl._scrollContent = scrollContent;
+  controlsModalEl._getCurrentTab = () => currentHowToPlayTab;
 }
 
 export function showHowToPlayModal(tab = 'controls') {

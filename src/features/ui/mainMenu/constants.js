@@ -26,10 +26,10 @@ export const PHYSIQUE_OPTIONS = ['classic', 'masculine', 'feminine'];
 
 export const CAMERA_OPTIONS = [
   { id: 'chase', label: '3RD PERSON CHASE (DEFAULT)' },
-  { id: 'ball', label: 'BALL TRACKING CAM' },
-  { id: 'sports', label: 'SPORTS CAM [FULLSCREEN]' },
-  { id: 'broadcast', label: 'SIDELINE BROADCAST [FULLSCREEN]' },
+  { id: 'thirdPerson', label: '3RD PERSON (BALL TRACK)' },
+  { id: 'firstPerson', label: '1ST PERSON (EYE-LEVEL)' },
   { id: 'tactical', label: 'TACTICAL OVERHEAD' },
+  { id: 'broadcast', label: 'SIDELINE BROADCAST [FULLSCREEN]' },
 ];
 
 export const MATCH_BALL_OPTIONS = [
@@ -59,7 +59,7 @@ export const PRACTICE_BALL_OPTIONS = [
 export const BALL_OPTIONS = MATCH_BALL_OPTIONS;
 
 export const ASSIST_OPTIONS = [
-  { id: 'pureSim', label: 'PURE SIM [DEFAULT]', desc: 'True physics · 0% forgiveness' },
-  { id: 'standard', label: 'STANDARD', desc: 'Gamepad buffer · 0.30m hit forgiveness' },
-  { id: 'casual', label: 'CASUAL', desc: 'Accessible · 0.45m hit + 25% target pull' },
+  { id: 'standard', label: 'STANDARD [DEFAULT]', desc: 'v0.2.2 baseline · 0.45m hit forgiveness' },
+  { id: 'pureSim', label: 'PURE SIM', desc: 'True physics · 0% forgiveness' },
+  { id: 'casual', label: 'CASUAL', desc: '0.65m reach + 360° right-stick aim steering' },
 ];

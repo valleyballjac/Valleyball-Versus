@@ -1016,25 +1016,25 @@ const DEFAULTS = {
       },
       standard: {
         id: 'standard',
-        label: 'STANDARD',
-        desc: 'Gamepad buffer · 0.30m hit forgiveness',
-        assistRadius: 0.30,
-        assistWindowTicks: 4,
+        label: 'STANDARD [DEFAULT]',
+        desc: 'v0.2.2 baseline · 0.45m hit forgiveness',
+        assistRadius: 0.45,
+        assistWindowTicks: 6,
         aimMagnetism: 0.0,
       },
       casual: {
         id: 'casual',
         label: 'CASUAL',
-        desc: 'Accessible · 0.45m hit + 25% target pull',
-        assistRadius: 0.45,
-        assistWindowTicks: 6,
-        aimMagnetism: 0.25,
+        desc: '0.65m reach + 360° right-stick aim steering',
+        assistRadius: 0.65,
+        assistWindowTicks: 9,
+        aimMagnetism: 0.0,
       },
     },
 
-    // Baseline Default: Pure Sim (unassisted physics simulation)
-    assistRadius: 0.0,        // m of proximity forgiveness around a qualifying limb
-    assistWindowTicks: 0,     // only within +/- this many ticks of sweetTick
+    // Baseline Default: Standard (v0.2.2 baseline)
+    assistRadius: 0.45,       // m of proximity forgiveness around a qualifying limb
+    assistWindowTicks: 6,     // only within +/- this many ticks of sweetTick
     aimMagnetism: 0.0,        // 0.0 = pure player aim (disabled by default)
 
     // ═══ THE EAST BUTTON IS CONTEXTUAL ═══ (G4.1 §5)
@@ -1544,23 +1544,36 @@ const DEFAULTS = {
       recoverySpeed: 16.0,         // Exponential spring back to normal FOV
     },
 
-    // ═══ THE OTHER THREE VIEWS ═══
-    ballCam: {
-      distance: 8.5,
+    // ═══ CAMERA VIEW CONFIGURATIONS ═══
+    firstPerson: {
+      eyeHeight: 1.15,             // m above motor sphere center (eye level ~1.65m world Y)
+      forwardOffset: 0.14,         // m forward along look vector to clear face geometry
+      minPitch: -1.25,             // rad (~ -71 deg, look down at feet/body)
+      maxPitch: 1.25,              // rad (~ +71 deg, look up at high balls)
+    },
+    chase: {
+      radius: 4.8,                 // m tight action chase distance
+      targetHeight: 1.1,
+    },
+    thirdPerson: {
+      distance: 7.2,               // m balanced action ball-tracking distance
       targetHeight: 1.2,
       minPitch: -0.35,
       maxPitch: 1.25,
       smoothEase: 6.0,
-      restPitch: 0.15,      // rad, relaxed downward angle
-      loftAboveY: 2.2,      // m. Below this the ball's height is not tracked AT ALL.
-      loftPitchGain: 0.55,  // how much pitch compensates when ball is high
-      loftMinDistance: 6.0,
-      pitchEase: 3.0,       // 1/s ease on pitch adjustment
-      lookLiftMax: 6.0,     // m the look-at point rises on a high ball
-      lookLiftGain: 0.50,   // m of lift per m of loft
-      // Manual right-stick override
-      manualReturnDelay: 0.35, // s of stick idle before decaying back to ball lock
-      manualReturnSpeed: 3.5,  // 1/s rate of return to ball
+      pitchEase: 3.5,
+      manualReturnDelay: 0.35,     // s of stick idle before decaying back to ball lock
+      manualReturnSpeed: 3.5,      // 1/s rate of return to ball
+    },
+    ballCam: {
+      distance: 7.2,
+      targetHeight: 1.2,
+      minPitch: -0.35,
+      maxPitch: 1.25,
+      smoothEase: 6.0,
+      pitchEase: 3.5,
+      manualReturnDelay: 0.35,
+      manualReturnSpeed: 3.5,
     },
     broadcast: {
       sideX: 30.0,        // sideline distance, East side

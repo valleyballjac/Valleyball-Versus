@@ -65,7 +65,7 @@ class AthleteManager {
         team,
         variant,
         primaryColor,
-        assistPreset: slotConfig.assistPreset || 'pureSim',
+        assistPreset: slotConfig.assistPreset || 'standard',
         spawn: { x: 0, y: 1.5, z: 0, yaw: 0 },
         scene: this.scene,
         characterSkeleton: this.characterSkeleton,

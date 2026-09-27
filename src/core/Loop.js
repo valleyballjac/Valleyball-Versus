@@ -68,6 +68,7 @@ export class Loop {
 
     this._rafHandle = 0;
     this._running = false;
+    this.paused = false;
     this._onFrame = this._onFrame.bind(this);
   }
 
@@ -175,6 +176,13 @@ export class Loop {
 
     const frameListeners = this._frameListeners;
     for (let i = 0; i < frameListeners.length; i++) frameListeners[i]();
+
+    if (this.paused) {
+      this.accumulator = 0;
+      this._render(0);
+      this._rafHandle = requestAnimationFrame(this._onFrame);
+      return;
+    }
 
     const dt = this.fixedDt;
     this.stepsThisFrame = 0;

@@ -1,6 +1,12 @@
 import { TUNING } from '../../../config/tuning.js';
-import { getControllerAssignments } from '../../../input/inputRouter.js';
+import {
+  getControllerAssignments,
+  getExplicitDeviceMappings,
+  assignDefaultDeviceForSlot,
+  clearDeviceMappingForSlot,
+} from '../../../input/inputRouter.js';
 import { soundManager } from '../../../audio/soundManager.js';
+import { state } from './state.js';
 import {
   PALETTE_SWATCHES,
   getColorName,
@@ -46,7 +52,7 @@ let playerConfigs = [
     variant: 'classic',
     primaryColor: 0xd90429,
     cameraMode: 'chase',
-    assistPreset: 'pureSim',
+    assistPreset: 'standard',
   },
   {
     name: 'Player 2',
@@ -57,7 +63,7 @@ let playerConfigs = [
     variant: 'classic',
     primaryColor: 0x1d4ed8,
     cameraMode: 'chase',
-    assistPreset: 'pureSim',
+    assistPreset: 'standard',
   },
 ];
 
@@ -71,7 +77,10 @@ let matchBallCards = [];
 let matchDurationButtons = [];
 let arenaButtons = [];
 let matchRulesBoxEl = null;
-let matchRulesFocusRow = 0; // 0: ball, 1: duration, 2: arena, 3: ready, 4: start
+let matchRulesFocusRow = 0; // 0: ball, 1: duration, 2: arena, 3: action bar (back, ready p1, start, ready p2)
+let matchRulesActionCol = 2; // 0: back, 1: ready p1, 2: start match, 3: ready p2
+let screen1ActionCol = 1; // 0: back, 1: next
+let practiceActionCol = 1; // 0: back, 1: start drill
 
 let lobbyTitleEl = null;
 let lobbySubtitleEl = null;
@@ -108,7 +117,80 @@ let matchCountdownActive = false;
 let readyBannerEls = [null, null];
 let ctrlTagEls = [null, null];
 
+export function ensureMenuStyles() {
+  if (typeof document === 'undefined') return;
+  if (document.getElementById('valleyball-menu-rainbow-style')) return;
+  const style = document.createElement('style');
+  style.id = 'valleyball-menu-rainbow-style';
+  style.textContent = `
+    @keyframes rainbow-glow {
+      0% {
+        outline-color: #ff2e55 !important;
+        box-shadow: 0 0 18px rgba(255, 46, 85, 0.7), inset 0 0 8px rgba(255, 46, 85, 0.3) !important;
+      }
+      16% {
+        outline-color: #ff6b35 !important;
+        box-shadow: 0 0 18px rgba(255, 107, 53, 0.7), inset 0 0 8px rgba(255, 107, 53, 0.3) !important;
+      }
+      33% {
+        outline-color: #fbb417 !important;
+        box-shadow: 0 0 18px rgba(251, 180, 23, 0.7), inset 0 0 8px rgba(251, 180, 23, 0.3) !important;
+      }
+      50% {
+        outline-color: #00e5ff !important;
+        box-shadow: 0 0 18px rgba(0, 229, 255, 0.7), inset 0 0 8px rgba(0, 229, 255, 0.3) !important;
+      }
+      66% {
+        outline-color: #3b82f6 !important;
+        box-shadow: 0 0 18px rgba(59, 130, 246, 0.7), inset 0 0 8px rgba(59, 130, 246, 0.3) !important;
+      }
+      83% {
+        outline-color: #a855f7 !important;
+        box-shadow: 0 0 18px rgba(168, 85, 247, 0.7), inset 0 0 8px rgba(168, 85, 247, 0.3) !important;
+      }
+      100% {
+        outline-color: #ff2e55 !important;
+        box-shadow: 0 0 18px rgba(255, 46, 85, 0.7), inset 0 0 8px rgba(255, 46, 85, 0.3) !important;
+      }
+    }
+
+    @keyframes bumper-pulse {
+      0%, 100% { transform: scale(1); filter: brightness(1); }
+      50% { transform: scale(1.1); filter: brightness(1.35) drop-shadow(0 0 8px rgba(0, 229, 255, 0.8)); }
+    }
+
+    .rainbow-focused {
+      outline: 3px solid #00e5ff !important;
+      outline-offset: 3px !important;
+      animation: rainbow-glow 2.5s linear infinite !important;
+      transform: scale(1.025) !important;
+      background: rgba(255, 255, 255, 0.08) !important;
+      transition: transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.15s ease !important;
+      z-index: 5 !important;
+    }
+
+    .contextual-btn-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      background: rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      color: #ffffff;
+      box-shadow: 0 0 8px rgba(0, 0, 0, 0.4);
+      vertical-align: middle;
+      user-select: none;
+    }
+  `;
+  document.head.appendChild(style);
+}
+
 export function buildPlayerSetupScreen(root, cbs = {}, navs = {}) {
+  ensureMenuStyles();
   if (root) rootEl = root;
   setPlayerSetupCallbacks(cbs, navs);
   playerSetupEl = document.createElement('div');
@@ -781,21 +863,120 @@ export function updateAggressivenessUI(idx) {
   }
 }
 
+export function updateInputBadgesUI() {
+  const assignments = getControllerAssignments(currentSetupMode === 'practice' ? 1 : 2, currentSetupMode);
+
+  [0, 1].forEach((idx) => {
+    const badge = playerInputBadges[idx];
+    if (!badge) return;
+
+    if (currentSetupMode === 'practice') {
+      badge.textContent = `INPUT: ${assignments.p1 || 'KEYBOARD WASD'}`;
+      badge.style.color = '#ffffff';
+      badge.style.borderColor = 'rgba(255, 255, 255, 0.25)';
+      return;
+    }
+
+    const cfg = playerConfigs[idx];
+    if (cfg && cfg.type === 'ai') {
+      const diff = (cfg.difficulty || 'medium').toUpperCase();
+      badge.textContent = `INPUT: AI BOT (${diff})`;
+      badge.style.color = idx === 0 ? '#00e5ff' : '#ff2e55';
+      badge.style.borderColor = idx === 0 ? 'rgba(0, 229, 255, 0.4)' : 'rgba(255, 46, 85, 0.4)';
+    } else {
+      const devName = idx === 0 ? assignments.p1 : assignments.p2;
+      badge.textContent = `INPUT: ${(devName || (idx === 0 ? 'KEYBOARD WASD' : 'KEYBOARD IJKL')).toUpperCase()}`;
+      badge.style.color = '#ffffff';
+      badge.style.borderColor = 'rgba(255, 255, 255, 0.25)';
+    }
+  });
+}
+
 export function setPlayerType(idx, typeId) {
   if (typeId === 'human') {
     playerConfigs[idx].type = 'human';
     playerReadyState[idx] = false;
+    assignDefaultDeviceForSlot(idx);
   } else {
     playerConfigs[idx].type = 'ai';
     playerConfigs[idx].difficulty = typeId.replace('ai-', '');
     playerReadyState[idx] = true;
+    clearDeviceMappingForSlot(idx);
+  }
+
+  if (state.playerConfigs && state.playerConfigs[idx]) {
+    state.playerConfigs[idx].type = playerConfigs[idx].type;
+    state.playerConfigs[idx].difficulty = playerConfigs[idx].difficulty;
   }
 
   updateReadyUI();
   updateTypeButtonsUI();
   updateAggressivenessUI(idx);
+  updateInputBadgesUI();
   updateFocusUI();
   notifyPlayerUpdate(idx);
+}
+
+export function applyControllerAssignments(assignments = null, mode = 'match') {
+  if (mode === 'practice') {
+    playerConfigs[0].type = 'human';
+    playerReadyState[0] = false;
+    updateTypeButtonsUI();
+    updateReadyUI();
+    updateInputBadgesUI();
+    return;
+  }
+
+  let devP1 = null;
+  let devP2 = null;
+
+  if (assignments) {
+    devP1 = assignments.team1?.[0] || null;
+    devP2 = assignments.team2?.[0] || null;
+  } else {
+    const explicit = getExplicitDeviceMappings();
+    if (explicit) {
+      devP1 = explicit[0] || null;
+      devP2 = explicit[1] || null;
+    }
+  }
+
+  // Update Player 1
+  if (devP1) {
+    playerConfigs[0].type = 'human';
+    playerReadyState[0] = false;
+  } else {
+    playerConfigs[0].type = 'ai';
+    if (!playerConfigs[0].difficulty) playerConfigs[0].difficulty = 'medium';
+    playerReadyState[0] = true;
+  }
+
+  // Update Player 2
+  if (devP2) {
+    playerConfigs[1].type = 'human';
+    playerReadyState[1] = false;
+  } else {
+    playerConfigs[1].type = 'ai';
+    if (!playerConfigs[1].difficulty) playerConfigs[1].difficulty = 'medium';
+    playerReadyState[1] = true;
+  }
+
+  // Keep state.playerConfigs in sync
+  if (state.playerConfigs) {
+    state.playerConfigs[0].type = playerConfigs[0].type;
+    state.playerConfigs[0].difficulty = playerConfigs[0].difficulty;
+    state.playerConfigs[1].type = playerConfigs[1].type;
+    state.playerConfigs[1].difficulty = playerConfigs[1].difficulty;
+  }
+
+  updateTypeButtonsUI();
+  updateReadyUI();
+  updateAggressivenessUI(0);
+  updateAggressivenessUI(1);
+  updateInputBadgesUI();
+  updateFocusUI();
+  notifyPlayerUpdate(0);
+  notifyPlayerUpdate(1);
 }
 
 export function updateTypeButtonsUI() {
@@ -968,7 +1149,7 @@ export function setPlayerAssist(idx, assistId) {
 
 export function updateAssistButtonsUI() {
   [0, 1].forEach((idx) => {
-    const curPreset = playerConfigs[idx]?.assistPreset || 'pureSim';
+    const curPreset = playerConfigs[idx]?.assistPreset || 'standard';
     const btns = playerAssistButtons[idx] || [];
     btns.forEach(({ btn, id }) => {
       const isSelected = id === curPreset;
@@ -986,6 +1167,33 @@ export function updateAssistButtonsUI() {
 }
 
 export function cycleOption(playerIdx, rowIdx, direction = 1) {
+  // Practice Mode row mapping
+  if (currentSetupMode === 'practice') {
+    if (rowIdx === 1) {
+      setPlayerTeam(playerIdx, playerConfigs[playerIdx].team === 'home' ? 'away' : 'home');
+    } else if (rowIdx === 2) {
+      const allowed = PALETTE_SWATCHES;
+      const curIdx = allowed.findIndex((s) => s.hex === playerConfigs[playerIdx].primaryColor);
+      const nextIdx = (curIdx + direction + allowed.length) % allowed.length;
+      setPlayerColor(playerIdx, allowed[nextIdx].hex);
+    } else if (rowIdx === 3) {
+      const curIdx = PHYSIQUE_OPTIONS.indexOf(playerConfigs[playerIdx].variant);
+      const nextIdx = (curIdx + direction + PHYSIQUE_OPTIONS.length) % PHYSIQUE_OPTIONS.length;
+      setPlayerPhysique(playerIdx, PHYSIQUE_OPTIONS[nextIdx]);
+    } else if (rowIdx === 4) {
+      const curIdx = CAMERA_OPTIONS.findIndex((c) => c.id === playerConfigs[playerIdx].cameraMode);
+      const nextIdx = (curIdx + direction + CAMERA_OPTIONS.length) % CAMERA_OPTIONS.length;
+      setPlayerCamera(playerIdx, CAMERA_OPTIONS[nextIdx].id);
+    } else if (rowIdx === 5) {
+      const curPreset = playerConfigs[playerIdx].assistPreset || 'standard';
+      const curIdx = ASSIST_OPTIONS.findIndex((a) => a.id === curPreset);
+      const nextIdx = (curIdx + direction + ASSIST_OPTIONS.length) % ASSIST_OPTIONS.length;
+      setPlayerAssist(playerIdx, ASSIST_OPTIONS[nextIdx].id);
+    }
+    return;
+  }
+
+  // Match Mode Screen 1 row mapping
   if (rowIdx === 0) {
     const types = ['human', 'ai-easy', 'ai-medium', 'ai-hard'];
     const curConfig = playerConfigs[playerIdx];
@@ -994,8 +1202,15 @@ export function cycleOption(playerIdx, rowIdx, direction = 1) {
     const nextIdx = (curIdx + direction + types.length) % types.length;
     setPlayerType(playerIdx, types[nextIdx]);
   } else if (rowIdx === 1) {
-    setPlayerTeam(playerIdx, playerConfigs[playerIdx].team === 'home' ? 'away' : 'home');
+    if (playerConfigs[playerIdx].type === 'ai') {
+      const curVal = playerConfigs[playerIdx].aggressiveness ?? 0.60;
+      const nextVal = Math.max(0, Math.min(1.0, Math.round((curVal + direction * 0.05) * 100) / 100));
+      setPlayerAggressiveness(playerIdx, nextVal);
+      soundManager.playTone(direction > 0 ? 520 : 380, 0.04, 'sine', 0.15);
+    }
   } else if (rowIdx === 2) {
+    setPlayerTeam(playerIdx, playerConfigs[playerIdx].team === 'home' ? 'away' : 'home');
+  } else if (rowIdx === 3) {
     const homeIdx = playerConfigs[0].team === 'home' ? 0 : 1;
     const isAway = playerIdx !== homeIdx;
     const homeColor = playerConfigs[homeIdx].primaryColor;
@@ -1003,22 +1218,26 @@ export function cycleOption(playerIdx, rowIdx, direction = 1) {
     const curIdx = allowed.findIndex((s) => s.hex === playerConfigs[playerIdx].primaryColor);
     const nextIdx = (curIdx + direction + allowed.length) % allowed.length;
     setPlayerColor(playerIdx, allowed[nextIdx].hex);
-  } else if (rowIdx === 3) {
+  } else if (rowIdx === 4) {
     const curIdx = PHYSIQUE_OPTIONS.indexOf(playerConfigs[playerIdx].variant);
     const nextIdx = (curIdx + direction + PHYSIQUE_OPTIONS.length) % PHYSIQUE_OPTIONS.length;
     setPlayerPhysique(playerIdx, PHYSIQUE_OPTIONS[nextIdx]);
-  } else if (rowIdx === 4) {
+  } else if (rowIdx === 5) {
     const curIdx = CAMERA_OPTIONS.findIndex((c) => c.id === playerConfigs[playerIdx].cameraMode);
     const nextIdx = (curIdx + direction + CAMERA_OPTIONS.length) % CAMERA_OPTIONS.length;
     setPlayerCamera(playerIdx, CAMERA_OPTIONS[nextIdx].id);
-  } else if (rowIdx === 5) {
-    const curPreset = playerConfigs[playerIdx].assistPreset || 'pureSim';
+  } else if (rowIdx === 6) {
+    const curPreset = playerConfigs[playerIdx].assistPreset || 'standard';
     const curIdx = ASSIST_OPTIONS.findIndex((a) => a.id === curPreset);
     const nextIdx = (curIdx + direction + ASSIST_OPTIONS.length) % ASSIST_OPTIONS.length;
     setPlayerAssist(playerIdx, ASSIST_OPTIONS[nextIdx].id);
-  } else if (rowIdx === 6) {
-    setupPage = 2;
-    window._updateSetupPage();
+  } else if (rowIdx === 7) {
+    if (screen1ActionCol === 0) {
+      if (navActions.showTitleScreen) navActions.showTitleScreen();
+    } else {
+      setupPage = 2;
+      window._updateSetupPage();
+    }
   }
 }
 
@@ -1281,8 +1500,10 @@ export function buildPlayerColumn(idx, label, themeColor) {
   `;
 
   const labelSpan = document.createElement('span');
-  labelSpan.style.cssText = `font-size: 13px; font-weight: 800; letter-spacing: 0.1em; color: #ffffff;`;
-  labelSpan.textContent = label;
+  labelSpan.style.cssText = `font-size: 13px; font-weight: 800; letter-spacing: 0.1em; color: #ffffff; display: inline-flex; align-items: center; gap: 6px;`;
+  labelSpan.innerHTML = idx === 0
+    ? `<span class="contextual-btn-badge" id="badge-p1-lb" style="border-color:#00e5ff;color:#00e5ff;">LB</span><span>${label}</span>`
+    : `<span>${label}</span><span class="contextual-btn-badge" id="badge-p2-rb" style="border-color:#ff2e55;color:#ff2e55;">RB</span>`;
   if (idx === 0) col1HeaderLabelEl = labelSpan;
 
   const subSpan = document.createElement('span');
@@ -1292,7 +1513,7 @@ export function buildPlayerColumn(idx, label, themeColor) {
   const ctrlTag = document.createElement('span');
   ctrlTag.id = `ctrl-tag-p${idx + 1}`;
   ctrlTag.style.cssText = 'font-size: 10px; font-weight: 800; margin-left: 8px; letter-spacing: 0.05em; color: #ffffff;';
-  ctrlTag.textContent = idx === 0 ? '[ACTIVE FOCUS]' : '[LB/RB SWITCH]';
+  ctrlTag.innerHTML = idx === 0 ? '<span class="contextual-btn-badge" style="border-color:#10b981;color:#10b981;">ACTIVE FOCUS</span>' : '<span class="contextual-btn-badge">LB/RB SWITCH</span>';
   ctrlTagEls[idx] = ctrlTag;
 
   pHeader.appendChild(labelSpan);
@@ -1451,6 +1672,16 @@ export function buildPlayerColumn(idx, label, themeColor) {
     cursor: pointer;
     height: 5px;
   `;
+  aggContainer.onclick = () => {
+    playerFocusRow[idx] = 1;
+    focusedColumn = idx;
+    updateFocusUI();
+  };
+  aggSlider.onfocus = () => {
+    playerFocusRow[idx] = 1;
+    focusedColumn = idx;
+    updateFocusUI();
+  };
 
   const btnPlus = document.createElement('button');
   btnPlus.textContent = '+';
@@ -1514,6 +1745,7 @@ export function buildPlayerColumn(idx, label, themeColor) {
 
   typeCard.appendChild(aggContainer);
   playerRowElements[idx][0] = typeRow;
+  playerRowElements[idx][1] = aggContainer;
   col.appendChild(typeCard);
 
   // SUB-WINDOW 1: TEAM OPTIONS
@@ -1560,7 +1792,7 @@ export function buildPlayerColumn(idx, label, themeColor) {
       cursor: pointer;
     `;
     btn.onclick = () => {
-      playerFocusRow[idx] = 1;
+      playerFocusRow[idx] = 2;
       focusedColumn = idx;
       updateFocusUI();
       setPlayerTeam(idx, t.id);
@@ -1570,7 +1802,7 @@ export function buildPlayerColumn(idx, label, themeColor) {
   });
   teamStatusRow.appendChild(teamBtnRow);
   teamCard.appendChild(teamStatusRow);
-  playerRowElements[idx][1] = teamStatusRow;
+  playerRowElements[idx][2] = teamStatusRow;
 
   // Row 2: Team Color Swatches
   const teamColorRow = document.createElement('div');
@@ -1596,7 +1828,7 @@ export function buildPlayerColumn(idx, label, themeColor) {
       transition: transform 0.1s ease;
     `;
     swBtn.onclick = () => {
-      playerFocusRow[idx] = 2;
+      playerFocusRow[idx] = 3;
       focusedColumn = idx;
       updateFocusUI();
       setPlayerColor(idx, swatch.hex);
@@ -1606,7 +1838,7 @@ export function buildPlayerColumn(idx, label, themeColor) {
   });
   teamColorRow.appendChild(swatchGrid);
   teamCard.appendChild(teamColorRow);
-  playerRowElements[idx][2] = teamColorRow;
+  playerRowElements[idx][3] = teamColorRow;
 
   col.appendChild(teamCard);
 
@@ -1652,7 +1884,7 @@ export function buildPlayerColumn(idx, label, themeColor) {
       cursor: pointer;
     `;
     btn.onclick = () => {
-      playerFocusRow[idx] = 3;
+      playerFocusRow[idx] = 4;
       focusedColumn = idx;
       updateFocusUI();
       setPlayerPhysique(idx, variant);
@@ -1662,7 +1894,7 @@ export function buildPlayerColumn(idx, label, themeColor) {
   });
   physiqueRow.appendChild(physiqueBtnRow);
   charCard.appendChild(physiqueRow);
-  playerRowElements[idx][3] = physiqueRow;
+  playerRowElements[idx][4] = physiqueRow;
 
   // Row 4: Preferred Camera
   const cameraRow = document.createElement('div');
@@ -1693,20 +1925,20 @@ export function buildPlayerColumn(idx, label, themeColor) {
     camSelect.appendChild(el);
   });
   camSelect.onchange = (e) => {
-    playerFocusRow[idx] = 4;
+    playerFocusRow[idx] = 5;
     focusedColumn = idx;
     updateFocusUI();
     setPlayerCamera(idx, e.target.value);
   };
   camSelect.onfocus = () => {
-    playerFocusRow[idx] = 4;
+    playerFocusRow[idx] = 5;
     focusedColumn = idx;
     updateFocusUI();
   };
   playerCameraSelects[idx] = camSelect;
   cameraRow.appendChild(camSelect);
   charCard.appendChild(cameraRow);
-  playerRowElements[idx][4] = cameraRow;
+  playerRowElements[idx][5] = cameraRow;
 
   // Row 5: Strike Assist Preset
   const assistRow = document.createElement('div');
@@ -1721,7 +1953,7 @@ export function buildPlayerColumn(idx, label, themeColor) {
   ASSIST_OPTIONS.forEach((opt) => {
     const btn = document.createElement('button');
     btn.textContent = opt.label.replace(' [DEFAULT]', '');
-    const isSelected = (playerConfigs[idx].assistPreset || 'pureSim') === opt.id;
+    const isSelected = (playerConfigs[idx].assistPreset || 'standard') === opt.id;
     btn.style.cssText = `
       flex: 1;
       padding: 6px 2px;
@@ -1737,7 +1969,7 @@ export function buildPlayerColumn(idx, label, themeColor) {
       transition: all 0.15s ease;
     `;
     btn.onclick = () => {
-      playerFocusRow[idx] = 5;
+      playerFocusRow[idx] = 6;
       focusedColumn = idx;
       updateFocusUI();
       setPlayerAssist(idx, opt.id);
@@ -1749,16 +1981,16 @@ export function buildPlayerColumn(idx, label, themeColor) {
 
   const assistDescEl = document.createElement('div');
   assistDescEl.style.cssText = 'font-size: 9.5px; color: #7dd3fc; margin-top: 2px; font-weight: 600; min-height: 14px;';
-  const curOpt = ASSIST_OPTIONS.find((o) => o.id === (playerConfigs[idx].assistPreset || 'pureSim'));
+  const curOpt = ASSIST_OPTIONS.find((o) => o.id === (playerConfigs[idx].assistPreset || 'standard'));
   assistDescEl.textContent = curOpt?.desc || '';
   playerAssistDescEls[idx] = assistDescEl;
   assistRow.appendChild(assistDescEl);
 
   charCard.appendChild(assistRow);
-  playerRowElements[idx][5] = assistRow;
+  playerRowElements[idx][6] = assistRow;
 
   // Row 6: Next Button
-  playerRowElements[idx][6] = btnNext;
+  playerRowElements[idx][7] = btnNext;
 
   col.appendChild(charCard);
 
@@ -1781,45 +2013,55 @@ export function updateFocusUI() {
 
     const activeRow = playerFocusRow[0];
 
-    // Rows 1..4 (Character options: Team, Swatch, Physique, Camera)
-    [1, 2, 3, 4].forEach((rIdx) => {
+    // Rows 1..5: Team Status, Team Color, Physique, Camera, Strike Assist
+    [1, 2, 3, 4, 5].forEach((rIdx) => {
       const el = playerRowElements[0]?.[rIdx];
       if (!el) return;
       if (rIdx === activeRow) {
-        el.style.outline = '2px solid #ffffff';
-        el.style.outlineOffset = '2px';
-        el.style.boxShadow = '0 0 12px rgba(255, 255, 255, 0.3)';
-        el.style.background = 'rgba(255, 255, 255, 0.06)';
+        el.classList.add('rainbow-focused');
       } else {
+        el.classList.remove('rainbow-focused');
         el.style.outline = 'none';
         el.style.boxShadow = 'none';
         el.style.background = 'transparent';
+        el.style.transform = 'scale(1)';
       }
     });
 
-    // Row 5: Practice Ball Selector Box
+    // Row 6: Practice Ball Selector Box
     if (ballBox) {
-      if (activeRow === 5) {
-        ballBox.style.borderColor = '#ffffff';
-        ballBox.style.outline = '2px solid #ffffff';
-        ballBox.style.outlineOffset = '2px';
-        ballBox.style.boxShadow = '0 0 20px rgba(255, 255, 255, 0.5), 0 0 25px rgba(0, 229, 255, 0.25)';
+      if (activeRow === 6) {
+        ballBox.classList.add('rainbow-focused');
       } else {
+        ballBox.classList.remove('rainbow-focused');
         ballBox.style.borderColor = 'rgba(255, 255, 255, 0.15)';
         ballBox.style.outline = 'none';
         ballBox.style.boxShadow = 'none';
+        ballBox.style.transform = 'scale(1)';
       }
     }
 
-    // Row 6: Start Practice Drill Button
-    if (btnStartMatch) {
-      if (activeRow === 6) {
-        btnStartMatch.style.outline = '2px solid #34d399';
-        btnStartMatch.style.outlineOffset = '2px';
-        btnStartMatch.style.boxShadow = '0 0 20px rgba(52, 211, 153, 0.6)';
+    // Row 7: Action Row (Back and Start Drill)
+    if (btnBack && btnStartMatch) {
+      if (activeRow === 7) {
+        if (practiceActionCol === 0) {
+          btnBack.classList.add('rainbow-focused');
+          btnStartMatch.classList.remove('rainbow-focused');
+          btnStartMatch.style.outline = 'none';
+          btnStartMatch.style.transform = 'scale(1)';
+        } else {
+          btnStartMatch.classList.add('rainbow-focused');
+          btnBack.classList.remove('rainbow-focused');
+          btnBack.style.outline = 'none';
+          btnBack.style.transform = 'scale(1)';
+        }
       } else {
+        btnBack.classList.remove('rainbow-focused');
+        btnStartMatch.classList.remove('rainbow-focused');
+        btnBack.style.outline = 'none';
         btnStartMatch.style.outline = 'none';
-        btnStartMatch.style.boxShadow = '0 4px 18px rgba(16, 185, 129, 0.5)';
+        btnBack.style.transform = 'scale(1)';
+        btnStartMatch.style.transform = 'scale(1)';
       }
     }
     return;
@@ -1830,97 +2072,73 @@ export function updateFocusUI() {
     // Row 0: Match Ball Box
     if (ballBox) {
       if (matchRulesFocusRow === 0) {
-        ballBox.style.borderColor = '#ffffff';
-        ballBox.style.outline = '2px solid #ffffff';
-        ballBox.style.outlineOffset = '2px';
-        ballBox.style.boxShadow = '0 0 20px rgba(255, 255, 255, 0.5), 0 0 25px rgba(0, 229, 255, 0.25)';
+        ballBox.classList.add('rainbow-focused');
       } else {
+        ballBox.classList.remove('rainbow-focused');
         ballBox.style.borderColor = 'rgba(255, 255, 255, 0.15)';
         ballBox.style.outline = 'none';
         ballBox.style.boxShadow = 'none';
+        ballBox.style.transform = 'scale(1)';
       }
     }
 
     // Row 1: Match Duration Box
     if (durationBox) {
       if (matchRulesFocusRow === 1) {
-        durationBox.style.borderColor = '#ffffff';
-        durationBox.style.outline = '2px solid #ffffff';
-        durationBox.style.outlineOffset = '2px';
-        durationBox.style.boxShadow = '0 0 20px rgba(255, 255, 255, 0.5), 0 0 25px rgba(0, 229, 255, 0.25)';
+        durationBox.classList.add('rainbow-focused');
       } else {
+        durationBox.classList.remove('rainbow-focused');
         durationBox.style.borderColor = 'rgba(255, 255, 255, 0.15)';
         durationBox.style.outline = 'none';
         durationBox.style.boxShadow = 'none';
+        durationBox.style.transform = 'scale(1)';
       }
     }
 
     // Row 2: Arena Selector Box
     if (arenaBox) {
       if (matchRulesFocusRow === 2) {
-        arenaBox.style.borderColor = '#ffffff';
-        arenaBox.style.outline = '2px solid #ffffff';
-        arenaBox.style.outlineOffset = '2px';
-        arenaBox.style.boxShadow = '0 0 20px rgba(255, 255, 255, 0.5), 0 0 25px rgba(0, 229, 255, 0.25)';
+        arenaBox.classList.add('rainbow-focused');
       } else {
+        arenaBox.classList.remove('rainbow-focused');
         arenaBox.style.borderColor = 'rgba(255, 255, 255, 0.15)';
         arenaBox.style.outline = 'none';
         arenaBox.style.boxShadow = 'none';
+        arenaBox.style.transform = 'scale(1)';
       }
     }
 
-    // Row 3: Ready Buttons
-    [0, 1].forEach((idx) => {
-      const readyBtn = playerReadyButtons[idx];
-      if (readyBtn) {
-        const isReadyFocused = (matchRulesFocusRow === 3) && (isSingleController ? focusedColumn === idx : true);
-        if (isReadyFocused) {
-          readyBtn.style.outline = '2px solid #ffffff';
-          readyBtn.style.outlineOffset = '2px';
-          readyBtn.style.transform = 'scale(1.02)';
-        } else {
-          readyBtn.style.outline = 'none';
-          readyBtn.style.transform = 'scale(1)';
-        }
+    // Row 3: Unified Action Bar (Back, Ready P1, Start Match, Ready P2)
+    const actionBtns = [btnBack, btnReadyP1, btnStartMatch, btnReadyP2];
+    actionBtns.forEach((btn, colIdx) => {
+      if (!btn) return;
+      const isFocused = (matchRulesFocusRow === 3) && (matchRulesActionCol === colIdx);
+      if (isFocused) {
+        btn.classList.add('rainbow-focused');
+      } else {
+        btn.classList.remove('rainbow-focused');
+        btn.style.outline = 'none';
+        btn.style.transform = 'scale(1)';
       }
     });
-
-    // Row 4: Start Match / Spectate Match Button
-    if (btnStartMatch) {
-      if (matchRulesFocusRow === 4) {
-        btnStartMatch.style.outline = '3px solid #ffffff';
-        btnStartMatch.style.outlineOffset = '2px';
-        btnStartMatch.style.transform = 'scale(1.02)';
-        btnStartMatch.style.boxShadow = '0 0 24px rgba(255, 255, 255, 0.7), 0 0 30px rgba(0, 229, 255, 0.35)';
-      } else {
-        btnStartMatch.style.outline = 'none';
-        btnStartMatch.style.transform = 'scale(1)';
-        btnStartMatch.style.boxShadow = btnStartMatch.disabled
-          ? 'none'
-          : (playerConfigs.every((c) => c.type === 'ai')
-              ? '0 0 25px rgba(0, 229, 255, 0.6), 0 4px 20px rgba(0, 229, 255, 0.4)'
-              : '0 4px 20px rgba(255, 255, 255, 0.45), 0 0 25px rgba(0, 229, 255, 0.25)');
-      }
-    }
     return;
   }
 
   // 3. MATCH MODE SCREEN 1: PLAYER & TEAM SETUP
-  // Column focus tags & borders
   [0, 1].forEach((idx) => {
     const tag = ctrlTagEls[idx];
     const col = idx === 0 ? col1El : col2El;
     if (tag) {
       if (!isSingleController) {
-        tag.textContent = `[P${idx + 1} / PAD ${idx + 1}]`;
+        tag.innerHTML = `<span class="contextual-btn-badge">[P${idx + 1} / PAD ${idx + 1}]</span>`;
         tag.style.color = '#ffffff';
       } else {
         if (focusedColumn === idx) {
-          tag.textContent = '[ACTIVE FOCUS]';
-          tag.style.color = '#ffffff';
+          tag.innerHTML = `<span class="contextual-btn-badge" style="border-color:#10b981;color:#10b981;box-shadow:0 0 10px rgba(16,185,129,0.5);">ACTIVE FOCUS</span>`;
         } else {
-          tag.textContent = '[LB/RB SWITCH]';
-          tag.style.color = '#64748b';
+          tag.innerHTML = idx === 0
+            ? `<span class="contextual-btn-badge" style="animation:bumper-pulse 1.8s infinite;border-color:#00e5ff;color:#00e5ff;">◀ LB SWITCH</span>`
+            : `<span class="contextual-btn-badge" style="animation:bumper-pulse 1.8s infinite;border-color:#ff2e55;color:#ff2e55;">RB SWITCH ▶</span>`;
         }
       }
     }
@@ -1935,37 +2153,59 @@ export function updateFocusUI() {
     const activeRow = playerFocusRow[idx];
     const isThisColActive = !isSingleController || focusedColumn === idx;
 
-    // Rows 0..5: Type, Team, Color, Physique, Camera, Strike Assist
-    [0, 1, 2, 3, 4, 5].forEach((rIdx) => {
+    // Rows 0..6: Type, AI Agg, Team, Color, Physique, Camera, Strike Assist
+    [0, 1, 2, 3, 4, 5, 6].forEach((rIdx) => {
       const el = playerRowElements[idx]?.[rIdx];
       if (!el) return;
-      if (rIdx === activeRow && isThisColActive) {
-        el.style.outline = '2px solid #ffffff';
-        el.style.outlineOffset = '2px';
-        el.style.boxShadow = '0 0 12px rgba(255, 255, 255, 0.3)';
-        el.style.background = 'rgba(255, 255, 255, 0.06)';
+      const isFocused = (rIdx === activeRow && isThisColActive);
+      if (isFocused) {
+        el.classList.add('rainbow-focused');
+        let hint = el.querySelector('.contextual-row-hint');
+        if (!hint) {
+          hint = document.createElement('span');
+          hint.className = 'contextual-btn-badge contextual-row-hint';
+          hint.style.cssText = 'float:right;font-size:9px;color:#00e5ff;border-color:#00e5ff;box-shadow:0 0 8px rgba(0,229,255,0.4);';
+          hint.textContent = '◀ D-PAD ▶';
+          const header = el.querySelector('div') || el;
+          header.appendChild(hint);
+        }
+        hint.style.display = 'inline-flex';
       } else {
+        el.classList.remove('rainbow-focused');
         el.style.outline = 'none';
         el.style.boxShadow = 'none';
         el.style.background = 'transparent';
+        el.style.transform = 'scale(1)';
+        const hint = el.querySelector('.contextual-row-hint');
+        if (hint) hint.style.display = 'none';
       }
     });
   });
 
-  // Row 6: Next Button
-  if (btnNext) {
-    const isNextFocused = isSingleController
-      ? (playerFocusRow[focusedColumn] === 6)
-      : (playerFocusRow[0] === 6 || playerFocusRow[1] === 6);
-    if (isNextFocused) {
-      btnNext.style.outline = '2px solid #ffffff';
-      btnNext.style.outlineOffset = '2px';
-      btnNext.style.transform = 'scale(1.02)';
-      btnNext.style.boxShadow = '0 0 20px rgba(16, 185, 129, 0.8), 0 0 25px rgba(255, 255, 255, 0.4)';
+  // Row 7: Action Row (Back and Next)
+  if (btnBack && btnNext) {
+    const isActionFocused = isSingleController
+      ? (playerFocusRow[focusedColumn] === 7)
+      : (playerFocusRow[0] === 7 || playerFocusRow[1] === 7);
+    if (isActionFocused) {
+      if (screen1ActionCol === 0) {
+        btnBack.classList.add('rainbow-focused');
+        btnNext.classList.remove('rainbow-focused');
+        btnNext.style.outline = 'none';
+        btnNext.style.transform = 'scale(1)';
+      } else {
+        btnNext.classList.add('rainbow-focused');
+        btnBack.classList.remove('rainbow-focused');
+        btnBack.style.outline = 'none';
+        btnBack.style.transform = 'scale(1)';
+      }
     } else {
+      btnNext.classList.remove('rainbow-focused');
+      btnBack.classList.remove('rainbow-focused');
       btnNext.style.outline = 'none';
+      btnBack.style.outline = 'none';
       btnNext.style.transform = 'scale(1)';
-      btnNext.style.boxShadow = '0 4px 18px rgba(16, 185, 129, 0.5)';
+      btnBack.style.transform = 'scale(1)';
     }
   }
 }
@@ -1978,6 +2218,12 @@ export function notifyPlayerUpdate(idx) {
 
 
 
+export function getScreen1ActionCol() { return screen1ActionCol; }
+export function setScreen1ActionCol(v) { screen1ActionCol = v; }
+export function getMatchRulesActionCol() { return matchRulesActionCol; }
+export function setMatchRulesActionCol(v) { matchRulesActionCol = v; }
+export function getPracticeActionCol() { return practiceActionCol; }
+export function setPracticeActionCol(v) { practiceActionCol = v; }
 export function getPlayerConfigs() { return playerConfigs; }
 export function getSelectedMatchBall() { return selectedMatchBall; }
 export function setSelectedMatchBall(val) { selectedMatchBall = val; }
@@ -2024,12 +2270,20 @@ export const playerSetup = {
   set setupPage(v) { setupPage = v; },
   get matchRulesFocusRow() { return matchRulesFocusRow; },
   set matchRulesFocusRow(v) { matchRulesFocusRow = v; },
+  get matchRulesActionCol() { return matchRulesActionCol; },
+  set matchRulesActionCol(v) { matchRulesActionCol = v; },
+  get screen1ActionCol() { return screen1ActionCol; },
+  set screen1ActionCol(v) { screen1ActionCol = v; },
+  get practiceActionCol() { return practiceActionCol; },
+  set practiceActionCol(v) { practiceActionCol = v; },
+  get playerConfigs() { return playerConfigs; },
   get playerInputBadges() { return playerInputBadges; },
   get playerFocusRow() { return playerFocusRow; },
   get focusedColumn() { return focusedColumn; },
   set focusedColumn(v) { focusedColumn = v; },
   get btnStartMatch() { return btnStartMatch; },
   get btnBack() { return btnBack; },
+  get btnNext() { return btnNext; },
   get playerReadyState() { return playerReadyState; },
   get matchCountdownActive() { return matchCountdownActive; },
   get playerSetupEl() { return playerSetupEl; },
@@ -2042,4 +2296,7 @@ export const playerSetup = {
   togglePlayerReady,
   updateReadyUI,
   updateFocusUI,
+  updateInputBadgesUI,
+  applyControllerAssignments,
+  setPlayerType,
 };

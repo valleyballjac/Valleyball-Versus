@@ -88,6 +88,11 @@ export function createPerception() {
             angularVelocity: new THREE.Vector3(),
             speed: 0,
             heightAboveGround: 0,
+            altitude: 0,
+            isGrounded: false,
+            isGroundBall: false,
+            isMidBall: false,
+            isAerialBall: false,
             radius: 0.5,
             mass: 2.0,
             id: 'medium',
@@ -134,9 +139,7 @@ export function createPerception() {
         ballIntercept: {
             position: new THREE.Vector3(),
             ticksToArrive: 0,
-            reachable: false,
-            heightAboveGround: 0,
-            requiresJump: false,
+            reachable: false
         },
         trajectory: {
             samples: trajectorySamples,
@@ -321,11 +324,6 @@ export function evaluateOpponentContest(selfPos, selfVel, oppPos, oppVel, defend
     let selfNodeIdx = -1;
     let oppNodeIdx = -1;
 
-    let fallbackSelfIdx = -1;
-    let fallbackOppIdx = -1;
-    let minSelfFloorDelta = Infinity;
-    let minOppFloorDelta = Infinity;
-
     const selfSpeed = 5.4;
     const oppSpeed = 5.4;
 
@@ -333,64 +331,42 @@ export function evaluateOpponentContest(selfPos, selfVel, oppPos, oppVel, defend
         const sample = trajectory.samples[i];
         const t = sample.time;
 
-        const floorY = getCourtFloorY(sample.pos.x, sample.pos.z);
-        const heightAboveFloor = sample.pos.y - floorY;
-
-        // Physical striking envelope: standing reach (0.15m..2.4m) through running jump-spike apex (up to 3.6m)
-        // or ground contact / bounce
-        const isStrikeable = (heightAboveFloor >= 0.15 && heightAboveFloor <= 3.6) || sample.isBounce || sample.isGrounded;
+        const sampleFloorY = getCourtFloorY(sample.pos.x, sample.pos.z);
+        const sampleRelY = sample.pos.y - sampleFloorY;
+        const isReachableHeight = sampleRelY >= 0.1 && sampleRelY <= 3.4;
 
         // Self reachability
-        const distSelf = Math.hypot(sample.pos.x - selfPos.x, sample.pos.z - selfPos.z);
-        const timeToReachSelf = 0.10 + distSelf / selfSpeed;
-
-        if (timeToReachSelf <= t) {
-            if (isStrikeable && earliestSelfTick === Infinity) {
+        if (isReachableHeight && earliestSelfTick === Infinity) {
+            const distSelf = Math.hypot(sample.pos.x - selfPos.x, sample.pos.z - selfPos.z);
+            const timeToReachSelf = 0.12 + distSelf / selfSpeed;
+            if (timeToReachSelf <= t) {
                 earliestSelfTick = sample.tick;
                 selfNodeIdx = i;
-            } else if (earliestSelfTick === Infinity && heightAboveFloor < minSelfFloorDelta) {
-                minSelfFloorDelta = heightAboveFloor;
-                fallbackSelfIdx = i;
             }
         }
 
         // Opponent reachability
-        if (hasOpponent) {
+        if (hasOpponent && isReachableHeight && earliestOppTick === Infinity) {
             const distOpp = Math.hypot(sample.pos.x - oppPos.x, sample.pos.z - oppPos.z);
-            const timeToReachOpp = 0.10 + distOpp / oppSpeed;
+            const timeToReachOpp = 0.12 + distOpp / oppSpeed;
             if (timeToReachOpp <= t) {
-                if (isStrikeable && earliestOppTick === Infinity) {
-                    earliestOppTick = sample.tick;
-                    oppNodeIdx = i;
-                } else if (earliestOppTick === Infinity && heightAboveFloor < minOppFloorDelta) {
-                    minOppFloorDelta = heightAboveFloor;
-                    fallbackOppIdx = i;
-                }
+                earliestOppTick = sample.tick;
+                oppNodeIdx = i;
             }
         }
 
-        if (earliestSelfTick !== Infinity && (earliestOppTick !== Infinity || !hasOpponent)) {
+        if (earliestSelfTick !== Infinity && earliestOppTick !== Infinity) {
             break;
         }
     }
 
     if (earliestSelfTick === Infinity) {
-        if (fallbackSelfIdx >= 0) {
-            earliestSelfTick = trajectory.samples[fallbackSelfIdx].tick;
-            selfNodeIdx = fallbackSelfIdx;
-        } else {
-            earliestSelfTick = 480;
-            selfNodeIdx = TRAJECTORY_SAMPLES_COUNT - 1;
-        }
+        earliestSelfTick = 480;
+        selfNodeIdx = TRAJECTORY_SAMPLES_COUNT - 1;
     }
     if (earliestOppTick === Infinity) {
-        if (fallbackOppIdx >= 0) {
-            earliestOppTick = trajectory.samples[fallbackOppIdx].tick;
-            oppNodeIdx = fallbackOppIdx;
-        } else {
-            earliestOppTick = 480;
-            oppNodeIdx = TRAJECTORY_SAMPLES_COUNT - 1;
-        }
+        earliestOppTick = 480;
+        oppNodeIdx = TRAJECTORY_SAMPLES_COUNT - 1;
     }
 
     trajectory.earliestInterceptTickSelf = earliestSelfTick;
@@ -540,8 +516,13 @@ export function buildPerception(ownAthlete, opponentAthlete, activeBalls, matchS
         perception.ball.id = nearestBall.id || (nearestBall.radius <= 0.3 ? 'small' : (nearestBall.radius >= 0.6 ? 'large' : 'medium'));
         perception.ball.radius = nearestBall.radius || 0.5;
         perception.ball.mass = nearestBall.body.mass ? nearestBall.body.mass() : (nearestBall.mass || 2.0);
-        perception.ball.speed = perception.ball.velocity.length();
-        perception.ball.heightAboveGround = perception.ball.position.y - perception.ball.radius;
+        const ballFloorY = getCourtFloorY(t.x, t.z);
+        perception.ball.altitude = Math.max(0, perception.ball.position.y - (ballFloorY + perception.ball.radius));
+        perception.ball.heightAboveGround = perception.ball.altitude;
+        perception.ball.isGrounded = perception.ball.altitude < 0.15;
+        perception.ball.isGroundBall = perception.ball.altitude < 0.65;
+        perception.ball.isMidBall = perception.ball.altitude >= 0.65 && perception.ball.altitude < 1.75;
+        perception.ball.isAerialBall = perception.ball.altitude >= 1.75;
 
         // Trajectory apex and vertical state
         const peakTime = perception.ball.velocity.y > 0 ? perception.ball.velocity.y / 12.0 : 0;
@@ -575,9 +556,6 @@ export function buildPerception(ownAthlete, opponentAthlete, activeBalls, matchS
         perception.ballIntercept.position.copy(perception.trajectory.earliestInterceptPosSelf);
         perception.ballIntercept.ticksToArrive = perception.trajectory.earliestInterceptTickSelf;
         perception.ballIntercept.reachable = perception.trajectory.earliestInterceptTickSelf < 480;
-        const interceptFloorY = getCourtFloorY(perception.ballIntercept.position.x, perception.ballIntercept.position.z);
-        perception.ballIntercept.heightAboveGround = Math.max(0, perception.ballIntercept.position.y - interceptFloorY);
-        perception.ballIntercept.requiresJump = perception.ballIntercept.heightAboveGround > 2.2;
 
         // Line-of-action vectors
         perception.hoops.vecToAttackGoal

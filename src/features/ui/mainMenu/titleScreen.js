@@ -1,5 +1,7 @@
 import { createBrandBall } from '../../../visuals/brandBall.js';
 import { state } from './state.js';
+import { showToast } from './toast.js';
+import { soundManager } from '../../../audio/soundManager.js';
 
 /**
  * Main Menu Title Screen
@@ -82,7 +84,7 @@ export function buildTitleScreen(rootEl, navActions = {}) {
   `;
 
   const versionBadge = document.createElement('div');
-  versionBadge.textContent = 'v0.2.5';
+  versionBadge.textContent = 'v0.3.0';
   versionBadge.style.cssText = `
     font-size: 11px;
     font-weight: 800;
@@ -127,29 +129,17 @@ export function buildTitleScreen(rootEl, navActions = {}) {
     }
   };
 
-  // Unselectable 2v2 Versus Item
-  const btnMatch2v2 = document.createElement('div');
-  btnMatch2v2.id = 'btn-play-match-2v2-soon';
-  btnMatch2v2.style.cssText = `
-    position: relative;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 14px 20px;
-    font-size: 14px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    color: rgba(255, 255, 255, 0.35);
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px dashed rgba(255, 255, 255, 0.18);
-    border-radius: 8px;
-    cursor: not-allowed;
-    user-select: none;
-    pointer-events: none;
-  `;
+  // 2v2 Versus Item (Locked Preview: Coming Soon)
+  const btnMatch2v2 = createMenuButton('PLAY MATCH (2v2 VERSUS)', 'rgba(245, 158, 11, 0.06)', () => {
+    showToast('2v2 Versus is currently in development — coming soon in the next update!', 'warning', 3500);
+    soundManager?.playTone?.(480, 0.08, 'sine', 0.16);
+  });
+  btnMatch2v2.id = 'btn-play-match-2v2';
+  btnMatch2v2.style.opacity = '0.65';
+  btnMatch2v2.style.cursor = 'not-allowed';
   btnMatch2v2.innerHTML = `
-    <span>PLAY MATCH (2v2 VERSUS)</span>
-    <span style="font-size: 10px; font-weight: 800; letter-spacing: 0.14em; padding: 3px 8px; border-radius: 4px; background: rgba(255, 255, 255, 0.08); color: #ffffff; border: 1px solid rgba(255, 255, 255, 0.25);">COMING SOON</span>
+    <span style="display:flex;align-items:center;gap:8px;">🔒 PLAY MATCH (2v2 VERSUS)</span>
+    <span class="contextual-btn-badge" style="background:#f59e0b;color:#000;border:none;font-weight:900;">COMING SOON</span>
   `;
 
   const btnSettings = createMenuButton('SETTINGS', 'rgba(255, 255, 255, 0.08)', () => {
@@ -162,13 +152,42 @@ export function buildTitleScreen(rootEl, navActions = {}) {
   });
   btnHowToPlay.id = 'btn-title-how-to-play';
 
+  // In-Browser Link Buttons
+  const btnValleyballVS = createMenuButton('VALLEYBALLVS.COM ↗', 'rgba(0, 229, 255, 0.08)', () => {
+    window.open('https://ValleyballVS.com', '_blank');
+  });
+  btnValleyballVS.id = 'btn-link-valleyball-vs';
+  btnValleyballVS.innerHTML = `
+    <span style="display:flex;align-items:center;gap:8px;">VALLEYBALLVS.COM</span>
+    <span class="contextual-btn-badge" style="background:rgba(0,229,255,0.18);color:#00e5ff;border:1px solid rgba(0,229,255,0.45);">VISIT SITE ↗</span>
+  `;
+
+  const btnValleyballOrg = createMenuButton('VALLEYBALL.ORG ↗', 'rgba(255, 255, 255, 0.08)', () => {
+    window.open('https://Valleyball.org', '_blank');
+  });
+  btnValleyballOrg.id = 'btn-link-valleyball-org';
+  btnValleyballOrg.innerHTML = `
+    <span style="display:flex;align-items:center;gap:8px;">VALLEYBALL.ORG</span>
+    <span class="contextual-btn-badge" style="background:rgba(255,255,255,0.15);color:#ffffff;border:1px solid rgba(255,255,255,0.35);">ORGANIZATION ↗</span>
+  `;
+
   menuList.appendChild(btnPractice);
   menuList.appendChild(btnPlayMatch);
   menuList.appendChild(btnMatch2v2);
   menuList.appendChild(btnSettings);
   menuList.appendChild(btnHowToPlay);
+  menuList.appendChild(btnValleyballVS);
+  menuList.appendChild(btnValleyballOrg);
 
-  state.titleButtons = [btnPractice, btnPlayMatch, btnSettings, btnHowToPlay];
+  state.titleButtons = [
+    btnPractice,
+    btnPlayMatch,
+    btnMatch2v2,
+    btnSettings,
+    btnHowToPlay,
+    btnValleyballVS,
+    btnValleyballOrg,
+  ];
   state.titleFocusIndex = 0;
   state.titleButtons.forEach((btn, idx) => {
     btn.onmouseenter = () => {
@@ -191,14 +210,12 @@ export function updateTitleFocusUI() {
     if (!btn) return;
     const isPlayMatch = btn.id === 'btn-play-match';
     if (idx === state.titleFocusIndex) {
-      btn.style.transform = 'translateX(12px)';
-      btn.style.borderColor = '#ffffff';
-      btn.style.boxShadow = '0 0 22px rgba(255, 255, 255, 0.6), 0 0 25px rgba(0, 229, 255, 0.3), 0 0 35px rgba(255, 46, 85, 0.25)';
-      btn.style.outline = '2px solid #ffffff';
-      btn.style.outlineOffset = '2px';
+      btn.classList.add('rainbow-focused');
+      btn.style.transform = 'translateX(12px) scale(1.025)';
       try { btn.focus(); } catch (_) {}
     } else {
-      btn.style.transform = 'translateX(0)';
+      btn.classList.remove('rainbow-focused');
+      btn.style.transform = 'translateX(0) scale(1)';
       btn.style.borderColor = isPlayMatch ? '#ffffff' : 'rgba(255, 255, 255, 0.2)';
       btn.style.boxShadow = isPlayMatch ? '0 4px 20px rgba(255, 255, 255, 0.45), 0 0 25px rgba(0, 229, 255, 0.25)' : '0 4px 16px rgba(0, 0, 0, 0.4)';
       btn.style.outline = 'none';
