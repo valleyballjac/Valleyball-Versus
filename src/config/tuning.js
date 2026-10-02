@@ -667,6 +667,12 @@ const DEFAULTS = {
     // held airborne pose — the mechanics work whether or not the art is there.
     slideClip: 'Slide Left',
     diveClip: 'Running Dive',
+    // The hands-up volley take is a pure defensive pose here: it receives no
+    // strike resolver or impulse. Its physical limb colliders do the blocking.
+    braceClip: 'Idle Two Hand Volley',
+    braceHoldPhase: 0.65,
+    // Leave locomotion/jump visible even at full hold: never freeze a stance.
+    braceMaxShare: 0.4,
 
     // THE PELVIS'S CLAMP, BOOSTED WHILE SLIDING. At speed the whole body is
     // dragging on the floor, and the tracker's mass-proportional impulse cap is

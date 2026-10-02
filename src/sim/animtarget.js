@@ -299,6 +299,8 @@ export function createAnimTarget(characterRoot, clips, rig) {
     // which action is running.
     slideMix: 0,
     diveMix: 0,
+    // Held defence share. It is a continuous pose overlay, never a movement lock.
+    braceMix: 0,
     slidePhase: 0,
     divePhase: 0,
     // THE STRIKES join on exactly those terms (G4). A continuous share and a
@@ -568,9 +570,9 @@ function buildBlendNodes(state) {
   // The clone matters for the same reason the reversed back node needed one:
   // three's mixer caches one action per clip uuid, so a fallback sharing the
   // standing jump's clip would share its action, its time and its weight.
-  const makeAction = (id, wanted) => {
+  const makeAction = (id, wanted, cloneClip = false) => {
     const clip = findClip(state, wanted);
-    if (clip) return { node: make(id, clip, 0), fallback: false };
+    if (clip) return { node: make(id, cloneClip ? clip.clone() : clip, 0), fallback: false };
     const stand = requireClip(TUNING.jump.standingClip).clone();
     stand.name = `${wanted} (fallback: held ${TUNING.jump.standingClip})`;
     return { node: make(id, stand, 0), fallback: true };
@@ -578,6 +580,9 @@ function buildBlendNodes(state) {
 
   const slideBuilt = makeAction('slide', TUNING.action.slideClip);
   const diveBuilt = makeAction('dive', TUNING.action.diveClip);
+  // Clone the clip because the strike row may play the same authored take; one
+  // AnimationAction cannot independently carry brace and strike weights.
+  const braceBuilt = makeAction('brace', TUNING.action.braceClip, true);
   // THE THREE STRIKE NODES, built on the same terms and through the same
   // fallback. Three rather than two because the spike is authored L and R as
   // genuinely different takes — measured channel-by-channel against each other
@@ -600,6 +605,7 @@ function buildBlendNodes(state) {
   const action = {
     slide: slideBuilt.node,
     dive: diveBuilt.node,
+    brace: braceBuilt.node,
     volley: volleyBuilt.node,
     spikeL: spikeLBuilt.node,
     spikeR: spikeRBuilt.node,
@@ -608,6 +614,7 @@ function buildBlendNodes(state) {
   };
   state.slideIsFallback = slideBuilt.fallback;
   state.diveIsFallback = diveBuilt.fallback;
+  state.braceIsFallback = braceBuilt.fallback;
   state.volleyIsFallback = volleyBuilt.fallback;
   state.spikeLIsFallback = spikeLBuilt.fallback;
   state.spikeRIsFallback = spikeRBuilt.fallback;
@@ -663,6 +670,7 @@ function buildBlendNodes(state) {
     standUp.faceUp,
     action.slide,
     action.dive,
+    action.brace,
     action.volley,
     action.spikeL,
     action.spikeR,
@@ -690,6 +698,7 @@ function buildBlendNodes(state) {
   const actionClips = [
     ['slide', TUNING.action.slideClip, slideBuilt],
     ['dive', TUNING.action.diveClip, diveBuilt],
+    ['brace', TUNING.action.braceClip, braceBuilt],
     ['volley', TUNING.strike.volley.clip, volleyBuilt],
     ['spike (left)', TUNING.strike.spike.clipLeft, spikeLBuilt],
     ['spike (right)', TUNING.strike.spike.clipRight, spikeRBuilt],
@@ -1274,6 +1283,10 @@ function writeClipTimes(state) {
   state.nodes.action.dive.action.time = state.diveIsFallback
     ? TUNING.jump.apexHold * state.nodes.action.dive.duration
     : diveFraction * state.nodes.action.dive.duration;
+  const braceFraction = TUNING.action.braceHoldPhase;
+  state.nodes.action.brace.action.time = state.braceIsFallback
+    ? TUNING.jump.apexHold * state.nodes.action.brace.duration
+    : braceFraction * state.nodes.action.brace.duration;
 
   // THE STRIKES, on the same terms. Both rows are scrubbed every step whichever
   // one is playing: the phase is shared, the windows are not, and writing only
@@ -1502,6 +1515,7 @@ function readGhostInputs(state, inputs) {
   state.steerInput = inputs.steerInput;
   state.slideMix = inputs.slideMix;
   state.diveMix = inputs.diveMix;
+  state.braceMix = inputs.braceMix;
   state.slidePhase = inputs.slidePhase;
   state.divePhase = inputs.divePhase;
   state.strikeMix = inputs.strikeMix;
@@ -1590,7 +1604,10 @@ export function updateAnimTarget(
     // stopSpeed, and diveMix follows a latch the cooldown bounds. Neither can
     // sit high over a real knockdown and hold the stand-up out, and as either
     // decays the stand-up takes the tier back continuously.
-    const actionDemand = Math.min(1, state.slideMix + state.diveMix + state.strikeMix);
+    // A brace must not mask a real knockdown; unlike a slide it is not a
+    // committed move. Its share fades with the ONE physical balance weight.
+    const braceDemand = state.braceMix * state.recoveryWeight * TUNING.action.braceMaxShare;
+    const actionDemand = Math.min(1, state.slideMix + state.diveMix + braceDemand + state.strikeMix);
     const actionShare = actionDemand;
     const afterAction = 1 - actionDemand;
 
@@ -1645,12 +1662,14 @@ export function updateAnimTarget(
     // The dive's share used to be written as `1 - slidePart`, which is the same
     // number while there are two of them and the wrong one the moment there are
     // three. Every part is now explicit and they sum to 1 by construction.
-    const actionTotal = state.slideMix + state.diveMix + state.strikeMix;
+    const actionTotal = state.slideMix + state.diveMix + braceDemand + state.strikeMix;
     const slidePart = actionTotal > 0 ? state.slideMix / actionTotal : 0;
     const divePart = actionTotal > 0 ? state.diveMix / actionTotal : 0;
+    const bracePart = actionTotal > 0 ? braceDemand / actionTotal : 0;
     const strikePart = actionTotal > 0 ? state.strikeMix / actionTotal : 0;
     state.nodes.action.slide.action.setEffectiveWeight(actionShare * slidePart);
     state.nodes.action.dive.action.setEffectiveWeight(actionShare * divePart);
+    state.nodes.action.brace.action.setEffectiveWeight(actionShare * bracePart);
 
     // THE STRIKE'S SHARE GOES TO EXACTLY ONE OF ITS FIVE NODES. The kind picks
     // the row — volley, spike or kick — the recorded side picks which of a

@@ -223,6 +223,7 @@ export function createAthlete({
       steerInput: Math.hypot(inputSnapshot.moveWorld.x, inputSnapshot.moveWorld.z),
       slideMix: actions.slideMix,
       diveMix: actions.diveMix,
+      braceMix: actions.braceMix,
       slidePhase: actions.slidePhase,
       divePhase: actions.divePhase,
       strikeMix: strikes.strikeMix,

@@ -1257,6 +1257,7 @@ function buildGhostInputs(actions, strikes) {
     steerInput: Math.hypot(input.moveWorld.x, input.moveWorld.z),
     slideMix: actions.slideMix,
     diveMix: actions.diveMix,
+    braceMix: actions.braceMix,
     slidePhase: actions.slidePhase,
     divePhase: actions.divePhase,
     // The strike's share and scrub, plus the two recorded values that pick
@@ -1921,6 +1922,7 @@ function fixedUpdate(dt, tick) {
         moveZ: 0,
         sprintHeld: false,
         slideHeld: false,
+        braceHeld: false,
         moveWorld: _zeroVector,
       };
       jumpQueued = false;

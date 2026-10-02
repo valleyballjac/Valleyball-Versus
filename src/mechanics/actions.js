@@ -148,6 +148,7 @@ export function runActions({
   // which is only the handful of ticks between boot and the first spawn.
   let slideMix = null;
   let diveMix = null;
+  let braceMix = null;
   let slidePhase = null;
   let divePhase = null;
 
@@ -439,11 +440,16 @@ export function runActions({
     // phase alive across a respawn, and that is a behaviour change.
     slideMix = ghost.slideMix;
     diveMix = ghost.diveMix;
+    braceMix = ghost.braceMix;
     slidePhase = ghost.slidePhase;
     divePhase = ghost.divePhase;
     slideMix += ((sliding ? 1 : 0) - slideMix) * ease;
     diveMix += ((state.divePending ? 1 : 0) - diveMix) * ease;
-    // Phases for real action clips, from the same tick accumulators. A fallback
+    // Brace is a held pose share only: no motor scale, cooldown, impulse, or
+    // locomotion gate is attached to it. Raised arm colliders meet the ball
+    // through Rapier's normal contact solve.
+    braceMix += ((input.braceHeld ? 1 : 0) - braceMix) * ease;
+    // Phases for real action clips, from the same tick accumulators.
     // node ignores these and holds the apex pose instead.
     // THE SLIDE PHASE IS A RATCHET WITH A HOLD POINT, not a fraction of a
     // timer — the timer is gone, and a clip scrubbed 0..1 stood the athlete
@@ -488,6 +494,7 @@ export function runActions({
     /** The ghost's four action inputs, or null before the first spawn. */
     slideMix,
     diveMix,
+    braceMix,
     slidePhase,
     divePhase,
     /** The tick on which the most recent dive was launched. */

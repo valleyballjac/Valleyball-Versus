@@ -30,6 +30,8 @@ const P1_KEYS = {
   dive: ['KeyQ'],
   jump: 'Space',
   cut: ['KeyV'],
+  // Held defence: a pose overlay only. It never gates movement or motor input.
+  brace: ['KeyG'],
   volley: ['KeyE'],
   spike: ['KeyR'],
   ballReset: ['KeyB'],
@@ -45,6 +47,8 @@ const P2_KEYS = {
   dive: ['KeyU'],
   jump: 'Enter',
   cut: ['KeyN'],
+  // P2 mirrors P1's held defence without sharing a movement key.
+  brace: ['KeyH'],
   volley: ['KeyP'],
   spike: ['BracketLeft', 'KeyY'],
   ballReset: ['KeyM'],
@@ -58,6 +62,7 @@ const GAMEPAD_BUTTONS = {
   cut: 4,         // LB / L1 (Left Shoulder)
   sprint: 6,      // LT / Left Trigger
   slide: 7,       // RT / Right Trigger
+  brace: 5,       // RB / R1 (Right Shoulder)
   ballReset: 8,   // Select / Back / View
   pauseMenu: 9,   // Start / Options
 };
@@ -81,6 +86,8 @@ export function createInputSlot() {
     moveZ: 0,
     sprintHeld: false,
     slideHeld: false,
+    // Input state, not character state: actions sample this held signal each tick.
+    braceHeld: false,
     jumpQueued: false,
     diveQueued: false,
     cutQueued: false,
@@ -532,6 +539,7 @@ export function sampleAllInputs(cameras, athleteCount = 2, mode = 'match', botSl
     let z = (heldKeys.has(P1_KEYS.moveUp) ? 1 : 0) - (heldKeys.has(P1_KEYS.moveDown) ? 1 : 0);
     let sprintHeld = P1_KEYS.sprint.some((k) => heldKeys.has(k));
     let slideHeld = P1_KEYS.slide.some((k) => heldKeys.has(k));
+    let braceHeld = P1_KEYS.brace.some((k) => heldKeys.has(k));
     let lookX = 0;
     let lookY = 0;
 
@@ -548,6 +556,7 @@ export function sampleAllInputs(cameras, athleteCount = 2, mode = 'match', botSl
 
       if (padDown(p1Pad, GAMEPAD_BUTTONS.sprint)) sprintHeld = true;
       if (padDown(p1Pad, GAMEPAD_BUTTONS.slide)) slideHeld = true;
+      if (padDown(p1Pad, GAMEPAD_BUTTONS.brace)) braceHeld = true;
 
       const prev = getPadPrev(0);
       const jumpDown = padDown(p1Pad, GAMEPAD_BUTTONS.jump);
@@ -611,6 +620,7 @@ export function sampleAllInputs(cameras, athleteCount = 2, mode = 'match', botSl
     slot.moveZ = z;
     slot.sprintHeld = sprintHeld;
     slot.slideHeld = slideHeld;
+    slot.braceHeld = braceHeld;
     slot.lookX = lookX;
     slot.lookY = lookY;
     slot.hasAim = false;
@@ -633,6 +643,7 @@ export function sampleAllInputs(cameras, athleteCount = 2, mode = 'match', botSl
     let z = (heldKeys.has(P2_KEYS.moveUp) ? 1 : 0) - (heldKeys.has(P2_KEYS.moveDown) ? 1 : 0);
     let sprintHeld = P2_KEYS.sprint.some((k) => heldKeys.has(k));
     let slideHeld = P2_KEYS.slide.some((k) => heldKeys.has(k));
+    let braceHeld = P2_KEYS.brace.some((k) => heldKeys.has(k));
     let lookX = 0;
     let lookY = 0;
 
@@ -649,6 +660,7 @@ export function sampleAllInputs(cameras, athleteCount = 2, mode = 'match', botSl
 
       if (padDown(p2Pad, GAMEPAD_BUTTONS.sprint)) sprintHeld = true;
       if (padDown(p2Pad, GAMEPAD_BUTTONS.slide)) slideHeld = true;
+      if (padDown(p2Pad, GAMEPAD_BUTTONS.brace)) braceHeld = true;
 
       const prev = getPadPrev(1);
       const jumpDown = padDown(p2Pad, GAMEPAD_BUTTONS.jump);
@@ -712,6 +724,7 @@ export function sampleAllInputs(cameras, athleteCount = 2, mode = 'match', botSl
     slot.moveZ = z;
     slot.sprintHeld = sprintHeld;
     slot.slideHeld = slideHeld;
+    slot.braceHeld = braceHeld;
     slot.lookX = lookX;
     slot.lookY = lookY;
     slot.hasAim = false;

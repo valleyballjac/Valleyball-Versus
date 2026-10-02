@@ -393,7 +393,10 @@ function selectStrategy(bot, perception, params, tick) {
  * @param {number} dt         fixed timestep (1/60)
  */
 export function updateBot(bot, athlete, opponent, balls, matchState, inputSlot, tick, dt) {
-  if (inputSlot) inputSlot.cutQueued = false;
+  if (inputSlot) {
+    inputSlot.cutQueued = false;
+    inputSlot.braceHeld = false;
+  }
   if (!athlete || !balls || balls.length === 0) {
     steerIdle(inputSlot);
     return;
