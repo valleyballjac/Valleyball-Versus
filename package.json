@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Valleyball — Iteration 2: deterministic fixed-step foundation plus the Rapier sphere motor and bowl arena.",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --port 5174 --strictPort",
     "build": "vite build",
     "preview": "vite preview",
     "deploy": "gh-pages -d dist",

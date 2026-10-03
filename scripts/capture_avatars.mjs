@@ -13,7 +13,7 @@ import { chromium } from 'playwright';
 import { createServer } from 'vite';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const PORT = 5173;
+const PORT = 5174;
 const TIMEOUT_MS = 60_000;
 
 const CHROMIUM_ARGS = [

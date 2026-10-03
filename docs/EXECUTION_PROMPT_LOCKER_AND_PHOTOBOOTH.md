@@ -11,7 +11,7 @@ Valleyball Versus is a fast-paced, physics-driven digital sport played on sloped
 
 ### The 3 Anti-Hallucination Guardrails (Read Carefully):
 1. **Never Touch Rapier Physics:** Cosmetics are strictly visual scene-graph decorations (`THREE.Group`, `THREE.Mesh`). They are attached to bones or existing `solidMesh` groups. They must **NEVER** register Rapier colliders, rigid bodies, or physics mass.
-2. **Never Render WebGL in Naked Node.js:** Node.js has no DOM or WebGL canvas. All rendering must occur inside the browser context via the Vite development server (`http://localhost:5173/?mode=photobooth`).
+2. **Never Render WebGL in Naked Node.js:** Node.js has no DOM or WebGL canvas. All rendering must occur inside the browser context via the Vite development server (`http://localhost:5174/?mode=photobooth`).
 3. **Continuous Compiler Verification:** After every stage, execute `npm run build`. Never proceed to the next stage if the build produces compiler or bundle errors.
 
 ---
@@ -124,5 +124,5 @@ In `src/main.js`:
 ### Stage 4: Verification & Execution
 1. Run `npm run build` in PowerShell. Ensure 0 errors and a clean exit.
 2. Launch Vite in dev mode (`npm run dev`).
-3. Open `http://localhost:5173/?mode=photobooth` in the browser or via automated runner to generate all 10 avatars into `captures/avatars/`.
+3. Open `http://localhost:5174/?mode=photobooth` in the browser or via automated runner to generate all 10 avatars into `captures/avatars/`.
 4. Inspect the generated images in `captures/avatars/` to confirm proper scaling, no clipping, and accurate palette assignments.
