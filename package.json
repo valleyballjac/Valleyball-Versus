@@ -1,7 +1,7 @@
 {
   "name": "valleyball",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.3.1",
   "type": "module",
   "description": "Valleyball \u2014 Physics volleyball simulation featuring deterministic ragdoll physics and AI opponents.",
   "scripts": {

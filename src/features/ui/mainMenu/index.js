@@ -37,7 +37,6 @@ import {
   buildControllerAssignmentScreen,
   showControllerAssignment,
   hideControllerAssignment,
-  getControllerAssignmentEl,
 } from './controllerAssignment.js';
 import {
   buildTitleScreen,
@@ -80,7 +79,6 @@ import {
   setSetupPage,
   setMatchRulesFocusRow,
   setFocusedColumn,
-  getPlayerReadyState,
   getPlayerFocusRow,
   applyControllerAssignments,
   updateInputBadgesUI,

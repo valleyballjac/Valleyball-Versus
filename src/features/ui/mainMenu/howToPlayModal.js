@@ -330,7 +330,7 @@ export function buildHowToPlayModal(rootEl) {
           <span style="color: #7dd3fc; font-weight: 800; font-size: 8.5px;">SLIDE</span>
         </div>
         <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 72px; height: 50px; background: #0f172a; border: 1px solid #3b82f6; border-radius: 8px; box-shadow: 0 0 12px rgba(59,130,246,0.35);">
-          <span style="color: #ffffff; font-weight: 900; font-size: 13px;">F</span>
+          <span style="color: #ffffff; font-weight: 900; font-size: 13px;">V / F</span>
           <span style="color: #93c5fd; font-weight: 800; font-size: 8.5px;">CUT</span>
         </div>
         <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 200px; height: 50px; background: #0f172a; border: 2px solid #10b981; border-radius: 8px; box-shadow: 0 0 16px rgba(16,185,129,0.45);">
@@ -341,7 +341,7 @@ export function buildHowToPlayModal(rootEl) {
 
       <!-- Sub-notice for P2 -->
       <div style="text-align: center; font-size: 10.5px; color: #64748b; font-weight: 600; margin-top: 4px;">
-        PLAYER 2 SECONDARY KEYBOARD: <span style="color: #94a3b8;">IJKL (Move) · Enter (Jump) · Slash (Sprint) · O (Slide) · H (Cut) · U (Dive) · P (Volley) · Bracket [ (Spike)</span>
+        PLAYER 2 SECONDARY KEYBOARD: <span style="color: #94a3b8;">IJKL (Move) · Enter (Jump) · Slash (Sprint) · O (Slide) · N / H (Cut) · U (Dive) · P (Volley) · Bracket [ (Spike)</span>
       </div>
     </div>
   `;
@@ -362,13 +362,13 @@ export function buildHowToPlayModal(rootEl) {
     { action: 'Aim Strikes / Look', pad: 'Right Stick', key: 'Mouse Movement · Arrow Keys', color: '#38bdf8' },
     { action: 'Sprint Boost', pad: 'Left Trigger (LT)', key: 'Shift · (P2: Slash /)', color: '#38bdf8' },
     { action: 'Slide Tackle (Hold)', pad: 'Right Trigger (RT)', key: 'C · (P2: O)', color: '#38bdf8' },
-    { action: 'Directional Cut / Plant', pad: 'Left Bumper (LB / L1)', key: 'F · (P2: H)', color: '#3b82f6' },
+    { action: 'Directional Cut / Plant', pad: 'Left Bumper (LB / L1)', key: 'V / F · (P2: N / H)', color: '#3b82f6' },
     { action: 'Jump (Hold for Height)', pad: 'A / Cross', key: 'Space · (P2: Enter)', color: '#10b981' },
     { action: 'Ground Dive', pad: 'X / Square', key: 'Q · (P2: U)', color: '#a855f7' },
     { action: 'Volley / Kick Strike', pad: 'B / Circle', key: 'Left-Click · E · (P2: P)', color: '#38bdf8' },
     { action: 'Spike Strike', pad: 'Y / Triangle', key: 'Right-Click · R · (P2: Bracket [)', color: '#f43f5e' },
     { action: 'Reset Ball (Practice)', pad: 'Select / Back / View', key: 'B · (P2: N)', color: '#f59e0b' },
-    { action: 'Cycle Camera Angle', pad: 'D-Pad', key: 'Tab · (P2: Backslash \\)', color: '#fbbf24' },
+    { action: 'Cycle Camera Angle', pad: 'D-Pad', key: 'Tab (Shift+Tab: Arena) · (P2: ] / \\)', color: '#fbbf24' },
     { action: 'Pause Menu / Settings', pad: 'Start / Options', key: 'Escape', color: '#ef4444' },
   ];
 

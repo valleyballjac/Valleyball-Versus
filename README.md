@@ -39,16 +39,17 @@ Valleyball Versus supports full dual-gamepad input (Xbox, PlayStation, standard 
 |---|---|---|---|
 | **Move** | <kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> | <kbd>I</kbd> <kbd>J</kbd> <kbd>K</kbd> <kbd>L</kbd> | Left Stick |
 | **Look / Aim** | Mouse Look | <kbd>Arrow Keys</kbd> | Right Stick |
-| **Jump** | <kbd>Space</kbd> | <kbd>Num 0</kbd> | <kbd>A</kbd> / <kbd>✕</kbd> |
-| **Sprint** | <kbd>Shift</kbd> (Hold) | <kbd>Right Ctrl</kbd> | Left Trigger (<kbd>LT</kbd> / <kbd>L2</kbd>) |
-| **Slide** | <kbd>C</kbd> | <kbd>Num .</kbd> | Right Trigger (<kbd>RT</kbd> / <kbd>R2</kbd>) |
+| **Jump** | <kbd>Space</kbd> | <kbd>Enter</kbd> | <kbd>A</kbd> / <kbd>✕</kbd> |
+| **Sprint** | <kbd>Shift</kbd> (Hold) | <kbd>/</kbd> | Left Trigger (<kbd>LT</kbd> / <kbd>L2</kbd>) |
+| **Slide** | <kbd>C</kbd> | <kbd>O</kbd> | Right Trigger (<kbd>RT</kbd> / <kbd>R2</kbd>) |
+| **Cut / Plant** | <kbd>V</kbd> / <kbd>F</kbd> | <kbd>N</kbd> / <kbd>H</kbd> | Left Bumper (<kbd>LB</kbd> / <kbd>L1</kbd>) |
 | **Dive** | <kbd>Q</kbd> | <kbd>U</kbd> | <kbd>X</kbd> / <kbd>□</kbd> |
-| **Volley / Kick** | <kbd>E</kbd> | <kbd>O</kbd> | <kbd>B</kbd> / <kbd>○</kbd> |
-| **Power Spike** | <kbd>R</kbd> | <kbd>P</kbd> | <kbd>Y</kbd> / <kbd>△</kbd> |
-| **Camera Toggle** | <kbd>Tab</kbd> | <kbd>]</kbd> | D-Pad Up / Down |
-| **Splitscreen Mode** | <kbd>V</kbd> | — | — |
+| **Volley / Kick** | <kbd>E</kbd> / Left Click | <kbd>P</kbd> | <kbd>B</kbd> / <kbd>○</kbd> |
+| **Power Spike** | <kbd>R</kbd> / Right Click | <kbd>[</kbd> | <kbd>Y</kbd> / <kbd>△</kbd> |
+| **Camera Toggle** | <kbd>Tab</kbd> (Shift+Tab: Arena) | <kbd>]</kbd> (<kbd>\</kbd>: Arena) | D-Pad Up / Down |
+| **Splitscreen Mode** | <kbd>Shift</kbd>+<kbd>V</kbd> / <kbd>F8</kbd> | — | — |
 | **Pause / Menu** | <kbd>Esc</kbd> | — | <kbd>Start</kbd> / <kbd>Options</kbd> |
-| **Reset Ball (Practice)** | <kbd>B</kbd> | — | <kbd>Back</kbd> / <kbd>Select</kbd> |
+| **Reset Ball (Practice)** | <kbd>B</kbd> | <kbd>M</kbd> | <kbd>Back</kbd> / <kbd>Select</kbd> |
 
 ---
 

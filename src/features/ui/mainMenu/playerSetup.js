@@ -1792,7 +1792,7 @@ export function buildPlayerColumn(idx, label, themeColor) {
       cursor: pointer;
     `;
     btn.onclick = () => {
-      playerFocusRow[idx] = 2;
+      playerFocusRow[idx] = currentSetupMode === 'practice' ? 1 : 2;
       focusedColumn = idx;
       updateFocusUI();
       setPlayerTeam(idx, t.id);
@@ -1828,7 +1828,7 @@ export function buildPlayerColumn(idx, label, themeColor) {
       transition: transform 0.1s ease;
     `;
     swBtn.onclick = () => {
-      playerFocusRow[idx] = 3;
+      playerFocusRow[idx] = currentSetupMode === 'practice' ? 2 : 3;
       focusedColumn = idx;
       updateFocusUI();
       setPlayerColor(idx, swatch.hex);
@@ -1884,7 +1884,7 @@ export function buildPlayerColumn(idx, label, themeColor) {
       cursor: pointer;
     `;
     btn.onclick = () => {
-      playerFocusRow[idx] = 4;
+      playerFocusRow[idx] = currentSetupMode === 'practice' ? 3 : 4;
       focusedColumn = idx;
       updateFocusUI();
       setPlayerPhysique(idx, variant);
@@ -1925,13 +1925,13 @@ export function buildPlayerColumn(idx, label, themeColor) {
     camSelect.appendChild(el);
   });
   camSelect.onchange = (e) => {
-    playerFocusRow[idx] = 5;
+    playerFocusRow[idx] = currentSetupMode === 'practice' ? 4 : 5;
     focusedColumn = idx;
     updateFocusUI();
     setPlayerCamera(idx, e.target.value);
   };
   camSelect.onfocus = () => {
-    playerFocusRow[idx] = 5;
+    playerFocusRow[idx] = currentSetupMode === 'practice' ? 4 : 5;
     focusedColumn = idx;
     updateFocusUI();
   };
@@ -1969,7 +1969,7 @@ export function buildPlayerColumn(idx, label, themeColor) {
       transition: all 0.15s ease;
     `;
     btn.onclick = () => {
-      playerFocusRow[idx] = 6;
+      playerFocusRow[idx] = currentSetupMode === 'practice' ? 5 : 6;
       focusedColumn = idx;
       updateFocusUI();
       setPlayerAssist(idx, opt.id);
@@ -2013,18 +2013,40 @@ export function updateFocusUI() {
 
     const activeRow = playerFocusRow[0];
 
+    // Practice Mode Athlete Column:
     // Rows 1..5: Team Status, Team Color, Physique, Camera, Strike Assist
+    // Map practice row indices (1..5) to elements in playerRowElements[0] (indices 2..6)
+    const practiceRowMap = {
+      1: playerRowElements[0]?.[2], // Team Status
+      2: playerRowElements[0]?.[3], // Team Color
+      3: playerRowElements[0]?.[4], // Physique
+      4: playerRowElements[0]?.[5], // Camera
+      5: playerRowElements[0]?.[6], // Strike Assist
+    };
+
     [1, 2, 3, 4, 5].forEach((rIdx) => {
-      const el = playerRowElements[0]?.[rIdx];
+      const el = practiceRowMap[rIdx];
       if (!el) return;
       if (rIdx === activeRow) {
         el.classList.add('rainbow-focused');
+        let hint = el.querySelector('.contextual-row-hint');
+        if (!hint) {
+          hint = document.createElement('span');
+          hint.className = 'contextual-btn-badge contextual-row-hint';
+          hint.style.cssText = 'float:right;font-size:9px;color:#00e5ff;border-color:#00e5ff;box-shadow:0 0 8px rgba(0,229,255,0.4);';
+          hint.textContent = '◀ D-PAD ▶';
+          const header = el.querySelector('div') || el;
+          header.appendChild(hint);
+        }
+        hint.style.display = 'inline-flex';
       } else {
         el.classList.remove('rainbow-focused');
         el.style.outline = 'none';
         el.style.boxShadow = 'none';
         el.style.background = 'transparent';
         el.style.transform = 'scale(1)';
+        const hint = el.querySelector('.contextual-row-hint');
+        if (hint) hint.style.display = 'none';
       }
     });
 
