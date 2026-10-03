@@ -87,19 +87,32 @@ export function createCaptureHandler(options = {}) {
 
       const buffer = Buffer.from(dataUrl.slice(PNG_PREFIX.length), 'base64');
 
-      // A capture meant for comparison gets a stable, tick-addressed name, so a
-      // harness can hash `auto_t300.png` without globbing and a re-run
-      // overwrites rather than accumulating. Only a capture that explicitly asks
-      // to be kept alongside its predecessors gets a timestamp — ISO 8601, with
-      // the characters that are illegal in filenames on Windows folded to '-'.
-      const stem = `${name}_t${Math.trunc(tick)}`;
-      const file = payload.timestamped === true
-        ? `${stem}_${new Date().toISOString().replace(/[:.]/g, '-')}.png`
-        : `${stem}.png`;
-      const full = path.join(outDir, file);
+      let full;
+      if (payload && (payload.filename || payload.file)) {
+        const rawFile = String(payload.filename || payload.file).replace(/^\/+/, '');
+        const safePath = path.normalize(rawFile).replace(/^(\.\.[\/\\])+/, '');
+        full = path.join(outDir, safePath);
+      } else {
+        const name = sanitiseName(payload && payload.name);
+        if (!name) return respond(res, 400, { error: 'capture name is empty after sanitising' });
+
+        const tick = payload && payload.tick;
+        if (!Number.isFinite(tick)) return respond(res, 400, { error: 'tick must be a finite number' });
+
+        // A capture meant for comparison gets a stable, tick-addressed name, so a
+        // harness can hash `auto_t300.png` without globbing and a re-run
+        // overwrites rather than accumulating. Only a capture that explicitly asks
+        // to be kept alongside its predecessors gets a timestamp — ISO 8601, with
+        // the characters that are illegal in filenames on Windows folded to '-'.
+        const stem = `${name}_t${Math.trunc(tick)}`;
+        const file = payload.timestamped === true
+          ? `${stem}_${new Date().toISOString().replace(/[:.]/g, '-')}.png`
+          : `${stem}.png`;
+        full = path.join(outDir, file);
+      }
 
       try {
-        fs.mkdirSync(outDir, { recursive: true });
+        fs.mkdirSync(path.dirname(full), { recursive: true });
         fs.writeFileSync(full, buffer);
       } catch (error) {
         return respond(res, 500, { error: `could not write capture: ${error.message}` });
@@ -120,6 +133,8 @@ export default function capturePlugin(options = {}) {
     configureServer(server) {
       const handler = createCaptureHandler({ root: server.config.root, ...options });
       server.middlewares.use('/__capture', handler);
+      server.middlewares.use('/api/capture', handler);
+      server.middlewares.use('/Valleyball-Versus/api/capture', handler);
     },
   };
 }

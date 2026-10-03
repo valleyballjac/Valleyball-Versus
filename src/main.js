@@ -36,7 +36,9 @@ import {
   applyRagdollVisibility,
   updateAthletePalette,
   updateAthleteVariant,
+  setAthleteHeadwear,
 } from './sim/ragdoll.js';
+import { PALETTES, HEADWEAR_CATALOG, CANONICAL_ROSTER } from './config/cosmetics.js';
 import { applyClampedLinearDamping } from './sim/damping.js';
 import { createAthlete } from './sim/athlete.js';
 import {
@@ -2793,9 +2795,235 @@ function handlePlayerConfigChange(idx, config) {
   }
 }
 
+/**
+ * IN-ENGINE PHOTO BOOTH STUDIO VIEWPORT (?mode=photobooth)
+ * Generates 512x512 canonical roster avatar portraits with studio lighting rig.
+ */
+async function bootPhotoBooth(urlParams) {
+  console.log('[photobooth] Booting in-engine Photo Booth studio...');
+
+  // 1. Hide HUD & menus
+  setHudVisible(false);
+  const hudRoot = document.getElementById('hud');
+  if (hudRoot) hudRoot.style.display = 'none';
+
+  // 2. Dedicated studio scene with neutral dark backdrop
+  const studioScene = new THREE.Scene();
+  studioScene.background = new THREE.Color(0x0b0f17);
+
+  // Enable shadow autoUpdate for studio lighting
+  renderer.shadowMap.autoUpdate = true;
+
+  // 3. Create Studio Athlete
+  const studioAthlete = createAthlete({
+    id: 'photobooth-athlete',
+    team: 'home',
+    variant: 'masculine',
+    spawn: { x: 0, y: 1.2, z: 0, yaw: 0 },
+    scene: studioScene,
+    characterSkeleton,
+    characterRoot,
+    clips: characterClips,
+  });
+
+  if (studioAthlete.motor?.mesh) studioAthlete.motor.mesh.visible = false;
+
+  // Find head position for camera and lighting anchoring
+  const headPart = studioAthlete.ragdoll.rig.get('head');
+  const headPos = headPart.body.translation();
+  const headRadius = headPart.radius;
+
+  // Clean portrait bust: hide arm chain meshes so limbs do not poke into the avatar frame
+  const armKeys = ['upperArmL', 'upperArmR', 'foreArmL', 'foreArmR', 'handL', 'handR'];
+  for (const k of armKeys) {
+    const part = studioAthlete.ragdoll.rig.get(k);
+    if (part?.mesh) part.mesh.visible = false;
+  }
+  studioAthlete.renderPose(1);
+
+  // 4. Target Camera at chest/chin level (distance ~1.05m, 12° side angle, looking slightly up)
+  const distance = 1.05;
+  const angleRad = 12 * (Math.PI / 180); // 12° side angle
+
+  // In bind space the athlete faces +Z; camera placed at +Z looking at chin/face
+  const lookTarget = new THREE.Vector3(headPos.x, headPos.y + headRadius * 0.05, headPos.z);
+  const camX = headPos.x + Math.sin(angleRad) * distance;
+  const camZ = headPos.z + Math.cos(angleRad) * distance;
+  const camY = headPos.y - headRadius * 0.18; // chest/chin level looking slightly up
+
+  const studioCamera = new THREE.PerspectiveCamera(34, 1.0, 0.1, 50);
+  studioCamera.position.set(camX, camY, camZ);
+  studioCamera.lookAt(lookTarget);
+
+  // Key Light: Studio spotlight from upper-right (warm tint, intensity 2.4)
+  const keyLight = new THREE.SpotLight(0xfff8f0, 2.4);
+  keyLight.position.set(headPos.x + 0.65, headPos.y + 0.55, headPos.z + 1.3);
+  keyLight.target.position.copy(lookTarget);
+  keyLight.angle = Math.PI * 0.35;
+  keyLight.penumbra = 0.5;
+  keyLight.decay = 0;
+  keyLight.castShadow = true;
+  keyLight.shadow.mapSize.set(1024, 1024);
+  keyLight.shadow.bias = -0.0005;
+  studioScene.add(keyLight);
+  studioScene.add(keyLight.target);
+
+  // Rim Light: Strong cyan edge backlight (0x38bdf8, intensity 4.2) to pop silhouettes
+  const rimLight = new THREE.DirectionalLight(0x38bdf8, 4.2);
+  rimLight.position.set(headPos.x - 1.2, headPos.y + 1.2, headPos.z - 1.4);
+  rimLight.castShadow = false;
+  studioScene.add(rimLight);
+
+  // Frontal fill light for shadow legibility and face illumination
+  const fillLight = new THREE.DirectionalLight(0xffffff, 1.2);
+  fillLight.position.set(headPos.x - 0.7, headPos.y + 0.3, headPos.z + 1.4);
+  studioScene.add(fillLight);
+
+  // Subtle studio ambient so dark graphite materials never crush to pure black
+  const studioAmbient = new THREE.AmbientLight(0xffffff, 0.5);
+  studioScene.add(studioAmbient);
+
+  function applyStudioViewport() {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(w, h, false);
+    studioCamera.aspect = w / h;
+    studioCamera.updateProjectionMatrix();
+  }
+  applyStudioViewport();
+  window.addEventListener('resize', applyStudioViewport);
+
+  let isCapturing = false;
+  let turntableYaw = 0;
+  const pivotGroup = studioAthlete.ragdoll.group;
+
+  // 5. Expose window.captureRosterAvatars()
+  window.captureRosterAvatars = async function() {
+    if (isCapturing) return { error: 'already capturing' };
+    isCapturing = true;
+    console.log('[photobooth] Starting canonical roster avatar captures (512x512)...');
+
+    // Reset turntable to 0 so hero angle matches specification
+    if (pivotGroup) pivotGroup.rotation.y = 0;
+
+    // Pin renderer to 512x512 at pixel ratio 1
+    renderer.setPixelRatio(1);
+    renderer.setSize(512, 512, false);
+    studioCamera.aspect = 1.0;
+    studioCamera.position.set(camX, camY, camZ);
+    studioCamera.lookAt(lookTarget);
+    studioCamera.updateProjectionMatrix();
+
+    const results = [];
+
+    for (const [athleteId, roster] of Object.entries(CANONICAL_ROSTER)) {
+      console.log(`[photobooth] Capturing ${roster.name} (${athleteId}) - palette:${roster.palette}, headwear:${roster.headwear}, variant:${roster.variant}...`);
+
+      const palette = PALETTES[roster.palette];
+      const primaryHex = palette ? palette.hex : 0xffffff;
+
+      studioAthlete.setTeamAndVariant('home', roster.variant || 'masculine', {
+        primaryColor: primaryHex,
+      }, roster.headwear);
+
+      studioAthlete.renderPose(1);
+      studioScene.updateMatrixWorld(true);
+
+      renderer.render(studioScene, studioCamera);
+      renderer.render(studioScene, studioCamera);
+
+      const dataUrl = renderer.domElement.toDataURL('image/png');
+
+      const payload = {
+        filename: `avatars/${athleteId}.png`,
+        file: `avatars/${athleteId}.png`,
+        name: athleteId,
+        tick: 0,
+        dataUrl,
+      };
+
+      try {
+        const response = await fetch('/api/capture', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        if (!response.ok) {
+          const text = await response.text();
+          console.error(`[photobooth] Capture error for ${athleteId}:`, text);
+          results.push({ id: athleteId, success: false, error: text });
+        } else {
+          const json = await response.json();
+          console.log(`[photobooth] Saved ${json.path || `avatars/${athleteId}.png`}`);
+          results.push({ id: athleteId, success: true, path: json.path });
+        }
+      } catch (err) {
+        console.error(`[photobooth] Network error saving ${athleteId}:`, err);
+        results.push({ id: athleteId, success: false, error: String(err) });
+      }
+    }
+
+    applyStudioViewport();
+    isCapturing = false;
+
+    console.log(`[photobooth] All ${results.length} canonical avatar captures completed!`);
+    window.__photoboothDone = true;
+    window.__photoboothResults = results;
+    return results;
+  };
+
+  // Add UI banner in DOM
+  const banner = document.createElement('div');
+  banner.id = 'photobooth-hud';
+  banner.style.cssText = 'position:fixed;bottom:16px;left:16px;background:rgba(15,23,42,0.85);color:#f8fafc;padding:12px 18px;border-radius:8px;font-family:sans-serif;font-size:13px;border:1px solid rgba(255,255,255,0.1);z-index:99999;backdrop-filter:blur(8px);';
+  banner.innerHTML = `
+    <div style="font-weight:bold;margin-bottom:6px;font-size:14px;color:#38bdf8;">VALLEYBALL PHOTO BOOTH</div>
+    <div style="color:#94a3b8;margin-bottom:10px;">Studio Viewport Active &bull; 512x512 Portrait Rig</div>
+    <button id="btn-capture-avatars" style="background:#0284c7;color:#fff;border:none;padding:6px 14px;border-radius:4px;cursor:pointer;font-weight:bold;">Capture All 10 Avatars</button>
+  `;
+  document.body.appendChild(banner);
+  document.getElementById('btn-capture-avatars')?.addEventListener('click', () => {
+    window.captureRosterAvatars();
+  });
+
+  // Turntable animation loop
+  function animateTurntable() {
+    requestAnimationFrame(animateTurntable);
+    if (!isCapturing) {
+      turntableYaw += 0.003;
+      if (pivotGroup) {
+        pivotGroup.rotation.y = Math.sin(turntableYaw) * 0.25;
+      }
+      studioAthlete.renderPose(1);
+      renderer.render(studioScene, studioCamera);
+    }
+  }
+  animateTurntable();
+
+  if (urlParams.get('auto') === 'true' || urlParams.get('captureRoster') === 'true') {
+    setTimeout(() => {
+      window.captureRosterAvatars();
+    }, 400);
+  }
+}
+
 async function boot() {
-  // Determine mode from URL query or TUNING first
   const urlParams = new URLSearchParams(window.location.search);
+  const isPhotoBooth = urlParams.get('mode') === 'photobooth';
+
+  if (isPhotoBooth) {
+    await initPhysics(loop.fixedDt);
+    try {
+      await loadCharacter();
+    } catch (error) {
+      console.error('[character] load failed in photobooth', error);
+    }
+    return await bootPhotoBooth(urlParams);
+  }
+
+  // Determine mode from URL query or TUNING first
   const modeParam = urlParams.get('mode');
   if (modeParam === 'match' || modeParam === 'practice') {
     TUNING.match.mode = modeParam;

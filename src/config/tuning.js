@@ -1074,6 +1074,7 @@ const DEFAULTS = {
       holdPoint: 0.65,
       windowOpen: 12, sweetTick: 20, windowClose: 30,
       climbRate: 1.93,        // phase/s; 0.900 in 28 ticks = 1x
+      completeRate: 1.93,
       launchSpeed: 24.5,      // m/s on a perfect contact, mass-normalised (tuned for 10m hoop arc)
       elevationDeg: 46,       // above horizontal — allows full-court valley arcs into 10m hoop
       bodies: ['handL', 'handR', 'foreArmL', 'foreArmR'],

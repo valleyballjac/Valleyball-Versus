@@ -23,6 +23,7 @@ import {
   syncRagdollPose,
   applyRagdollVisibility,
   updateAthletePalette,
+  setAthleteHeadwear,
 } from './ragdoll.js';
 import { applyClampedLinearDamping } from './damping.js';
 import { createWatchdogState, runWatchdog } from '../mechanics/watchdog.js';
@@ -63,6 +64,7 @@ export function createAthlete({
   id = 'p1',
   team = 'home',
   variant = 'masculine',
+  headwear = null,
   primaryColor = null,
   colorOverride = null,
   spawn = { x: 0, y: 1.5, z: 0, yaw: 0 },
@@ -75,6 +77,7 @@ export function createAthlete({
   let initialYaw = spawn.yaw ?? 0;
   let currentTeam = team;
   let currentVariant = variant;
+  let currentHeadwear = headwear;
   let currentPrimaryColor = primaryColor;
   let currentColorOverride = colorOverride;
 
@@ -139,12 +142,14 @@ export function createAthlete({
     built.group = createRagdollVisuals(built.rig, {
       team: currentTeam,
       variant: currentVariant,
+      headwear: currentHeadwear,
       primaryColor: currentPrimaryColor,
       colorOverride: currentColorOverride,
     });
     built.characterRoot = characterRoot;
     built.team = currentTeam;
     built.variant = currentVariant;
+    built.headwear = currentHeadwear;
     built.primaryColor = currentPrimaryColor;
     built.colorOverride = currentColorOverride;
 
@@ -282,15 +287,22 @@ export function createAthlete({
         updateAthletePalette(ragdoll, {
           team: currentTeam,
           variant: currentVariant,
+          headwear: currentHeadwear,
           primaryColor: currentPrimaryColor,
           colorOverride: currentColorOverride,
         });
       }
     },
 
-    setTeamAndVariant(newTeam, newVariant, newColors = null) {
+    setHeadwear(newHeadwear) {
+      currentHeadwear = newHeadwear;
+      athlete.refreshVisuals();
+    },
+
+    setTeamAndVariant(newTeam, newVariant, newColors = null, newHeadwear = null) {
       if (newTeam) currentTeam = newTeam;
       if (newVariant) currentVariant = newVariant;
+      if (newHeadwear !== null && newHeadwear !== undefined) currentHeadwear = newHeadwear;
       if (newColors?.primaryColor !== undefined) currentPrimaryColor = newColors.primaryColor;
       if (newColors?.colorOverride !== undefined) currentColorOverride = newColors.colorOverride;
       athlete.refreshVisuals();
@@ -510,6 +522,10 @@ export function createAthlete({
 
     get variant() {
       return currentVariant;
+    },
+
+    get headwear() {
+      return currentHeadwear;
     },
 
     get strikeState() {

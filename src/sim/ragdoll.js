@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { TUNING } from '../config/tuning.js';
 import { Interpolated } from '../core/Interpolated.js';
+import { HEADWEAR_CATALOG } from '../config/cosmetics.js';
+import { CosmeticsBuilders } from './cosmeticsBuilders.js';
 
 /**
  * Physics -> pose sync, and the ragdoll's debug skin.
@@ -219,6 +221,11 @@ function createSolidAthletePart(item, colors) {
     headMesh.receiveShadow = true;
     solidGroup.add(headMesh);
 
+    // Dedicated headwear slot container
+    const headwearSlot = new THREE.Group();
+    headwearSlot.name = 'athlete-headwear-slot';
+    solidGroup.add(headwearSlot);
+
     // 2. ATHLETIC BASEBALL CAP (in Team Primary Color)
     // Sits naturally on the upper 1/3 of the skull with an authentic curved brim.
     const crownRadius = radius * 1.03;
@@ -435,6 +442,9 @@ export function createRagdollVisuals(rig, options = null) {
   }
 
   updateAthleteVariant({ rig, ...options }, options);
+  if (options?.headwear !== undefined) {
+    setAthleteHeadwear({ rig, ...options }, options.headwear, colors);
+  }
 
   return group;
 }
@@ -735,18 +745,73 @@ export function updateAthleteVariant(state, options = null) {
 }
 
 /**
+ * Procedural headwear switcher. Cleans up existing geometries and attaches new accessory mesh.
+ */
+export function setAthleteHeadwear(state, headwearId, colors = null) {
+  const rig = state?.rig || state?.ragdoll?.rig || (state instanceof Map ? state : null);
+  if (!rig) return;
+
+  const headPart = rig.get('head');
+  if (!headPart || !headPart.solidMesh) return;
+
+  const slot = headPart.solidMesh.getObjectByName('athlete-headwear-slot');
+  if (!slot) return;
+
+  // Clean old accessory geometries and materials
+  while (slot.children.length > 0) {
+    const child = slot.children[0];
+    child.traverse((obj) => {
+      if (obj.geometry) obj.geometry.dispose();
+      if (obj.material) {
+        if (Array.isArray(obj.material)) obj.material.forEach((m) => m.dispose());
+        else obj.material.dispose();
+      }
+    });
+    slot.remove(child);
+  }
+
+  // Toggle default baseball cap visibility
+  const defaultCap = headPart.solidMesh.getObjectByName('athletic-cap');
+  if (defaultCap) {
+    defaultCap.visible = (headwearId === undefined || headwearId === null);
+  }
+
+  // Build and attach new item
+  if (headwearId && headwearId !== 'none') {
+    const entry = HEADWEAR_CATALOG[headwearId];
+    const builderKey = entry?.build || headwearId;
+    const builder = CosmeticsBuilders[builderKey];
+    if (typeof builder === 'function') {
+      const effectiveColors = colors || getAthleteColors(state);
+      const meshGroup = builder(headPart.radius, effectiveColors);
+      slot.add(meshGroup);
+    } else {
+      console.warn(`[cosmetics] No builder found for headwear: ${headwearId} (builder: ${builderKey})`);
+    }
+  }
+
+  if (state && typeof state === 'object') {
+    state.headwear = headwearId;
+  }
+}
+
+/**
  * Updates live material colors when the team palette changes.
  */
 export function updateAthletePalette(state, options = null) {
   if (!state || !state.rig) return;
   if (options?.team) state.team = options.team;
   if (options?.variant) state.variant = options.variant;
+  if (options?.headwear !== undefined) state.headwear = options.headwear;
   if (options?.primaryColor !== undefined) state.primaryColor = options.primaryColor;
   if (options?.colorOverride !== undefined) state.colorOverride = options.colorOverride;
   if (options?.bodyColor !== undefined) state.bodyColor = options.bodyColor;
   if (options?.jointColor !== undefined) state.jointColor = options.jointColor;
   updateAthleteVariant(state, options);
   const colors = getAthleteColors(options ?? state);
+  if (options?.headwear !== undefined || state.headwear) {
+    setAthleteHeadwear(state, options?.headwear ?? state.headwear, colors);
+  }
   for (const item of state.rig.values()) {
     if (!item.solidMesh) continue;
     item.solidMesh.traverse((child) => {
@@ -761,9 +826,11 @@ export function updateAthletePalette(state, options = null) {
         } else if (role === 'hair') {
           child.material.color.setHex(0x24272e);
         } else if (role === 'visor') {
+          const isDark = !colors.primary || colors.primary === 0x0F172A || colors.primary === 0x000000;
+          const emissiveColor = isDark ? 0x38bdf8 : colors.primary;
           child.material.color.setHex(colors.primary);
-          child.material.emissive.setHex(colors.primary);
-          child.material.emissiveIntensity = 0.6;
+          child.material.emissive.setHex(emissiveColor);
+          child.material.emissiveIntensity = 1.5;
         }
       }
     });
