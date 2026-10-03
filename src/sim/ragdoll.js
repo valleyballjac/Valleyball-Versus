@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { TUNING } from '../config/tuning.js';
+import { HEADWEAR_CATALOG } from '../config/cosmetics.js';
 import { Interpolated } from '../core/Interpolated.js';
+import * as CosmeticsBuilders from './cosmeticsBuilders.js';
 
 /**
  * Physics -> pose sync, and the ragdoll's debug skin.
@@ -26,6 +28,11 @@ const BALL_SEGMENTS = 16;
 const BALL_RINGS = 12;
 
 const UNIT_SCALE = new THREE.Vector3(1, 1, 1);
+
+/** Name of the empty group under the head's solid mesh that holds locker headwear. */
+export const HEADWEAR_SLOT_NAME = 'athlete-headwear-slot';
+/** Name of the built-in cap/visor group that predates the locker. */
+const LEGACY_CAP_NAME = 'athletic-cap';
 
 const _bodyWorld = new THREE.Matrix4();
 const _desired = new THREE.Matrix4();
@@ -284,6 +291,16 @@ function createSolidAthletePart(item, colors) {
     capGroup.add(strapMesh);
 
     solidGroup.add(capGroup);
+
+    // 3. LOCKER HEADWEAR SLOT
+    // Empty container at the skull centre that setAthleteHeadwear() fills with
+    // a procedural accessory from cosmeticsBuilders.js. Purely a scene-graph
+    // child of the head's solid mesh: it rides the head body's interpolated
+    // transform and owns no physics of its own.
+    const headwearSlot = new THREE.Group();
+    headwearSlot.name = HEADWEAR_SLOT_NAME;
+    solidGroup.add(headwearSlot);
+
     return solidGroup;
   }
 
@@ -435,6 +452,12 @@ export function createRagdollVisuals(rig, options = null) {
   }
 
   updateAthleteVariant({ rig, ...options }, options);
+
+  // Locker headwear survives a respawn because athlete.js rebuilds visuals
+  // through here with the same options it stored on the previous ragdoll.
+  if (options?.headwear != null) {
+    setAthleteHeadwear({ rig, ...options }, options.headwear, colors);
+  }
 
   return group;
 }
@@ -690,6 +713,14 @@ export function updateAthleteVariant(state, options = null) {
       if (button) button.visible = true;
       if (band) band.visible = false;
     }
+
+    // Once an athlete has an explicit locker headwear id (including 'none',
+    // the bare dome), the legacy built-in cap/visor steps aside and the slot
+    // owns the silhouette. Athletes that never touched the locker (headwear
+    // undefined/null) keep the pre-locker look exactly as before.
+    const headwearId = options?.headwear !== undefined ? options.headwear : state.headwear;
+    const legacyCap = head.solidMesh.getObjectByName(LEGACY_CAP_NAME);
+    if (legacyCap) legacyCap.visible = headwearId == null;
   }
 
   const limbKeys = ['upperArmL', 'upperArmR', 'foreArmL', 'foreArmR', 'thighL', 'thighR', 'calfL', 'calfR'];
@@ -745,8 +776,18 @@ export function updateAthletePalette(state, options = null) {
   if (options?.colorOverride !== undefined) state.colorOverride = options.colorOverride;
   if (options?.bodyColor !== undefined) state.bodyColor = options.bodyColor;
   if (options?.jointColor !== undefined) state.jointColor = options.jointColor;
+  const previousHeadwear = state.headwear;
+  if (options?.headwear !== undefined) state.headwear = options.headwear;
   updateAthleteVariant(state, options);
   const colors = getAthleteColors(options ?? state);
+
+  // A changed headwear id rebuilds the accessory; an unchanged one is simply
+  // recolored by the role sweep below, since the slot lives under the head's
+  // solid mesh.
+  if (state.headwear !== previousHeadwear && state.headwear != null) {
+    setAthleteHeadwear(state, state.headwear, colors);
+  }
+
   for (const item of state.rig.values()) {
     if (!item.solidMesh) continue;
     item.solidMesh.traverse((child) => {
@@ -763,11 +804,75 @@ export function updateAthletePalette(state, options = null) {
         } else if (role === 'visor') {
           child.material.color.setHex(colors.primary);
           child.material.emissive.setHex(colors.primary);
-          child.material.emissiveIntensity = 0.6;
+          // Locker visors declare their own glow strength (1.5); anything else
+          // keeps the pre-locker default.
+          child.material.emissiveIntensity = child.material.userData.emissiveIntensity ?? 0.6;
         }
+        // 'accent' (fixed-color detail such as greenstone) is deliberately untouched.
       }
     });
   }
+}
+
+/**
+ * THE VALLEYBALL LOCKER: swaps the procedural headwear mounted on the head.
+ *
+ * Finds `athlete-headwear-slot` under the head's solid mesh, disposes whatever
+ * accessory is there (geometry AND the accessory's own materials; the base
+ * athlete materials are never touched), then builds and mounts the catalog
+ * entry's item. 'none' (or an unknown id) leaves the slot empty: a bare dome.
+ *
+ * Visual only. Nothing here reads or writes a Rapier body or collider.
+ *
+ * @param {object} state      ragdoll state with `rig` (Map) — `state.headwear` is updated
+ * @param {string} headwearId key in HEADWEAR_CATALOG
+ * @param {object} [colors]   getAthleteColors() output; derived from state when omitted
+ * @returns {THREE.Group | null} the mounted accessory group, or null if the slot is empty
+ */
+export function setAthleteHeadwear(state, headwearId, colors = null) {
+  if (!state || !state.rig) return null;
+  const head = state.rig.get('head');
+  if (!head || !head.solidMesh) return null;
+
+  const slot = head.solidMesh.getObjectByName(HEADWEAR_SLOT_NAME);
+  if (!slot) return null;
+
+  // Tear down the previous accessory.
+  while (slot.children.length > 0) {
+    const child = slot.children[0];
+    child.traverse((obj) => {
+      if (!obj.isMesh) return;
+      if (obj.geometry) obj.geometry.dispose();
+      if (Array.isArray(obj.material)) obj.material.forEach((m) => m.dispose());
+      else if (obj.material) obj.material.dispose();
+    });
+    slot.remove(child);
+  }
+
+  const entry = HEADWEAR_CATALOG[headwearId];
+  const resolvedId = entry ? entry.id : 'none';
+  state.headwear = resolvedId;
+  if (!entry && headwearId != null) {
+    console.warn(`[locker] unknown headwear id "${headwearId}", slot left empty`);
+  }
+
+  // The legacy cap yields to the slot as soon as the locker is in charge.
+  const legacyCap = head.solidMesh.getObjectByName(LEGACY_CAP_NAME);
+  if (legacyCap) legacyCap.visible = false;
+
+  const builderName = entry?.build;
+  if (!builderName) return null;
+  const builder = CosmeticsBuilders[builderName];
+  if (typeof builder !== 'function') {
+    console.warn(`[locker] headwear "${resolvedId}" names missing builder "${builderName}"`);
+    return null;
+  }
+
+  const palette = colors ?? getAthleteColors(state);
+  const accessory = builder(head.radius, palette);
+  accessory.name = accessory.name || `headwear-${resolvedId}`;
+  slot.add(accessory);
+  return accessory;
 }
 
 /** Applies the athlete and debug visibility toggles. Init- and GUI-time only. */

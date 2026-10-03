@@ -65,6 +65,7 @@ export function createAthlete({
   variant = 'masculine',
   primaryColor = null,
   colorOverride = null,
+  headwear = null,
   spawn = { x: 0, y: 1.5, z: 0, yaw: 0 },
   scene,
   characterSkeleton,
@@ -77,6 +78,8 @@ export function createAthlete({
   let currentVariant = variant;
   let currentPrimaryColor = primaryColor;
   let currentColorOverride = colorOverride;
+  // Locker headwear id (HEADWEAR_CATALOG key). null = pre-locker legacy cap.
+  let currentHeadwear = headwear;
 
   // 1. Motor sphere
   const motor = createMotor();
@@ -141,12 +144,14 @@ export function createAthlete({
       variant: currentVariant,
       primaryColor: currentPrimaryColor,
       colorOverride: currentColorOverride,
+      headwear: currentHeadwear,
     });
     built.characterRoot = characterRoot;
     built.team = currentTeam;
     built.variant = currentVariant;
     built.primaryColor = currentPrimaryColor;
     built.colorOverride = currentColorOverride;
+    built.headwear = currentHeadwear;
 
     scene.add(built.group);
     ragdoll = built;
@@ -251,6 +256,8 @@ export function createAthlete({
     set primaryColor(val) { currentPrimaryColor = val; },
     get colorOverride() { return currentColorOverride; },
     set colorOverride(val) { currentColorOverride = val; },
+    get headwear() { return currentHeadwear; },
+    set headwear(val) { currentHeadwear = val; },
     motor,
     get ragdoll() { return ragdoll; },
     get animTarget() { return animTarget; },
@@ -284,6 +291,7 @@ export function createAthlete({
           variant: currentVariant,
           primaryColor: currentPrimaryColor,
           colorOverride: currentColorOverride,
+          headwear: currentHeadwear,
         });
       }
     },
@@ -293,6 +301,13 @@ export function createAthlete({
       if (newVariant) currentVariant = newVariant;
       if (newColors?.primaryColor !== undefined) currentPrimaryColor = newColors.primaryColor;
       if (newColors?.colorOverride !== undefined) currentColorOverride = newColors.colorOverride;
+      if (newColors?.headwear !== undefined) currentHeadwear = newColors.headwear;
+      athlete.refreshVisuals();
+    },
+
+    /** Locker: equip a HEADWEAR_CATALOG id (or 'none'). Survives respawns. */
+    setHeadwear(headwearId) {
+      currentHeadwear = headwearId;
       athlete.refreshVisuals();
     },
 
