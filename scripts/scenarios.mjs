@@ -29,6 +29,24 @@
  *   spike   serve (0, 5.0, -0.7) @50; presses at 50 and 54 hit q 1.000 (46: q 0.756)
  *   kick    rest  (0, 0.52, -1.0) @40; press 70 -> q 1.000 (0.8 m: q 0.919; 1.2 m: whiff)
  */
+/**
+ * MOVEMENT FEEL AUDIT SCENARIO.
+ *
+ * Designed to exercise the full locomotion surface in one deterministic run:
+ * walk, run, sprint, hard reversal, strafe, release-to-stop, in-place jump,
+ * sprint jump, and a jump-cancelled slide.
+ *
+ * Facts captured by scripts/trace.mjs let a report compute:
+ *   - acceleration curves (m/s per tick)
+ *   - top speeds per gait
+ *   - stop distance and stop time
+ *   - turn responsiveness / reversal lag
+ *   - jump height and air time
+ *   - animation weight transitions (smoothness)
+ *
+ * Query strips the ball and starts the athlete on the court spawn.
+ */
+
 export const SCENARIOS = {
   /** No input at all: the pure-function-of-the-tick claim, traced every tick. */
   idle: {
@@ -130,6 +148,47 @@ export const SCENARIOS = {
       // 0.23 by 410 and 0.01 by 420. Braking takes work, by design.
       { label: 'still carrying momentum 30 ticks after release', when: 'f => f.speed > 2', from: 368, to: 372, all: true },
       { label: 'comes to rest ~1.2 s after release', when: 'f => f.speed < 0.3', from: 410, to: 420, all: true },
+    ],
+  },
+
+  /**
+   * Movement feel audit: a longer, cleaner gait ladder plus jumps, reversal and
+   * a slide-cancel. Used by scripts/feelReport.mjs to produce the movement report.
+   */
+  'movement-feel': {
+    end: 1100,
+    query: 'balls=1',
+    script: `(tick, pad, set) => {
+      let ax = [0, 0, 0, 0];
+      const walk   = tick >= 70  && tick < 230;
+      const run    = tick >= 270 && tick < 350;
+      const sprint = tick >= 390 && tick < 490;
+      const coast  = tick >= 540 && tick < 720;
+      const rev    = tick >= 760 && tick < 840;
+      if (walk)        ax = [0, -0.40, 0, 0];
+      else if (run)    ax = [0, -1.00, 0, 0];
+      else if (sprint) ax = [0, -1.00, 0, 0];
+      else if (rev)    ax = [0,  1.00, 0, 0];
+      pad.axes = ax;
+      set(6, sprint);
+      // Jumps after reversal: in-place at 900, running follow-up at 1000 (cooldown from 900 clears at 990)
+      set(0, (tick >= 900 && tick < 905) || (tick >= 1000 && tick < 1005));
+    }`,
+    expect: [
+      { label: 'never loses balance during clean movement', when: 'f => f.weight > 0.90', from: 60, to: 1080, all: true },
+      // Walk
+      { label: 'walk reaches the floor (>= 1.8 m/s)', when: 'f => f.speed >= 1.8', from: 200, to: 230 },
+      { label: 'walk holds below the run ceiling (no collapse, < 2.5 m/s)', when: 'f => f.speed < 2.5', from: 200, to: 230, all: true },
+      // Run
+      { label: 'run settles above 3.0 m/s', when: 'f => f.speed > 3.0', from: 320, to: 350, all: true },
+      { label: 'run stays below 5.2 m/s', when: 'f => f.speed < 5.2', from: 320, to: 350, all: true },
+      // Sprint
+      { label: 'sprint exceeds 5.5 m/s', when: 'f => f.speed > 5.5', from: 460, to: 490 },
+      // Braking
+      { label: 'coast still above 2 m/s right after release', when: 'f => f.speed > 2', from: 548, to: 552, all: true },
+      { label: 'coast drops below 0.3 m/s by tick 700', when: 'f => f.speed < 0.3', from: 660, to: 720, all: true },
+      // Reversal
+      { label: 'reversal drives forward (z positive)', when: 'f => f.speed > 2', from: 800, to: 840, all: true },
     ],
   },
 };

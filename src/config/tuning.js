@@ -249,19 +249,13 @@ const DEFAULTS = {
     // to build without capping what gravity can give you down a slope — a
     // velocity cap would do the opposite, so the acceleration is what moves.
     driveTorque: 4,          // LIVE TUNE: raised from 3 for punchier acceleration
-    // 12 rad/s = 6.0 m/s. LOWERED from 25, and this is the lever that actually
-    // delivers the heaviness — cutting driveTorque alone did not, because at
-    // 3.0 the motor still had enough authority to climb all the way to the old
-    // 25 rad/s ceiling, just slower. Measured: flat sprint stayed at 12.46 m/s
-    // while a slope ride only returned 7.70, so the flat was FASTER than the
-    // bowl and the design goal was inverted.
-    //
-    // Why this cap and not a velocity clamp: the governor STARVES DRIVE TORQUE
-    // and never writes a velocity (LAW L1). So it bounds what the player can
-    // push themselves to on flat ground and does nothing whatsoever to speed
-    // that gravity supplied. Ride the wall down and the ball passes straight
-    // through this number — which is exactly the asymmetry the brief asks for:
-    // flat ground is sluggish, the bowl is where speed lives.
+    // WALK BAND (magnitude-aware governor). The non-sprint ceiling now ramps
+    // from this walk terminal speed at light stick deflection up to
+    // blend2d.runSpeed at full stick. Added because the governor previously had
+    // only two stops, sprint and not-sprint, so a light stick crawled all the
+    // way up to run speed given a moment, and "walk" was a measurement artifact
+    // rather than a gait. 2.0 m/s sits mid the 1.8-2.2 walk-floor target.
+    walkSpeed: 2.0,
     maxAngularSpeed: 12,
     // Seeded at 8.0 by the spec; measured down to 1.0 to satisfy acceptance
     // criterion 2. A braking impulse of T decelerates this rolling ball at

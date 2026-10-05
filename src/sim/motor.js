@@ -293,21 +293,29 @@ export function updateMotor(motor, input, jumpQueued, dt, driveScale = 1, tick =
     const angular = body.angvel();
     const alongAxis = angular.x * _axis.x + angular.y * _axis.y + angular.z * _axis.z;
 
-    // THE GOVERNOR NOW HAS TWO CEILINGS. Sprint held gives the full
-    // maxAngularSpeed; sprint released gives the spin that rolls at run speed,
-    // which for a ball rolling without slipping is simply v / r.
+    // THE GOVERNOR HAS THREE CEILINGS. Sprint held gives the full
+    // maxAngularSpeed; sprint released is now magnitude-aware and ramps from a
+    // walk band (walkSpeed) at light stick deflection up to run speed at full
+    // stick. For a ball rolling without slipping, linear speed v = angular
+    // speed * radius, so each ceiling is expressed as v / r.
     //
     // The MECHANISM is unchanged and that is the point: the governor STARVES
     // the motor rather than clamping the velocity. Once the spin along the
     // drive axis is already at the ceiling, this step simply adds no torque.
-    // Nothing here ever writes a velocity, and releasing sprint at full speed
-    // therefore does NOT snap the character back to run speed — the existing
-    // rolling resistance decays the surplus over a second or so, which is what
-    // a runner easing off actually looks like. That decay is intended, not an
-    // omission.
+    // Nothing here ever writes a velocity, and easing off any gait decays the
+    // surplus through rolling resistance rather than snapping, the same way
+    // releasing sprint already behaves.
+    //
+    // Squaring the stick magnitude keeps the walk band generous at low
+    // deflection (a light touch reads as a deliberate walk, not a crawl) while
+    // still opening the full run ceiling only near full stick. It is continuous
+    // in the one input signal, so it respects L4 (no boolean gait state).
+    const walkCeil = TUNING.motor.walkSpeed / TUNING.motor.radius;
+    const runCeil = TUNING.blend2d.runSpeed / TUNING.motor.radius;
+    const magnitudeBand = inputMagnitude * inputMagnitude;
     const effectiveMax = input.sprintHeld
       ? TUNING.motor.maxAngularSpeed
-      : TUNING.blend2d.runSpeed / TUNING.motor.radius;
+      : walkCeil + (runCeil - walkCeil) * magnitudeBand;
 
     if (alongAxis < effectiveMax) {
       const control = motor.grounded ? 1 : TUNING.motor.airControlMultiplier;
