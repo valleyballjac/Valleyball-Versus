@@ -90,6 +90,27 @@ The motor sphere's only resistance is angular, through `motor.js`'s own
 `brakeTorque` when the stick is neutral (`motor.js:346-347`). So the levers that
 matter for this card are all in `TUNING.motor` and are all angular.
 
+### Empirical confirmation (deterministic trace, court)
+
+Ran an adhoc trace holding the audit's walk input (40% stick, no sprint) for 360
+ticks instead of the audit's 50-tick window. The sphere does **not** settle at
+0.713 m/s; it climbs monotonically and parks on the run governor:
+
+```
+tick  90  speed 0.846   (54 ticks of drive)
+tick 120  speed 1.308
+tick 200  speed 2.539
+tick 250  speed 3.309
+tick 285  speed 3.793   <- run ceiling (runSpeed/r = 3.8 m/s)
+tick 300+ speed 3.77-3.80  (flat; then it rides up the bowl wall)
+```
+
+So the audit's "walk @ 0.713 m/s" is purely a 50-tick sampling artifact, not a
+terminal speed. This is the direct, measured proof that there is no walk ceiling
+to tune against: partial stick and full stick share the one non-sprint governor,
+and any `driveTorque` raise shortens the climb to 3.8 m/s without creating a
+distinct walk floor.
+
 ## Authority assessment, lever by lever
 
 ### Braking distance (halve it) — in range
