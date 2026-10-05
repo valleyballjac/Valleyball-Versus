@@ -248,15 +248,17 @@ const DEFAULTS = {
     // flat ground, and cutting it is what makes flat-ground momentum expensive
     // to build without capping what gravity can give you down a slope — a
     // velocity cap would do the opposite, so the acceleration is what moves.
-    driveTorque: 4,          // LIVE TUNE: raised from 3 for punchier acceleration
+    driveTorque: 8,          // LIVE TUNE: raised from 4 for quicker low-authority response
     // WALK BAND (magnitude-aware governor). The non-sprint ceiling now ramps
     // from this walk terminal speed at light stick deflection up to
     // blend2d.runSpeed at full stick. Added because the governor previously had
     // only two stops, sprint and not-sprint, so a light stick crawled all the
     // way up to run speed given a moment, and "walk" was a measurement artifact
-    // rather than a gait. 2.0 m/s sits mid the 1.8-2.2 walk-floor target.
-    walkSpeed: 2.0,
-    maxAngularSpeed: 12,
+    // rather than a gait. 1.9 m/s lands the 40%-stick walk band inside the
+    // 1.8-2.2 walk-floor target now that runSpeed is 4.5 (the squared band
+    // widens with runSpeed - walkSpeed).
+    walkSpeed: 1.9,
+    maxAngularSpeed: 13.5,
     // Seeded at 8.0 by the spec; measured down to 1.0 to satisfy acceptance
     // criterion 2. A braking impulse of T decelerates this rolling ball at
     // T * radius / (I + m * radius^2) = 1.364 * T m/s^2. At T = 8 that is
@@ -266,7 +268,7 @@ const DEFAULTS = {
     // the floor and oscillating up the far side. At 1.0 the brake is 1.36
     // m/s^2, gravity wins on every part of the wall, and the ball still comes
     // to a dead stop on the flat floor in under 2 s from 5 m/s.
-    brakeTorque: 2,          // LIVE TUNE: raised from 1 for crisper stopping
+    brakeTorque: 4,          // LIVE TUNE: raised from 2 for planted stops
     // 0.5 — a slight raise from 0.4, and deliberately no more.
     //
     // Resistance turned out NOT to be a heaviness lever: the governor sets the
@@ -546,9 +548,9 @@ const DEFAULTS = {
     // actually reach or the gait reads wrong: leave sprintSpeed at 6.0 while
     // flat-ground sprint tops out near 5.2 due to rolling resistance, and the
     // sprint clip never fully engages on the flat. Calibrated to actual measured speeds.
-    walkSpeed: 1.8,
-    runSpeed: 3.8,
-    sprintSpeed: 5.0,
+    walkSpeed: 2.0,
+    runSpeed: 4.5,
+    sprintSpeed: 6.5,
 
     // THE NODE TABLE. Ring order is F, R, B, L throughout and must stay in that
     // order — the angular tent reads it as four equal sectors starting at

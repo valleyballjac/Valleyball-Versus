@@ -163,7 +163,7 @@ export const SCENARIOS = {
       const walk   = tick >= 70  && tick < 230;
       const run    = tick >= 270 && tick < 350;
       const sprint = tick >= 390 && tick < 490;
-      const coast  = tick >= 540 && tick < 720;
+      const coast  = tick >= 490 && tick < 700;
       const rev    = tick >= 760 && tick < 840;
       if (walk)        ax = [0, -0.40, 0, 0];
       else if (run)    ax = [0, -1.00, 0, 0];
@@ -185,7 +185,7 @@ export const SCENARIOS = {
       // Sprint
       { label: 'sprint exceeds 5.5 m/s', when: 'f => f.speed > 5.5', from: 460, to: 490 },
       // Braking
-      { label: 'coast still above 2 m/s right after release', when: 'f => f.speed > 2', from: 548, to: 552, all: true },
+      { label: 'coast still above 2 m/s right after release', when: 'f => f.speed > 2', from: 492, to: 496, all: true },
       { label: 'coast drops below 0.3 m/s by tick 700', when: 'f => f.speed < 0.3', from: 660, to: 720, all: true },
       // Reversal
       { label: 'reversal drives forward (z positive)', when: 'f => f.speed > 2', from: 800, to: 840, all: true },

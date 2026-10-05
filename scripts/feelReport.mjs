@@ -133,7 +133,7 @@ function buildReport(facts) {
   const walk = windowFacts(facts, 200, 230);
   const run = windowFacts(facts, 320, 350);
   const sprint = windowFacts(facts, 460, 490);
-  const coast = windowFacts(facts, 540, 720);
+  const coast = windowFacts(facts, 490, 700);
 
   const walkTop = round(maxIn(walk, 'speed'));
   const runTop = round(maxIn(run, 'speed'));
@@ -142,10 +142,10 @@ function buildReport(facts) {
   const accelWalk = timeToThreshold(facts, walkTop * 0.9, 70);
   const accelRun = timeToThreshold(facts, runTop * 0.9, 270);
   const accelSprint = timeToThreshold(facts, sprintTop * 0.9, 390);
-  const stopTime = round(timeFromReleaseToStop(coast, 540, 0.3));
+  const stopTime = round(timeFromReleaseToStop(coast, 490, 0.3));
   const stopDist = (() => {
-    const start = coast.find((f) => f.tick >= 540);
-    const end = coast.find((f) => f.tick > 540 && f.speed <= 0.3);
+    const start = coast.find((f) => f.tick >= 490);
+    const end = coast.find((f) => f.tick > 490 && f.speed <= 0.3);
     if (!start || !end) return null;
     return Math.abs(end.z - start.z);
   })();
@@ -243,7 +243,7 @@ Generated from deterministic trace scenario \`movement-feel\` on the Valley Cour
 | Run | ${report.gait.runTop} | ${report.gait.runAvg} | ${report.gait.accelRun} |
 | Sprint | ${report.gait.sprintTop} | ${report.gait.sprintAvg} | ${report.gait.accelSprint} |
 
-## Braking (release at sprint end, tick 540)
+## Braking (release at sprint end, tick 490)
 
 - Time to sub-0.3 m/s: **${report.braking.stopTime} s**
 - Distance travelled while stopping: **${report.braking.stopDistance} m**
@@ -275,7 +275,7 @@ ${critical(report)}
 ## How to reproduce
 
 \`\`\`bash
-git checkout card/red-movement-feel-audit
+git checkout card/blue-motor-authority-review
 npm ci --ignore-scripts
 node scripts/feelReport.mjs
 \`\`\`
