@@ -6,6 +6,8 @@ captures/
 _fable/
 scratch/
 test_*.mjs
+!scripts/test_ball_roll.mjs
+test_ball_roll_report.json
 diff.mjs
 *_backup.glb
 c.json
