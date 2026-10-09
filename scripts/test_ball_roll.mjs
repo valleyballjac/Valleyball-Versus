@@ -165,7 +165,7 @@ function createBall(world) {
       .setCcdEnabled(true)
       .setLinearDamping(BALL_DRAG_LINEAR)
       .setAngularDamping(BALL_DRAG_ANGULAR));
-  world.createCollider(
+  const collider = world.createCollider(
     RAPIER.ColliderDesc.ball(BALL_RADIUS)
       .setDensity(BALL_DENSITY_GCM3 * 1000)
       .setFriction(BALL_FRICTION)
@@ -175,7 +175,39 @@ function createBall(world) {
       .setRestitutionCombineRule(RAPIER.CoefficientCombineRule.Max)
       .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Min),
     body);
-  return body;
+  return { body, collider };
+}
+
+/**
+ * True contact test via the narrow phase (contact manifolds). A vertical
+ * ray-gap test lies on slopes: the center-to-surface vertical distance of a
+ * resting sphere on a slope theta is R / cos(theta) (0.61 m at 35 deg), which
+ * reads as "airborne" even during continuous contact. Contact manifolds do
+ * not.
+ */
+function hasContact(world, collider) {
+  let touching = false;
+  // rapier3d-compat 0.19.x: contactPairsWith enumerates bodies in contact.
+  world.contactPairsWith(collider, () => { touching = true; });
+  return touching;
+}
+
+/**
+ * Local downhill gradient direction (horizontal, unit) at (x, z) by central
+ * differences of the surface height. Returns null where the surface is
+ * unsampled.
+ */
+function downhillDir(probe, x, z, eps = 0.25) {
+  const yP = surfaceY(probe, x + eps, z);
+  const yM = surfaceY(probe, x - eps, z);
+  const zP = surfaceY(probe, x, z + eps);
+  const zM = surfaceY(probe, x, z - eps);
+  if (yP === null || yM === null || zP === null || zM === null) return null;
+  const gx = (yP - yM) / (2 * eps);
+  const gz = (zP - zM) / (2 * eps);
+  const len = Math.hypot(gx, gz);
+  if (len < 1e-6) return { x: 0, z: 0, flat: true };
+  return { x: -gx / len, z: -gz / len, flat: false };
 }
 
 /**
@@ -186,7 +218,7 @@ function createBall(world) {
 function runRoll({ sim, probe }, { x, z, vx, vz, ticks }) {
   const surf0 = surfaceY(probe, x, z);
   if (surf0 === null) throw new Error(`no terrain under spawn (${x}, ${z})`);
-  const body = createBall(sim);
+  const { body, collider } = createBall(sim);
   body.setTranslation({ x, y: surf0 + BALL_RADIUS + SPAWN_GAP, z }, true);
   body.setLinvel({ x: vx, y: 0, z: vz }, true);
   body.setAngvel({ x: 0, y: 0, z: 0 }, true);
@@ -200,6 +232,7 @@ function runRoll({ sim, probe }, { x, z, vx, vz, ticks }) {
       t,
       x: p.x, y: p.y, z: p.z,
       vx: v.x, vy: v.y, vz: v.z,
+      contact: hasContact(sim, collider),
     });
   }
   sim.removeRigidBody(body);
@@ -212,12 +245,19 @@ function runRoll({ sim, probe }, { x, z, vx, vz, ticks }) {
 
 // ═══ METRIC HELPERS ═══
 
-/** Max upward velocity while airborne (gap > 0.05 m). */
+/**
+ * Max upward velocity while truly airborne. Airborne is decided by the
+ * narrow-phase contact manifolds, NOT the vertical ray gap: on a slope of
+ * angle theta a resting sphere's center sits R/cos(theta) above the surface
+ * vertically (0.61 m at 35 deg, i.e. gap = 0.11 m) even in continuous
+ * contact, so a gap-only test would count grounded climbs as hops.
+ * The gap term only guards against contact-manifold lag right after launch.
+ */
 function maxAirborneVy(samples, from = 0, to = samples.length) {
   let max = 0;
   for (let i = from; i < to; i++) {
     const s = samples[i];
-    if (s.gap !== null && s.gap > 0.05 && s.vy > max) max = s.vy;
+    if (!s.contact && s.gap !== null && s.gap > 0.05 && s.vy > max) max = s.vy;
   }
   return max;
 }
@@ -234,6 +274,46 @@ function windowTicks(samples, axis, crossing, half) {
 
 // ═══ SCENARIOS ═══
 
+/**
+ * SPEC METRIC: world-locked lateral deflection |delta z| from spawn across
+ * the mouth TRANSITION (spawn lip |x| = 13 until the ball first funnels
+ * into the channel bed, |x| < 10.5), as the card states. Ticks after the
+ * ball is in the bed are excluded: there the ball legitimately follows the
+ * curving channel flow toward z = 0.
+ */
+function maxWorldDzAcrossTransition(samples, z0) {
+  let worst = 0;
+  for (const s of samples) {
+    if (Math.abs(s.x) < MOUTH_FINAL_ABS_X) break;
+    worst = Math.max(worst, Math.abs(s.z - z0));
+  }
+  return worst;
+}
+
+/**
+ * DIAGNOSTIC (calibration note 2): the same in-transition drift gauged
+ * perpendicular to the local downhill gradient, plus the worst single-tick
+ * lateral velocity spike |delta vz| (a lip/snag kick shows up here as a
+ * sudden spike, while the channel's smooth flow produces ~g*grade*dt
+ * = 0.06 m/s per tick).
+ */
+function mouthDiagnostics(probe, samples) {
+  let drift = 0;
+  let worstPerp = 0;
+  let maxVzSpike = 0;
+  for (let i = 1; i < samples.length; i++) {
+    const a = samples[i - 1];
+    const b = samples[i];
+    maxVzSpike = Math.max(maxVzSpike, Math.abs(b.vz - a.vz));
+    if (Math.abs(b.x) < MOUTH_FINAL_ABS_X) break;
+    const d = downhillDir(probe, a.x, a.z);
+    if (d === null || d.flat) continue;
+    drift += (b.x - a.x) * -d.z + (b.z - a.z) * d.x;
+    worstPerp = Math.max(worstPerp, Math.abs(drift));
+  }
+  return { gradPerpDrift: round3(worstPerp), maxVzSpikePerTick: round3(maxVzSpike) };
+}
+
 function mouthScenario(envs, sx, sz, label) {
   const x = 13.0 * sx;
   const z = 38.0 * sz;
@@ -243,9 +323,10 @@ function mouthScenario(envs, sx, sz, label) {
     vz: 0,
     ticks: 120,
   });
-  const z0 = samples.length ? z : z;
-  let lateralDeflect = 0;
-  for (const s of samples) lateralDeflect = Math.max(lateralDeflect, Math.abs(s.z - z0));
+  const lateralDeflect = maxWorldDzAcrossTransition(samples, z);
+  const diag = mouthDiagnostics(envs.probe, samples);
+  let worldDz = 0;
+  for (const s of samples) worldDz = Math.max(worldDz, Math.abs(s.z - z));
   const last = samples[samples.length - 1];
   const reboundVy = maxAirborneVy(samples);
   return {
@@ -254,6 +335,12 @@ function mouthScenario(envs, sx, sz, label) {
       maxReboundVy: { value: round3(reboundVy), threshold: MOUTH_MAX_REBOUND_VY, pass: reboundVy <= MOUTH_MAX_REBOUND_VY },
       lateralDeflect: { value: round3(lateralDeflect), threshold: MOUTH_MAX_LATERAL_DEFLECT, pass: lateralDeflect <= MOUTH_MAX_LATERAL_DEFLECT },
       finalAbsX: { value: round3(Math.abs(last.x)), threshold: MOUTH_FINAL_ABS_X, pass: Math.abs(last.x) < MOUTH_FINAL_ABS_X, below: true },
+    },
+    diagnostics: {
+      worldMaxDz: round3(worldDz),
+      gradPerpDrift: diag.gradPerpDrift,
+      maxVzSpikePerTick: diag.maxVzSpikePerTick,
+      deflectGauge: 'spec metric is world |dz| across the transition (|x| 13 -> 10.5); gradPerpDrift and vz spikes are diagnostics',
     },
     spawn: { x, z, vx: -3.0 * sx, vz: 0 },
     final: { x: round3(last.x), y: round3(last.y), z: round3(last.z) },
