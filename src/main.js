@@ -63,6 +63,7 @@ import { updateSportsCamera } from './visuals/sportsCamera.js';
 import { createBotController, updateBot } from './ai/botController.js';
 import { PlayerCamera } from './visuals/playerCamera.js';
 import { CinematicCamera } from './visuals/cinematicCamera.js';
+import { trailerDirector } from './visuals/trailerDirector.js';
 import { createTurfParticleSystem, getPitchSurfaceColor } from './visuals/turfParticles.js';
 import { createGoalCelebrationSystem } from './visuals/goalCelebration.js';
 import { initVictoryScreen, showVictoryScreen, hideVictoryScreen, showPracticeSummary } from './ui/victoryScreen.js';
@@ -301,6 +302,10 @@ function installRespawnHotkey() {
     if (isHotkey(event, 'F3') || (isHotkey(event, 'KeyH') && event.shiftKey)) {
       TUNING.debug.showHud = !TUNING.debug.showHud;
       setHudVisible(TUNING.debug.showHud);
+    }
+    // "F9" — TOGGLE TRAILER DIRECTOR MODE (Choreographed debut trailer sequence)
+    if (isHotkey(event, 'F9')) {
+      trailerDirector.toggle();
     }
     // "1" — TOGGLE TEAM JERSEY (Home <-> Away) for P1
     if (isHotkey(event, 'Digit1')) {
@@ -1391,6 +1396,10 @@ function drainImpacts(tick, dt) {
           soundManager.playStrike(kind, quality, athleteHit.strikeState.lastLaunchSpeed, ballPos, hitBall.radius || 0.5);
           if (isSweetSpot || isSpike) {
             soundManager.playSweetSpotPop(ballPos, isSpike);
+            if (isSpike) {
+              soundManager.music?.triggerImpactFilter?.(450, 0.35);
+              trailerDirector?.addImpulse?.(0.7);
+            }
           }
 
           // Camera juice: FOV lens punch and softened micro-screenshake scaled by strike impact
@@ -2157,6 +2166,8 @@ function fixedUpdate(dt, tick) {
         z: lastGoal.goal === 'N' ? TUNING.match.hoopNorthZ : TUNING.match.hoopSouthZ,
       };
       soundManager.playGoal(lastGoal.scoredFor, lastGoal.goal, hoopPos);
+      soundManager.music?.onGoalScored?.();
+      trailerDirector?.addImpulse?.(0.5);
       goalCelebration.triggerGoal(lastGoal.scoredFor, hoopPos, { y: lastGoal.y, z: lastGoal.z });
       if (gameState === 'practice') {
         practiceStats.goals++;
@@ -2453,7 +2464,14 @@ function render(alpha) {
   // Render stadium shadow maps once per frame across all viewports
   renderer.shadowMap.needsUpdate = true;
 
-  if (gameState === 'menu' || gameState === 'flyover' || isVictoryActive) {
+  if (trailerDirector.isActive) {
+    const primaryBall = balls[0] || (allBalls && allBalls[0]) || null;
+    trailerDirector.update(frameDelta, primaryBall, athletes, matchState);
+    trailerDirector.camera.aspect = width / height;
+    trailerDirector.camera.updateProjectionMatrix();
+    renderer.setViewport(0, 0, width, height);
+    renderer.render(scene, trailerDirector.camera);
+  } else if (gameState === 'menu' || gameState === 'flyover' || isVictoryActive) {
     cinematicCamera.camera.aspect = width / height;
     cinematicCamera.camera.updateProjectionMatrix();
     renderer.setViewport(0, 0, width, height);
@@ -3018,6 +3036,7 @@ function handleStartMatch(configs, matchRulesOrBall = {}) {
   setActiveMatchBall(currentMatchBallType);
 
   matchManager.startMatch(configs, { durationSeconds, ballPreference, arenaType });
+  soundManager.music?.onMatchStart?.();
   matchState = matchManager.getState();
   matchState.targetGoal = 'N';
   matchState.lastScoredFor = null;
@@ -3645,6 +3664,8 @@ async function boot() {
   window.__vb.allBalls = allBalls;
   window.__vb.getGameState = () => gameState;
   window.__vb.cinematicCamera = cinematicCamera;
+  window.__vb.trailerDirector = trailerDirector;
+  window.__vb.musicManager = soundManager.music;
   window.__vb.getPlayerConfigs = getPlayerConfigs;
   window.__vb.athleteMatchStats = athleteMatchStats;
   window.__vb.showVictoryScreen = showVictoryScreen;
