@@ -24,6 +24,17 @@ import { createBotController, updateBot } from './botController.js';
 import { testHoopCrossing } from '../mechanics/scoring.js';
 import { toTrimeshArrays } from '../sim/arena.js';
 import { getCourtFloorY } from './botPerception.js';
+import {
+  createTelemetryRecorder,
+  recordDrop,
+  advancePhase,
+  recordHit,
+  recordWhiff,
+  recordGoal,
+  recordRespawn,
+  recordClockEnd,
+  sampleUphill,
+} from '../sim/playtestTelemetry.js';
 
 let cachedCollisionMeshes = null;
 
@@ -170,6 +181,14 @@ function createMockAthlete(motorBody, id = 'p1', team = 'home') {
     },
     strikeState: null,
   };
+}
+
+/**
+ * True when initHeadless() loaded the real arena.glb collision trimeshes.
+ * Playtest telemetry must not be collected on the cuboid fallback court.
+ */
+export function isHeadlessCourtLoaded() {
+  return !!(cachedCollisionMeshes && cachedCollisionMeshes.length > 0);
 }
 
 /**
@@ -381,6 +400,12 @@ export function createHeadlessMatch(paramsA, paramsB, opts = {}) {
     label: ballCfg.label,
   };
 
+  // Telemetry recorder: zero-allocation event pool + scalar segment state.
+  const telemetry = opts.telemetry === false
+    ? null
+    : createTelemetryRecorder({ capacity: opts.telemetryCapacity });
+  if (telemetry) recordDrop(telemetry, 0);
+
   return {
     world,
     motorBodyA, motorBodyB,
@@ -398,6 +423,11 @@ export function createHeadlessMatch(paramsA, paramsB, opts = {}) {
     divingHits: { home: 0, away: 0 },
     tick: 0,
     maxTicks: matchTicks,
+    telemetry,
+    // True only when the real arena.glb collision trimeshes loaded. Telemetry
+    // consumers must fail closed on false (cuboid fallback is not reportable).
+    courtLoaded: !!(cachedCollisionMeshes && cachedCollisionMeshes.length > 0),
+    activeBalls: [ballObj],
   };
 }
 
@@ -536,6 +566,19 @@ function resolveStrikes(match, strikeState, motorBody, side) {
         pos: { x: bPos.x, y: bPos.y, z: bPos.z },
       });
 
+      if (match.telemetry) {
+        recordHit(
+          match.telemetry,
+          match.tick,
+          side,
+          strikeState.pendingKind,
+          side === 'home' ? match.botA.difficulty : match.botB.difficulty,
+          bPos.x, bPos.y, bPos.z,
+          dirX, dirZ, q,
+          match.matchState.targetGoal,
+        );
+      }
+
       // Track diving hits if athlete dove recently
       const athlete = side === 'home' ? match.athleteA : match.athleteB;
       if (athlete._lastDiveTick && (match.tick - athlete._lastDiveTick) <= 50) {
@@ -551,6 +594,16 @@ function resolveStrikes(match, strikeState, motorBody, side) {
     if (!match.whiffs) match.whiffs = { home: 0, away: 0 };
     match.whiffs[side]++;
     strikeState.resolvedTick = strikeState.pressTick;
+    if (match.telemetry) {
+      const wPos = match.ballBody.translation();
+      recordWhiff(
+        match.telemetry,
+        match.tick,
+        side,
+        side === 'home' ? match.botA.difficulty : match.botB.difficulty,
+        wPos.x, wPos.y, wPos.z,
+      );
+    }
   }
 }
 
@@ -560,6 +613,11 @@ function resolveStrikes(match, strikeState, motorBody, side) {
 function checkScoring(match) {
   const pos = match.ballBody.translation();
   const prev = match.ballPrev;
+
+  // ═══ TELEMETRY: sample uphill floor height for the active strike-segment.
+  // Reuses the translation() this function already performs; the hook itself
+  // allocates nothing (see src/sim/playtestTelemetry.js). ═══
+  if (match.telemetry) sampleUphill(match.telemetry, pos.x, pos.z);
 
   // Re-arm hoops when ball is far from x=0
   if (Math.abs(pos.x) > HOOP_REARM_X) {
@@ -612,6 +670,12 @@ function recordHeadlessGoal(match, goalId) {
   match.ballBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
   match.ballPrev.x = dropX; match.ballPrev.y = 10; match.ballPrev.z = 0;
   match.ballArmed.N = true; match.ballArmed.S = true;
+
+  if (match.telemetry) {
+    recordGoal(match.telemetry, match.tick, goalId, scoredForHome ? 'home' : 'away');
+    advancePhase(match.telemetry);
+    recordDrop(match.telemetry, match.tick);
+  }
 }
 
 /**
@@ -626,6 +690,12 @@ function checkBallRespawn(match) {
     match.ballBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
     match.ballPrev.x = respawnX; match.ballPrev.y = 10; match.ballPrev.z = 0;
     match.ballArmed.N = true; match.ballArmed.S = true;
+
+    if (match.telemetry) {
+      recordRespawn(match.telemetry, match.tick, pos.x, pos.y, pos.z);
+      advancePhase(match.telemetry);
+      recordDrop(match.telemetry, match.tick);
+    }
   }
 }
 
@@ -649,14 +719,25 @@ function updateFacing(athlete, motorBody) {
   }
 }
 
+/** Respawn one motor sphere if it left the arena. Event-rate, not tick-rate. */
+function respawnMotorIfOutOfBounds(mb, spawnZ) {
+  const p = mb.translation();
+  if (p.y < KILL_PLANE_Y || Math.abs(p.x) > ARENA_HALF_X || Math.abs(p.z) > ARENA_HALF_Z) {
+    const spawnY = getCourtFloorY(0, spawnZ) + MOTOR_RADIUS + 0.3;
+    mb.setTranslation({ x: 0, y: spawnY, z: spawnZ }, true);
+    mb.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    mb.setAngvel({ x: 0, y: 0, z: 0 }, true);
+  }
+}
+
 /**
  * Step the simulation one tick.
  */
 export function stepHeadlessMatch(match) {
   match.tick++;
 
-  const { botA, botB, athleteA, athleteB, slotA, slotB, matchState, ballObj } = match;
-  const balls = [ballObj];
+  const { botA, botB, athleteA, athleteB, slotA, slotB, matchState } = match;
+  const balls = match.activeBalls;
 
   // Clear action queues (keep movement from last tick)
   slotA.jumpQueued = false; slotA.diveQueued = false; slotA.cutQueued = false;
@@ -761,21 +842,17 @@ export function stepHeadlessMatch(match) {
   checkScoring(match);
   checkBallRespawn(match);
 
-  // Motor respawn if out of bounds
-  for (const [mb, spawnZ] of [[match.motorBodyA, 20], [match.motorBodyB, -20]]) {
-    const p = mb.translation();
-    if (p.y < KILL_PLANE_Y || Math.abs(p.x) > ARENA_HALF_X || Math.abs(p.z) > ARENA_HALF_Z) {
-      const spawnY = getCourtFloorY(0, spawnZ) + MOTOR_RADIUS + 0.3;
-      mb.setTranslation({ x: 0, y: spawnY, z: spawnZ }, true);
-      mb.setLinvel({ x: 0, y: 0, z: 0 }, true);
-      mb.setAngvel({ x: 0, y: 0, z: 0 }, true);
-    }
-  }
+  // Motor respawn if out of bounds (unrolled: the old for-of over nested
+  // array literals allocated on every tick; this form allocates nothing
+  // until an actual out-of-bounds respawn fires).
+  respawnMotorIfOutOfBounds(match.motorBodyA, 20);
+  respawnMotorIfOutOfBounds(match.motorBodyB, -20);
 
   // Match clock
   matchState.ticksRemaining--;
   if (matchState.ticksRemaining <= 0) {
     matchState.matchOver = true;
+    if (match.telemetry) recordClockEnd(match.telemetry, match.tick);
   }
 }
 

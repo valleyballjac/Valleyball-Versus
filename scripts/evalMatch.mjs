@@ -15,11 +15,15 @@
  *   --awayDiff DIFF    'easy' | 'medium' | 'hard' (default: hard)
  *   --seed N           Random seed (default: 42)
  *   --matches N        Number of matches to average (default: 1)
+ *   --sport            Print the shared sport-metrics report (JSON) from
+ *                      src/sim/playtestTelemetry.js after the default table.
+ *                      Default console output is unchanged without this flag.
  */
 
 import { initHeadless, createHeadlessMatch, runHeadlessMatch, destroyHeadlessMatch } from '../src/ai/headlessSim.js';
 import { createFitnessAccumulator, accumulateTick, computeFitness } from '../src/ai/fitnessFunction.js';
 import { TUNING } from '../src/config/tuning.js';
+import { buildTelemetryDoc } from '../src/sim/playtestTelemetry.js';
 
 function parseArgs(args) {
   const opts = {
@@ -28,6 +32,7 @@ function parseArgs(args) {
     awayDiff: 'hard',
     seed: 42,
     matches: 1,
+    sport: false,
     ball: 'medium',
     aggA: 0.60,
     aggB: 0.60,
@@ -42,6 +47,7 @@ function parseArgs(args) {
       case '--awayDiff': opts.awayDiff = val; i++; break;
       case '--seed': opts.seed = parseInt(val, 10); i++; break;
       case '--matches': opts.matches = parseInt(val, 10); i++; break;
+      case '--sport': opts.sport = true; break;
       case '--ball': opts.ball = val; i++; break;
       case '--aggA': opts.aggA = parseFloat(val); i++; break;
       case '--aggB': opts.aggB = parseFloat(val); i++; break;
@@ -109,6 +115,7 @@ async function runEval() {
 
   const homeParams = TUNING.ai?.[opts.homeDiff] || null;
   const awayParams = TUNING.ai?.[opts.awayDiff] || null;
+  const sportDocs = [];
 
   for (let m = 0; m < opts.matches; m++) {
     const matchSeed = opts.seed + m * 100;
@@ -182,6 +189,20 @@ async function runEval() {
     awayTotals.ownCircle += resAway.breakdown.ownCircleTouches || 0;
     awayTotals.fitness += resAway.fitness;
 
+    if (opts.sport && match.telemetry) {
+      sportDocs.push(buildTelemetryDoc(match.telemetry, {
+        durationTicks: opts.duration * 60,
+        ballId: opts.ball,
+        homeSkill: opts.homeDiff,
+        awaySkill: opts.awayDiff,
+        seedA: matchSeed,
+        seedB: matchSeed + 1,
+        aggressivenessA: opts.aggA,
+        aggressivenessB: opts.aggB,
+        courtLoaded: match.courtLoaded === true,
+      }));
+    }
+
     destroyHeadlessMatch(match);
   }
 
@@ -218,6 +239,12 @@ async function runEval() {
   console.log(`│ Own Circle Touches (Defensive Hold) │ ${String(avg(homeTotals.ownCircle)).padStart(12)} │ ${String(avg(awayTotals.ownCircle)).padStart(12)} │`);
   console.log(`│ Overall Performance Fitness         │ ${String(avg(homeTotals.fitness)).padStart(12)} │ ${String(avg(awayTotals.fitness)).padStart(12)} │`);
   console.log('└─────────────────────────────────────┴──────────────┴──────────────┘\n');
+
+  if (opts.sport) {
+    // Shared sport reducer output (headless bot proxy; diagnostic only).
+    console.log('SPORT REPORT (headless bot proxy, diagnostic only):');
+    console.log(JSON.stringify(sportDocs.map((d) => d.report), null, 2));
+  }
 }
 
 runEval().catch(err => {
