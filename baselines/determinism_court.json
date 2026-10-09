@@ -1,9 +1,9 @@
 {
-  "note": "PNG pairs from `npm run determinism`, headless SwiftShader (cloud, Chromium 1194). Renderer-bound: a GPU run on the laptop will produce different PNG hashes and is compared only against itself. Recorded on rebuild/core, Phase 0, from e34833f + harness-only changes; t300 equals the pre-change hash, proving the Phase 0 code is a no-op when unarmed.",
+  "note": "PNG pairs from `npm run determinism`, headless SwiftShader. Renderer-bound: a GPU run on the laptop will produce different PNG hashes and is compared only against itself. Re-recorded on rc/v0.3.2 after integrating arena-10.0 terrain (8d37ee3) and the motor-authority-review tuning (1237565). The squared walk governor and gait speed constants feed the athlete's rendered pose, so every tick's hash shifted. t300 moved 87cdbaae -> c0c75b6b from the tuning alone (terrain unchanged, pair still byte-identical). t90 and t600 were additionally stale in the arena-10.0 baseline (it re-recorded only t300, leaving pre-terrain values 2ac97d92 / fc1febea), so those two now correct for both the terrain and the tuning.",
   "renderer": "swiftshader",
   "court": {
-    "t90": "2ac97d92247dd204447bf037fd1b7cb7459080b76b14d0a2dbf5393f9ba760e1",
-    "t300": "87cdbaae0cfd4183b49c9e9e7b91815e77a9db4344d9e18354dfa3a52b495b8c",
-    "t600": "fc1febea4aed6760e95dbd18777f7c7be95d250e2d462e23ed2d9af8c488041a"
+    "t90": "5951b04803bd5f1f0a9a3239459948e06bd152366c82dfab48a7c56ef1cf6bfe",
+    "t300": "c0c75b6bc1876d59f57d8896238cf04ae31aed11a61a5e8aa93c76c3befb6e1c",
+    "t600": "12c7b9e2e3633251e1d2ae59240377c16825a607310b29c374ad868cdbdd39d5"
   }
 }
