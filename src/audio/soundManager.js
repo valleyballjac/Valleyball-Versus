@@ -1,4 +1,5 @@
 import { TUNING, assetUrl } from '../config/tuning.js';
+import { musicManager } from './musicManager.js';
 
 /**
  * VALLEYBALL SOUND ENGINE (HYBRID ARCHITECTURE)
@@ -48,6 +49,7 @@ class SoundManager {
     this.lastHoopClankTime = 0;
     this.lastBodyThudTime = 0;
     this.lastPlayedInPool = new Map();
+    this.music = musicManager;
   }
 
   /**
@@ -87,6 +89,9 @@ class SoundManager {
     this.ambienceGain = this.ctx.createGain();
     this.ambienceGain.gain.setValueAtTime(TUNING.audio.ambienceVolume, this.ctx.currentTime);
     this.ambienceGain.connect(this.masterGain);
+
+    // Music Manager Bus
+    musicManager.init(this.ctx, this.masterGain);
 
     // Pre-bake shared 2.0-second white noise buffer to eliminate runtime heap allocations and GC spikes
     try {
@@ -224,6 +229,7 @@ class SoundManager {
     );
     this.sfxGain.gain.setTargetAtTime(TUNING.audio.sfxVolume, now, 0.05);
     this.ambienceGain.gain.setTargetAtTime(TUNING.audio.ambienceVolume, now, 0.05);
+    musicManager.updateVolume();
   }
 
   setMasterVolume(val) {
@@ -242,6 +248,14 @@ class SoundManager {
 
   getSfxVolume() {
     return TUNING.audio?.sfxVolume ?? 0.8;
+  }
+
+  setMusicVolume(val) {
+    musicManager.setVolume(val);
+  }
+
+  getMusicVolume() {
+    return musicManager.getVolume();
   }
 
   setMuted(muted) {
@@ -773,6 +787,7 @@ class SoundManager {
 }
 
 export const soundManager = new SoundManager();
+export { musicManager };
 if (typeof window !== 'undefined') {
   window.__soundManager = soundManager;
 }

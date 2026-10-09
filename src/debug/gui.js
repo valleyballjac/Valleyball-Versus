@@ -443,9 +443,20 @@ export function createGui({
   const audioFolder = gui.addFolder('audio & sfx');
   audioFolder.add(TUNING.audio, 'enabled').name('audio enabled').onChange(() => soundManager.updateTuning());
   audioFolder.add(TUNING.audio, 'masterVolume', 0, 1, 0.05).name('master volume').onChange(() => soundManager.updateTuning());
+  audioFolder.add(TUNING.audio, 'musicVolume', 0, 1, 0.05).name('music volume').onChange(() => soundManager.updateTuning());
+  audioFolder.add(TUNING.audio, 'musicEnabled').name('music enabled').onChange(() => soundManager.updateTuning());
   audioFolder.add(TUNING.audio, 'sfxVolume', 0, 1, 0.05).name('sfx volume').onChange(() => soundManager.updateTuning());
   audioFolder.add(TUNING.audio, 'ambienceVolume', 0, 1, 0.05).name('ambience volume').onChange(() => soundManager.updateTuning());
   audioFolder.add(TUNING.audio, 'spatialAudio').name('spatial 3D audio');
+  audioFolder.add({
+    playMusic: () => soundManager.music?.play?.(0),
+  }, 'playMusic').name('play music (debut)');
+  audioFolder.add({
+    stopMusic: () => soundManager.music?.stop?.(),
+  }, 'stopMusic').name('stop music');
+  audioFolder.add({
+    toggleTrailer: () => window.__vb?.trailerDirector?.toggle?.(),
+  }, 'toggleTrailer').name('toggle trailer [F9]');
   audioFolder.add({
     testBuzzer: () => soundManager.playGoal('home', 'N'),
   }, 'testBuzzer').name('test arena buzzer');

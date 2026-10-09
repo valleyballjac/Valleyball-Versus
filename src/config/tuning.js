@@ -1751,6 +1751,52 @@ const DEFAULTS = {
     pulseMs: 120,
   },
 
+  // ═══ AUDIO & SFX ═══
+  // Zero-dependency procedural Web Audio sound synthesis & adaptive music engine.
+  audio: {
+    enabled: true,
+    masterVolume: 0.8,
+    sfxVolume: 0.9,
+    ambienceVolume: 0.2,
+    musicVolume: 0.7,
+    musicEnabled: true,
+    spatialAudio: true,
+    minBounceForce: 2.0, // N: ignore micro-contacts/resting jitters
+    strikeSweetBonus: false,
+    musicPlaylist: [
+      {
+        id: 'track_01_arena_of_frost',
+        title: 'Arena of Frost (Debut Anthem)',
+        bpm: 130,
+        src: 'audio/music/track_01_arena_of_frost.mp3',
+      },
+      {
+        id: 'track_02_baroque_pulse',
+        title: 'Baroque Pulse',
+        bpm: 128,
+        src: 'audio/music/track_02_baroque_pulse.mp3',
+      },
+      {
+        id: 'track_03_smalltown_drive',
+        title: 'Smalltown Drive',
+        bpm: 132,
+        src: 'audio/music/track_03_smalltown_drive.mp3',
+      },
+      {
+        id: 'track_04_gladiatorial_toccata',
+        title: 'Gladiatorial Toccata',
+        bpm: 126,
+        src: 'audio/music/track_04_gladiatorial_toccata.mp3',
+      },
+      {
+        id: 'track_05_spectral_continuum',
+        title: 'Spectral Continuum',
+        bpm: 130,
+        src: 'audio/music/track_05_spectral_continuum.mp3',
+      },
+    ],
+  },
+
   render: {
     // 'native' | '1.25' | '1.0'
     pixelRatioPreset: 'native',
