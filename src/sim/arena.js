@@ -286,10 +286,10 @@ function normaliseCourtMaterial(material) {
     return;
   }
 
-  // Stream / water channels: subtle sleek hydro-resin sheen, restrained for an athletic venue
+  // Stream / water channels: very subtle hydro-matte, eliminating distracting glare and hotspots
   if (material.name && (material.name.includes('Stream') || material.name.includes('Water'))) {
-    material.roughness = 0.38;
-    material.metalness = 0.06;
+    material.roughness = 0.65;
+    material.metalness = 0.02;
     return;
   }
 
