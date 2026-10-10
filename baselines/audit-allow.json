@@ -59,7 +59,6 @@
     "src/main.js :: createMatchState": 1,
     "src/main.js :: createMotor": 1,
     "src/main.js :: detachMotorFromRagdoll": 1,
-    "src/main.js :: isMainMenuActive": 1,
     "src/main.js :: runActions": 1,
     "src/main.js :: runMountFollower": 1,
     "src/main.js :: runStrikes": 1,
@@ -82,8 +81,8 @@
   },
   "clips": {},
   "size": {
-    "src/config/tuning.js": 1732,
-    "src/main.js": 3916,
+    "src/config/tuning.js": 1737,
+    "src/main.js": 3910,
     "src/mechanics/strikes.js": 956,
     "src/sim/animtarget.js": 1992
   }

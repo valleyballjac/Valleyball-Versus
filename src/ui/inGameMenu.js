@@ -15,6 +15,7 @@ let isOpen = false;
 let clockBannerEl = null;
 let callbacks = {
   onResume: null,
+  onOpen: null,
   onRematch: null,
   onPracticeMode: null,
   onFinishPractice: null,
@@ -60,12 +61,13 @@ let inGamePrevPad = { up: false, down: false, left: false, right: false, a: fals
 let currentRenderSettings = {
   pixelRatioPreset: 'native',
   shadowQuality: 'high',
-  showControlsOverlay: true,
+  showControlsOverlay: false,
   showTuningGui: false,
 };
 
 export function initInGameMenu({
   onResume,
+  onOpen,
   onRematch,
   onPracticeMode,
   onFinishPractice,
@@ -75,7 +77,7 @@ export function initInGameMenu({
   initialRenderSettings = {},
 }) {
   if (menuOverlayEl) return;
-  callbacks = { onResume, onRematch, onPracticeMode, onFinishPractice, onMainMenu, onRenderSettingsChange, onCameraChange };
+  callbacks = { onResume, onOpen, onRematch, onPracticeMode, onFinishPractice, onMainMenu, onRenderSettingsChange, onCameraChange };
   Object.assign(currentRenderSettings, initialRenderSettings);
 
   menuOverlayEl = document.createElement('div');
@@ -338,8 +340,8 @@ export function initInGameMenu({
       cursor: pointer;
       border: 1px solid rgba(120, 170, 210, 0.3);
       transition: all 0.12s ease;
-      background: ${(currentRenderSettings.showControlsOverlay ?? true) === opt.id ? '#2563eb' : 'rgba(255, 255, 255, 0.06)'};
-      color: ${(currentRenderSettings.showControlsOverlay ?? true) === opt.id ? '#ffffff' : '#94a3b8'};
+      background: ${(currentRenderSettings.showControlsOverlay ?? false) === opt.id ? '#2563eb' : 'rgba(255, 255, 255, 0.06)'};
+      color: ${(currentRenderSettings.showControlsOverlay ?? false) === opt.id ? '#ffffff' : '#94a3b8'};
     `;
     btn.onclick = () => {
       currentRenderSettings.showControlsOverlay = opt.id;
@@ -677,7 +679,7 @@ function cycleShadow(dir = 1) {
 }
 
 function cycleControls() {
-  const nextVal = !(currentRenderSettings.showControlsOverlay ?? true);
+  const nextVal = !(currentRenderSettings.showControlsOverlay ?? false);
   const targetBtn = controlsButtons.find((_, idx) => controlsOptions[idx].id === nextVal);
   targetBtn?.click();
   updateInGameFocusUI();
@@ -1108,6 +1110,7 @@ function stopInGameMenuPolling() {
 export function showInGameMenu(cam1Mode, cam2Mode) {
   if (!menuOverlayEl) return;
   isOpen = true;
+  if (callbacks.onOpen) callbacks.onOpen();
   menuOverlayEl.style.display = 'flex';
   if (menuOverlayEl._updateCamSelects) {
     menuOverlayEl._updateCamSelects(cam1Mode, cam2Mode);

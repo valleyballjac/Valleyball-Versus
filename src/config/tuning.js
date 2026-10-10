@@ -1702,6 +1702,11 @@ const DEFAULTS = {
     },
   },
 
+  controlsHud: {
+    userEnabled: false,
+    pulseMs: 120,
+  },
+
   render: {
     // 'native' | '1.25' | '1.0'
     pixelRatioPreset: 'native',

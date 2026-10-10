@@ -44,6 +44,7 @@ import { matchManager } from './features/match/matchManager.js';
 import {
   initInputRouter,
   sampleAllInputs,
+  getControlsSnapshot,
   getInputSlot,
   consumeAthleteJump,
   consumeAthleteDive,
@@ -55,7 +56,6 @@ import {
   consumeCameraCycleArena,
   consumeMenuToggle,
   getMouseDeltas,
-  getControllerAssignments,
   exitGamePointerLock,
   triggerHaptic,
 } from './input/inputRouter.js';
@@ -65,7 +65,8 @@ import { PlayerCamera } from './visuals/playerCamera.js';
 import { CinematicCamera } from './visuals/cinematicCamera.js';
 import { createTurfParticleSystem, getPitchSurfaceColor } from './visuals/turfParticles.js';
 import { createGoalCelebrationSystem } from './visuals/goalCelebration.js';
-import { initVictoryScreen, showVictoryScreen, hideVictoryScreen, showPracticeSummary } from './ui/victoryScreen.js';
+import { initVictoryScreen, showVictoryScreen, hideVictoryScreen, showPracticeSummary, isVictoryScreenVisible } from './ui/victoryScreen.js';
+import { initControlsOverlay, updateControlsOverlay, setControlsOverlayEnabled, hideControlsOverlay } from './ui/controlsOverlay.js';
 import { initCountdownOverlay, updateCountdownOverlay, resetCountdownOverlay } from './ui/countdownOverlay.js';
 import { initInGameMenu, toggleInGameMenu, hideInGameMenu, updateInGameMenuBanner, isInGameMenuOpen } from './ui/inGameMenu.js';
 import {
@@ -669,10 +670,8 @@ function applyRenderSettings(settings = {}) {
     applyShadowSettings();
   }
   if (settings.showControlsOverlay !== undefined) {
-    const controlsCard = document.getElementById('controls-card');
-    if (controlsCard) {
-      controlsCard.style.display = settings.showControlsOverlay ? 'flex' : 'none';
-    }
+    setControlsOverlayEnabled(settings.showControlsOverlay);
+    if (!settings.showControlsOverlay) hideControlsOverlay();
   }
   if (settings.showTuningGui !== undefined && guiInstance) {
     if (settings.showTuningGui) {
@@ -872,15 +871,6 @@ function updateHud(match) {
       `${m.mode === 'match' ? clock : 'practice'}${m.matchOver ? '  FULL TIME' : ''}`;
   }
 
-  const ctrlVal = document.getElementById('controls-assignment-val');
-  if (ctrlVal) {
-    const assignments = getControllerAssignments(athletes.length, TUNING.match.mode);
-    if (TUNING.match.mode === 'match') {
-      ctrlVal.textContent = `P1: ${assignments.p1}  |  P2: ${assignments.p2}`;
-    } else {
-      ctrlVal.textContent = `P1: ${assignments.p1}`;
-    }
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2164,6 +2154,7 @@ function fixedUpdate(dt, tick) {
     }
     if (gameState === 'match') {
       if (matchState.matchOver && !matchState._buzzerPlayed) {
+        hideControlsOverlay();
         matchState._buzzerPlayed = true;
         soundManager.playSample('arena_buzzer', 0.95, 1.0, null, soundManager.uiGain);
         const p1Strike = athletes[0]?.getStrikeStats() || { hits: 0, whiffs: 0, accuracy: 0 };
@@ -3545,8 +3536,10 @@ async function boot() {
   );
 
   initInputRouter(canvas);
+  initControlsOverlay();
   loop.onFrame(() => {
     sampleAllInputs([playerCameras[0].camera, playerCameras[1].camera], gameState === 'practice' ? 1 : athletes.length, TUNING.match.mode, activeBotSlots);
+    updateControlsOverlay(getControlsSnapshot(), gameState, isInGameMenuOpen(), isVictoryScreenVisible(), !!matchState?.matchOver, !!matchState?.isCountingDown, isMainMenuActive());
   });
 
   applyViewportSize();
@@ -3568,6 +3561,7 @@ async function boot() {
 
   initInGameMenu({
     onResume: () => {},
+    onOpen: hideControlsOverlay,
     onRematch: handleRematch,
     onPracticeMode: () => handleStartPractice(getPlayerConfigs()[0], selectedPracticeBallType),
     onFinishPractice: handleFinishPractice,
