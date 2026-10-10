@@ -52,7 +52,10 @@ const goal = (tick, scoredFor, lastHitSide, goalId = 'N') => ({
 });
 const respawn = (tick) => ({ type: 'respawn', tick, phase: 0, side: null, strikeType: null, skill: null, goal: null, scoredFor: null, lastHitSide: null, x: 0, y: 0, z: 0, dirX: 0, dirZ: 0, quality: 0, seg: null });
 const clockEnd = (tick) => ({ type: 'clockEnd', tick, phase: 0, side: null, strikeType: null, skill: null, goal: null, scoredFor: null, lastHitSide: null, x: 0, y: 0, z: 0, dirX: 0, dirZ: 0, quality: 0, seg: null });
-const META = { durationTicks: 600 };
+// Fixtures for the PUBLIC reducer must supply VERIFIED court metadata: the
+// exported reduceSportReport fails closed without courtLoaded === true.
+const META = { durationTicks: 600, courtLoaded: true };
+const META_UNVERIFIED = { durationTicks: 600 }; // no courtLoaded: must fail closed
 const META_OK = { ...META, courtLoaded: true };
 
 /** A point on the baked heightmap (scan finds one; center is expected). */
@@ -85,7 +88,7 @@ test('empty stream: zero denominators yield null, not 0%', () => {
   assert.equal(r.summary.touches.touchesPerPossessionMean, null);
   assert.equal(r.summary.touches.contestedShare, null);
   assert.equal(r.summary.goals.perMinute, 0); // 0 goals over real exposure is 0, not null
-  assert.equal(reduceSportReport([], {}).summary.goals.perMinute, null); // no exposure: null
+  assert.equal(reduceSportReport([], { courtLoaded: true }).summary.goals.perMinute, null); // no exposure: null
   assert.equal(r.summary.whiffs.whiffRate, null);
   assert.equal(r.summary.whiffs.bySkill.hard.whiffRate, null);
   assert.equal(r.summary.uphill.positiveGainShare, null);
@@ -188,7 +191,7 @@ test('rally cadence math: median, p10, p90, histogram bins', () => {
     events.push(goal(t + d, 'home', 'home'));
     t += d + 1;
   }
-  const r = reduceSportReport(events, { durationTicks: t }).summary;
+  const r = reduceSportReport(events, { durationTicks: t, courtLoaded: true }).summary;
   assert.deepEqual(r.rally.durationsTicks, [10, 20, 30, 40]);
   assert.equal(r.rally.median, 25);
   assert.equal(r.rally.p10, 10);
@@ -218,16 +221,26 @@ test('missing height samples: unavailable, never treated as zero gain', () => {
   assert.equal(r.uphill.positiveGainShare, null); // no available segment
 });
 
-test('uphill gain and progress aggregate over available segments', () => {
+test('uphill gain and progress aggregate over available segments; negative gain clamped at the boundary', () => {
   const segA = { side: 'home', strikeTick: 10, targetGoal: 'N', uphillGain: 1.5, progress: 3, unavailable: 0, samples: 20 };
   const segB = { side: 'away', strikeTick: 30, targetGoal: 'S', uphillGain: -0.5, progress: 2, unavailable: 0, samples: 10 };
   const r = reduceSportReport([
     drop(0), hit(10, 'home', { seg: segA }), hit(30, 'away', { seg: segB }), clockEnd(600),
   ], META).summary;
   assert.equal(r.uphill.struckPossessions, 2);
-  assert.equal(r.uphill.gainTotalMeters, 1);
-  assert.equal(r.uphill.positiveGainShare, 0.5);
+  // segB's negative (hand-built) gain is CLAMPED to 0 at the reducer boundary:
+  // a descent can never subtract from the aggregate rise. 1.5 + 0 = 1.5.
+  assert.equal(r.uphill.gainTotalMeters, 1.5);
+  assert.equal(r.uphill.positiveGainShare, 0.5); // segB clamped to 0: not positive
   assert.equal(r.uphill.progressTotalMeters, 5);
+});
+
+test('reducer boundary: a solely negative gain yields 0 total, 0 positive share', () => {
+  const seg = { side: 'home', strikeTick: 10, targetGoal: 'N', uphillGain: -2, progress: 1, unavailable: 0, samples: 5 };
+  const r = reduceSportReport([drop(0), hit(10, 'home', { seg }), clockEnd(600)], META).summary;
+  assert.equal(r.uphill.gainTotalMeters, 0);
+  assert.equal(r.uphill.positiveGainShare, 0);
+  assert.equal(r.uphill.unavailableSegments, 0); // available, just clamped
 });
 
 // ── Recorder-level fixtures ──
@@ -247,13 +260,40 @@ test('fail closed: fallback court (courtLoaded !== true) produces no doc', () =>
   const build = () => {
     const tel = createTelemetryRecorder({ capacity: 16 });
     recordDrop(tel, 0);
-    recordClockEnd(tel, 600);
+    recordClockEnd(tel, 600, 0, 10); // explicit real endpoint, never a default
     return tel;
   };
   assert.throws(() => assertTelemetryReportable(false, build()), /fallback|court/i);
   assert.throws(() => assertTelemetryReportable(undefined, build()), /fallback|court/i);
-  assert.throws(() => buildTelemetryDoc(build(), META), /fallback|court/i); // no courtLoaded flag
+  assert.throws(() => buildTelemetryDoc(build(), META_UNVERIFIED), /fallback|court/i); // no courtLoaded flag
   assert.doesNotThrow(() => assertTelemetryReportable(true, build()));
+});
+
+test('fail closed: the EXPORTED reducer itself refuses unverified or overflowed metadata', () => {
+  const events = [drop(0), clockEnd(600)];
+  // Direct public-reducer use without verified court metadata must throw.
+  assert.throws(() => reduceSportReport(events, META_UNVERIFIED), /fallback|court/i);
+  assert.throws(() => reduceSportReport(events, { durationTicks: 600, courtLoaded: false }), /fallback|court/i);
+  // Overflowed stream must throw even with a verified court.
+  assert.throws(
+    () => reduceSportReport(events, { durationTicks: 600, courtLoaded: true, eventOverflow: true }),
+    /overflow/i,
+  );
+  // Verified, non-overflowed metadata passes.
+  assert.doesNotThrow(() => reduceSportReport(events, META));
+});
+
+test('recordClockEnd requires an actual finite endpoint (no (0,0) default)', () => {
+  const tel = createTelemetryRecorder({ capacity: 16 });
+  recordDrop(tel, 0);
+  assert.throws(() => recordClockEnd(tel, 600), /endpoint/i);
+  assert.throws(() => recordClockEnd(tel, 600, NaN, 5), /endpoint/i);
+  assert.throws(() => recordClockEnd(tel, 600, 1, undefined), /endpoint/i);
+  assert.equal(tel.count, 1); // nothing recorded by the rejected calls
+  assert.doesNotThrow(() => recordClockEnd(tel, 600, 2, -7));
+  const ev = serializeEvents(tel).find((e) => e.type === 'clockEnd');
+  assert.equal(ev.x, 2);
+  assert.equal(ev.z, -7);
 });
 
 test('recorder round-trip: labels, skill mapping, phase advance on goal', () => {
@@ -264,7 +304,7 @@ test('recorder round-trip: labels, skill mapping, phase advance on goal', () => 
   recordGoal(tel, 20, 'N', 'home');
   advancePhase(tel);
   recordDrop(tel, 21);
-  recordClockEnd(tel, 600);
+  recordClockEnd(tel, 600, 3, -8); // explicit endpoint (required; no defaults)
   const events = serializeEvents(tel);
   assert.deepEqual(events.map((e) => e.type), ['drop', 'hit', 'whiff', 'goal', 'drop', 'clockEnd']);
   const h = events[1];
@@ -371,7 +411,7 @@ test('buildTelemetryDoc is deterministic: identical inputs, identical JSON', () 
     recordGoal(tel, 50, 'N', 'home');
     advancePhase(tel);
     recordDrop(tel, 51);
-    recordClockEnd(tel, 600);
+    recordClockEnd(tel, 600, -2, 4); // explicit endpoint (required; no defaults)
     return JSON.stringify(buildTelemetryDoc(tel, { ...META_OK, seedA: 42, seedB: 137, ballId: 'medium' }));
   };
   assert.equal(build(), build());

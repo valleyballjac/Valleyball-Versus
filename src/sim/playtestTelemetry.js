@@ -20,7 +20,11 @@
  *   2. REDUCER (post-match). `serializeEvents` and `reduceSportReport` run once
  *      after the match, when allocation is free, and turn the raw event stream
  *      into the structured sport report. The reducer is a pure function of its
- *      inputs, so it is unit-testable on hand-built event fixtures.
+ *      inputs, so it is unit-testable on hand-built event fixtures. It is also
+ *      a FAIL-CLOSED boundary: `reduceSportReport` itself refuses (throws) on
+ *      unverified court metadata or an overflowed event stream, so no public
+ *      path can emit a sport report from an invalid run, and it clamps
+ *      negative uphill gain to 0 (a descent is never a negative rise).
  *
  * PARITY DISCLAIMER (mirrors the notice in headlessSim.js):
  *   This is a HEADLESS BOT PROXY, not the visual client's full motor, ghost or
@@ -346,10 +350,17 @@ export function recordRespawn(tel, tick, x, y, z) {
 
 /**
  * Match-clock end. Closes the final phase's segment at the ball's ACTUAL
- * position (x, z) at clock end. Callers must pass the real endpoint; closing
- * at (0, 0) would fabricate segment progress toward the hoop.
+ * position (x, z) at clock end. The endpoint is REQUIRED: closing at a
+ * (0, 0) default would fabricate segment progress toward the hoop, so a
+ * missing or non-finite endpoint throws instead of recording fake data.
  */
-export function recordClockEnd(tel, tick, x = 0, z = 0) {
+export function recordClockEnd(tel, tick, x, z) {
+  if (!Number.isFinite(x) || !Number.isFinite(z)) {
+    throw new Error(
+      `recordClockEnd requires the ball's actual finite endpoint (got x=${x}, z=${z}); ` +
+      'refusing to close the segment at a fabricated default.',
+    );
+  }
   const e = nextSlot(tel, EV.CLOCK_END, tick);
   if (!e) return;
   closeSegmentInto(tel, e, x, z);
@@ -430,9 +441,21 @@ function histogram(sortedValues, edges) {
  * be compared by a wholesale JSON digest).
  *
  * @param {Array} events  serialized event objects (strings + numbers)
- * @param {object} meta   { durationTicks, ballId, homeSkill, awaySkill, seedA, seedB, histogramEdges }
+ * @param {object} meta   { durationTicks, ballId, homeSkill, awaySkill, seedA, seedB,
+ *                         histogramEdges, courtLoaded, eventOverflow }
+ *
+ * FAIL-CLOSED BOUNDARY: this exported reducer is itself a public sport-report
+ * path, so it refuses (throws) when the court metadata is not verified
+ * (courtLoaded !== true) or when the event stream overflowed
+ * (eventOverflow === true), even when called directly rather than through
+ * buildTelemetryDoc. Fixtures must supply verified metadata (courtLoaded:
+ * true) or build the doc through buildTelemetryDoc.
  */
 export function reduceSportReport(events, meta = {}) {
+  assertTelemetryReportable(
+    meta.courtLoaded,
+    meta.eventOverflow ? { overflow: true, capacity: meta.eventCapacity ?? 'unknown' } : null,
+  );
   const edges = meta.histogramEdges || DEFAULT_EDGES;
 
   // ── Phase parsing ──
@@ -536,9 +559,13 @@ export function reduceSportReport(events, meta = {}) {
     // AND at least one ball sample; otherwise it counts as unavailable, never
     // as a zero (or positive) gain.
     if (ev.seg.samples > 0 && !ev.seg.originUnavailable) {
-      gainTotal += ev.seg.uphillGain || 0;
+      // Clamp at the reducer boundary: uphill gain is a RISE. A negative
+      // input (hand-built fixture or corrupt stream) is clamped to 0 and can
+      // never subtract from the aggregate, mirroring the recorder-side clamp.
+      const gain = Math.max(0, ev.seg.uphillGain || 0);
+      gainTotal += gain;
       gainAvailable += 1;
-      if ((ev.seg.uphillGain || 0) > 0) gainPositiveCount += 1;
+      if (gain > 0) gainPositiveCount += 1;
     } else {
       unavailableSegments += 1;
     }

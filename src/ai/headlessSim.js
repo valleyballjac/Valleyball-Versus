@@ -600,13 +600,17 @@ function resolveStrikes(match, strikeState, motorBody, side) {
     match.whiffs[side]++;
     strikeState.resolvedTick = strikeState.pressTick;
     if (match.telemetry) {
-      const wPos = match.ballBody.translation();
+      // Zero-alloc: reuse the cached per-tick ball position (match.ballPrev,
+      // updated by checkScoring after every physics step) instead of a
+      // telemetry-only Rapier translation() wrapper inside the fixed tick.
+      // The cached position is the ball at the end of the previous step
+      // (resolveStrikes runs pre-step), one tick old: fine for diagnostics.
       recordWhiff(
         match.telemetry,
         match.tick,
         side,
         side === 'home' ? match.botA.difficulty : match.botB.difficulty,
-        wPos.x, wPos.y, wPos.z,
+        match.ballPrev.x, match.ballPrev.y, match.ballPrev.z,
       );
     }
   }
@@ -859,9 +863,10 @@ export function stepHeadlessMatch(match) {
     matchState.matchOver = true;
     if (match.telemetry) {
       // Close the final segment at the ball's ACTUAL clock-end position.
-      // (One translation() wrapper per match end, not per tick.)
-      const endPos = match.ballBody.translation();
-      recordClockEnd(match.telemetry, match.tick, endPos.x, endPos.z);
+      // Zero-alloc: checkScoring already ran this tick (post-step) and cached
+      // the current ball position in match.ballPrev; no telemetry-only Rapier
+      // translation() wrapper is created inside the fixed tick.
+      recordClockEnd(match.telemetry, match.tick, match.ballPrev.x, match.ballPrev.z);
     }
   }
 }
