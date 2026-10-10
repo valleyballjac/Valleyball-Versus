@@ -51,7 +51,6 @@ import {
   consumeAthleteVolley,
   consumeAthleteSpike,
   consumeAthleteBallReset,
-  consumeCameraCycle,
   consumeCameraCyclePlayer,
   consumeCameraCycleArena,
   consumeMenuToggle,

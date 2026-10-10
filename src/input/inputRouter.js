@@ -29,7 +29,7 @@ const P1_KEYS = {
   slide: ['KeyC'],
   dive: ['KeyQ'],
   jump: 'Space',
-  cut: ['KeyV'],
+  cut: ['KeyV', 'KeyF'],
   volley: ['KeyE'],
   spike: ['KeyR'],
   ballReset: ['KeyB'],
@@ -44,7 +44,7 @@ const P2_KEYS = {
   slide: ['KeyO'],
   dive: ['KeyU'],
   jump: 'Enter',
-  cut: ['KeyN'],
+  cut: ['KeyN', 'KeyH'],
   volley: ['KeyP'],
   spike: ['BracketLeft', 'KeyY'],
   ballReset: ['KeyM'],
@@ -170,6 +170,7 @@ let currentBotSlots = [];
 
 function onKeyDown(event) {
   if (isTextEntry(event.target)) return;
+  if (isInGameMenuOpen()) return;
   heldKeys.add(event.code);
 
   if (!event.repeat) {
@@ -194,15 +195,16 @@ function onKeyDown(event) {
     }
   }
 
-  // Tab or 'C' cycles P1 player camera (1st person <-> chase <-> 3rd person)
-  if (event.code === 'Tab' || event.code === 'KeyC') {
+  // Tab cycles P1 player camera (Shift+Tab cycles arena camera)
+  if (event.code === 'Tab') {
     event.preventDefault();
-    if (!event.repeat) cameraCyclePlayerQueued[0] = 1;
-  }
-  // 'V' cycles P1 arena camera (tactical <-> broadcast)
-  if (event.code === 'KeyV') {
-    event.preventDefault();
-    if (!event.repeat) cameraCycleArenaQueued[0] = 1;
+    if (!event.repeat) {
+      if (event.shiftKey) {
+        cameraCycleArenaQueued[0] = 1;
+      } else {
+        cameraCyclePlayerQueued[0] = 1;
+      }
+    }
   }
   // ']' cycles P2 player camera
   if (event.code === 'BracketRight') {
@@ -483,6 +485,32 @@ function getCamVectors(cam, slotIdx = 0) {
  */
 export function sampleAllInputs(cameras, athleteCount = 2, mode = 'match', botSlots = []) {
   currentBotSlots = botSlots;
+
+  if (isInGameMenuOpen()) {
+    for (let i = 0; i < athleteCount; i++) {
+      if (!botSlots.includes(i)) {
+        const slot = slots[i];
+        slot.moveX = 0;
+        slot.moveZ = 0;
+        slot.sprintHeld = false;
+        slot.slideHeld = false;
+        slot.lookX = 0;
+        slot.lookY = 0;
+        slot.hasAim = false;
+        slot.aimYaw = 0;
+        slot.moveWorld.set(0, 0, 0);
+      }
+    }
+    accumDX = 0;
+    accumDY = 0;
+    _mouseDX = 0;
+    _mouseDY = 0;
+    cameraCyclePlayerQueued.fill(0);
+    cameraCycleArenaQueued.fill(0);
+    heldKeys.clear();
+    return;
+  }
+
   // Hand over accumulated mouse deltas
   _mouseDX = accumDX;
   _mouseDY = accumDY;
