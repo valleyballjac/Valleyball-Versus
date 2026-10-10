@@ -953,3 +953,58 @@ export function applyStrikeAssistPreset(state, presetKey) {
   state.assistWindowTicks = preset.assistWindowTicks;
   state.aimMagnetism = preset.aimMagnetism;
 }
+
+/**
+ * THE ACTIVE BRACE REDIRECT (GF-2.1).
+ *
+ * The brace is no longer a passive wall: when the ball meets an athlete whose
+ * brace share is above the hold threshold, the contact ABSORBS the inbound
+ * kinetic energy and redirects the exit velocity forward along the athlete's
+ * facing, up by the authored loft. This is a block, not a strike, so the exit
+ * is always slower than the entry — energy is drained, never invented — and the
+ * direction is the facing yaw plus elevation, never the inbound path.
+ *
+ * LAW 1: one impulse, applied to the BALL, exactly like resolveStrikeContact.
+ * LAW 3: side-steps the clamped damping helpers because this is a redirect, not
+ * a damping; but it still obeys the no-energy-injection spirit by capping the
+ * exit at braceMaxRedirectSpeed and scaling it below the inbound speed.
+ *
+ * Called from the contact resolver only when no strike resolved on the same
+ * contact, so a swing and a block are never double-applied.
+ *
+ * @param {object} ball the ball whose body takes the impulse
+ * @param {number} braceMix the eased brace share (0..1)
+ * @param {number} facingYaw the athlete's facing yaw, bearing convention
+ * @param {number} tick for the trace log only
+ * @returns {boolean} true when a redirect impulse was applied
+ */
+export function resolveBraceRedirect(ball, braceMix, facingYaw, tick) {
+  const b = TUNING.action;
+  if (braceMix <= 0.2) return false;
+  const vel = ball.body.linvel();
+  const inbound = Math.hypot(vel.x, vel.y, vel.z);
+  if (inbound < b.braceMinRedirectSpeed) return false;
+
+  const outbound = Math.min(inbound, b.braceMaxRedirectSpeed) * b.braceRedirectScale;
+  const elevation = b.braceRedirectUpDeg * DEG2RAD;
+  const horizontal = Math.cos(elevation);
+  const dirX = Math.sin(facingYaw) * horizontal;
+  const dirY = Math.sin(elevation);
+  const dirZ = Math.cos(facingYaw) * horizontal;
+
+  // One impulse that both cancels the inbound velocity and sets the forward
+  // exit, so the ball lands on the authored exit in a single applyImpulse. The
+  // mass is read once and the scratch `_impulse` is the same one the strike
+  // resolver uses — each call is consumed by applyImpulse before returning.
+  const mass = ball.body.mass();
+  _impulse.x = (dirX * outbound - vel.x) * mass;
+  _impulse.y = (dirY * outbound - vel.y) * mass;
+  _impulse.z = (dirZ * outbound - vel.z) * mass;
+  ball.body.applyImpulse(_impulse, true);
+
+  console.log(
+    `[brace] redirect ${inbound.toFixed(2)} -> ${outbound.toFixed(2)} m/s ` +
+      `ball:${ball.id} tick ${tick}`,
+  );
+  return true;
+}

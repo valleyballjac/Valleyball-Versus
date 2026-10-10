@@ -53,6 +53,61 @@ import { queueKnockdown } from '../sim/tracker.js';
  */
 const DIVE_INPUT_DEADZONE = 0.3;
 
+const DEG2RAD = Math.PI / 180;
+
+/**
+ * THE BRACE-DIVE INTERCEPT SOLVER (GF-2.1).
+ *
+ * Returns the horizontal dive direction toward the NEAREST ball, or null when
+ * that ball sits outside the forward cone so the caller falls back to the
+ * standard dive. The cone is the signed bearing-to-ball around the ghost's
+ * facing yaw, measured in the flat XZ plane; a ball behind the athlete is
+ * always outside it. The direction points at the ball, not along its velocity,
+ * because at cone range the ball is closing and the shortest reach is the
+ * intercept point itself.
+ *
+ * Scratch-free: it writes the result into `out` and returns `out` or `null`.
+ *
+ * @param {object} motor READ ONLY, for the sphere position
+ * @param {object|null} ghost READ ONLY, for the facing yaw
+ * @param {Array} balls READ ONLY
+ * @param {THREE.Vector3} out scratch to receive the direction
+ * @returns {THREE.Vector3|null}
+ */
+function solveBraceDiveIntercept(motor, ghost, balls, out) {
+  if (!balls || balls.length === 0) return null;
+  const centre = motor.body.translation();
+  let bx = 0;
+  let bz = 0;
+  let bd = Infinity;
+  for (const ball of balls) {
+    const p = ball.body.translation();
+    const d = Math.hypot(p.x - centre.x, p.z - centre.z);
+    if (d < bd) {
+      bd = d;
+      bx = p.x;
+      bz = p.z;
+    }
+  }
+  if (!Number.isFinite(bd)) return null;
+  const dx = bx - centre.x;
+  const dz = bz - centre.z;
+  const len = Math.hypot(dx, dz);
+  if (len < 1e-4) return null;
+  // Signed bearing offset from facing, wrapped by construction of atan2. facing
+  // direction is (sin yaw, cos yaw), the project's yaw convention.
+  const facingYaw = ghost ? ghost.yaw : 0;
+  const fx = Math.sin(facingYaw);
+  const fz = Math.cos(facingYaw);
+  const dot = fx * dx + fz * dz;
+  const cross = fx * dz - fz * dx;
+  const rel = Math.atan2(cross, dot);
+  const coneHalf = TUNING.action.interceptDiveMaxRedirectAngleDeg * DEG2RAD;
+  if (Math.abs(rel) > coneHalf) return null;
+  out.set(dx / len, 0, dz / len);
+  return out;
+}
+
 /**
  * THE TWO ACTIONS, as mechanics accumulators and latches (RULING GF-2.0).
  *
@@ -113,6 +168,12 @@ export function createActionState() {
     cleatAnchorUntil: -Infinity,
     /** Scratch for the cut direction. */
     cutDir: new THREE.Vector3(),
+    /** Recorded eased brace share (0..1), sampled each step for the contact resolver. */
+    braceMix: 0,
+    /** Tick of the most recent brace-intercept dive; -Infinity means "never". */
+    lastInterceptDiveTick: -Infinity,
+    /** Tick a ball redirect resolved during that dive; -Infinity means none (whiff). */
+    interceptDiveContactTick: -Infinity,
   };
 }
 
@@ -289,20 +350,43 @@ export function runActions({
   const jumpLockout = (tick - motor.lastJumpTick) < 25;
   if (diveQueued && motor.grounded && !jumpQueued && !jumpLockout && tick - state.lastDiveTick >= TUNING.action.diveCooldownTicks) {
     allowJump = false;
-    const magnitude = Math.hypot(input.moveWorld.x, input.moveWorld.z);
-    if (magnitude > DIVE_INPUT_DEADZONE) {
-      state.diveDir.set(input.moveWorld.x / magnitude, 0, input.moveWorld.z / magnitude);
+
+    // BRACE + DIVE (GF-2.1). While bracing, a dive checks the forward cone and,
+    // when a ball is inside it, becomes a low intercept lunge toward that ball
+    // instead of the stick/camera dive. `solveBraceDiveIntercept` returns null
+    // for "outside the cone or behind", so this is not a branch on character
+    // state: it is the same dive with one of two headings.
+    const interceptDir = input.braceHeld
+      ? solveBraceDiveIntercept(motor, ghost, balls, state.diveDir)
+      : null;
+
+    if (interceptDir) {
+      // direction already written into state.diveDir by the solver
+      state.lastInterceptDiveTick = tick;
+      // LOW LUNGE: a flatter arc and a larger horizontal impulse than the
+      // standard dive, both tunables live next to each other in tuning.action.
+      applyDiveImpulse(
+        motor,
+        state.diveDir,
+        TUNING.action.interceptDiveForwardImpulse,
+        TUNING.action.interceptDiveUpImpulse,
+      );
     } else {
-      // NO STICK: DIVE WHERE HE IS LOOKING, not where the camera is. Under the
-      // chase camera the two agree, so this changes nothing there. Under a
-      // sideline shot the camera's heading points across the court, and a
-      // standing dive threw the athlete at the stands. The ghost's yaw is the
-      // direction his body is actually pointing, which is the only reading that
-      // is right under every camera.
-      const defaultYaw = ghost ? ghost.yaw : input.cameraYaw;
-      state.diveDir.set(Math.sin(defaultYaw), 0, Math.cos(defaultYaw));
+      const magnitude = Math.hypot(input.moveWorld.x, input.moveWorld.z);
+      if (magnitude > DIVE_INPUT_DEADZONE) {
+        state.diveDir.set(input.moveWorld.x / magnitude, 0, input.moveWorld.z / magnitude);
+      } else {
+        // NO STICK: DIVE WHERE HE IS LOOKING, not where the camera is. Under the
+        // chase camera the two agree, so this changes nothing there. Under a
+        // sideline shot the camera's heading points across the court, and a
+        // standing dive threw the athlete at the stands. The ghost's yaw is the
+        // direction his body is actually pointing, which is the only reading that
+        // is right under every camera.
+        const defaultYaw = ghost ? ghost.yaw : input.cameraYaw;
+        state.diveDir.set(Math.sin(defaultYaw), 0, Math.cos(defaultYaw));
+      }
+      applyDiveImpulse(motor, state.diveDir);
     }
-    applyDiveImpulse(motor, state.diveDir);
 
     // THE DIVE NO LONGER GOES LIMP ON LIFTOFF, and nothing writes velocity into
     // the sixteen ragdoll bodies any more.
@@ -375,7 +459,17 @@ export function runActions({
     // THE STUN STARTS HERE, on the same edge and nowhere else. A recorded tick,
     // of exactly the same class as lastDiveTick and motor.lastJumpTick — not a
     // state, and nothing branches on "are we stunned", it only gates the ramp.
-    state.diveStunUntil = tick + TUNING.action.diveStunTicks;
+    //
+    // WHIFF RECOVERY (GF-2.1): a brace-dive that never touched a ball is a
+    // whiff, and the landing commits extra stun ticks. Two recorded ticks
+    // decide it, so nothing branches on character state: lastInterceptDiveTick
+    // is set at the intercept launch, and interceptDiveContactTick is set by
+    // the contact resolver when a redirect lands inside the dive window.
+    const interceptDive = state.lastInterceptDiveTick === state.lastDiveTick;
+    const whiffed = interceptDive && state.interceptDiveContactTick !== state.lastInterceptDiveTick;
+    state.diveStunUntil = tick + (whiffed
+      ? TUNING.action.diveStunTicks + TUNING.action.interceptDiveWhiffStunTicks
+      : TUNING.action.diveStunTicks);
   }
 
   // And the pose lets go once the momentum is spent. NO second knockdown here:
@@ -447,8 +541,10 @@ export function runActions({
     diveMix += ((state.divePending ? 1 : 0) - diveMix) * ease;
     // Brace is a held pose share only: no motor scale, cooldown, impulse, or
     // locomotion gate is attached to it. Raised arm colliders meet the ball
-    // through Rapier's normal contact solve.
+    // through Rapier's normal contact solve. The eased share is recorded onto
+    // the action state so the contact resolver can gate the redirect on it.
     braceMix += ((input.braceHeld ? 1 : 0) - braceMix) * ease;
+    state.braceMix = braceMix;
     // Phases for real action clips, from the same tick accumulators.
     // node ignores these and holds the apex pose instead.
     // THE SLIDE PHASE IS A RATCHET WITH A HOLD POINT, not a fraction of a
@@ -470,10 +566,14 @@ export function runActions({
     // soaring superman — and stays; on contact it runs on to 1 and the landing
     // plays out under the skid. A linear ramp over a fixed tick count reached
     // the landing pose a third of the way through the flight and dropped the
-    // athlete on his face for the rest of it.
+    // athlete on his face for the rest of it. An intercept dive holds a more
+    // upright phase, so the athlete stays ready to block the same ball.
     if (divePhaseRestart) divePhase = 0;
     const diveRate = diveSkidding ? TUNING.action.diveLandRate : TUNING.action.diveTakeoffRate;
-    const diveCeiling = diveSkidding ? 1 : TUNING.action.diveHoldPhase;
+    const interceptPhase = state.lastInterceptDiveTick === state.lastDiveTick;
+    const diveCeiling = diveSkidding
+      ? 1
+      : (interceptPhase ? TUNING.action.interceptDiveHoldPhase : TUNING.action.diveHoldPhase);
     divePhase = Math.min(diveCeiling, divePhase + diveRate * dt);
   }
   // THE STUN, READ AS A TICK COMPARISON. Set on the landing edge above and
