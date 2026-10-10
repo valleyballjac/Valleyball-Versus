@@ -264,6 +264,28 @@ function isRenderOnly(object, root) {
  */
 function normaliseCourtMaterial(material) {
   if (!material || !material.isMeshStandardMaterial) return;
+
+  // Standardize chalk lines to canonical arena chalk white (#F5F5F7)
+  if (material.name && (material.name.includes('Lines') || material.name.includes('Chalk'))) {
+    material.color.set(0xF5F5F7);
+    material.roughness = 0.9;
+    material.metalness = 0.0;
+    return;
+  }
+
+  // Translucent perimeter glass barriers: crystal clean pane
+  const isBarrierGlass = material.transparent || material.name === 'M_Barrier Glass' || material.name?.includes('Barrier');
+  if (isBarrierGlass) {
+    const config = TUNING.arena?.barrier || {};
+    material.transparent = true;
+    material.depthWrite = false;
+    material.side = THREE.FrontSide;
+    material.roughness = config.roughness ?? 0.10;
+    material.metalness = config.metalness ?? 0.15;
+    material.opacity = config.opacity ?? 0.08;
+    return;
+  }
+
   material.metalness = Math.min(material.metalness ?? 0, 0.05);
   material.roughness = Math.max(material.roughness ?? 1, 0.8);
   // The glass barriers are authored alphaMode BLEND. Leave them transparent,
@@ -273,6 +295,33 @@ function normaliseCourtMaterial(material) {
     material.depthWrite = false;
     material.side = THREE.FrontSide;
   }
+}
+
+/**
+ * Attaches a chalk-width pink outline along glass pane edges, chamfers, and angle intersections.
+ *
+ * @param {THREE.Mesh} object
+ * @param {string} owner
+ * @param {THREE.Material[]} materials
+ */
+function attachBarrierEdgeOutlines(object, owner, materials) {
+  const isBarrier =
+    owner.includes('Barrier') ||
+    owner.includes('Boundary') ||
+    materials.some((m) => m && (m.name === 'M_Barrier Glass' || m.name?.includes('Barrier')));
+  if (!isBarrier || !object.geometry) return;
+
+  const config = TUNING.arena?.barrier || {};
+  const edgeGeo = new THREE.EdgesGeometry(object.geometry, config.edgeAngle ?? 25);
+  const lineMat = new THREE.LineBasicMaterial({
+    color: config.edgeColor ?? 0xEC4899,
+    transparent: true,
+    opacity: config.edgeOpacity ?? 0.90,
+    depthWrite: false,
+  });
+  const edgeLines = new THREE.LineSegments(edgeGeo, lineMat);
+  edgeLines.name = `${owner}_pink_edges`;
+  object.add(edgeLines);
 }
 
 /**
@@ -345,6 +394,7 @@ async function loadCourtArena(scene) {
         object.frustumCulled = true;
         const materials = Array.isArray(object.material) ? object.material : [object.material];
         for (const material of materials) normaliseCourtMaterial(material);
+        attachBarrierEdgeOutlines(object, owner, materials);
         scenery.add(owner);
         return;
       }
@@ -357,6 +407,7 @@ async function loadCourtArena(scene) {
       for (const material of materials) normaliseCourtMaterial(material);
 
       if (isRenderOnly(object, group)) {
+        attachBarrierEdgeOutlines(object, owner, materials);
         scenery.add(owner);
         return;
       }
