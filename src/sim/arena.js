@@ -286,8 +286,42 @@ function normaliseCourtMaterial(material) {
     return;
   }
 
-  material.metalness = Math.min(material.metalness ?? 0, 0.05);
-  material.roughness = Math.max(material.roughness ?? 1, 0.8);
+  // Stream / water channels: subtle sleek hydro-resin sheen, restrained for an athletic venue
+  if (material.name && (material.name.includes('Stream') || material.name.includes('Water'))) {
+    material.roughness = 0.38;
+    material.metalness = 0.06;
+    return;
+  }
+
+  // Colored athletic court zones: sealed satin composite finish
+  if (
+    material.name &&
+    (material.name.includes('Center') ||
+      material.name.includes('Pick') ||
+      material.name.includes('Scoring') ||
+      material.name.includes('Corner'))
+  ) {
+    material.roughness = 0.68;
+    material.metalness = 0.03;
+    return;
+  }
+
+  // Main playing turf: clean athletic synthetic turf with subtle directional slope roll-off
+  if (material.name && (material.name.includes('Field') || material.name.includes('Turf'))) {
+    material.roughness = 0.78;
+    material.metalness = 0.02;
+    return;
+  }
+
+  // Goal hoops / hardware: anodized athletic satin metal
+  if (material.name && (material.name.includes('Goal') || material.name.includes('Hoop'))) {
+    material.roughness = 0.35;
+    material.metalness = 0.50;
+    return;
+  }
+
+  material.metalness = Math.min(material.metalness ?? 0, 0.04);
+  material.roughness = Math.max(material.roughness ?? 1, 0.80);
   // The glass barriers are authored alphaMode BLEND. Leave them transparent,
   // but stop them writing depth or they punch holes in everything behind.
   // Render FrontSide to eliminate 50% transparent pixel overdraw across large bounds.
