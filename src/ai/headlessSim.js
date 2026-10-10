@@ -400,8 +400,12 @@ export function createHeadlessMatch(paramsA, paramsB, opts = {}) {
     label: ballCfg.label,
   };
 
-  // Telemetry recorder: zero-allocation event pool + scalar segment state.
-  const telemetry = opts.telemetry === false
+  // Telemetry recorder: preallocated event pool + scalar segment state. The
+  // pool is a one-time setup allocation; per-tick hook writes allocate
+  // nothing. FAIL CLOSED: no recorder at all on the cuboid fallback court, so
+  // no report-producing path can even see telemetry from a fallback match.
+  const courtLoaded = !!(cachedCollisionMeshes && cachedCollisionMeshes.length > 0);
+  const telemetry = (opts.telemetry === false || !courtLoaded)
     ? null
     : createTelemetryRecorder({ capacity: opts.telemetryCapacity });
   if (telemetry) recordDrop(telemetry, 0);
@@ -425,8 +429,9 @@ export function createHeadlessMatch(paramsA, paramsB, opts = {}) {
     maxTicks: matchTicks,
     telemetry,
     // True only when the real arena.glb collision trimeshes loaded. Telemetry
-    // consumers must fail closed on false (cuboid fallback is not reportable).
-    courtLoaded: !!(cachedCollisionMeshes && cachedCollisionMeshes.length > 0),
+    // consumers must fail closed on false (cuboid fallback is not reportable,
+    // and no recorder is created above when this is false).
+    courtLoaded,
     activeBalls: [ballObj],
   };
 }
@@ -852,7 +857,12 @@ export function stepHeadlessMatch(match) {
   matchState.ticksRemaining--;
   if (matchState.ticksRemaining <= 0) {
     matchState.matchOver = true;
-    if (match.telemetry) recordClockEnd(match.telemetry, match.tick);
+    if (match.telemetry) {
+      // Close the final segment at the ball's ACTUAL clock-end position.
+      // (One translation() wrapper per match end, not per tick.)
+      const endPos = match.ballBody.translation();
+      recordClockEnd(match.telemetry, match.tick, endPos.x, endPos.z);
+    }
   }
 }
 

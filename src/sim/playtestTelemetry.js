@@ -5,11 +5,17 @@
  * This module is the sport report behind the rebuild's auto-playtest harness.
  * It has two halves with different discipline:
  *
- *   1. RECORDER (in-tick). A fixed-size, preallocated pool of scalar event
- *      slots. `sampleUphill` and every `record*` helper write primitives into
- *      the next slot in place. No arrays, objects, closures, or THREE.Vector3
- *      are allocated on the simulation's hot path. Overflow is flagged, never
- *      thrown.
+ *   1. RECORDER (in-tick). A fixed-size pool of scalar event slots, allocated
+ *      ONCE at match creation (a one-time setup cost, sized by `capacity`).
+ *      `sampleUphill` and every `record*` helper write primitives into the
+ *      next slot in place: no arrays, objects, closures, or THREE.Vector3 are
+ *      allocated per tick BY THE RECORDER. Overflow is flagged, never thrown.
+ *      NOTE: the surrounding fixed tick is NOT allocation-free. Pre-existing
+ *      engine paths (Rapier translation()/linvel() wrappers, impulse vector
+ *      literals, baseline hit/goal event arrays) allocate every tick; those
+ *      are measured per tick by scripts/checkTelemetry.mjs. Whole-tick zero
+ *      allocation is an unmet constraint that would require physics-binding
+ *      changes, and is not claimed anywhere in this module.
  *
  *   2. REDUCER (post-match). `serializeEvents` and `reduceSportReport` run once
  *      after the match, when allocation is free, and turn the raw event stream
@@ -27,6 +33,30 @@ import { getCourtFloorY, isCourtFloorSampleAvailable } from '../ai/courtHeightma
 
 export const PARITY_NOTICE =
   'HEADLESS BOT PROXY. Diagnostic numbers only. Not Law 1 parity, not a measure of human play.';
+
+/**
+ * FAIL-CLOSED REPORT GUARD. No sport report or telemetry doc may be produced
+ * from a match that ran on the cuboid fallback court or whose event pool
+ * overflowed. Every report-producing path (evalMatch --sport, checkTelemetry
+ * main mode, checkTelemetry --digest child) routes through buildTelemetryDoc,
+ * which calls this first. Spec: "fail closed if arena.glb collision meshes
+ * did not load. Do not use the cuboid fallback for a playtest report" and
+ * "on overflow, mark run invalid and fail rather than dropping events."
+ */
+export function assertTelemetryReportable(courtLoaded, tel) {
+  if (courtLoaded !== true) {
+    throw new Error(
+      'telemetry report suppressed (fail closed): courtLoaded !== true. ' +
+      'The cuboid fallback court is not reportable; arena.glb collision trimeshes must load.',
+    );
+  }
+  if (tel && tel.overflow) {
+    throw new Error(
+      'telemetry report suppressed (fail closed): event pool overflowed ' +
+      `(capacity=${tel.capacity}). The run is invalid; raise telemetryCapacity and re-run.`,
+    );
+  }
+}
 
 /**
  * Event type codes. Numeric in the pool for zero-alloc writes; decoded to
@@ -121,6 +151,7 @@ function createEventSlot() {
     segUphillGain: 0,
     segProgress: 0,
     segUnavailable: 0,
+    segOriginUnavailable: 0,
     segSamples: 0,
   };
 }
@@ -147,6 +178,7 @@ export function createTelemetryRecorder({ capacity = 16384 } = {}) {
     segStrikeTick: 0,
     segStrikeFloorY: 0,
     segTargetGoal: GOAL.NONE,
+    segOriginOk: true,
     segStartX: 0,
     segStartZ: 0,
     segDirX: 0,
@@ -182,6 +214,7 @@ function nextSlot(tel, type, tick) {
   e.segUphillGain = 0;
   e.segProgress = 0;
   e.segUnavailable = 0;
+  e.segOriginUnavailable = 0;
   e.segSamples = 0;
   return e;
 }
@@ -189,11 +222,15 @@ function nextSlot(tel, type, tick) {
 /** Finalize the active strike-segment (if any) into a closing event slot. */
 function closeSegmentInto(tel, e, finalX, finalZ) {
   if (!tel.segActive) return;
-  if (tel.segSamples > 0) {
-    e.segUphillGain = q(tel.segMaxFloorY - tel.segStrikeFloorY);
+  // Uphill gain is a RISE above the strike-origin floor: clamped to >= 0, and
+  // only computed when both the origin query and at least one ball sample were
+  // available. Unavailable terrain must never become a false rise (or fall).
+  if (tel.segSamples > 0 && tel.segOriginOk) {
+    e.segUphillGain = q(Math.max(0, tel.segMaxFloorY - tel.segStrikeFloorY));
   } else {
     e.segUphillGain = 0;
   }
+  e.segOriginUnavailable = tel.segOriginOk ? 0 : 1;
   // Signed horizontal travel toward the attacking hoop captured at strike time.
   e.segProgress = q((finalX - tel.segStartX) * tel.segDirX + (finalZ - tel.segStartZ) * tel.segDirZ);
   e.segSide = tel.segSide;
@@ -210,7 +247,11 @@ function openSegment(tel, side, tick, x, z, targetGoalCode) {
   tel.segSide = side;
   tel.segStrikeTick = tick;
   tel.segTargetGoal = targetGoalCode;
-  tel.segStrikeFloorY = getCourtFloorY(x, z);
+  // Strike-origin floor query: check availability FIRST. If the origin is off
+  // the baked heightmap, getCourtFloorY would return a clamped edge value and
+  // any later real sample could fabricate a rise. Mark the segment instead.
+  tel.segOriginOk = isCourtFloorSampleAvailable(x, z);
+  tel.segStrikeFloorY = tel.segOriginOk ? getCourtFloorY(x, z) : 0;
   tel.segStartX = x;
   tel.segStartZ = z;
   tel.segMaxFloorY = -Infinity;
@@ -303,11 +344,16 @@ export function recordRespawn(tel, tick, x, y, z) {
   e.x = q(x); e.y = q(y); e.z = q(z);
 }
 
-/** Match-clock end. Closes the final phase's segment. */
-export function recordClockEnd(tel, tick) {
+/**
+ * Match-clock end. Closes the final phase's segment at the ball's ACTUAL
+ * position (x, z) at clock end. Callers must pass the real endpoint; closing
+ * at (0, 0) would fabricate segment progress toward the hoop.
+ */
+export function recordClockEnd(tel, tick, x = 0, z = 0) {
   const e = nextSlot(tel, EV.CLOCK_END, tick);
   if (!e) return;
-  closeSegmentInto(tel, e, 0, 0);
+  closeSegmentInto(tel, e, x, z);
+  e.x = q(x); e.z = q(z);
 }
 
 /**
@@ -339,6 +385,7 @@ export function serializeEvents(tel) {
             uphillGain: s.segUphillGain,
             progress: s.segProgress,
             unavailable: s.segUnavailable,
+            originUnavailable: s.segOriginUnavailable === 1,
             samples: s.segSamples,
           }
         : null,
@@ -485,7 +532,10 @@ export function reduceSportReport(events, meta = {}) {
     struckPossessions += 1;
     progressTotal += ev.seg.progress || 0;
     unavailableSamples += ev.seg.unavailable || 0;
-    if (ev.seg.samples > 0) {
+    // A segment is gain-available only with a real strike-origin floor query
+    // AND at least one ball sample; otherwise it counts as unavailable, never
+    // as a zero (or positive) gain.
+    if (ev.seg.samples > 0 && !ev.seg.originUnavailable) {
       gainTotal += ev.seg.uphillGain || 0;
       gainAvailable += 1;
       if ((ev.seg.uphillGain || 0) > 0) gainPositiveCount += 1;
@@ -589,6 +639,9 @@ export function reduceSportReport(events, meta = {}) {
  * runs can be compared byte-for-byte (after JSON.stringify).
  */
 export function buildTelemetryDoc(tel, meta = {}) {
+  // Fail closed before any report bytes exist: no doc from a fallback court
+  // or an overflowed pool. Every report producer goes through this function.
+  assertTelemetryReportable(meta.courtLoaded, tel);
   const events = serializeEvents(tel);
   const metaFull = {
     ...meta,

@@ -23,7 +23,7 @@
 import { initHeadless, createHeadlessMatch, runHeadlessMatch, destroyHeadlessMatch } from '../src/ai/headlessSim.js';
 import { createFitnessAccumulator, accumulateTick, computeFitness } from '../src/ai/fitnessFunction.js';
 import { TUNING } from '../src/config/tuning.js';
-import { buildTelemetryDoc } from '../src/sim/playtestTelemetry.js';
+import { buildTelemetryDoc, PARITY_NOTICE } from '../src/sim/playtestTelemetry.js';
 
 function parseArgs(args) {
   const opts = {
@@ -189,7 +189,17 @@ async function runEval() {
     awayTotals.ownCircle += resAway.breakdown.ownCircleTouches || 0;
     awayTotals.fitness += resAway.fitness;
 
-    if (opts.sport && match.telemetry) {
+    if (opts.sport) {
+      // FAIL CLOSED: no sport report from a fallback court (no recorder is
+      // created there) or an overflowed event pool. buildTelemetryDoc throws
+      // on overflow / courtLoaded !== true; the missing-recorder case is
+      // checked here so it fails loudly instead of printing an empty report.
+      if (!match.telemetry) {
+        throw new Error(
+          `--sport fail closed: telemetry unavailable (courtLoaded=${match.courtLoaded}). ` +
+          'The cuboid fallback court is not reportable.',
+        );
+      }
       sportDocs.push(buildTelemetryDoc(match.telemetry, {
         durationTicks: opts.duration * 60,
         ballId: opts.ball,
@@ -241,8 +251,10 @@ async function runEval() {
   console.log('└─────────────────────────────────────┴──────────────┴──────────────┘\n');
 
   if (opts.sport) {
-    // Shared sport reducer output (headless bot proxy; diagnostic only).
-    console.log('SPORT REPORT (headless bot proxy, diagnostic only):');
+    // Shared sport reducer output. Header carries the exact parity disclaimer
+    // (spec: surface the non-parity notice in every report header). Only the
+    // --sport path prints this; default stdout is unchanged.
+    console.log(`SPORT REPORT (${PARITY_NOTICE}):`);
     console.log(JSON.stringify(sportDocs.map((d) => d.report), null, 2));
   }
 }

@@ -5,7 +5,9 @@
  * rally, height missing and buffer overflow").
  *
  * Pure reducer tests use hand-built serialized event streams. Recorder tests
- * exercise the zero-alloc pool + segment math end to end.
+ * exercise the preallocated pool + segment math end to end (the recorder is
+ * zero-alloc per tick; the one-time pool at creation is excluded from that
+ * claim - see scripts/checkTelemetry.mjs for the measured allocation harness).
  *
  * Run: npm run test  (node --test test/)
  */
@@ -24,11 +26,12 @@ import {
   serializeEvents,
   reduceSportReport,
   buildTelemetryDoc,
+  assertTelemetryReportable,
   skillCode,
   PARITY_NOTICE,
   SKILL,
 } from '../src/sim/playtestTelemetry.js';
-import { isCourtFloorSampleAvailable } from '../src/ai/courtHeightmap.js';
+import { isCourtFloorSampleAvailable, getCourtFloorY } from '../src/ai/courtHeightmap.js';
 
 // ── Hand-built serialized-event helpers (post-serialize string form) ──
 const drop = (tick, phase = 0) => ({ type: 'drop', tick, phase });
@@ -50,6 +53,25 @@ const goal = (tick, scoredFor, lastHitSide, goalId = 'N') => ({
 const respawn = (tick) => ({ type: 'respawn', tick, phase: 0, side: null, strikeType: null, skill: null, goal: null, scoredFor: null, lastHitSide: null, x: 0, y: 0, z: 0, dirX: 0, dirZ: 0, quality: 0, seg: null });
 const clockEnd = (tick) => ({ type: 'clockEnd', tick, phase: 0, side: null, strikeType: null, skill: null, goal: null, scoredFor: null, lastHitSide: null, x: 0, y: 0, z: 0, dirX: 0, dirZ: 0, quality: 0, seg: null });
 const META = { durationTicks: 600 };
+const META_OK = { ...META, courtLoaded: true };
+
+/** A point on the baked heightmap (scan finds one; center is expected). */
+function onCourtPoint() {
+  for (const x of [0, 1, 2, 5]) {
+    for (const z of [0, 1, 2, 5, 10]) {
+      if (isCourtFloorSampleAvailable(x, z)) return { x, z };
+    }
+  }
+  throw new Error('no on-court heightmap sample found');
+}
+
+/** An off-court point where the heightmap has no sample. */
+function offCourtPoint() {
+  for (const x of [500, 1000, 5000]) {
+    if (!isCourtFloorSampleAvailable(x, 0)) return { x, z: 0 };
+  }
+  throw new Error('expected off-court samples to be unavailable');
+}
 
 test('empty stream: zero denominators yield null, not 0%', () => {
   const r = reduceSportReport([], META);
@@ -210,16 +232,28 @@ test('uphill gain and progress aggregate over available segments', () => {
 
 // ── Recorder-level fixtures ──
 
-test('buffer overflow flags the run invalid instead of dropping silently', () => {
+test('buffer overflow flags the run invalid and fails the doc closed', () => {
   const tel = createTelemetryRecorder({ capacity: 2 });
   recordDrop(tel, 0);
   recordHit(tel, 10, 'home', 'volley', 'easy', 0, 1, 5, 0, -1, 1, 'N');
   recordWhiff(tel, 20, 'away', 'hard', 0, 1, -5); // overflow here
   assert.equal(tel.count, 2);
   assert.equal(tel.overflow, true);
-  const doc = buildTelemetryDoc(tel, META);
-  assert.equal(doc.meta.eventOverflow, true);
-  assert.equal(doc.report.meta.eventOverflow, true);
+  // Overflowed runs must never produce report bytes, even from a loaded court.
+  assert.throws(() => buildTelemetryDoc(tel, META_OK), /overflow/i);
+});
+
+test('fail closed: fallback court (courtLoaded !== true) produces no doc', () => {
+  const build = () => {
+    const tel = createTelemetryRecorder({ capacity: 16 });
+    recordDrop(tel, 0);
+    recordClockEnd(tel, 600);
+    return tel;
+  };
+  assert.throws(() => assertTelemetryReportable(false, build()), /fallback|court/i);
+  assert.throws(() => assertTelemetryReportable(undefined, build()), /fallback|court/i);
+  assert.throws(() => buildTelemetryDoc(build(), META), /fallback|court/i); // no courtLoaded flag
+  assert.doesNotThrow(() => assertTelemetryReportable(true, build()));
 });
 
 test('recorder round-trip: labels, skill mapping, phase advance on goal', () => {
@@ -246,23 +280,87 @@ test('recorder round-trip: labels, skill mapping, phase advance on goal', () => 
 });
 
 test('height unavailable off-court: segment records unavailable samples, not zeros', () => {
-  // Find an off-court point where the baked heightmap has no sample.
-  let offX = null;
-  for (const x of [500, 1000, 5000]) {
-    if (!isCourtFloorSampleAvailable(x, 0)) { offX = x; break; }
-  }
-  assert.ok(offX !== null, 'expected off-court samples to be unavailable');
+  const off = offCourtPoint();
   const tel = createTelemetryRecorder({ capacity: 64 });
   recordDrop(tel, 0);
-  recordHit(tel, 10, 'home', 'volley', 'medium', offX, 1, 0, 1, 0, 1, 'N');
-  sampleUphill(tel, offX, 0);
-  sampleUphill(tel, offX, 0);
-  recordClockEnd(tel, 600);
+  recordHit(tel, 10, 'home', 'volley', 'medium', off.x, 1, off.z, 1, 0, 1, 'N');
+  sampleUphill(tel, off.x, off.z);
+  sampleUphill(tel, off.x, off.z);
+  recordClockEnd(tel, 600, off.x, off.z);
   const events = serializeEvents(tel);
   const closing = events.find((e) => e.seg);
   assert.ok(closing, 'clockEnd should carry the closed segment');
   assert.equal(closing.seg.samples, 0);
   assert.equal(closing.seg.unavailable, 2);
+  assert.equal(closing.seg.originUnavailable, true); // strike origin is off-court too
+});
+
+test('strike origin off-court: segment flagged, real samples cannot fabricate a rise', () => {
+  const off = offCourtPoint();
+  const on = onCourtPoint();
+  const tel = createTelemetryRecorder({ capacity: 64 });
+  recordDrop(tel, 0);
+  // Strike from OFF the heightmap, then sample ON it. Without the origin
+  // availability check, the clamped edge value at the origin could invent a
+  // rise (or a fall) against real on-court samples.
+  recordHit(tel, 10, 'home', 'volley', 'medium', off.x, 1, off.z, 0, -1, 1, 'N');
+  sampleUphill(tel, on.x, on.z);
+  sampleUphill(tel, on.x, on.z);
+  recordClockEnd(tel, 600, on.x, on.z);
+  const closing = serializeEvents(tel).find((e) => e.seg);
+  assert.equal(closing.seg.originUnavailable, true);
+  assert.equal(closing.seg.samples, 2);
+  assert.equal(closing.seg.uphillGain, 0); // suppressed, not fabricated
+  // Reducer must count it as unavailable, never as a zero/positive gain.
+  const r = reduceSportReport(serializeEvents(tel), META).summary;
+  assert.equal(r.uphill.struckPossessions, 1);
+  assert.equal(r.uphill.unavailableSegments, 1);
+  assert.equal(r.uphill.positiveGainShare, null);
+});
+
+test('clock-end segment closes at the ACTUAL endpoint, not (0,0)', () => {
+  // Start on the x=0 axis so the north-hoop direction is exactly (0,-1):
+  // progress math is then exact, no normalization rounding in the fixture.
+  const start = { x: 0, z: 10 };
+  assert.ok(isCourtFloorSampleAvailable(start.x, start.z), 'fixture point must be on-court');
+  const tel = createTelemetryRecorder({ capacity: 64 });
+  recordDrop(tel, 0);
+  recordHit(tel, 10, 'home', 'volley', 'medium', start.x, 1, start.z, 0, -1, 1, 'N');
+  sampleUphill(tel, start.x, start.z);
+  // Ball ends at (0, -5): progress toward the north hoop is
+  // (0-0)*0 + (-5-10)*(-1) = 15. Closing at the (0,0) default would give 10.
+  recordClockEnd(tel, 600, 0, -5);
+  const closing = serializeEvents(tel).find((e) => e.type === 'clockEnd' && e.seg);
+  assert.ok(closing, 'clockEnd should carry the closed segment');
+  assert.equal(closing.seg.progress, 15);
+  assert.equal(closing.x, 0);
+  assert.equal(closing.z, -5);
+});
+
+test('uphill gain is clamped to >= 0 (a descent is never a negative rise)', () => {
+  // Find two on-court points where the floor drops from origin to sample.
+  let hi = null;
+  let lo = null;
+  outer: for (let xi = -20; xi <= 20; xi += 2) {
+    for (let zi = -30; zi <= 30; zi += 2) {
+      if (!isCourtFloorSampleAvailable(xi, zi)) continue;
+      const fy = getCourtFloorY(xi, zi);
+      if (hi === null || fy > getCourtFloorY(hi.x, hi.z)) hi = { x: xi, z: zi };
+      if (lo === null || fy < getCourtFloorY(lo.x, lo.z)) lo = { x: xi, z: zi };
+      if (hi && lo && getCourtFloorY(hi.x, hi.z) > getCourtFloorY(lo.x, lo.z) + 0.01) break outer;
+    }
+  }
+  assert.ok(hi && lo && getCourtFloorY(hi.x, hi.z) > getCourtFloorY(lo.x, lo.z) + 0.01,
+    'expected a downhill origin->sample pair on the sloped court');
+  const tel = createTelemetryRecorder({ capacity: 64 });
+  recordDrop(tel, 0);
+  recordHit(tel, 10, 'home', 'volley', 'medium', hi.x, 1, hi.z, 0, -1, 1, 'N');
+  sampleUphill(tel, lo.x, lo.z); // floor BELOW the strike origin
+  recordClockEnd(tel, 600, lo.x, lo.z);
+  const closing = serializeEvents(tel).find((e) => e.seg);
+  assert.ok(closing.seg.samples >= 1);
+  assert.equal(closing.seg.originUnavailable, false);
+  assert.equal(closing.seg.uphillGain, 0); // clamped: never negative
 });
 
 test('buildTelemetryDoc is deterministic: identical inputs, identical JSON', () => {
@@ -274,7 +372,7 @@ test('buildTelemetryDoc is deterministic: identical inputs, identical JSON', () 
     advancePhase(tel);
     recordDrop(tel, 51);
     recordClockEnd(tel, 600);
-    return JSON.stringify(buildTelemetryDoc(tel, { ...META, seedA: 42, seedB: 137, ballId: 'medium' }));
+    return JSON.stringify(buildTelemetryDoc(tel, { ...META_OK, seedA: 42, seedB: 137, ballId: 'medium' }));
   };
   assert.equal(build(), build());
 });
