@@ -5,14 +5,14 @@ import { TUNING } from '../config/tuning.js';
 const actions = [
   ['move', 'Move'], ['look', 'Look'], ['sprint', 'Sprint'], ['slide', 'Slide'],
   ['jump', 'Jump'], ['dive', 'Dive'], ['cut', 'Cut'], ['volley', 'Volley'],
-  ['spike', 'Spike'], ['reset', 'Reset ball'],
+  ['spike', 'Spike'], ['brace', 'Block'], ['reset', 'Reset ball'],
 ];
 const keys = [
-  ['WASD', 'Mouse', 'Shift', 'C', 'Space', 'Q', 'V / F', 'E / Click', 'R / Right click', 'B'],
-  ['IJKL', 'Arrows', 'Right Shift / Slash', 'O', 'Enter', 'U', 'N / H', 'P', '[ / Y', 'M'],
+  ['WASD', 'Mouse', 'Shift', 'C', 'Space', 'Q', 'V / F', 'E / Click', 'R / Right click', 'G', 'B'],
+  ['IJKL', 'Arrows', 'Right Shift / Slash', 'O', 'Enter', 'U', 'N', 'P', '[ / Y', 'H', 'M'],
 ];
-const padLabels = ['LS', 'RS', 'LT', 'RT', 'A', 'X', 'LB', 'B', 'Y', 'Back'];
-const padIndices = ['Axis 0/1', 'Axis 2/3', 'Btn 6', 'Btn 7', 'Btn 0', 'Btn 2', 'Btn 4', 'Btn 1', 'Btn 3', 'Btn 8'];
+const padLabels = ['LS', 'RS', 'LT', 'RT', 'A', 'X', 'LB', 'B', 'Y', 'RB', 'Back'];
+const padIndices = ['Axis 0/1', 'Axis 2/3', 'Btn 6', 'Btn 7', 'Btn 0', 'Btn 2', 'Btn 4', 'Btn 1', 'Btn 3', 'Btn 5', 'Btn 8'];
 const slots = [null, null];
 let root = null;
 let enabled = TUNING.controlsHud.userEnabled;
@@ -125,7 +125,7 @@ export function updateControlsOverlay(snapshot, state, menuOpen, endOpen, matchO
     }
     // Only practice exposes ball reset. Hide P1 keyboard look outside practice where arrows may be assigned to P2.
     const practice = state === 'practice';
-    if (layout.nodes[9].hidden !== !practice) layout.nodes[9].hidden = !practice;
+    if (layout.nodes[actions.length - 1].hidden !== !practice) layout.nodes[actions.length - 1].hidden = !practice;
     if (layout === slot.keyboard && i === 0 && layout.nodes[1].hidden !== !practice) layout.nodes[1].hidden = !practice;
   }
 }

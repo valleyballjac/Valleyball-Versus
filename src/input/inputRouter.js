@@ -104,9 +104,9 @@ export function createInputSlot() {
 }
 
 // Presentation-only snapshots. Never consumed by gameplay action readers.
-export const CONTROL_BITS = Object.freeze({ move: 1, look: 2, sprint: 4, slide: 8, jump: 16, dive: 32, cut: 64, volley: 128, spike: 256, reset: 512 });
+export const CONTROL_BITS = Object.freeze({ move: 1, look: 2, sprint: 4, slide: 8, jump: 16, dive: 32, cut: 64, volley: 128, spike: 256, reset: 512, brace: 1024 });
 const uiSlots = [0, 1].map(() => ({ human: false, available: true, device: 'keyboard', standard: true, held: 0, pulse: 0, padIndex: -1, previousPadHeld: 0, initialized: false }));
-const UI_ACTIONS = CONTROL_BITS.move | CONTROL_BITS.look | CONTROL_BITS.sprint | CONTROL_BITS.slide | CONTROL_BITS.jump | CONTROL_BITS.dive | CONTROL_BITS.cut | CONTROL_BITS.volley | CONTROL_BITS.spike;
+const UI_ACTIONS = CONTROL_BITS.move | CONTROL_BITS.look | CONTROL_BITS.sprint | CONTROL_BITS.slide | CONTROL_BITS.jump | CONTROL_BITS.dive | CONTROL_BITS.cut | CONTROL_BITS.volley | CONTROL_BITS.spike | CONTROL_BITS.brace;
 const uiKeyboardEdges = [0, 0];
 const uiMouseHeld = [0, 0];
 export function getControlsSnapshot() { return uiSlots; }
@@ -119,6 +119,7 @@ function keyAction(code, player) {
   if (code === k.jump) return CONTROL_BITS.jump;
   if (k.dive.includes(code)) return CONTROL_BITS.dive;
   if (k.cut.includes(code)) return CONTROL_BITS.cut;
+  if (k.brace.includes(code)) return CONTROL_BITS.brace;
   if (k.volley.includes(code)) return CONTROL_BITS.volley;
   if (k.spike.includes(code)) return CONTROL_BITS.spike;
   if (k.ballReset.includes(code)) return CONTROL_BITS.reset;
@@ -135,6 +136,7 @@ function keyboardHeld(player, mode, pad) {
   if (heldKeys.has(k.jump)) mask |= CONTROL_BITS.jump;
   if (heldKeys.has(k.dive[0])) mask |= CONTROL_BITS.dive;
   if (heldKeys.has(k.cut[0]) || heldKeys.has(k.cut[1])) mask |= CONTROL_BITS.cut;
+  if (heldKeys.has(k.brace[0])) mask |= CONTROL_BITS.brace;
   if (heldKeys.has(k.volley[0])) mask |= CONTROL_BITS.volley;
   if (heldKeys.has(k.spike[0]) || (k.spike[1] && heldKeys.has(k.spike[1]))) mask |= CONTROL_BITS.spike;
   if (mode === 'practice' && heldKeys.has(k.ballReset[0])) mask |= CONTROL_BITS.reset;
@@ -162,6 +164,7 @@ function updateUiSlot(index, pad, athleteCount, botSlots, mode) {
     if (padDown(pad, GAMEPAD_BUTTONS.jump)) padMask |= CONTROL_BITS.jump;
     if (padDown(pad, GAMEPAD_BUTTONS.dive)) padMask |= CONTROL_BITS.dive;
     if (padDown(pad, GAMEPAD_BUTTONS.cut)) padMask |= CONTROL_BITS.cut;
+    if (padDown(pad, GAMEPAD_BUTTONS.brace)) padMask |= CONTROL_BITS.brace;
     if (padDown(pad, GAMEPAD_BUTTONS.volley)) padMask |= CONTROL_BITS.volley;
     if (padDown(pad, GAMEPAD_BUTTONS.spike)) padMask |= CONTROL_BITS.spike;
     if (mode === 'practice' && padDown(pad, GAMEPAD_BUTTONS.ballReset)) padMask |= CONTROL_BITS.reset;
