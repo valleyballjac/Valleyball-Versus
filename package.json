@@ -11,6 +11,7 @@
     "deploy": "gh-pages -d dist",
     "package:itch": "node scripts/package_itch.mjs",
     "determinism": "node scripts/determinism.mjs",
+    "test": "node --test \"test/*.test.mjs\"",
     "test:roll": "node scripts/test_ball_roll.mjs",
     "scenario": "node scripts/trace.mjs --name all",
     "eval:match": "node scripts/evalMatch.mjs",

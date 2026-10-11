@@ -72,3 +72,11 @@ export function getCourtSlopeNormal(x, z, outVec = null) {
   }
   return { x: nx, y: ny, z: nz };
 }
+
+/**
+ * Whether an (x, z) position lies inside the elevation grid, so a floor-height
+ * sample is meaningful rather than a clamped edge value.
+ */
+export function isCourtFloorSampleAvailable(x, z) {
+  return x >= MIN_X && x <= MIN_X + GRID_W - 1 && z >= MIN_Z && z <= MIN_Z + GRID_H - 1;
+}
