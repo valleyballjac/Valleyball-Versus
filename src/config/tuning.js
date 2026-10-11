@@ -663,6 +663,44 @@ const DEFAULTS = {
     // held airborne pose — the mechanics work whether or not the art is there.
     slideClip: 'Slide Left',
     diveClip: 'Running Dive',
+    // The hands-up volley take is a pure defensive pose here: it receives no
+    // strike resolver or impulse. Its physical limb colliders do the blocking.
+    braceClip: 'Idle Two Hand Volley',
+    braceHoldPhase: 0.65,
+    // Leave locomotion/jump visible even at full hold: never freeze a stance.
+    braceMaxShare: 0.4,
+
+    // AGILE BRACE (GF-2.1) — active redirect values.
+    // Elevation of a held-brace redirect above horizontal. A block is not a
+    // strike; it sends the ball back out with a small loft.
+    braceRedirectUpDeg: 25.0,
+    // Inbound speed at which the redirect is strongest, and the scale applied.
+    // outbound = min(inbound, maxRedirectSpeed) * redirectScale.
+    braceMaxRedirectSpeed: 22.0,
+    braceRedirectScale: 0.95,
+    // Ignore glancing taps below this speed.
+    braceMinRedirectSpeed: 1.5,
+
+    // INTERCEPT DIVE (GF-2.1) — Dive + Brace combo.
+    // A short, fast dive toward the ball with a more upright body.
+    interceptDiveForwardImpulse: 6.0,
+        interceptDiveUpImpulse: 2.8,
+        // How long (ticks) after a brace-dive launches that a ball redirect still
+        // counts as "connected" rather than a whiff.
+        interceptDiveWindowTicks: 20,
+        // THE FORWARD CONE for the intercept decision: the half-angle, in degrees,
+        // around the athlete's facing within which the nearest ball qualifies for
+        // the brace-dive intercept. 45 gives a 90-degree total forward cone. A ball
+        // outside this cone, or behind, falls back to the standard directional dive.
+        interceptDiveMaxRedirectAngleDeg: 45.0,
+        // More upright hold phase than a normal dive, so the athlete stays ready to block.
+        interceptDiveHoldPhase: 0.45,
+        // Shares the normal dive cooldown by default. Override here if design wants a
+        // separate gate.
+        interceptDiveCooldownTicks: 150,
+        // RECOVERY TRADE-OFF: a brace-dive that never touches a ball is a whiff, and
+        // the landing commits this many EXTRA stun ticks on top of diveStunTicks.
+        interceptDiveWhiffStunTicks: 30,
 
     // THE PELVIS'S CLAMP, BOOSTED WHILE SLIDING. At speed the whole body is
     // dragging on the floor, and the tracker's mass-proportional impulse cap is

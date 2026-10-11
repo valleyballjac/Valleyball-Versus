@@ -421,10 +421,10 @@ export function updateMotor(motor, input, jumpQueued, dt, driveScale = 1, tick =
  * @param {ReturnType<typeof createMotor>} motor
  * @param {THREE.Vector3} direction horizontal, already normalised by the caller
  */
-export function applyDiveImpulse(motor, direction) {
-  _impulse.x = direction.x * TUNING.action.diveImpulseForward;
-  _impulse.y = TUNING.action.diveImpulseUp;
-  _impulse.z = direction.z * TUNING.action.diveImpulseForward;
+export function applyDiveImpulse(motor, direction, forward = TUNING.action.diveImpulseForward, up = TUNING.action.diveImpulseUp) {
+  _impulse.x = direction.x * forward;
+  _impulse.y = up;
+  _impulse.z = direction.z * forward;
   motor.body.applyImpulse(_impulse, true);
 }
 

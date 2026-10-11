@@ -341,7 +341,7 @@ export function buildHowToPlayModal(rootEl) {
 
       <!-- Sub-notice for P2 -->
       <div style="text-align: center; font-size: 10.5px; color: #64748b; font-weight: 600; margin-top: 4px;">
-        PLAYER 2 SECONDARY KEYBOARD: <span style="color: #94a3b8;">IJKL (Move) · Enter (Jump) · Slash (Sprint) · O (Slide) · N / H (Cut) · U (Dive) · P (Volley) · Bracket [ (Spike)</span>
+        PLAYER 2 SECONDARY KEYBOARD: <span style="color: #94a3b8;">IJKL (Move) · Enter (Jump) · Slash (Sprint) · O (Slide) · N (Cut) · H (Brace) · U (Dive) · P (Volley) · Bracket [ (Spike)</span>
       </div>
     </div>
   `;
@@ -362,7 +362,8 @@ export function buildHowToPlayModal(rootEl) {
     { action: 'Aim Strikes / Look', pad: 'Right Stick', key: 'Mouse Movement · Arrow Keys', color: '#38bdf8' },
     { action: 'Sprint Boost', pad: 'Left Trigger (LT)', key: 'Shift · (P2: Slash /)', color: '#38bdf8' },
     { action: 'Slide Tackle (Hold)', pad: 'Right Trigger (RT)', key: 'C · (P2: O)', color: '#38bdf8' },
-    { action: 'Directional Cut / Plant', pad: 'Left Bumper (LB / L1)', key: 'V / F · (P2: N / H)', color: '#3b82f6' },
+    { action: 'Directional Cut / Plant', pad: 'Left Bumper (LB / L1)', key: 'V / F · (P2: N)', color: '#3b82f6' },
+    { action: 'Agile Brace (Hold)', pad: 'Right Bumper (RB / R1)', key: 'G · (P2: H)', color: '#93c5fd' },
     { action: 'Jump (Hold for Height)', pad: 'A / Cross', key: 'Space · (P2: Enter)', color: '#10b981' },
     { action: 'Ground Dive', pad: 'X / Square', key: 'Q · (P2: U)', color: '#a855f7' },
     { action: 'Volley / Kick Strike', pad: 'B / Circle', key: 'Left-Click · E · (P2: P)', color: '#38bdf8' },

@@ -92,6 +92,46 @@ export const SCENARIOS = {
     ],
   },
 
+  /** A held physical guard must retain steering and walking while arms are up. */
+  brace: {
+    end: 190,
+    query: 'balls=1',
+    script: `(tick, pad, set) => {
+      pad.axes = tick >= 36 && tick < 165 ? [0, -1, 0, 0] : [0, 0, 0, 0];
+      set(5, tick >= 60 && tick < 145);
+    }`,
+    expect: [
+      { label: 'brace pose reaches a visible share', when: 'f => f.bracePose > 0.35', from: 90, to: 130, all: true },
+      { label: 'locomotion remains in the pose', when: 'f => f.locomotion >= 0.59', from: 90, to: 130, all: true },
+      { label: 'motor still accelerates through brace', when: 'f => f.speed > 3.0', from: 110, to: 145 },
+      { label: 'brace releases without a pose latch', when: 'f => f.braceMix < 0.03', from: 175, to: 190, all: true },
+      { label: 'balance stays intact', when: 'f => f.weight > 0.9', from: 60, to: 190, all: true },
+    ],
+  },
+
+  /** No special strike impulse: the guard's physical limb redirects a served ball. */
+  braceContact: {
+    end: 110,
+    query: 'balls=1&serve=1:0,1.8,-3:0,0,12@65',
+    script: `(tick, pad, set) => { set(5, tick >= 40 && tick < 105); }`,
+    expect: [
+      { label: 'brace is visibly held at contact', when: 'f => f.bracePose > 0.35', from: 78, to: 90, all: true },
+      { label: 'physical contact redirects the ball sideways', when: 'f => f.ballX > 0.8', from: 105, to: 110, all: true },
+      { label: 'brace does not execute a strike', when: 'f => f.resolved === 0', from: 65, to: 110, all: true },
+    ],
+  },
+
+  /** Identical incoming ball, without brace: controls for baseline body bounce. */
+  braceControl: {
+    end: 110,
+    query: 'balls=1&serve=1:0,1.8,-3:0,0,12@65',
+    script: `() => {}`,
+    expect: [
+      { label: 'without guard ball retains near-central path', when: 'f => Math.abs(f.ballX) < 0.2', from: 105, to: 110, all: true },
+      { label: 'no defensive pose without input', when: 'f => f.bracePose === 0', from: 65, to: 110, all: true },
+    ],
+  },
+
   /**
    * G3.5's actions scenario, re-verified on the court: the slide, the JUMP-
    * CANCEL at 125 (nine ticks in, still fast), the RE-ENTRY LOCKOUT with the

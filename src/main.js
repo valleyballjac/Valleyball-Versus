@@ -85,7 +85,7 @@ import {
 import { createMountFollowerState, runMountFollower } from './mechanics/mountFollower.js';
 import { createActionState, runActions } from './mechanics/actions.js';
 import {
-  createStrikeState, runStrikes, resolveStrikeContact, strikeProbe, checkStrikeAssist,
+  createStrikeState, runStrikes, resolveStrikeContact, resolveBraceRedirect, strikeProbe, checkStrikeAssist,
   KIND_NAME,
 } from './mechanics/strikes.js';
 import { createMatchState, updateScoring, matchProbe } from './mechanics/scoring.js';
@@ -1256,6 +1256,7 @@ function buildGhostInputs(actions, strikes) {
     steerInput: Math.hypot(input.moveWorld.x, input.moveWorld.z),
     slideMix: actions.slideMix,
     diveMix: actions.diveMix,
+    braceMix: actions.braceMix,
     slidePhase: actions.slidePhase,
     divePhase: actions.divePhase,
     // The strike's share and scrub, plus the two recorded values that pick
@@ -1317,6 +1318,27 @@ function drainImpacts(tick, dt) {
         const limbKey = hitInfo.isMotor ? null : hitInfo.key;
         noteBallContact(hitBall, other, limbKey, athleteHit.motor.collider.handle, totalForce, tick);
         const didStrike = resolveStrikeContact(athleteHit.strikeState, hitBall, limbKey, totalForce, tick);
+
+        // AGILE BRACE ACTIVE REDIRECT (GF-2.1). A held brace turns ball contact
+        // into a block: inbound energy is absorbed and the exit is redirected
+        // forward along the athlete's facing. Fires only when no strike resolved
+        // on this same contact, so a swing and a block never double-apply. When a
+        // redirect lands inside the intercept-dive window it marks that dive as
+        // "connected", so the whiff recovery in actions.js is skipped.
+        if (!didStrike) {
+          const braceMix = athleteHit.actionState ? athleteHit.actionState.braceMix : 0;
+          if (braceMix > 0.2) {
+            const facingYaw = athleteHit.animTarget ? athleteHit.animTarget.yaw : 0;
+            if (resolveBraceRedirect(hitBall, braceMix, facingYaw, tick)) {
+              const as = athleteHit.actionState;
+              if (Number.isFinite(as.lastInterceptDiveTick) &&
+                  tick - as.lastInterceptDiveTick <= TUNING.action.interceptDiveWindowTicks) {
+                as.interceptDiveContactTick = as.lastInterceptDiveTick;
+              }
+            }
+          }
+        }
+
         const ballPos = hitBall.body.translation();
 
         // Track live match & practice statistics
@@ -1920,6 +1942,7 @@ function fixedUpdate(dt, tick) {
         moveZ: 0,
         sprintHeld: false,
         slideHeld: false,
+        braceHeld: false,
         moveWorld: _zeroVector,
       };
       jumpQueued = false;
