@@ -143,6 +143,16 @@ const DEFAULTS = {
     type: 'court',
     modelUrl: assetUrl('models/arena.glb'),
 
+    // Visual configuration for translucent perimeter glass barriers.
+    barrier: {
+      opacity: 0.08,
+      roughness: 0.10,
+      metalness: 0.15,
+      edgeColor: 0xEC4899, // canonical pink (#EC4899)
+      edgeOpacity: 0.90,
+      edgeAngle: 25, // degrees threshold for angle/intersection outlines
+    },
+
     // THE AUTHORED COURT. A 50 x 120 m valley basin: the inner field rises from
     // the centre out to the ends, streams flank it, and two goal hoops face
     // across the court width at z = +/-40. There is no net.

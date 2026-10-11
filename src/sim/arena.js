@@ -264,8 +264,64 @@ function isRenderOnly(object, root) {
  */
 function normaliseCourtMaterial(material) {
   if (!material || !material.isMeshStandardMaterial) return;
-  material.metalness = Math.min(material.metalness ?? 0, 0.05);
-  material.roughness = Math.max(material.roughness ?? 1, 0.8);
+
+  // Standardize chalk lines to canonical arena chalk white (#F5F5F7)
+  if (material.name && (material.name.includes('Lines') || material.name.includes('Chalk'))) {
+    material.color.set(0xF5F5F7);
+    material.roughness = 0.9;
+    material.metalness = 0.0;
+    return;
+  }
+
+  // Translucent perimeter glass barriers: crystal clean pane
+  const isBarrierGlass = material.transparent || material.name === 'M_Barrier Glass' || material.name?.includes('Barrier');
+  if (isBarrierGlass) {
+    const config = TUNING.arena?.barrier || {};
+    material.transparent = true;
+    material.depthWrite = false;
+    material.side = THREE.FrontSide;
+    material.roughness = config.roughness ?? 0.10;
+    material.metalness = config.metalness ?? 0.15;
+    material.opacity = config.opacity ?? 0.08;
+    return;
+  }
+
+  // Stream / water channels: very subtle hydro-matte, eliminating distracting glare and hotspots
+  if (material.name && (material.name.includes('Stream') || material.name.includes('Water'))) {
+    material.roughness = 0.65;
+    material.metalness = 0.02;
+    return;
+  }
+
+  // Colored athletic court zones: sealed satin composite finish
+  if (
+    material.name &&
+    (material.name.includes('Center') ||
+      material.name.includes('Pick') ||
+      material.name.includes('Scoring') ||
+      material.name.includes('Corner'))
+  ) {
+    material.roughness = 0.68;
+    material.metalness = 0.03;
+    return;
+  }
+
+  // Main playing turf: clean athletic synthetic turf with subtle directional slope roll-off
+  if (material.name && (material.name.includes('Field') || material.name.includes('Turf'))) {
+    material.roughness = 0.78;
+    material.metalness = 0.02;
+    return;
+  }
+
+  // Goal hoops / hardware: anodized athletic satin metal
+  if (material.name && (material.name.includes('Goal') || material.name.includes('Hoop'))) {
+    material.roughness = 0.35;
+    material.metalness = 0.50;
+    return;
+  }
+
+  material.metalness = Math.min(material.metalness ?? 0, 0.04);
+  material.roughness = Math.max(material.roughness ?? 1, 0.80);
   // The glass barriers are authored alphaMode BLEND. Leave them transparent,
   // but stop them writing depth or they punch holes in everything behind.
   // Render FrontSide to eliminate 50% transparent pixel overdraw across large bounds.
@@ -273,6 +329,33 @@ function normaliseCourtMaterial(material) {
     material.depthWrite = false;
     material.side = THREE.FrontSide;
   }
+}
+
+/**
+ * Attaches a chalk-width pink outline along glass pane edges, chamfers, and angle intersections.
+ *
+ * @param {THREE.Mesh} object
+ * @param {string} owner
+ * @param {THREE.Material[]} materials
+ */
+function attachBarrierEdgeOutlines(object, owner, materials) {
+  const isBarrier =
+    owner.includes('Barrier') ||
+    owner.includes('Boundary') ||
+    materials.some((m) => m && (m.name === 'M_Barrier Glass' || m.name?.includes('Barrier')));
+  if (!isBarrier || !object.geometry) return;
+
+  const config = TUNING.arena?.barrier || {};
+  const edgeGeo = new THREE.EdgesGeometry(object.geometry, config.edgeAngle ?? 25);
+  const lineMat = new THREE.LineBasicMaterial({
+    color: config.edgeColor ?? 0xEC4899,
+    transparent: true,
+    opacity: config.edgeOpacity ?? 0.90,
+    depthWrite: false,
+  });
+  const edgeLines = new THREE.LineSegments(edgeGeo, lineMat);
+  edgeLines.name = `${owner}_pink_edges`;
+  object.add(edgeLines);
 }
 
 /**
@@ -345,6 +428,7 @@ async function loadCourtArena(scene) {
         object.frustumCulled = true;
         const materials = Array.isArray(object.material) ? object.material : [object.material];
         for (const material of materials) normaliseCourtMaterial(material);
+        attachBarrierEdgeOutlines(object, owner, materials);
         scenery.add(owner);
         return;
       }
@@ -357,6 +441,7 @@ async function loadCourtArena(scene) {
       for (const material of materials) normaliseCourtMaterial(material);
 
       if (isRenderOnly(object, group)) {
+        attachBarrierEdgeOutlines(object, owner, materials);
         scenery.add(owner);
         return;
       }
