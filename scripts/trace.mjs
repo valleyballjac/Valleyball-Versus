@@ -183,6 +183,7 @@ function shim({ scriptSource, probeEvery }) {
           bracePose: r(g.nodes?.action?.brace?.action?.getEffectiveWeight() || 0),
           locomotion: r(g.shares?.loco || 0),
           ballX: r(window.__vb?.balls?.[1]?.body?.translation()?.x ?? null),
+          ballZ: r(window.__vb?.balls?.[1]?.body?.translation()?.z ?? null),
           slideTime: ac.slideTime || 0,
           divePending: !!ac.divePending,
           standUpNeed: r(g.standUpNeed || 0),

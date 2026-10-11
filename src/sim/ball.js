@@ -295,6 +295,8 @@ export async function createBall(scene, options = {}) {
     lastTouchForce: 0,
     /** Largest limb contact force seen this session. The calibration number. */
     peakTouchForce: 0,
+    /** Tick of the last brace redirect. -Infinity means "never redirected". */
+    lastBraceRedirectTick: -Infinity,
     /**
      * Times the ball has been reported in contact with the MOTOR collider.
      * This must stay 0 for the life of the process: the sphere is filtered out
@@ -334,6 +336,7 @@ export function resetBall(ball, tick, targetPos = null) {
   ball.interpolated.reset(_spawn);
 
   ball.lastResetTick = tick;
+  ball.lastBraceRedirectTick = -Infinity;
 }
 
 /**

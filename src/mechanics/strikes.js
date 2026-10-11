@@ -981,6 +981,11 @@ export function applyStrikeAssistPreset(state, presetKey) {
 export function resolveBraceRedirect(ball, braceMix, facingYaw, tick) {
   const b = TUNING.action;
   if (braceMix <= 0.2) return false;
+  // ONE REDIRECT PER BALL PER TICK. A brace can contact several limbs on the
+  // same tick (forearm, upper arm, chest, spine, head); without this gate each
+  // limb would cancel and rewrite the exit velocity, draining energy five times
+  // and sending the ball nowhere predictable.
+  if (ball.lastBraceRedirectTick === tick) return false;
   const vel = ball.body.linvel();
   const inbound = Math.hypot(vel.x, vel.y, vel.z);
   if (inbound < b.braceMinRedirectSpeed) return false;
@@ -1001,6 +1006,8 @@ export function resolveBraceRedirect(ball, braceMix, facingYaw, tick) {
   _impulse.y = (dirY * outbound - vel.y) * mass;
   _impulse.z = (dirZ * outbound - vel.z) * mass;
   ball.body.applyImpulse(_impulse, true);
+
+  ball.lastBraceRedirectTick = tick;
 
   console.log(
     `[brace] redirect ${inbound.toFixed(2)} -> ${outbound.toFixed(2)} m/s ` +
