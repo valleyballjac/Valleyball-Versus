@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { TUNING } from '../config/tuning.js';
 import { Interpolated } from '../core/Interpolated.js';
 import { RAPIER, getWorld, BALL_GROUPS, ENVIRONMENT_RAY_GROUPS } from './physics.js';
-import { applyClampedLinearDamping, applyClampedAngularDamping } from './damping.js';
+import { applyClampedLinearDamping, applyClampedAngularDamping, conservativeInertia } from './damping.js';
 
 /**
  * THE BALL. One body, created at boot, never destroyed, never pooled.
@@ -454,7 +454,15 @@ export function applyBallResistance(ball, dt) {
   const angular = ball.body.angvel();
   _angvel.set(angular.x, angular.y, angular.z);
   if (_angvel.lengthSq() > 0) {
-    applyClampedAngularDamping(ball.body, angularDrag * dt, _angvel, dt);
+    // LAW 3, angular form, matching the linear request's mass scaling just
+    // above: the torque impulse scales with the ball's own moment of inertia,
+    // so the angular deceleration is identical across every preset. Unscaled,
+    // the same torque strips the small ball's spin at I-weighted rate (16x the
+    // regulation) and ground traction converts that deficit into a braking
+    // penalty that cancels slope gravity. conservativeInertia is the body's
+    // smallest principal component, so the request never outruns the clamp's
+    // own zero-stop maximum for any axis.
+    applyClampedAngularDamping(ball.body, angularDrag * conservativeInertia(ball.body) * dt, _angvel, dt);
   }
 }
 

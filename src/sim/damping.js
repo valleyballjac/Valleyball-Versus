@@ -47,10 +47,15 @@ const _impulse = { x: 0, y: 0, z: 0 };
  * choice between a touch of residual wobble and a character that flips sign and
  * explodes, this takes the wobble.
  *
+ * The ball's spin decay sizes its request by this too (LAW 3 mass-scaling
+ * convention, in its angular form): a torque impulse that does not scale with
+ * the body's own inertia strips spin at a rate inversely proportional to it,
+ * so a small ball would decelerate 16x harder than a regulation one.
+ *
  * @param {object} body
  * @returns {number}
  */
-function conservativeInertia(body) {
+export function conservativeInertia(body) {
   const inertia = body.principalInertia();
   return Math.min(inertia.x, inertia.y, inertia.z);
 }
