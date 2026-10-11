@@ -14,7 +14,7 @@ Step 1 — build and simulation laws, from the repository root:
 
 Step 2 — action and contact fixtures:
 
-- `npm run trace -- --name brace --runs 2`; `npm run trace -- --name braceContact --runs 2`; `npm run trace -- --name braceControl --runs 2` — expect PASS and all per-tick rows byte-identical within each pair. `braceContact` and `braceControl` use the same ball serve: the braced ball's lateral x exceeds 0.8 m by tick 105, versus |x| < 0.2 m without bracing; zero strike resolves. These are narrow fixtures, not a general save-rate claim.
+- `npm run trace -- --name brace --runs 2`; `npm run trace -- --name braceContact --runs 2`; `npm run trace -- --name braceControl --runs 2` — expect PASS and all per-tick rows byte-identical within each pair. `braceContact` and `braceControl` use the same ball serve: the braced ball is redirected forward along the athlete's facing to `z < -3.5 m` by tick 105, versus the unbraced control staying near-central (`|x| < 0.2 m`); exactly one `[brace] redirect` resolves on the contact tick and zero strikes resolve. These are narrow fixtures, not a general save-rate claim.
 - Human-only: serve or shoot 10 balls toward the defender while moving laterally and holding the guard; count **at least 7/10** visibly altered by hand/forearm contact, and report saved goals separately from incidental torso bounces. This seed threshold is for Jac to judge, not machine-certified.
 
 Step 3 — baseline regression and laptop anchor:

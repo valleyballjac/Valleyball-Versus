@@ -116,7 +116,8 @@ export const SCENARIOS = {
     script: `(tick, pad, set) => { set(5, tick >= 40 && tick < 105); }`,
     expect: [
       { label: 'brace is visibly held at contact', when: 'f => f.bracePose > 0.35', from: 78, to: 90, all: true },
-      { label: 'physical contact redirects the ball sideways', when: 'f => f.ballX > 0.8', from: 105, to: 110, all: true },
+      { label: 'exactly one brace redirect resolves on contact tick', log: '[brace] redirect', from: 78, to: 78, min: 1, max: 1 },
+      { label: 'physical contact redirects the ball forward along facing', when: 'f => f.ballZ < -3.5', from: 105, to: 110, all: true },
       { label: 'brace does not execute a strike', when: 'f => f.resolved === 0', from: 65, to: 110, all: true },
     ],
   },
