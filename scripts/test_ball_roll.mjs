@@ -52,6 +52,18 @@ const SEAM_MAX_VY_HOP = 0.15;            // m/s upward while airborne in crossin
 const BOUNDARY_MAX_VY_KICK = 0.15;       // m/s upward while airborne in crossing window
 const CROSS_WINDOW_HALF = 1.0;           // m, half-width of the seam crossing window
 
+// Perimeter barrier / corner entrapment certification (COL_Barriers).
+// The corner "fan" entrapment ledges were replaced with a vertical curtain:
+// the terrain rim tops out at ~11 m (ball base) and a glass-bottom cap sits at
+// ~13 m. A rolling ball must climb to the rim, strike the curtain, and roll
+// back into play WITHOUT ever topping the curtain onto the shelf, WITHOUT an
+// unnatural upward pop, and WITHOUT wedging to rest perched on the rim.
+const SHELF_CAP_BASE = 13.0;             // m, glass-bottom cap height in the corners
+const CORNER_MAX_CLIMB_BASE = 12.0;      // m, ball base must stay below this (no shelf reach)
+const CORNER_MAX_VY_POP = 0.50;          // m/s, unnatural upward kick at the curtain
+const RIM_REST_BASE = 9.5;               // m, resting above this = perched on rim/shelf (wedge risk)
+const WEDGE_TICKS = 90;                  // 1.5 s of near-zero horizontal speed while perched = trapped
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 
@@ -445,6 +457,118 @@ function boundaryScenario(envs, dir, label) {
 
 function round3(v) { return Math.round(v * 1000) / 1000; }
 
+/**
+ * CERTIFICATION: rolling ball cannot reach the corner glass shelf. Approaches
+ * each corner from the terrain rim (ball base ~10.5 m) and rolls hard into the
+ * corner curtain. The ball must climb to the rim, strike the vertical curtain,
+ * and roll back into play without topping the curtain onto the shelf cap, and
+ * without wedging to a rest perched on the rim.
+ */
+function cornerBarrierScenario(envs, sx, sz, label) {
+  const x = 20.0 * sx;
+  const z = 49.0 * sz;
+  const { samples } = runRoll(envs, {
+    x, z,
+    vx: 6.0 * sx,
+    vz: 6.0 * sz,
+    ticks: 600,
+  });
+  let maxClimbBase = 0;
+  let maxAbsX = 0;
+  let maxAbsZ = 0;
+  for (const s of samples) {
+    maxClimbBase = Math.max(maxClimbBase, s.y - BALL_RADIUS);
+    maxAbsX = Math.max(maxAbsX, Math.abs(s.x));
+    maxAbsZ = Math.max(maxAbsZ, Math.abs(s.z));
+  }
+  const vyPop = maxAirborneVy(samples);
+  // Wedge trap: consecutive ticks resting (near-zero horizontal speed) while
+  // perched above the rim base height.
+  let runLen = 0;
+  let maxRunLen = 0;
+  for (const s of samples) {
+    const hsp = Math.hypot(s.vx, s.vz);
+    if (s.y - BALL_RADIUS > RIM_REST_BASE && hsp < 0.1) {
+      runLen += 1;
+      maxRunLen = Math.max(maxRunLen, runLen);
+    } else {
+      runLen = 0;
+    }
+  }
+  const last = samples[samples.length - 1];
+  return {
+    group: 'barrier-corner', label,
+    metrics: {
+      maxClimbBase: { value: round3(maxClimbBase), threshold: CORNER_MAX_CLIMB_BASE, pass: maxClimbBase < CORNER_MAX_CLIMB_BASE, below: true },
+      vyPop: { value: round3(vyPop), threshold: CORNER_MAX_VY_POP, pass: vyPop <= CORNER_MAX_VY_POP },
+      wedgeTicks: { value: maxRunLen, threshold: WEDGE_TICKS, pass: maxRunLen < WEDGE_TICKS, below: true },
+    },
+    diagnostics: {
+      shelfCapBase: SHELF_CAP_BASE,
+      maxAbsX: round3(maxAbsX),
+      maxAbsZ: round3(maxAbsZ),
+      finalBase: round3(last.y - BALL_RADIUS),
+      note: 'vertical corner curtain (rim ~11m -> cap ~13m) must stop the ball below the shelf cap',
+    },
+    spawn: { x, z, vx: 6.0 * sx, vz: 6.0 * sz, gapAboveSurface: SPAWN_GAP },
+  };
+}
+
+/**
+ * CERTIFICATION: no snag or entrapment at the long-side lower glass sill.
+ * Rolls the ball outward toward the long-side glass at several z stations and
+ * verifies it neither hops unnaturally off the sill seam nor comes to rest
+ * perched on the rim. (The outward roll reverses naturally against the rising
+ * lateral slope; a snag or shelf would instead leave the ball trapped.)
+ */
+function sillScenario(envs, side, label) {
+  const stations = [];
+  for (const z of [0, 20, 40]) {
+    const { samples } = runRoll(envs, {
+      x: 18.0 * side, z,
+      vx: 7.0 * side,
+      vz: 0,
+      ticks: 600,
+    });
+    const vyHop = maxAirborneVy(samples);
+    let runLen = 0;
+    let maxRunLen = 0;
+    let maxClimbBase = 0;
+    for (const s of samples) {
+      const base = s.y - BALL_RADIUS;
+      maxClimbBase = Math.max(maxClimbBase, base);
+      const hsp = Math.hypot(s.vx, s.vz);
+      if (base > RIM_REST_BASE && hsp < 0.1) {
+        runLen += 1;
+        maxRunLen = Math.max(maxRunLen, runLen);
+      } else {
+        runLen = 0;
+      }
+    }
+    const last = samples[samples.length - 1];
+    stations.push({
+      z,
+      vyHop: round3(vyHop),
+      wedgeTicks: maxRunLen,
+      maxClimbBase: round3(maxClimbBase),
+      finalBase: round3(last.y - BALL_RADIUS),
+    });
+  }
+  const worstHop = Math.max(...stations.map((st) => st.vyHop));
+  const worstWedge = Math.max(...stations.map((st) => st.wedgeTicks));
+  const worstClimb = Math.max(...stations.map((st) => st.maxClimbBase));
+  return {
+    group: 'barrier-sill', label,
+    metrics: {
+      vyHop: { value: worstHop, threshold: CORNER_MAX_VY_POP, pass: worstHop <= CORNER_MAX_VY_POP },
+      wedgeTicks: { value: worstWedge, threshold: WEDGE_TICKS, pass: worstWedge < WEDGE_TICKS, below: true },
+      maxClimbBase: { value: worstClimb, threshold: CORNER_MAX_CLIMB_BASE, pass: worstClimb < CORNER_MAX_CLIMB_BASE, below: true },
+    },
+    stations,
+    spawn: { x: 18.0 * side, vx: 7.0 * side, vz: 0, gapAboveSurface: SPAWN_GAP },
+  };
+}
+
 // ═══ MAIN ═══
 
 async function main() {
@@ -461,8 +585,16 @@ async function main() {
   scenarios.push(seamScenario(envs, +1, 'E'));
   scenarios.push(seamScenario(envs, -1, 'W'));
   // c) KeyBump / scoring-circle boundaries.
-  scenarios.push(boundaryScenario(envs, +1, 'S'));
-  scenarios.push(boundaryScenario(envs, -1, 'N'));
+    scenarios.push(boundaryScenario(envs, +1, 'S'));
+    scenarios.push(boundaryScenario(envs, -1, 'N'));
+    // d) Perimeter barrier corners (entrapment certification).
+    scenarios.push(cornerBarrierScenario(envs, +1, +1, 'corner+NE'));
+    scenarios.push(cornerBarrierScenario(envs, +1, -1, 'corner+NW'));
+    scenarios.push(cornerBarrierScenario(envs, -1, +1, 'corner+SE'));
+    scenarios.push(cornerBarrierScenario(envs, -1, -1, 'corner+SW'));
+    // e) Long-side lower glass sill (snag / entrapment certification).
+    scenarios.push(sillScenario(envs, +1, 'sill E'));
+    scenarios.push(sillScenario(envs, -1, 'sill W'));
 
   // ═══ REPORT ═══
   const rows = [];
