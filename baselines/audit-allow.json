@@ -59,7 +59,6 @@
     "src/main.js :: createMatchState": 1,
     "src/main.js :: createMotor": 1,
     "src/main.js :: detachMotorFromRagdoll": 1,
-    "src/main.js :: isMainMenuActive": 1,
     "src/main.js :: runActions": 1,
     "src/main.js :: runMountFollower": 1,
     "src/main.js :: runStrikes": 1,
