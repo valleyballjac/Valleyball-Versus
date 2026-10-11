@@ -84,7 +84,7 @@ export function buildTitleScreen(rootEl, navActions = {}) {
   `;
 
   const versionBadge = document.createElement('div');
-  versionBadge.textContent = 'v0.3.1';
+  versionBadge.textContent = 'v0.3.2';
   versionBadge.style.cssText = `
     font-size: 11px;
     font-weight: 800;
@@ -129,9 +129,9 @@ export function buildTitleScreen(rootEl, navActions = {}) {
     }
   };
 
-  // 2v2 Versus Item (Locked Preview: Coming Soon)
+  // 2v2 Versus Item (Locked Preview: Coming In V0.4.0!)
   const btnMatch2v2 = createMenuButton('PLAY MATCH (2v2 VERSUS)', 'rgba(245, 158, 11, 0.06)', () => {
-    showToast('2v2 Versus is currently in development — coming soon in the next update!', 'warning', 3500);
+    showToast('2v2 Versus is currently in development. Coming in v0.4.0!', 'warning', 3500);
     soundManager?.playTone?.(480, 0.08, 'sine', 0.16);
   });
   btnMatch2v2.id = 'btn-play-match-2v2';
@@ -139,7 +139,7 @@ export function buildTitleScreen(rootEl, navActions = {}) {
   btnMatch2v2.style.cursor = 'not-allowed';
   btnMatch2v2.innerHTML = `
     <span style="display:flex;align-items:center;gap:8px;">🔒 PLAY MATCH (2v2 VERSUS)</span>
-    <span class="contextual-btn-badge" style="background:#f59e0b;color:#000;border:none;font-weight:900;">COMING SOON</span>
+    <span class="contextual-btn-badge" style="background:#f59e0b;color:#000;border:none;font-weight:900;">COMING IN V0.4.0!</span>
   `;
 
   const btnSettings = createMenuButton('SETTINGS', 'rgba(255, 255, 255, 0.08)', () => {

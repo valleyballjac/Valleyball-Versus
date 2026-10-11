@@ -255,7 +255,7 @@ export function buildControllerAssignmentScreen(rootEl, callbacks = {}) {
     opacity: 0.65;
     transition: all 0.15s ease;
   `;
-  btnToggle.innerHTML = `<span class="contextual-btn-badge" style="background:#f59e0b;color:#000;font-weight:900;">COMING SOON</span><span>2v2 (4 ATHLETES)</span>`;
+  btnToggle.innerHTML = `<span class="contextual-btn-badge" style="background:#f59e0b;color:#000;font-weight:900;">COMING IN V0.4.0!</span><span>2v2 (4 ATHLETES)</span>`;
   btnToggle.onclick = () => toggleMode();
 
   const btnBothAI = document.createElement('button');
@@ -338,7 +338,7 @@ export function getControllerAssignmentEl() {
 }
 
 export function toggleMode() {
-  showToast('2v2 Versus is currently in development — coming soon in the next update!', 'warning', 3500);
+  showToast('2v2 Versus is currently in development. Coming in v0.4.0!', 'warning', 3500);
   soundManager.playTone(440, 0.08, 'sine', 0.16);
 }
 
