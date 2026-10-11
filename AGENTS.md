@@ -10,7 +10,7 @@ This document provides mandatory operational context, architectural invariants, 
 
 ## 1. PROJECT ESSENTIALS
 
-- **Title**: Valleyball Versus (v0.3.0)
+- **Title**: Valleyball Versus (v0.3.1)
 - **Stack**: Three.js (r185.1), Rapier3D (`@dimforge/rapier3d-compat` 0.19.3), Vite (8.2.2), vanilla modern JavaScript (ES modules).
 - **Core Concept**: Pure physics sports simulation featuring physical active ragdolls, mass-normal strikes, zero artificial ball magnetism, dynamic target goal switching, and locked 60+ FPS performance.
 - **Working Root**: `C:\Users\portt\Dev\Valleyball\Valleyball-Demo`
