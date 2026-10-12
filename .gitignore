@@ -7,7 +7,10 @@ _fable/
 scratch/
 test_*.mjs
 !scripts/test_ball_roll.mjs
+!scripts/test_boundary_drops.mjs
 test_ball_roll_report.json
+test_boundary_drops_report.json
+audit_collision_coverage_report.json
 diff.mjs
 *_backup.glb
 c.json
