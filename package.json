@@ -14,6 +14,7 @@
     "test": "node --test \"test/*.test.mjs\" && node scripts/test_boundary_drops.mjs",
     "test:roll": "node scripts/test_ball_roll.mjs",
     "test:drops": "node scripts/test_boundary_drops.mjs",
+    "test:negative": "node scripts/test_corner_cap_negative.mjs",
     "scenario": "node scripts/trace.mjs --name all",
     "eval:match": "node scripts/evalMatch.mjs",
     "train:bot": "node scripts/trainBot.mjs",

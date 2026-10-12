@@ -26,6 +26,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { TUNING } from '../src/config/tuning.js';
 import { toTrimeshArrays } from '../src/sim/arena.js';
+import { mutateCap } from './corner_cap_gate.mjs';
 
 // ═══ CONSTANTS (card spec) ═══
 const DT = 1 / 60;                       // standard fixed timestep
@@ -69,7 +70,7 @@ const ROOT = path.resolve(__dirname, '..');
 
 // ═══ WORLD BUILD (mirrors src/ai/headlessSim.js) ═══
 
-export async function buildWorld() {
+export async function buildWorld(options = {}) {
   await RAPIER.init();
 
   const modelPath = path.join(ROOT, 'public', 'models', 'arena.glb');
@@ -101,31 +102,36 @@ export async function buildWorld() {
   });
 
   if (!meshes.some((m) => m.name === 'COL_Court')) {
-    throw new Error('COL_Court not found in arena.glb');
-  }
-
-  // Two worlds: `probe` holds only the static terrain (stepped once so the
-  // broadphase is populated) and answers surface raycasts; `sim` carries the
-  // terrain plus the rolling ball. Keeping probes in a ball-free world means
-  // a downward ray at the ball's (x, z) can never hit the ball itself.
-  const buildStatic = () => {
-    const w = new RAPIER.World({ x: 0, y: TUNING.physics.gravityY, z: 0 });
-    const groundBody = w.createRigidBody(RAPIER.RigidBodyDesc.fixed());
-    for (const m of meshes) {
-      const flags = m.isCourtSurface ? RAPIER.TriMeshFlags.FIX_INTERNAL_EDGES : 0;
-      const desc = flags
-        ? RAPIER.ColliderDesc.trimesh(m.vertices, m.indices, flags)
-        : RAPIER.ColliderDesc.trimesh(m.vertices, m.indices);
-      desc.setFriction(0.3).setRestitution(0.75);
-      w.createCollider(desc, groundBody);
+      throw new Error('COL_Court not found in arena.glb');
     }
-    w.step();
-    return w;
-  };
-  const probe = buildStatic();
-  const sim = buildStatic();
-  return { probe, sim, meshNames: meshes.map((m) => m.name) };
-}
+
+    // Negative-control mutation (corner cap removed/inverted) is applied to the
+    // extracted triangle arrays BEFORE the colliders are built, so a mutant world
+    // exercises the same code path as production. Only COL_Barriers is touched.
+    const meshesFinal = mutateCap(meshes, options.mutate);
+
+    // Two worlds: `probe` holds only the static terrain (stepped once so the
+    // broadphase is populated) and answers surface raycasts; `sim` carries the
+    // terrain plus the rolling ball. Keeping probes in a ball-free world means
+    // a downward ray at the ball's (x, z) can never hit the ball itself.
+    const buildStatic = () => {
+      const w = new RAPIER.World({ x: 0, y: TUNING.physics.gravityY, z: 0 });
+      const groundBody = w.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+      for (const m of meshesFinal) {
+        const flags = m.isCourtSurface ? RAPIER.TriMeshFlags.FIX_INTERNAL_EDGES : 0;
+        const desc = flags
+          ? RAPIER.ColliderDesc.trimesh(m.vertices, m.indices, flags)
+          : RAPIER.ColliderDesc.trimesh(m.vertices, m.indices);
+        desc.setFriction(0.3).setRestitution(0.75);
+        w.createCollider(desc, groundBody);
+      }
+      w.step();
+      return w;
+    };
+    const probe = buildStatic();
+    const sim = buildStatic();
+    return { probe, sim, meshNames: meshesFinal.map((m) => m.name), meshes: meshesFinal };
+  }
 
 // ═══ SURFACE SAMPLING ═══
 

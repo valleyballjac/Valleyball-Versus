@@ -27,20 +27,32 @@
  *            of bug, where a ball or player reads a surface the physics body
  *            does not.
  *
- * Exit contract: exit code 0 when the court passes both rules, 1 otherwise.
- * Writes audit_collision_coverage_report.json next to the package root.
+ *   Rule 3 — Corner cap certification. The four corner shelves are standing
+ *            surfaces: their glass-bottom caps (COL_Barriers, y = 13.0) must
+ *            be present, wound upward, and hold a resting entity at the cap
+ *            height (>= 12.8 m). A missing or downward-wound cap reads as a
+ *            hole: a dropped entity exits the enclosed court into the void
+ *            instead of resting on the shelf. The 2.5 m backing tolerance of
+ *            Rule 2 alone accepts the ~11 m court rim as "backing" for a
+ *            13 m corner surface, so this rule certifies the cap itself.
+ *
+ * Exit contract: exit code 0 when the court passes all three rules, 1
+ * otherwise. Writes audit_collision_coverage_report.json next to the package
+ * root.
  *
  * Run: npm run audit:coverage
  */
 
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath, pathToFileURL } from 'url';
-import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { fileURLToPath } from 'url';
 import RAPIER from '@dimforge/rapier3d-compat';
-import { toTrimeshArrays } from '../src/sim/arena.js';
 import { buildWorld, surfaceY } from './test_ball_roll.mjs';
+import {
+  buildVisStandingWorld,
+  cornerCapWinding,
+  cornerCapRestCheck,
+} from './corner_cap_gate.mjs';
 
 // ═══ CONSTANTS ═══
 
@@ -65,19 +77,13 @@ const CORNER_STEP = 0.5;
 
 /** Corner-platform footprint: a single quadrant (mirrored across all four). */
 const CORNER_X_MIN = 15.0;
-const CORNER_X_MAX = 24.0;
+const CORNER_X_MAX = 25.0;
 const CORNER_Z_MIN = 45.0;
-const CORNER_Z_MAX = 59.0;
+const CORNER_Z_MAX = 60.0;
 
-/** Court footprint extent. */
-const COURT_X = 24.0;
-const COURT_Z = 58.0;
-
-/** VIS meshes that represent standing/walkable terrain (horizontal surfaces a
- * ball or player would stand on), as distinct from the vertical glass walls
- * (VIS_Back_Boundary, VIS_Lower_Side_Wall, VIS_Upper_*) whose perimeter
- * integrity is certified by scripts/test_ball_roll.mjs entrapment scenarios. */
-const STANDING_VIS = /^VIS_(Corner_|Inner_Field_|Outer_Field_|Stream_|SM_Goal_)/;
+/** Court footprint extent (full enclosed glass boundary |x|<=25, |z|<=60). */
+const COURT_X = 25.0;
+const COURT_Z = 60.0;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -108,37 +114,11 @@ function castUp(world, x, y0, z, max) {
   return y0 + toi;
 }
 
-/** Build a static raycast world from the VIS standing meshes so their
- * world-space surfaces can be sampled by the same raycast helper. */
-async function buildVisStandingWorld() {
-  const modelPath = path.join(ROOT, 'public', 'models', 'arena.glb');
-  const glb = fs.readFileSync(modelPath);
-  const ab = glb.buffer.slice(glb.byteOffset, glb.byteOffset + glb.byteLength);
-  const gltf = await new Promise((res, rej) => new GLTFLoader().parse(ab, '', res, rej));
-  gltf.scene.updateMatrixWorld(true);
-
-  const world = new RAPIER.World({ x: 0, y: -12, z: 0 });
-  const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
-  let tris = 0;
-  gltf.scene.traverse((o) => {
-    if (!o.isMesh || !STANDING_VIS.test(o.name)) return;
-    const geom = o.geometry.clone();
-    geom.applyMatrix4(o.matrixWorld);
-    const { vertices, indices } = toTrimeshArrays(geom, { filterInverted: false });
-    geom.dispose();
-    if (!indices.length) return;
-    tris += indices.length / 3;
-    world.createCollider(RAPIER.ColliderDesc.trimesh(vertices, indices), body);
-  });
-  world.step();
-  return { world, tris };
-}
-
 // ═══ AUDIT ═══
 
 async function main() {
   await RAPIER.init();
-  const { probe } = await buildWorld();
+  const { probe, meshes } = await buildWorld();
   const { world: visWorld, tris: visTris } = await buildVisStandingWorld();
 
   // ── Rule 1: downward hole sweep ──
@@ -186,7 +166,12 @@ async function main() {
     }
   }
 
-  const passes = holes.length === 0 && uncovered.length === 0;
+  // ── Rule 3: corner cap certification ──
+  const winding = cornerCapWinding(meshes);
+  const capRest = cornerCapRestCheck(probe, visWorld);
+  const capFailures = [...winding.failures, ...capRest.failures];
+
+  const passes = holes.length === 0 && uncovered.length === 0 && capFailures.length === 0;
 
   // ── report ──
   const report = {
@@ -209,6 +194,18 @@ async function main() {
       worstPoint,
       samples: uncovered.slice(0, 16),
     },
+    rule3CornerCaps: {
+      pass: capFailures.length === 0,
+      winding: {
+        upPerQuadrant: winding.upPerQuadrant,
+        downFacing: winding.downFacing,
+      },
+      restChecks: {
+        sampled: capRest.checked,
+        failures: capRest.failures.length,
+      },
+      failures: capFailures.slice(0, 32),
+    },
   };
 
   const outPath = path.join(ROOT, 'audit_collision_coverage_report.json');
@@ -216,6 +213,7 @@ async function main() {
 
   console.log(`court-footprint hole sweep: ${sweep1.length} rays, ${holes.length} holes`);
   console.log(`visual-walkable coverage: ${visPoints} points, ${uncovered.length} uncovered, worst gap ${worstGap === Infinity ? 'inf' : worstGap.toFixed(3)} m`);
+  console.log(`corner-cap certification: ${capRest.checked} rest checks, ${winding.downFacing} down-facing, ${capFailures.length} failures`);
   console.log(passes ? 'AUDIT PASS — coverage holds' : 'AUDIT FAIL — see report');
   console.log(`report: ${outPath}`);
 
