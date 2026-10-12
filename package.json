@@ -1,9 +1,9 @@
 {
   "name": "valleyball",
   "private": true,
-  "version": "0.3.2",
+  "version": "0.3.3",
   "type": "module",
-  "description": "Valleyball \u2014 Physics volleyball simulation featuring deterministic ragdoll physics and AI opponents.",
+  "description": "Valleyball — Physics volleyball simulation featuring deterministic ragdoll physics and AI opponents.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -11,9 +11,10 @@
     "deploy": "gh-pages -d dist",
     "package:itch": "node scripts/package_itch.mjs",
     "determinism": "node scripts/determinism.mjs",
-    "test": "node --test \"test/*.test.mjs\" && node scripts/test_boundary_drops.mjs",
+    "test": "node --test \"test/*.test.mjs\" && node scripts/test_boundary_drops.mjs && node scripts/test_athlete_corner_traversal.mjs",
     "test:roll": "node scripts/test_ball_roll.mjs",
     "test:drops": "node scripts/test_boundary_drops.mjs",
+    "test:traversal": "node scripts/test_athlete_corner_traversal.mjs",
     "test:negative": "node scripts/test_corner_cap_negative.mjs",
     "scenario": "node scripts/trace.mjs --name all",
     "eval:match": "node scripts/evalMatch.mjs",

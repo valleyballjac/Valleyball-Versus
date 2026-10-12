@@ -27,14 +27,18 @@
  *            of bug, where a ball or player reads a surface the physics body
  *            does not.
  *
- *   Rule 3 — Corner cap certification. The four corner shelves are standing
- *            surfaces: their glass-bottom caps (COL_Barriers, y = 13.0) must
- *            be present, wound upward, and hold a resting entity at the cap
- *            height (>= 12.8 m). A missing or downward-wound cap reads as a
- *            hole: a dropped entity exits the enclosed court into the void
- *            instead of resting on the shelf. The 2.5 m backing tolerance of
- *            Rule 2 alone accepts the ~11 m court rim as "backing" for a
- *            13 m corner surface, so this rule certifies the cap itself.
+ *   Rule 3 — Corner fan certification. The four corner wedges (VIS_Corner_*)
+ *            are standing surfaces backed by a SLOPED RADIAL FAN in
+ *            COL_Barriers: 16 up-facing triangles per quadrant, rim vertices
+ *            at y = 11.00 rising to a shared apex at y = 13.00 at the outer
+ *            corner (v10.7/v10.11 geometry). Each quadrant must carry the fan
+ *            (present, up-facing, rim-to-apex continuous, nothing vertical in
+ *            the fan band), and the topmost solid surface under every fan
+ *            point must BE the fan surface: the ~10.5 m court rim below means
+ *            fall-through, a surface above means a phantom obstruction. The
+ *            2.5 m backing tolerance of Rule 2 alone accepts the court rim as
+ *            "backing" for the sloped fan, so this rule certifies the fan
+ *            itself against the pristine arena.glb.
  *
  * Exit contract: exit code 0 when the court passes all three rules, 1
  * otherwise. Writes audit_collision_coverage_report.json next to the package
@@ -50,6 +54,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { buildWorld, surfaceY } from './test_ball_roll.mjs';
 import {
   buildVisStandingWorld,
+  buildFanWorld,
   cornerCapWinding,
   cornerCapRestCheck,
 } from './corner_cap_gate.mjs';
@@ -62,8 +67,9 @@ const KILL_FLOOR_Y = -5.0;
 
 /** Vertical tolerance (m) for Rule 2: a VIS surface is "backed" if a COL
  * collider sits within this distance below or above it. Calibrated against the
- * fixed arena, where the corner purple wedge legitimately spans a ~2 m gap
- * between the ~11 m court rim (below) and the 13 m glass-bottom cap (above). */
+ * fixed arena, where the flat VIS_Corner render surface (y = 11.67) sits above
+ * a sloped fan collider spanning 11.0 to 13.0 m, a legitimate gap of up to
+ * ~1.35 m near the apex. */
 const BACKING_TOLERANCE_M = 2.5;
 
 /** Ray search depth (m) for the backing test on each side of a VIS surface. */
@@ -120,6 +126,7 @@ async function main() {
   await RAPIER.init();
   const { probe, meshes } = await buildWorld();
   const { world: visWorld, tris: visTris } = await buildVisStandingWorld();
+  const { world: fanWorld, tris: fanTris } = await buildFanWorld();
 
   // ── Rule 1: downward hole sweep ──
   const holes = [];
@@ -166,9 +173,9 @@ async function main() {
     }
   }
 
-  // ── Rule 3: corner cap certification ──
+  // ── Rule 3: corner fan certification ──
   const winding = cornerCapWinding(meshes);
-  const capRest = cornerCapRestCheck(probe, visWorld);
+  const capRest = cornerCapRestCheck(probe, fanWorld);
   const capFailures = [...winding.failures, ...capRest.failures];
 
   const passes = holes.length === 0 && uncovered.length === 0 && capFailures.length === 0;
@@ -194,11 +201,13 @@ async function main() {
       worstPoint,
       samples: uncovered.slice(0, 16),
     },
-    rule3CornerCaps: {
+    rule3CornerFans: {
       pass: capFailures.length === 0,
+      fanTris,
       winding: {
         upPerQuadrant: winding.upPerQuadrant,
         downFacing: winding.downFacing,
+        verticalInBand: winding.verticalInBand,
       },
       restChecks: {
         sampled: capRest.checked,
@@ -213,12 +222,13 @@ async function main() {
 
   console.log(`court-footprint hole sweep: ${sweep1.length} rays, ${holes.length} holes`);
   console.log(`visual-walkable coverage: ${visPoints} points, ${uncovered.length} uncovered, worst gap ${worstGap === Infinity ? 'inf' : worstGap.toFixed(3)} m`);
-  console.log(`corner-cap certification: ${capRest.checked} rest checks, ${winding.downFacing} down-facing, ${capFailures.length} failures`);
+  console.log(`corner-fan certification: ${fanTris} fan tris, ${capRest.checked} rest checks, ${winding.downFacing} down-facing, ${winding.verticalInBand} vertical-in-band, ${capFailures.length} failures`);
   console.log(passes ? 'AUDIT PASS — coverage holds' : 'AUDIT FAIL — see report');
   console.log(`report: ${outPath}`);
 
   probe.free();
   visWorld.free();
+  fanWorld.free();
   process.exitCode = passes ? 0 : 1;
 }
 

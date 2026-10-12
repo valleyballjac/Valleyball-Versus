@@ -3,17 +3,20 @@
  *
  * Two complementary checks against the exact COL_ world the game builds:
  *
- *   1. Corner cap rest certification. For every VIS corner standing surface
- *      (the flat 13 m shelf top, y >= CAP_VIS_MIN_Y) across all four
- *      quadrants, a regulation ball and a player-representative capsule are
- *      dropped ONTO the intended cap height and must come to rest at the cap
- *      (bottom >= CAP_REST_MIN_Y). This is the mechanism-agnostic guard for
- *      the v0.3.2 corner fall-through bug: a missing or inverted cap leaves
- *      only the ~11 m terrain rim (or the void) below, so the entity rests
- *      below shelf height and the check fails. The spawn height is the
- *      INTENDED cap, never the highest remaining collider, so a missing cap
- *      cannot be masked by spawning on the rim. A point with no standing
- *      surface to rest on is a failure, not a skip.
+ *   1. Corner fan certification. The four corner wedges are backed by a
+ *      SLOPED RADIAL FAN (COL_Barriers): rim at y = 11.00 rising to the
+ *      13.00 m apex at the outer corner. Two halves, static and dynamic:
+ *      (a) static rest check — under every fan point the topmost solid
+ *      surface of the terrain world must BE the fan surface (a missing fan
+ *      returns the ~10.5 m court rim below it, a phantom obstruction returns
+ *      a surface above it); (b) dynamic drop — a regulation ball and a
+ *      player-representative capsule are dropped onto the sloped fan at each
+ *      standing point and must come to rest on verified terrain inside the
+ *      enclosed court: downhill roll into the field is legitimate, but the
+ *      resting bottom must not sit below the surface under it (fall-through
+ *      into the void or an exit through the glass fails). The spawn height is
+ *      the fan surface itself, never the highest remaining collider, so a
+ *      missing fan cannot be masked at spawn.
  *
  *   2. Perimeter edge roll. Spawns along the inner court perimeter and moves
  *      each entity outward against the glass, asserting none falls below the
@@ -34,10 +37,9 @@ import { fileURLToPath } from 'url';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { buildWorld, surfaceY } from './test_ball_roll.mjs';
 import {
-  CAP_HEIGHT_M,
-  CAP_REST_MIN_Y,
-  buildVisStandingWorld,
+  buildFanWorld,
   cornerCapStandingPoints,
+  cornerCapRestCheck,
 } from './corner_cap_gate.mjs';
 
 // ═══ CONSTANTS ═══
@@ -65,7 +67,20 @@ const PLAYER_DENSITY = 1.0;
 const PLAYER_FRICTION = 0.5;
 const PLAYER_RESTITUTION = 0.3;
 
-const SPAWN_GAP = 0.05; // clearance above the intended cap at spawn.
+const SPAWN_GAP = 0.05; // clearance above the fan surface at spawn.
+
+/** Rest-on-terrain tolerance (m): the resting bottom must not sit more than
+ * this BELOW the raycast surface at the rest point. No upper bound: a ball
+ * that rolls into the field can wedge against a stream bank or mound slope,
+ * resting legitimately above the floor directly under it (measured up to
+ * ~1.5 m on bank slopes). Fall-through reads as a rest metres below any
+ * surface or an exit past the kill plane; phantom perches above the fan are
+ * the static rest check's job. */
+const REST_SURFACE_TOL_BELOW = 0.45;
+
+/** Enclosed-court rest envelope: glass walls at |x| = 25, |z| = 60. */
+const REST_ENVELOPE_X = 26.0;
+const REST_ENVELOPE_Z = 61.0;
 
 // Movement input for the perimeter roll: initial horizontal speed (m/s) plus a
 // sustained forward acceleration (m/s^2) toward the outer wall, so each entity
@@ -127,9 +142,9 @@ function liftOf(kind) {
 }
 
 /** True geometric bottom Y of a resting body, orientation-aware. A capsule
- * tips onto its side on a flat cap (unstable upright equilibrium), so its
- * lowest point is center - radius - halfHeight*|axisY|: 13.0 on the cap
- * whether upright or lying flat. The ball is center - radius. */
+ * tips onto its side on the sloped fan (unstable upright equilibrium), so its
+ * lowest point is center - radius - halfHeight*|axisY| whatever its rest
+ * orientation. The ball is center - radius. */
 function bottomOf(kind, body) {
   const p = body.translation();
   if (kind === 'ball') return p.y - BALL_RADIUS;
@@ -139,26 +154,38 @@ function bottomOf(kind, body) {
 }
 
 /**
- * Corner cap rest certification: spawn `kind` at the intended 13 m cap height
- * with no horizontal motion and require it to come to rest on the shelf
- * (bottom >= CAP_REST_MIN_Y). A missing/inverted cap drops it to the ~11 m rim
- * or the void, failing the check.
+ * Corner fan dynamic drop: spawn `kind` just above the sloped fan surface at
+ * (x, z) with no horizontal motion. It must stay inside the enclosed court and
+ * come to rest ON verified terrain: downhill roll from the fan into the field
+ * is legitimate, but the resting bottom must match the topmost surface under
+ * the rest point (a fall-through reads as a rest far below any surface or an
+ * exit past the kill plane / glass envelope).
  */
-function runCornerDrop(sim, kind, x, z) {
+function runCornerDrop(sim, probe, kind, x, z, fanY) {
   const lift = liftOf(kind);
-  const body = spawnEntity(sim, kind, x, CAP_HEIGHT_M + lift + SPAWN_GAP, z, 0, 0, false);
+  const body = spawnEntity(sim, kind, x, fanY + lift + SPAWN_GAP, z, 0, 0, false);
   let minY = body.translation().y;
   for (let t = 0; t < TICKS; t++) {
     sim.step();
     const y = body.translation().y;
     if (y < minY) minY = y;
   }
+  const rest = body.translation();
   const restBase = bottomOf(kind, body);
   sim.removeRigidBody(body);
+  const stayedInside =
+    Math.abs(rest.x) <= REST_ENVELOPE_X && Math.abs(rest.z) <= REST_ENVELOPE_Z;
+  const terrainAtRest = stayedInside ? surfaceY(probe, rest.x, rest.z) : null;
+  const restedOnTerrain =
+    terrainAtRest !== null && restBase >= terrainAtRest - REST_SURFACE_TOL_BELOW;
   return {
-    fellOut: minY < KILL_FLOOR_Y,
+    fellOut: minY < KILL_FLOOR_Y || !stayedInside || !restedOnTerrain,
     restBase,
-    capRest: restBase >= CAP_REST_MIN_Y,
+    minY,
+    terrainAtRest,
+    restX: +rest.x.toFixed(2),
+    restZ: +rest.z.toFixed(2),
+    fanRest: stayedInside && restedOnTerrain,
   };
 }
 
@@ -198,20 +225,26 @@ function runPerimeterSpawn(probe, sim, kind, x, z) {
 async function main() {
   await RAPIER.init();
   const { sim, probe } = await buildWorld();
-  const { world: visWorld } = await buildVisStandingWorld();
+  const { world: fanWorld } = await buildFanWorld();
 
   const results = [];
   let failures = 0;
 
-  // Corner cap rest certification: every cap-backed standing corner point,
-  // all four quadrants, full footprint.
-  const cornerPoints = cornerCapStandingPoints(visWorld, 1.0);
-  for (const { x, z } of cornerPoints) {
+  // Static fan rest certification: under every pristine fan point the topmost
+  // solid surface must BE the fan (catches missing/inverted/obstructed fan
+  // without depending on dynamics).
+  const rest = cornerCapRestCheck(probe, fanWorld, 1.0);
+  if (rest.failures.length > 0) failures += rest.failures.length;
+
+  // Dynamic corner drops: every fan-backed standing point, all four
+  // quadrants, full footprint.
+  const cornerPoints = cornerCapStandingPoints(fanWorld, 1.0);
+  for (const { x, z, fanY } of cornerPoints) {
     for (const kind of ['ball', 'player']) {
-      const r = runCornerDrop(sim, kind, x, z);
-      const fail = r.fellOut || !r.capRest;
+      const r = runCornerDrop(sim, probe, kind, x, z, fanY);
+      const fail = r.fellOut || !r.fanRest;
       if (fail) failures++;
-      results.push({ region: 'corner', x, z, kind, ...r, fail });
+      results.push({ region: 'corner', x, z, kind, fanY: +fanY.toFixed(2), ...r, fail });
     }
   }
 
@@ -237,9 +270,12 @@ async function main() {
     pass,
     arena: 'public/models/arena.glb',
     killFloorY: KILL_FLOOR_Y,
-    capHeightM: CAP_HEIGHT_M,
-    capRestMinY: CAP_REST_MIN_Y,
+    restSurfaceTolBelow: REST_SURFACE_TOL_BELOW,
     ticksPerSpawn: TICKS,
+    staticRestCheck: {
+      sampled: rest.checked,
+      failures: rest.failures.slice(0, 16),
+    },
     cornerPoints: cornerPoints.length,
     entities: results.length,
     failures,
@@ -253,6 +289,9 @@ async function main() {
         kind: r.kind,
         restBaseM: r.restBase == null ? null : +r.restBase.toFixed(2),
         minY: r.minY == null ? null : +r.minY.toFixed(2),
+        terrainAtRest: r.terrainAtRest == null ? null : +r.terrainAtRest.toFixed(2),
+        restX: r.restX,
+        restZ: r.restZ,
         missingSurface: !!r.missingSurface,
       })),
   };
@@ -260,13 +299,14 @@ async function main() {
   const outPath = path.join(ROOT, 'test_boundary_drops_report.json');
   fs.writeFileSync(outPath, JSON.stringify(report, null, 2));
 
-  console.log(`corner cap rest checks: ${cornerPoints.length} points x 2 entities`);
+  console.log(`corner fan static rest checks: ${rest.checked} points, ${rest.failures.length} failures`);
+  console.log(`corner fan dynamic drops: ${cornerPoints.length} points x 2 entities`);
   console.log(`perimeter roll points: ${perimSpawns.length} x 2 entities`);
   console.log(`spawned ${results.length} entities, ${failures} failures`);
-  console.log(pass ? 'DROP TEST PASS — every corner entity rested at shelf height' : 'DROP TEST FAIL — see report');
+  console.log(pass ? 'DROP TEST PASS — corner fan holds, perimeter sealed' : 'DROP TEST FAIL — see report');
   console.log(`report: ${outPath}`);
 
-  visWorld.free();
+  fanWorld.free();
   sim.free();
   process.exitCode = pass ? 0 : 1;
 }
