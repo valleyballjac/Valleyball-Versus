@@ -103,6 +103,12 @@ export class MusicManager {
   getPlaylist() {
     return TUNING.audio?.musicPlaylist || [
       {
+        id: 'track_trailer_neon_velocity',
+        title: 'Neon Velocity (Official Debut Trailer)',
+        bpm: 133,
+        src: 'audio/music/track_trailer_neon_velocity.mp3',
+      },
+      {
         id: 'track_01_arena_of_frost',
         title: 'Arena of Frost (Debut Anthem)',
         bpm: 130,

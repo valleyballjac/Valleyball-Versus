@@ -1,0 +1,3343 @@
+diff --git a/package.json b/package.json
+index ee347ad..c9ca7af 100644
+--- a/package.json
++++ b/package.json
+@@ -5,7 +5,7 @@
+   "type": "module",
+   "description": "Valleyball \u2014 Physics volleyball simulation featuring deterministic ragdoll physics and AI opponents.",
+   "scripts": {
+-    "dev": "vite",
++    "dev": "vite --port 5176 --strictPort",
+     "build": "vite build",
+     "preview": "vite preview",
+     "deploy": "gh-pages -d dist",
+diff --git a/public/textures/valleyball_mark.png b/public/textures/valleyball_mark.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..df03543409c701532f6e24bd5065ef7652dd83e9
+GIT binary patch
+literal 62172
+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
+RA2;$lTbkQ#C|~ax`+q>0>YxAs
+
+literal 0
+HcmV?d00001
+
+diff --git a/src/config/cosmetics.js b/src/config/cosmetics.js
+new file mode 100644
+index 0000000..7ade3ce
+--- /dev/null
++++ b/src/config/cosmetics.js
+@@ -0,0 +1,109 @@
++/**
++ * THE VALLEYBALL LOCKER REGISTRY
++ * Canonical color palettes, headwear catalog, and athlete presets.
++ *
++ * Pure data. No Rapier, no three.js, no wall-clock APIs: this file is safe to
++ * import from src/sim/, from the menus, and from offline scripts alike.
++ *
++ * Headwear `build` names resolve to exported functions in
++ * src/sim/cosmeticsBuilders.js. `null` means the slot stays empty.
++ *
++ * `showcase` on a headwear entry is the Photo Booth's hero angle for that
++ * piece: azimuth in degrees around the head from the face (positive swings
++ * the camera toward the athlete's RIGHT), elevation in degrees above the eye
++ * line, and distance in metres.
++ */
++
++export const PALETTES = {
++  white:   { hex: 0xF8FAFC, name: 'White',   role: 'captain' },
++  black:   { hex: 0x0F172A, name: 'Black',   role: 'umpire' },
++  blue:    { hex: 0x1D4ED8, name: 'Blue',    role: 'catcher' },
++  red:     { hex: 0xD90429, name: 'Red',     role: 'slugger' },
++  green:   { hex: 0x15803D, name: 'Green',   role: 'groundskeeper' },
++  purple:  { hex: 0x8B5CF6, name: 'Purple',  role: 'costumer' },
++  teal:    { hex: 0x06B6D4, name: 'Teal',    role: 'rigger' },
++  yellow:  { hex: 0xFFD60A, name: 'Yellow',  role: 'announcer' },
++  orange:  { hex: 0xEA580C, name: 'Orange',  role: 'scout' },
++  pink:    { hex: 0xEC4899, name: 'Pink',    role: 'fan' },
++};
++
++/**
++ * Base layers. `home` is the black kit, `away` the white kit; the accent
++ * colour on headwear is always the OPPOSITE of the base so trim reads.
++ */
++export const KITS = {
++  home: { name: 'Home (black)', body: 0x383b42, joint: 0x22242a, accent: 0xf1f5f9 },
++  away: { name: 'Away (white)', body: 0xffffff, joint: 0xd0d5dd, accent: 0x0f172a },
++};
++
++export const HEADWEAR_CATALOG = {
++  none:            { id: 'none',            name: 'Bare Dome',           tier: 'free',    slot: 'headwear', build: null,
++                     showcase: { azimuth: 60, elevation: 10, distance: 0.9 } },
++  manager_cap:     { id: 'manager_cap',     name: 'Manager Classic Cap', tier: 'free',    slot: 'headwear', build: 'createManagerCap',
++                     showcase: { azimuth: 42, elevation: -2, distance: 0.95 } },
++  sensor_visor:    { id: 'sensor_visor',    name: 'Sensor VISOR',        tier: 'premium', slot: 'headwear', build: 'createSensorVisor',
++                     showcase: { azimuth: 55, elevation: 2, distance: 0.9 } },
++  wicket_grill:    { id: 'wicket_grill',    name: 'Wicketkeeper Helmet', tier: 'premium', slot: 'headwear', build: 'createWicketGrill',
++                     showcase: { azimuth: 38, elevation: 8, distance: 0.95 } },
++  wrestler_bands:  { id: 'wrestler_bands',  name: 'Gridiron Horns',      tier: 'premium', slot: 'headwear', build: 'createCombatHorns',
++                     showcase: { azimuth: 32, elevation: 8, distance: 0.95 } },
++  terrace_visor:   { id: 'terrace_visor',   name: 'Terrace Montera',     tier: 'premium', slot: 'headwear', build: 'createTerraceMontera',
++                     showcase: { azimuth: 48, elevation: 20, distance: 1.0 } },
++  couture_wrap:    { id: 'couture_wrap',    name: 'Silk Road Diadem',    tier: 'premium', slot: 'headwear', build: 'createCoutureDiadem',
++                     showcase: { azimuth: 18, elevation: 16, distance: 0.95 } },
++  rigger_band:     { id: 'rigger_band',     name: 'Wayfinder Cord',      tier: 'premium', slot: 'headwear', build: 'createWayfinderCord',
++                     showcase: { azimuth: 95, elevation: 6, distance: 0.9 } },
++  broadcaster_mic: { id: 'broadcaster_mic', name: 'Stadium Headset',     tier: 'premium', slot: 'headwear', build: 'createBroadcasterHeadset',
++                     showcase: { azimuth: -80, elevation: 4, distance: 0.95 } },
++  cursor_cap:      { id: 'cursor_cap',      name: 'Winged Courier Cap',  tier: 'premium', slot: 'headwear', build: 'createCourierCap',
++                     showcase: { azimuth: -38, elevation: 12, distance: 0.95 } },
++  ouendan_knot:    { id: 'ouendan_knot',    name: 'Bleacher Hachimaki',  tier: 'premium', slot: 'headwear', build: 'createOuendanHeadband',
++                     showcase: { azimuth: 130, elevation: 10, distance: 0.95 } },
++};
++
++/**
++ * Alternatives the Photo Booth renders side by side for an art pick (empty
++ * after the pass-3 decisions; add `{ green: ['id', ...] }` to compare again).
++ */
++export const HEADWEAR_VARIANTS = {};
++
++/**
++ * `variant` is the silhouette ('classic' | 'masculine' | 'feminine'), `kit`
++ * the base layer. `idleTime` is the second of the 'At Rest' clip the Photo
++ * Booth freezes for the full-body idle (spread out so no two share a frame);
++ * `action` and `action2` are clip-and-second personality poses. `backdrop` is the
++ * portrait gradient (centre, edge), chosen for contrast against the kit.
++ */
++export const CANONICAL_ROSTER = {
++  white:  { id: 'white',  name: 'John Valleyball',             palette: 'white',  headwear: 'manager_cap',     variant: 'classic',   kit: 'home',
++            idleTime: 1.2,  action: { clip: 'Stop Walking', time: 1.35 }, action2: { clip: 'Walk Forward', time: 0.52 },             backdrop: { center: 0x8a94a6, edge: 0x2b3240 } },
++  black:  { id: 'black',  name: 'Umpire Bot',                  palette: 'black',  headwear: 'sensor_visor',    variant: 'classic',   kit: 'away',
++            idleTime: 2.9,  action: { clip: 'Bash Hit Right', time: 1.05 }, action2: { clip: 'Idle Kick Right', time: 0.72 },           backdrop: { center: 0x334155, edge: 0x0b1020 } },
++  blue:   { id: 'blue',   name: 'Bhavin "The Anchor" Bhasin',  palette: 'blue',   headwear: 'wicket_grill',    variant: 'masculine', kit: 'away',
++            idleTime: 4.6,  action: { clip: 'Running Dive', time: 0.30 }, action2: { clip: 'Idle Two Hand Volley', time: 0.36 },             backdrop: { center: 0x4a5a86, edge: 0x111a33 } },
++  red:    { id: 'red',    name: 'Malik "Striker" Modou',       palette: 'red',    headwear: 'wrestler_bands',  variant: 'masculine', kit: 'home',
++            idleTime: 6.3,  action: { clip: 'Standing Spike Right', time: 0.62 }, action2: { clip: 'Bash Hit Left', time: 1.1 },     backdrop: { center: 0xa36b6b, edge: 0x2e1416 } },
++  green:  { id: 'green',  name: 'Tupac "The Terrace" Quispe',  palette: 'green',  headwear: 'terrace_visor',   variant: 'classic',   kit: 'home',
++            idleTime: 8.0,  action: { clip: 'Walk Forward', time: 0.55 }, action2: { clip: 'Stop Walking', time: 1.0 },             backdrop: { center: 0x7f9a86, edge: 0x1a2a1e } },
++  purple: { id: 'purple', name: 'Parisa "The Palette" Shirin', palette: 'purple', headwear: 'couture_wrap',    variant: 'feminine',  kit: 'away',
++            idleTime: 9.7,  action: { clip: 'Walk Strafe Right', time: 0.40 }, action2: { clip: 'Walk Strafe Left', time: 0.5 },        backdrop: { center: 0x5c4a86, edge: 0x1a1230 } },
++  teal:   { id: 'teal',   name: 'Kahu "The Toki" Manaaki',     palette: 'teal',   headwear: 'rigger_band',     variant: 'masculine', kit: 'home',
++            idleTime: 11.4, action: { clip: 'Running Forward', time: 0.30 }, action2: { clip: 'Jump Running', time: 0.4 },          backdrop: { center: 0x6f9aa3, edge: 0x14282e } },
++  yellow: { id: 'yellow', name: 'Doña Catarina Sol',           palette: 'yellow', headwear: 'broadcaster_mic', variant: 'feminine',  kit: 'home',
++            idleTime: 13.1, action: { clip: 'Idle Two Hand Volley', time: 0.42 }, action2: { clip: 'Walk Forward', time: 0.3 },     backdrop: { center: 0xa3955c, edge: 0x2e2810 } },
++  orange: { id: 'orange', name: 'Vinny Valerius',              palette: 'orange', headwear: 'cursor_cap',      variant: 'classic',   kit: 'away',
++            idleTime: 14.8, action: { clip: 'Running Sprint', time: 0.24 }, action2: { clip: 'Jump Running', time: 0.35 },           backdrop: { center: 0x7a4a33, edge: 0x24130b } },
++  pink:   { id: 'pink',   name: 'Kimi "Hana" Kizuna',          palette: 'pink',   headwear: 'ouendan_knot',    variant: 'feminine',  kit: 'away',
++            idleTime: 16.0, action: { clip: 'Standing Jump', time: 0.95 }, action2: { clip: 'Strafe Run Right', time: 0.3 },            backdrop: { center: 0x8a4a6e, edge: 0x2a1020 } },
++};
++
++/**
++ * Stable iteration order for the roster (object key order is insertion order
++ * in practice, but the photo booth and menus should not have to rely on it).
++ */
++export const ROSTER_ORDER = Object.freeze(Object.keys(CANONICAL_ROSTER));
++
++/** The rainbow line-up for the group photograph: neutrals as bookends. */
++export const RAINBOW_ORDER = Object.freeze([
++  'white', 'red', 'orange', 'yellow', 'green', 'teal', 'blue', 'purple', 'pink', 'black',
++]);
+diff --git a/src/main.js b/src/main.js
+index faedd85..920e0d2 100644
+--- a/src/main.js
++++ b/src/main.js
+@@ -96,6 +96,8 @@ import { displayCoordinator } from './visuals/displayCoordinator.js';
+ import { soundManager } from './audio/soundManager.js';
+ import { createGui } from './debug/gui.js';
+ import { initCapture } from './debug/capture.js';
++import { createPhotoBooth } from './visuals/photoBooth.js';
++import { CANONICAL_ROSTER, PALETTES } from './config/cosmetics.js';
+ import { initStateTrace } from './debug/stateTrace.js';
+ import { readFixture, applyFixtureServes, fixtureParksBall } from './debug/fixture.js';
+ 
+@@ -534,7 +536,9 @@ const spectatorCamera = new THREE.PerspectiveCamera(
+ );
+ 
+ const cinematicCamera = new CinematicCamera();
+-let gameState = 'menu'; // 'menu' | 'flyover' | 'match' | 'practice'
++let gameState = 'menu'; // 'menu' | 'flyover' | 'match' | 'practice' | 'photobooth'
++/** The Locker portrait studio, present only under `?mode=photobooth`. */
++let photoBooth = null;
+ let victoryCameraActive = false;
+ 
+ const _camTarget = new THREE.Vector3();
+@@ -1895,7 +1899,7 @@ function fixedUpdate(dt, tick) {
+ 
+   // 3 to 10 — ATHLETE PRE-PHYSICS MECHANICS (Drive, Jump, Slide, Dive, Strikes, Ghost, Tracking)
+   const isCountingDown = (gameState === 'match') && !!(matchState && matchState.isCountingDown);
+-  const isAthleteHeld = isCountingDown || (gameState === 'menu') || (gameState === 'flyover');
++  const isAthleteHeld = isCountingDown || (gameState === 'menu') || (gameState === 'flyover') || (gameState === 'photobooth');
+   const isBallHeld = (gameState === 'match' && isCountingDown) || (gameState === 'flyover');
+   const hoopNorthZ = TUNING.match?.hoopNorthZ ?? -40.0;
+   const hoopSouthZ = TUNING.match?.hoopSouthZ ?? 40.0;
+@@ -2340,6 +2344,12 @@ function render(alpha) {
+     athlete.renderPose(alpha);
+   }
+ 
++  // PHOTO BOOTH: the studio owns the whole canvas; no cameras, boards or HUD.
++  if (gameState === 'photobooth' && photoBooth) {
++    photoBooth.renderPreview(window.innerWidth, window.innerHeight);
++    return;
++  }
++
+   const frameDelta = Math.min(loop.frameTimeMs / 1000, TUNING.loop.maxFrameTime);
+   turfParticles.update(frameDelta);
+   goalCelebration.update(frameDelta);
+@@ -3617,6 +3627,21 @@ async function boot() {
+ 
+   window.__vb = window.__vb || {};
+   window.__vb.matchState = matchState;
++  // THE LOCKER: dress a player as a canonical roster athlete (kit, palette,
++  // silhouette, headwear). Visual only; survives respawns. `?p1=red&p2=blue`
++  // does the same at boot for testing.
++  window.__vb.equipRoster = (playerIndex, rosterId) => {
++    const target = athletes[playerIndex];
++    const entry = CANONICAL_ROSTER[rosterId];
++    if (!target || !entry) return false;
++    target.setTeamAndVariant(entry.kit, entry.variant, { primaryColor: PALETTES[entry.palette].hex, headwear: entry.headwear });
++    return true;
++  };
++  window.__vb.roster = CANONICAL_ROSTER;
++  for (const [i, key] of [[0, 'p1'], [1, 'p2']]) {
++    const want = urlParams.get(key);
++    if (want && !window.__vb.equipRoster(i, want)) console.warn(`[locker] ?${key}=${want} is not a roster id`);
++  }
+   Object.defineProperty(window.__vb, 'balls', { get: () => balls, configurable: true });
+   window.__vb.sound = soundManager;
+   window.__soundManager = soundManager;
+@@ -3849,6 +3874,40 @@ async function boot() {
+     }
+   }
+ 
++  // THE PHOTO BOOTH (`?mode=photobooth`): the Locker's portrait studio.
++  // Everything above still ran (physics, arena, athletes) so P1 stands in the
++  // real held-idle pose; from here on nothing match-related is shown or driven.
++  if (modeParam === 'photobooth') {
++    hideMainMenu();
++    hideInGameMenu();
++    hideVictoryScreen();
++    setHudVisible(false);
++    applyRenderSettings({ showControlsOverlay: false });
++    gameState = 'photobooth';
++    if (athletes[1]) athletes[1].setEnabled(false);
++    // Centre court, facing the camera side, via the same sanctioned teleport
++    // the determinism capture uses at boot (construction-class, not play).
++    if (athletes[0]) {
++      athletes[0].teleportTo((arenaPreset && arenaPreset.spawn) || { x: 0, y: 1.2, z: 0 }, 0);
++      playerCameras[0].resetSmoothing();
++    }
++    photoBooth = createPhotoBooth({
++      renderer,
++      scene,
++      loop,
++      athletes,
++      restoreViewport: applyViewportSize,
++      urlParams,
++    });
++    window.captureRosterAvatars = () => photoBooth.captureRosterAvatars();
++    window.__vb.photoBooth = photoBooth;
++    applyViewportSize();
++    if (loadingStatus) loadingStatus.textContent = 'OPENING THE PHOTO BOOTH...';
++    hideLoadingScreen();
++    loop.start();
++    return;
++  }
++
+   const skipMenuParam = urlParams.get('skipMenu');
+   const isCaptureRun = armedCaptureTick !== null || urlParams.has('captureTick');
+   const shouldSkipMenu = skipMenuParam === 'true' || isCaptureRun;
+diff --git a/src/sim/athlete.js b/src/sim/athlete.js
+index e7a521c..e569657 100644
+--- a/src/sim/athlete.js
++++ b/src/sim/athlete.js
+@@ -66,6 +66,7 @@ export function createAthlete({
+   variant = 'masculine',
+   primaryColor = null,
+   colorOverride = null,
++  headwear = null,
+   spawn = { x: 0, y: 1.5, z: 0, yaw: 0 },
+   assistPreset = 'standard',
+   scene,
+@@ -82,6 +83,8 @@ export function createAthlete({
+   let currentVariant = variant;
+   let currentPrimaryColor = primaryColor;
+   let currentColorOverride = colorOverride;
++  // Locker headwear id (HEADWEAR_CATALOG key). null = pre-locker legacy cap.
++  let currentHeadwear = headwear;
+ 
+   // 1. Motor sphere
+   const motor = createMotor();
+@@ -146,12 +149,14 @@ export function createAthlete({
+       variant: currentVariant,
+       primaryColor: currentPrimaryColor,
+       colorOverride: currentColorOverride,
++      headwear: currentHeadwear,
+     });
+     built.characterRoot = characterRoot;
+     built.team = currentTeam;
+     built.variant = currentVariant;
+     built.primaryColor = currentPrimaryColor;
+     built.colorOverride = currentColorOverride;
++    built.headwear = currentHeadwear;
+ 
+     scene.add(built.group);
+     ragdoll = built;
+@@ -259,6 +264,8 @@ export function createAthlete({
+     set primaryColor(val) { currentPrimaryColor = val; },
+     get colorOverride() { return currentColorOverride; },
+     set colorOverride(val) { currentColorOverride = val; },
++    get headwear() { return currentHeadwear; },
++    set headwear(val) { currentHeadwear = val; },
+     motor,
+     get ragdoll() { return ragdoll; },
+     get animTarget() { return animTarget; },
+@@ -295,6 +302,7 @@ export function createAthlete({
+           variant: currentVariant,
+           primaryColor: currentPrimaryColor,
+           colorOverride: currentColorOverride,
++          headwear: currentHeadwear,
+         });
+       }
+     },
+@@ -304,6 +312,13 @@ export function createAthlete({
+       if (newVariant) currentVariant = newVariant;
+       if (newColors?.primaryColor !== undefined) currentPrimaryColor = newColors.primaryColor;
+       if (newColors?.colorOverride !== undefined) currentColorOverride = newColors.colorOverride;
++      if (newColors?.headwear !== undefined) currentHeadwear = newColors.headwear;
++      athlete.refreshVisuals();
++    },
++
++    /** Locker: equip a HEADWEAR_CATALOG id (or 'none'). Survives respawns. */
++    setHeadwear(headwearId) {
++      currentHeadwear = headwearId;
+       athlete.refreshVisuals();
+     },
+ 
+diff --git a/src/sim/cosmeticsBuilders.js b/src/sim/cosmeticsBuilders.js
+new file mode 100644
+index 0000000..2896ff0
+--- /dev/null
++++ b/src/sim/cosmeticsBuilders.js
+@@ -0,0 +1,846 @@
++import * as THREE from 'three';
++import { assetUrl } from '../config/tuning.js';
++
++/**
++ * THE VALLEYBALL LOCKER: procedural headwear builders.
++ *
++ * Every export is `create<Item>(radius, colors) -> THREE.Group`, where
++ * `radius` is the head sphere radius and `colors` is the object returned by
++ * getAthleteColors() in ragdoll.js ({ primary, bodyGrey, jointGrey, accent }).
++ *
++ * HEAD-LOCAL FRAME (matches the existing athletic cap in ragdoll.js):
++ *   origin = skull centre, +Y = up, -Z = forward (face), +Z = back, +X = right.
++ * Everything is expressed as a multiple of `radius`, so an item fits any head
++ * the rig derives and survives the feminine variant's 0.92 head scale.
++ *
++ * STRICTLY VISUAL. Nothing in this file knows Rapier exists: no colliders, no
++ * bodies, no mass. These groups are mounted under the head's solid mesh group
++ * and ride along with it; they never feed anything back into the simulation.
++ *
++ * DIRECTORY RULE (src/sim/): nothing here names a wall-clock or scheduler API.
++ *
++ * MATERIAL ROLES: every material carries `userData.colorRole` so that
++ * updateAthletePalette() recolors it when the kit or palette changes:
++ *   'primary'  team-colored fabric / metal                 -> colors.primary
++ *   'accent'   contrasting trim and the league mark        -> colors.accent
++ *   'bodyGrey' neutral matte body-tone fixtures            -> colors.bodyGrey
++ *   'visor'    glowing elements (emissive 1.5)             -> primary (cool white on a black kit)
++ *   'fixed'    never recolored (foam, jade)
++ *
++ * THE LEAGUE MARK is the flat monochrome Valleyball globe
++ * (public/textures/valleyball_mark.png, a white-on-black alpha mask, since
++ * three.js reads alphaMap from the green channel). It is applied
++ * as a one-colour decal in the accent colour wherever a team mark belongs.
++ */
++
++/** Emissive strength for 'visor' role materials, read back by updateAthletePalette. */
++export const VISOR_EMISSIVE_INTENSITY = 1.5;
++
++/** Pounamu / jade greenstone for the Wayfinder toki. Not team-tinted. */
++export const JADE_HEX = 0x2f8f6a;
++const FOAM_HEX = 0x24262b;
++
++const UP = new THREE.Vector3(0, 1, 0);
++const _dir = new THREE.Vector3();
++const _mid = new THREE.Vector3();
++
++// ---------------------------------------------------------------------------
++// Materials
++// ---------------------------------------------------------------------------
++
++function roleMaterial(role, color, extra) {
++  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.62, metalness: 0.06, ...extra });
++  mat.userData.colorRole = role;
++  return mat;
++}
++const primaryMaterial = (c, extra = {}) => roleMaterial('primary', c.primary, extra);
++const accentMaterial = (c, extra = {}) => roleMaterial('accent', c.accent, { roughness: 0.55, metalness: 0.1, ...extra });
++const fixedMaterial = (hex, extra = {}) => roleMaterial('fixed', hex, { roughness: 0.5, metalness: 0.08, ...extra });
++
++function visorMaterial(colors, extra = {}) {
++  const mat = new THREE.MeshStandardMaterial({
++    color: colors.primary,
++    emissive: colors.primary,
++    emissiveIntensity: VISOR_EMISSIVE_INTENSITY,
++    roughness: 0.28,
++    metalness: 0.18,
++    ...extra,
++  });
++  mat.userData.colorRole = 'visor';
++  mat.userData.emissiveIntensity = VISOR_EMISSIVE_INTENSITY;
++  return mat;
++}
++
++const METAL = { roughness: 0.3, metalness: 0.65 };
++
++// ---------------------------------------------------------------------------
++// Geometry helpers
++// ---------------------------------------------------------------------------
++
++function mesh(geometry, material, name) {
++  const m = new THREE.Mesh(geometry, material);
++  m.castShadow = true;
++  m.receiveShadow = false;
++  if (name) m.name = name;
++  return m;
++}
++
++/**
++ * A horizontal ring (or ring segment) around the skull, centred on the face.
++ * `arc` is the swept angle; `arc = 2π` is a full headband. `facing` rotates
++ * the segment's centre around +Y: 0 = forward (-Z), π = backward (+Z).
++ * `tall` stretches the tube vertically.
++ */
++function ring(radius, tube, arc, material, { y = 0, facing = 0, name, tall = 1 } = {}) {
++  const geo = new THREE.TorusGeometry(radius, tube, 12, Math.max(16, Math.round(arc * 16)), arc);
++  const m = mesh(geo, material, name);
++  m.rotation.set(0, (Math.PI - arc) / 2 + facing, 0);
++  m.rotateX(-Math.PI / 2);
++  m.position.y = y;
++  m.scale.z = tall;
++  return m;
++}
++
++/** A flat band: an open cylinder segment around the skull, centred on the face (+ `facing`). */
++function band(radius, height, arc, material, { y = 0, facing = 0, name } = {}) {
++  const geo = new THREE.CylinderGeometry(radius, radius, height, Math.max(24, Math.round(arc * 20)), 1, true, 0, arc);
++  const m = mesh(geo, material, name);
++  m.material.side = THREE.DoubleSide;
++  m.rotation.y = Math.PI - arc / 2 + facing;
++  m.position.y = y;
++  return m;
++}
++
++/** A straight strut between two head-local points. */
++function strut(from, to, thickness, material, name) {
++  _dir.subVectors(to, from);
++  const length = _dir.length();
++  const geo = new THREE.CylinderGeometry(thickness, thickness, length, 10, 1);
++  const m = mesh(geo, material, name);
++  _mid.addVectors(from, to).multiplyScalar(0.5);
++  m.position.copy(_mid);
++  m.quaternion.setFromUnitVectors(UP, _dir.normalize());
++  return m;
++}
++
++/** Upper skull dome: a sphere cap from the apex down to polar angle `phi`. */
++function dome(radius, phi, material, name) {
++  return mesh(new THREE.SphereGeometry(radius, 36, 18, 0, Math.PI * 2, 0, phi), material, name);
++}
++
++/** A conical brim from `inner` to `outer`, dropping (`drop` > 0) or lifting toward the edge. */
++function brim(inner, outer, drop, material, name) {
++  const h = Math.max(Math.abs(drop), 0.001);
++  const geo = new THREE.CylinderGeometry(drop >= 0 ? inner : outer, drop >= 0 ? outer : inner, h, 48, 1, true);
++  const m = mesh(geo, material, name);
++  m.material.side = THREE.DoubleSide;
++  return m;
++}
++
++/**
++ * The classic curved baseball bill from ragdoll.js's athletic cap: fused to
++ * the crown rim, pitched by `pitch` (positive = down), curled at the sides.
++ * `direction` -1 = forward, +1 = backward.
++ */
++function curvedBill(radius, rimRadius, rimY, length, thickness, material, direction, name, pitch = 0.26) {
++  const uSteps = 22;
++  const tSteps = 10;
++  const thetaMax = Math.PI * 0.38;
++  const curl = radius * 0.10;
++  const positions = [];
++  const indices = [];
++  const point = (u, t, layer) => {
++    const theta = u * thetaMax;
++    const profile = Math.max(0, Math.cos(u * Math.PI * 0.5));
++    const bx = rimRadius * Math.sin(theta);
++    const bz = direction * rimRadius * Math.cos(theta);
++    const off = layer === 'top' ? thickness * 0.5 : -thickness * 0.5;
++    if (t <= 0) return [bx * 0.96, rimY + off, bz * 0.96];
++    const L = length * Math.pow(profile, 0.72) * t;
++    const x = bx + Math.sin(theta * 0.7) * L * Math.cos(pitch);
++    const z = bz + direction * Math.cos(theta * 0.7) * L * Math.cos(pitch);
++    const y = rimY - L * Math.sin(pitch) - curl * u * u * t + off;
++    return [x, y, z];
++  };
++  for (const layer of ['top', 'bottom']) {
++    for (let j = 0; j <= tSteps; j++) {
++      const t = j === 0 ? -0.15 : j / tSteps;
++      for (let i = 0; i <= uSteps; i++) positions.push(...point((i / uSteps) * 2 - 1, t, layer));
++    }
++  }
++  const row = uSteps + 1;
++  const layerSize = (tSteps + 1) * row;
++  for (let j = 0; j < tSteps; j++) {
++    for (let i = 0; i < uSteps; i++) {
++      const a = j * row + i;
++      indices.push(a, a + row + 1, a + 1, a, a + row, a + row + 1);
++      const b = layerSize + a;
++      indices.push(b, b + 1, b + row + 1, b, b + row + 1, b + row);
++    }
++  }
++  for (let i = 0; i < uSteps; i++) {
++    const t = tSteps * row + i;
++    const b = layerSize + t;
++    indices.push(t, t + 1, b + 1, t, b + 1, b);
++  }
++  const geo = new THREE.BufferGeometry();
++  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
++  geo.setIndex(indices);
++  geo.computeVertexNormals();
++  const m = mesh(geo, material, name);
++  m.material.side = THREE.DoubleSide;
++  return m;
++}
++
++function group(name) {
++  const g = new THREE.Group();
++  g.name = name;
++  return g;
++}
++
++/** Position on a sphere of radius R at yaw `a` (0 = face, +ve toward +X) and height `y`. */
++function onSkull(R, a, y) {
++  const r = Math.sqrt(Math.max(0, R * R - y * y));
++  return new THREE.Vector3(r * Math.sin(a), y, -r * Math.cos(a));
++}
++
++/** Position on a vertical cylinder of radius R (a band) at yaw `a`, height `y`. */
++function onBand(R, a, y) {
++  return new THREE.Vector3(R * Math.sin(a), y, -R * Math.cos(a));
++}
++
++let _markTexture = null;
++/** The league mark texture, loaded once. Null outside a browser (node smoke tests). */
++function markTexture() {
++  if (_markTexture || typeof document === 'undefined') return _markTexture;
++  _markTexture = new THREE.TextureLoader().load(assetUrl('textures/valleyball_mark.png'));
++  _markTexture.colorSpace = THREE.SRGBColorSpace;
++  _markTexture.anisotropy = 8;
++  return _markTexture;
++}
++
++/**
++ * THE LEAGUE MARK: a flat disc carrying the globe as an alpha-cut decal in
++ * the accent colour. Built facing +Z, `size` is its radius.
++ */
++function leagueMark(size, colors, name = 'league-mark') {
++  const tex = markTexture();
++  const mat = new THREE.MeshStandardMaterial({
++    color: colors.accent,
++    roughness: 0.75,
++    metalness: 0.02,
++    alphaMap: tex || undefined,
++    transparent: true,
++    alphaTest: 0.5,
++    side: THREE.DoubleSide,
++  });
++  mat.userData.colorRole = 'accent';
++  const m = mesh(new THREE.CircleGeometry(size, 48), mat, name);
++  m.castShadow = false;
++  return m;
++}
++
++/** Mounts a +Z-facing decal on a sphere (radius R) at yaw `a`, height `y`, edges just touching. */
++function setMark(mark, R, a, y, size) {
++  const p = onSkull(R, a, y);
++  const normal = p.clone().normalize();
++  const lift = (size * size) / (2 * R) + R * 0.004;
++  mark.position.copy(p).addScaledVector(normal, lift);
++  mark.up.set(0, 1, 0);
++  mark.lookAt(_mid.copy(mark.position).add(normal));
++  return mark;
++}
++
++/** Mounts a +Z-facing decal on a vertical band (radius R) at yaw `a`, height `y`. */
++function setMarkOnBand(mark, R, a, y, size) {
++  const p = onBand(R, a, y);
++  const normal = new THREE.Vector3(p.x, 0, p.z).normalize();
++  const lift = (size * size) / (2 * R) + R * 0.004;
++  mark.position.copy(p).addScaledVector(normal, lift);
++  mark.up.set(0, 1, 0);
++  mark.lookAt(_mid.copy(mark.position).add(normal));
++  return mark;
++}
++
++/**
++ * A flat ribbon painted along a meridian of a sphere of radius R: from
++ * angle t0 to t1 where t = 0 is the apex, +ve toward the face (-Z).
++ */
++function meridianStrip(R, width, t0, t1, material, name, xOffset = 0) {
++  const steps = 40;
++  const positions = [];
++  const normals = [];
++  const indices = [];
++  for (let i = 0; i <= steps; i++) {
++    const t = t0 + (t1 - t0) * (i / steps);
++    const cy = Math.cos(t);
++    const cz = -Math.sin(t);
++    for (const sx of [-1, 1]) {
++      // Keep every vertex on the sphere: the circle at x shrinks to sqrt(R^2 - x^2).
++      const x = xOffset + sx * width * 0.5;
++      const r = Math.sqrt(Math.max(0, R * R - x * x));
++      positions.push(x, r * cy, r * cz);
++      normals.push(x / R, (r * cy) / R, (r * cz) / R);
++    }
++  }
++  for (let i = 0; i < steps; i++) {
++    const a = i * 2;
++    indices.push(a, a + 1, a + 3, a, a + 3, a + 2);
++  }
++  const geo = new THREE.BufferGeometry();
++  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
++  geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
++  geo.setIndex(indices);
++  const m = mesh(geo, material, name);
++  m.material.side = THREE.DoubleSide;
++  return m;
++}
++
++/**
++ * A cloth band whose height and centre line vary with yaw: `profile(a)`
++ * returns { y, h } for yaw a (0 = face). Vertices lie on a cylinder of
++ * radius R; normals point outward.
++ */
++function shapedBand(R, profile, material, name, steps = 72) {
++  const positions = [];
++  const normals = [];
++  const indices = [];
++  for (let i = 0; i <= steps; i++) {
++    const a = (i / steps) * Math.PI * 2;
++    const { y, h } = profile(a);
++    const x = R * Math.sin(a);
++    const z = -R * Math.cos(a);
++    positions.push(x, y + h / 2, z, x, y - h / 2, z);
++    normals.push(Math.sin(a), 0, -Math.cos(a), Math.sin(a), 0, -Math.cos(a));
++  }
++  for (let i = 0; i < steps; i++) {
++    const a = i * 2;
++    indices.push(a, a + 3, a + 1, a, a + 2, a + 3); // wound outward
++  }
++  const geo = new THREE.BufferGeometry();
++  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
++  geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
++  geo.setIndex(indices);
++  const m = mesh(geo, material, name);
++  m.material.side = THREE.DoubleSide;
++  return m;
++}
++
++/** A small marigold: a dark centre with two rings of rounded petals. Faces +Y. */
++function marigold(size, name = 'marigold') {
++  const g = group(name);
++  const petal = fixedMaterial(0xf59e0b, { roughness: 0.8 });
++  const inner = fixedMaterial(0xd97706, { roughness: 0.8 });
++  const heart = fixedMaterial(0x92400e, { roughness: 0.9 });
++  const c = mesh(new THREE.SphereGeometry(size * 0.3, 12, 8), heart, 'heart');
++  c.scale.y = 0.6;
++  g.add(c);
++  for (const [n, r, rad, mat, lift] of [[8, 0.72, 0.36, petal, 0], [6, 0.42, 0.3, inner, 0.08]]) {
++    for (let i = 0; i < n; i++) {
++      const a = (i / n) * Math.PI * 2 + (n === 6 ? 0.3 : 0);
++      const p = mesh(new THREE.SphereGeometry(size * rad, 10, 8), mat, 'petal');
++      p.position.set(Math.cos(a) * size * r, size * lift, Math.sin(a) * size * r);
++      p.scale.set(1.25, 0.45, 0.8);
++      p.rotation.y = -a;
++      g.add(p);
++    }
++  }
++  return g;
++}
++
++/** A tube whose radius tapers from r0 to r1 along `curve`. */
++function taperedTube(curve, r0, r1, material, name, segments = 48, radial = 10) {
++  const frames = curve.computeFrenetFrames(segments, false);
++  const positions = [];
++  const normals = [];
++  const indices = [];
++  const p = new THREE.Vector3();
++  for (let i = 0; i <= segments; i++) {
++    const t = i / segments;
++    curve.getPointAt(t, p);
++    const r = r0 + (r1 - r0) * t;
++    const N = frames.normals[i];
++    const B = frames.binormals[i];
++    for (let j = 0; j <= radial; j++) {
++      const v = (j / radial) * Math.PI * 2;
++      const nx = Math.cos(v) * N.x + Math.sin(v) * B.x;
++      const ny = Math.cos(v) * N.y + Math.sin(v) * B.y;
++      const nz = Math.cos(v) * N.z + Math.sin(v) * B.z;
++      positions.push(p.x + r * nx, p.y + r * ny, p.z + r * nz);
++      normals.push(nx, ny, nz);
++    }
++  }
++  const row = radial + 1;
++  for (let i = 0; i < segments; i++) {
++    for (let j = 0; j < radial; j++) {
++      const a = i * row + j;
++      indices.push(a, a + row, a + 1, a + 1, a + row, a + row + 1);
++    }
++  }
++  const geo = new THREE.BufferGeometry();
++  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
++  geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
++  geo.setIndex(indices);
++  return mesh(geo, material, name);
++}
++
++// ---------------------------------------------------------------------------
++// WHITE: Manager Classic Cap
++// ---------------------------------------------------------------------------
++
++/** The base model's classic cap, a shade larger, with the globe on the front panel. */
++export function createManagerCap(radius, colors) {
++  const g = group('headwear-manager_cap');
++  const fabric = primaryMaterial(colors, { roughness: 0.68 });
++  const trim = accentMaterial(colors, { roughness: 0.7 });
++
++  const crownR = radius * 1.05;
++  const phiRim = Math.PI * 0.37;
++  const yRim = crownR * Math.cos(phiRim);
++  const rRim = crownR * Math.sin(phiRim);
++
++  const cap = group('cap');
++  cap.position.y = radius * 0.02;
++  cap.rotation.x = 0.06;
++  g.add(cap);
++  cap.add(dome(crownR, phiRim, fabric, 'crown'));
++  cap.add(curvedBill(radius, rRim, yRim, radius * 0.74, radius * 0.04, fabric, -1, 'bill'));
++  const button = mesh(new THREE.CylinderGeometry(radius * 0.08, radius * 0.08, radius * 0.03, 16), trim, 'button');
++  button.position.y = crownR * 1.005;
++  cap.add(button);
++  cap.add(band(rRim * 0.995, radius * 0.07, Math.PI * 0.42, trim, { y: yRim + radius * 0.05, facing: Math.PI, name: 'strap' }));
++  cap.add(setMark(leagueMark(radius * 0.19, colors), crownR, 0, yRim + radius * 0.22, radius * 0.19));
++  return g;
++}
++
++// ---------------------------------------------------------------------------
++// BLACK: Sensor VISOR
++// ---------------------------------------------------------------------------
++
++/**
++ * Cylon territory: a slim black band across the eyes with one glowing
++ * scanner slit. Housing in the team colour, so the umpire stays black.
++ */
++export function createSensorVisor(radius, colors) {
++  const g = group('headwear-sensor_visor');
++  const housing = primaryMaterial(colors, { roughness: 0.35, metalness: 0.5 });
++  const glow = visorMaterial(colors);
++
++  const yEye = radius * 0.1;
++  const R = radius * 1.06;
++  const arc = Math.PI * 0.7;
++  g.add(band(R, radius * 0.17, arc, housing, { y: yEye, name: 'band' }));
++  g.add(band(R - radius * 0.03, radius * 0.17, arc, housing, { y: yEye, name: 'band-inner' }));
++  const scanner = ring(R + radius * 0.01, radius * 0.013, arc * 0.86, glow, { y: yEye, name: 'scanner', tall: 0.7 });
++  scanner.material.emissiveIntensity = 0.9;
++  scanner.material.userData.emissiveIntensity = 0.9;
++  g.add(scanner);
++  // The umpire's crest: the league mark flat on the brow, centred above the scanner.
++  g.add(setMark(leagueMark(radius * 0.14, colors), radius * 1.0, 0, yEye + radius * 0.34, radius * 0.14));
++  return g;
++}
++
++// ---------------------------------------------------------------------------
++// BLUE: Wicketkeeper Helmet
++// ---------------------------------------------------------------------------
++
++/**
++ * The cricket helmet: shell over the ears with a short peak, ear guards,
++ * and a face grille that starts exactly at the shell rim.
++ */
++export function createWicketGrill(radius, colors) {
++  const g = group('headwear-wicket_grill');
++  const shell = primaryMaterial(colors, { roughness: 0.4, metalness: 0.15 });
++  const bars = accentMaterial(colors, { roughness: 0.45, metalness: 0.5 });
++
++  // The whole helmet sits high and tilts back off the brow: the shell's rim
++  // runs from above the eyes at the front down over the ears and nape.
++  const helmet = group('helmet');
++  helmet.position.y = radius * 0.14;
++  helmet.rotation.x = 0.55;
++  g.add(helmet);
++
++  const shellR = radius * 1.1;
++  const phiShell = Math.PI * 0.55;
++  const yRim = shellR * Math.cos(phiShell);
++  const rRim = shellR * Math.sin(phiShell);
++  helmet.add(dome(shellR, phiShell, shell, 'shell'));
++  helmet.add(curvedBill(radius, rRim, yRim + radius * 0.02, radius * 0.42, radius * 0.045, shell, -1, 'peak'));
++
++  for (const side of [-1, 1]) {
++    const guard = mesh(new THREE.CylinderGeometry(radius * 0.34, radius * 0.34, radius * 0.12, 24), shell, side < 0 ? 'ear-l' : 'ear-r');
++    guard.rotation.z = Math.PI / 2;
++    guard.position.set(side * radius * 1.04, -radius * 0.06, 0);
++    helmet.add(guard);
++    const mark = leagueMark(radius * 0.22, colors, `mark-${side < 0 ? 'l' : 'r'}`);
++    mark.position.set(side * (radius * 1.04 + radius * 0.065), -radius * 0.06, 0);
++    mark.rotation.y = side * Math.PI / 2;
++    helmet.add(mark);
++  }
++
++  // Grille: NOT a child of the tilted shell. It hangs from the ear guards and
++  // sits in front of the mouth and chin, whatever the shell does.
++  const grille = group('grille');
++  grille.rotation.x = -0.08; // leans a touch forward at the chin
++  g.add(grille);
++  const R = radius * 1.12;
++  const bar = radius * 0.034;
++  const hoops = [-0.26, -0.46, -0.66];
++  for (const y of hoops) {
++    grille.add(ring(R, bar, Math.PI * 0.8, bars, { y: radius * y, name: `hoop-${y}` }));
++  }
++  for (const a of [-0.72, -0.24, 0.24, 0.72]) {
++    grille.add(strut(onBand(R, a, -radius * 0.14), onBand(R, a, -radius * 0.76), bar, bars, `upright-${a}`));
++  }
++  // Side arms up from the top hoop's ends to the ear guards.
++  for (const side of [-1, 1]) {
++    const earAnchor = new THREE.Vector3(side * radius * 1.06, radius * 0.06, radius * 0.02);
++    grille.add(strut(onBand(R, side * Math.PI * 0.4, -radius * 0.26), earAnchor, bar, bars, `arm-${side}`));
++  }
++  return g;
++}
++
++// ---------------------------------------------------------------------------
++// RED: Gridiron Horns
++// ---------------------------------------------------------------------------
++
++/**
++ * The seventies NFL helmet: contrasting shell with the face cut open from
++ * the brow, a single face bar at mouth level, the team stripe over the top,
++ * ear holes, and small horns off the stripe.
++ */
++export function createCombatHorns(radius, colors) {
++  const g = group('headwear-wrestler_bands');
++  const shell = accentMaterial(colors, { roughness: 0.35, metalness: 0.2 });
++  const stripe = primaryMaterial(colors, { roughness: 0.4, metalness: 0.15 });
++
++  const shellR = radius * 1.12;
++  // Top cap: full circle down to the brow line.
++  const browPhi = Math.PI * 0.36;
++  g.add(dome(shellR, browPhi, shell, 'shell-top'));
++  // Skirt: from the brow down over the ears and nape, open across the face.
++  // Sphere azimuth: phi = 0 is +X... the face (-Z) sits at phi = 1.5π.
++  const faceOpening = Math.PI * 0.62;
++  const skirtGeo = new THREE.SphereGeometry(
++    shellR, 36, 12,
++    Math.PI * 1.5 + faceOpening / 2, Math.PI * 2 - faceOpening,
++    browPhi, Math.PI * 0.62 - browPhi,
++  );
++  const skirt = mesh(skirtGeo, shell, 'shell-skirt');
++  skirt.material.side = THREE.DoubleSide;
++  g.add(skirt);
++
++  // Twin stripes painted on the shell, brow to nape.
++  for (const sx of [-1, 1]) {
++    g.add(meridianStrip(shellR * 1.004, radius * 0.09, -Math.PI * 0.6, browPhi * 0.98, stripe, `stripe-${sx}`, sx * radius * 0.13));
++  }
++
++  // Ear pieces with short bull's horns growing out of them: out, then up and
++  // a little forward, rooted in the red disc so nothing floats.
++  for (const side of [-1, 1]) {
++    const tag = side < 0 ? 'l' : 'r';
++    const ear = new THREE.Vector3(side * shellR * 0.995, -radius * 0.05, 0);
++    const hole = mesh(new THREE.CylinderGeometry(radius * 0.17, radius * 0.17, radius * 0.06, 20), stripe, `ear-${tag}`);
++    hole.rotation.z = Math.PI / 2;
++    hole.position.copy(ear);
++    g.add(hole);
++    const curve = new THREE.QuadraticBezierCurve3(
++      ear.clone(),
++      ear.clone().add(new THREE.Vector3(side * radius * 0.22, radius * 0.12, -radius * 0.05)),
++      ear.clone().add(new THREE.Vector3(side * radius * 0.26, radius * 0.5, -radius * 0.22)),
++    );
++    g.add(taperedTube(curve, radius * 0.11, radius * 0.025, stripe, `horn-${tag}`, 24));
++  }
++
++  // Double-bar face guard: two bars across the mouth and chin, a centre
++  // post between them, and arms up to the skirt edges.
++  const R = shellR * 1.04;
++  const barR = radius * 0.042;
++  g.add(ring(R, barR, Math.PI * 0.6, shell, { y: -radius * 0.32, name: 'facebar-upper' }));
++  g.add(ring(R, barR, Math.PI * 0.6, shell, { y: -radius * 0.54, name: 'facebar-lower' }));
++  g.add(strut(onBand(R, 0, -radius * 0.32), onBand(R, 0, -radius * 0.54), barR, shell, 'facebar-post'));
++  for (const side of [-1, 1]) {
++    g.add(strut(onBand(R, side * Math.PI * 0.3, -radius * 0.32), onSkull(shellR, side * faceOpening / 2, -radius * 0.1), barR, shell, `facebar-arm-${side}`));
++    g.add(strut(onBand(R, side * Math.PI * 0.3, -radius * 0.32), onBand(R, side * Math.PI * 0.3, -radius * 0.54), barR, shell, `facebar-side-${side}`));
++  }
++
++  // The league mark on the back, right of the stripes, the way helmet decals sit.
++  g.add(setMark(leagueMark(radius * 0.16, colors), shellR, Math.PI - 0.5, radius * 0.3, radius * 0.16));
++  return g;
++}
++
++// ---------------------------------------------------------------------------
++// GREEN: Terrace Montera
++// ---------------------------------------------------------------------------
++
++/** A highland montera perched on the crown: round top, flat upturned brim, beaded edge. */
++export function createTerraceMontera(radius, colors) {
++  const g = group('headwear-terrace_visor');
++  const wool = primaryMaterial(colors, { roughness: 0.9 });
++  const trim = accentMaterial(colors, { roughness: 0.7 });
++
++  const yBase = radius * 0.72;
++  const crownR = radius * 0.92;
++  const crownH = radius * 0.46;
++  const wall = mesh(new THREE.CylinderGeometry(crownR * 0.97, crownR, crownH, 36), wool, 'crown');
++  wall.position.y = yBase + crownH / 2;
++  g.add(wall);
++  const top = dome(crownR * 0.97, Math.PI * 0.5, wool, 'crown-top');
++  top.position.y = yBase + crownH;
++  top.scale.y = 0.22;
++  g.add(top);
++
++  const brimDrop = -radius * 0.14;
++  const brimOuter = radius * 1.85;
++  const b = brim(radius * 0.86, brimOuter, brimDrop, wool, 'brim');
++  b.position.y = yBase + radius * 0.06;
++  g.add(b);
++
++  g.add(ring(crownR * 1.01, radius * 0.045, Math.PI * 2, trim, { y: yBase + radius * 0.1, name: 'band', tall: 1.5 }));
++  // Beads sit ON the brim's upturned edge: the brim's outer rim is at
++  // yBase + 0.06 + |drop| / 2, and the bead rests on it.
++  const beadR = radius * 0.05;
++  const rimY = yBase + radius * 0.06 + Math.abs(brimDrop) / 2;
++  for (let i = 0; i < 16; i++) {
++    const a = (i / 16) * Math.PI * 2;
++    const bead = mesh(new THREE.SphereGeometry(beadR, 8, 6), trim, `bead-${i}`);
++    bead.position.set(Math.sin(a) * (brimOuter - beadR * 0.6), rimY + beadR * 0.5, -Math.cos(a) * (brimOuter - beadR * 0.6));
++    g.add(bead);
++  }
++  g.add(setMarkOnBand(leagueMark(radius * 0.15, colors), crownR * 0.985, 0, yBase + crownH * 0.52, radius * 0.15));
++  return g;
++}
++
++// ---------------------------------------------------------------------------
++// PURPLE: Silk Road Diadem
++// ---------------------------------------------------------------------------
++
++/**
++ * Back to the first pass's simplicity: a slim metallic band, three slender
++ * spires (centre tallest), a jewel at the foot of each.
++ */
++export function createCoutureDiadem(radius, colors) {
++  const g = group('headwear-couture_wrap');
++  const metal = primaryMaterial(colors, METAL);
++  const jewel = visorMaterial(colors);
++
++  const yBand = radius * 0.44;
++  const R = radius * 1.05;
++  g.add(ring(R, radius * 0.05, Math.PI * 1.4, metal, { y: yBand, name: 'band', tall: 1.4 }));
++
++  // Rounded petals rather than spikes: soft ellipsoids, like the body's capsules.
++  const spires = [{ a: 0, h: 0.62, r: 0.11 }, { a: -0.5, h: 0.4, r: 0.09 }, { a: 0.5, h: 0.4, r: 0.09 }];
++  for (const s of spires) {
++    const base = onBand(R, s.a, yBand + radius * 0.02);
++    const spire = mesh(new THREE.SphereGeometry(radius * s.r, 16, 12), metal, `petal-${s.a}`);
++    spire.position.copy(base);
++    spire.position.y += radius * s.h * 0.5;
++    spire.scale.set(1, s.h / s.r * 0.5, 0.55);
++    spire.rotation.set(-0.18 * Math.cos(s.a), 0, -0.18 * Math.sin(s.a));
++    g.add(spire);
++    const gem = mesh(new THREE.SphereGeometry(radius * s.r * 0.95, 14, 10), jewel, `gem-${s.a}`);
++    gem.position.copy(onBand(R * 1.03, s.a, yBand));
++    g.add(gem);
++  }
++  return g;
++}
++
++// ---------------------------------------------------------------------------
++// TEAL: Wayfinder Cord
++// ---------------------------------------------------------------------------
++
++/**
++ * The second pass's cord, aligned: a team band and a contrasting cord stacked
++ * cleanly, a knot with two tails at the back, and the jade toki hanging from
++ * the right temple.
++ */
++export function createWayfinderCord(radius, colors) {
++  const g = group('headwear-rigger_band');
++  const cloth = primaryMaterial(colors, { roughness: 0.85 });
++  const cord = accentMaterial(colors, { roughness: 0.85 });
++  const jade = fixedMaterial(JADE_HEX, { roughness: 0.3, metalness: 0.15 });
++
++  const R = radius * 1.04;
++  const yBand = radius * 0.3;
++  g.add(band(R, radius * 0.16, Math.PI * 2, cloth, { y: yBand, name: 'band' }));
++  g.add(ring(R + radius * 0.01, radius * 0.035, Math.PI * 2, cord, { y: yBand + radius * 0.1, name: 'cord-upper' }));
++  g.add(ring(R + radius * 0.01, radius * 0.035, Math.PI * 2, cord, { y: yBand - radius * 0.1, name: 'cord-lower' }));
++
++  const k = onBand(R + radius * 0.06, Math.PI, yBand);
++  const knot = mesh(new THREE.SphereGeometry(radius * 0.12, 14, 10), cord, 'knot');
++  knot.position.copy(k);
++  g.add(knot);
++  g.add(strut(k, new THREE.Vector3(k.x + radius * 0.14, k.y - radius * 0.5, k.z + radius * 0.1), radius * 0.03, cord, 'tail-a'));
++  g.add(strut(k, new THREE.Vector3(k.x - radius * 0.12, k.y - radius * 0.44, k.z + radius * 0.14), radius * 0.03, cord, 'tail-b'));
++
++  const anchor = onBand(R + radius * 0.03, 0.95, yBand - radius * 0.08);
++  const hang = anchor.clone();
++  hang.y -= radius * 0.3;
++  g.add(strut(anchor, hang, radius * 0.022, cord, 'toki-cord'));
++  const blade = mesh(new THREE.BoxGeometry(radius * 0.17, radius * 0.4, radius * 0.06), jade, 'toki');
++  blade.position.copy(hang);
++  blade.position.y -= radius * 0.18;
++  blade.rotation.y = 0.95;
++  g.add(blade);
++  const edge = mesh(new THREE.ConeGeometry(radius * 0.1, radius * 0.14, 4), jade, 'toki-edge');
++  edge.position.copy(blade.position);
++  edge.position.y -= radius * 0.27;
++  edge.rotation.set(Math.PI, 0.95 + Math.PI / 4, 0);
++  g.add(edge);
++  return g;
++}
++
++// ---------------------------------------------------------------------------
++// YELLOW: Stadium Headset
++// ---------------------------------------------------------------------------
++
++/** Broadcast cans with the globe on each cup, a hugging headband, boom and windscreen. */
++export function createBroadcasterHeadset(radius, colors) {
++  const g = group('headwear-broadcaster_mic');
++  const shell = primaryMaterial(colors, { roughness: 0.45, metalness: 0.2 });
++  const trim = accentMaterial(colors, { roughness: 0.5, metalness: 0.3 });
++  const foam = fixedMaterial(FOAM_HEX, { roughness: 0.95 });
++  const lamp = visorMaterial(colors);
++
++  const cupR = radius * 0.46;
++  const xCup = radius * 1.14;
++  const yCup = -radius * 0.02;
++  for (const side of [-1, 1]) {
++    const tag = side < 0 ? 'l' : 'r';
++    const cup = mesh(new THREE.CylinderGeometry(cupR, cupR, radius * 0.24, 28), shell, `cup-${tag}`);
++    cup.rotation.z = Math.PI / 2;
++    cup.position.set(side * xCup, yCup, 0);
++    g.add(cup);
++    const pad = mesh(new THREE.CylinderGeometry(cupR * 0.85, cupR * 0.85, radius * 0.08, 28), trim, `pad-${tag}`);
++    pad.rotation.z = Math.PI / 2;
++    pad.position.set(side * (xCup - radius * 0.15), yCup, 0);
++    g.add(pad);
++    const mark = leagueMark(radius * 0.22, colors, `mark-${tag}`);
++    mark.position.set(side * (xCup + radius * 0.125), yCup, 0);
++    mark.rotation.y = side * Math.PI / 2;
++    g.add(mark);
++  }
++  const hb = mesh(new THREE.TorusGeometry(xCup, radius * 0.075, 10, 40, Math.PI), trim, 'headband');
++  hb.position.y = yCup + cupR * 0.9;
++  hb.scale.set(1, 0.68, 1.7);
++  g.add(hb);
++
++  const a = new THREE.Vector3(-xCup - radius * 0.05, yCup - radius * 0.34, -radius * 0.12);
++  const b = new THREE.Vector3(-radius * 0.72, -radius * 0.58, -radius * 0.8);
++  const c = new THREE.Vector3(-radius * 0.25, -radius * 0.62, -radius * 1.1);
++  g.add(strut(a, b, radius * 0.04, trim, 'boom-a'));
++  g.add(strut(b, c, radius * 0.04, trim, 'boom-b'));
++  const windscreen = mesh(new THREE.SphereGeometry(radius * 0.16, 14, 10), foam, 'windscreen');
++  windscreen.position.copy(c);
++  g.add(windscreen);
++  const onAir = mesh(new THREE.SphereGeometry(radius * 0.05, 10, 8), lamp, 'on-air');
++  onAir.position.set(-(xCup + radius * 0.12), yCup + radius * 0.3, -radius * 0.2);
++  g.add(onAir);
++
++  // A marigold tucked at the hair tie behind the right ear, clear of the band
++  // (which runs over the crown) and of the cups.
++  const flower = marigold(radius * 0.17);
++  flower.position.set(radius * 0.3, radius * 0.5, radius * 0.86);
++  flower.rotation.set(0.9, 0.35, -0.5);
++  g.add(flower);
++  return g;
++}
++
++// ---------------------------------------------------------------------------
++// ORANGE: Winged Courier Cap
++// ---------------------------------------------------------------------------
++
++/** A low runner's cap worn backwards, bill flipped up at the back, swept fins, globe on the front. */
++export function createCourierCap(radius, colors) {
++  const g = group('headwear-cursor_cap');
++  const fabric = primaryMaterial(colors, { roughness: 0.5 });
++  const wing = accentMaterial(colors, { roughness: 0.45, metalness: 0.25 });
++
++  const crownR = radius * 1.06;
++  const phiRim = Math.PI * 0.42;
++  const yRim = crownR * Math.cos(phiRim);
++  const rRim = crownR * Math.sin(phiRim);
++
++  const cap = group('cap');
++  g.add(cap);
++  cap.add(dome(crownR, phiRim, fabric, 'crown'));
++  // Backwards: the bill points to +Z and is pitched UP, the way a flipped cap sits.
++  cap.add(curvedBill(radius, rRim, yRim + radius * 0.02, radius * 0.7, radius * 0.038, fabric, +1, 'rear-bill', -0.32));
++
++  const shape = new THREE.Shape();
++  shape.moveTo(0, -radius * 0.14);
++  shape.lineTo(0, radius * 0.18);
++  shape.lineTo(radius * 0.95, radius * 0.5);
++  shape.lineTo(radius * 0.75, radius * 0.08);
++  shape.closePath();
++  const finGeo = new THREE.ExtrudeGeometry(shape, { depth: radius * 0.035, bevelEnabled: false });
++  for (const side of [-1, 1]) {
++    const fin = mesh(finGeo, wing, side < 0 ? 'fin-l' : 'fin-r');
++    fin.material.side = THREE.DoubleSide;
++    fin.position.set(side * radius * 1.0, radius * 0.42, -radius * 0.05);
++    fin.rotation.set(0, -Math.PI / 2, 0);
++    cap.add(fin);
++  }
++  cap.add(setMark(leagueMark(radius * 0.19, colors), crownR, Math.PI, yRim + radius * 0.4, radius * 0.19));
++  return g;
++}
++
++// ---------------------------------------------------------------------------
++// PINK: Bleacher Hachimaki
++// ---------------------------------------------------------------------------
++
++/**
++ * A traditional hachimaki: a tenugui tied round the head, wide across the
++ * forehead and narrowing to a twist at the back, worn high and canted up at
++ * the front so the panel faces forward and up. The league mark sits large on
++ * the front panel; the knot's tails stand up and out behind.
++ */
++export function createOuendanHeadband(radius, colors) {
++  const g = group('headwear-ouendan_knot');
++  const cloth = primaryMaterial(colors, { roughness: 0.82 });
++
++  const hachi = group('hachimaki');
++  hachi.rotation.x = 0.3; // front rises up the forehead
++  g.add(hachi);
++
++  const R = radius * 1.03;
++  const yBack = radius * 0.22;
++  const yFront = radius * 0.34;
++  const hBack = radius * 0.1;
++  const hFront = radius * 0.5;
++  const profile = (a) => {
++    const w = Math.pow((1 + Math.cos(a)) / 2, 1.6); // 1 at the face, 0 at the nape
++    return { y: yBack + (yFront - yBack) * w, h: hBack + (hFront - hBack) * w };
++  };
++  hachi.add(shapedBand(R, profile, cloth, 'band'));
++  hachi.add(shapedBand(R + radius * 0.02, profile, cloth, 'band-outer'));
++  const front = profile(0);
++  hachi.add(setMarkOnBand(leagueMark(radius * 0.2, colors), R + radius * 0.02, 0, front.y, radius * 0.2));
++
++  const knot = mesh(new THREE.SphereGeometry(radius * 0.11, 14, 10), cloth, 'knot');
++  knot.position.set(0, yBack, R + radius * 0.05);
++  knot.scale.set(1.3, 0.7, 0.7);
++  hachi.add(knot);
++  for (const side of [-1, 1]) {
++    const tag = side < 0 ? 'l' : 'r';
++    const tail = mesh(new THREE.BoxGeometry(radius * 0.12, radius * 0.02, radius * 0.5), cloth, `tail-${tag}`);
++    tail.position.set(side * radius * 0.18, yBack + radius * 0.18, R + radius * 0.2);
++    tail.rotation.set(-0.75, side * 0.55, side * 0.2);
++    hachi.add(tail);
++  }
++  return g;
++}
++
++/** Object form, for callers that resolve builders by catalog `build` name. */
++export const CosmeticsBuilders = {
++  createManagerCap,
++  createSensorVisor,
++  createWicketGrill,
++  createCombatHorns,
++  createTerraceMontera,
++  createCoutureDiadem,
++  createWayfinderCord,
++  createBroadcasterHeadset,
++  createCourierCap,
++  createOuendanHeadband,
++};
+diff --git a/src/sim/ragdoll.js b/src/sim/ragdoll.js
+index dd91e12..adba836 100644
+--- a/src/sim/ragdoll.js
++++ b/src/sim/ragdoll.js
+@@ -1,6 +1,8 @@
+ import * as THREE from 'three';
+ import { TUNING } from '../config/tuning.js';
++import { HEADWEAR_CATALOG } from '../config/cosmetics.js';
+ import { Interpolated } from '../core/Interpolated.js';
++import * as CosmeticsBuilders from './cosmeticsBuilders.js';
+ 
+ /**
+  * Physics -> pose sync, and the ragdoll's debug skin.
+@@ -27,6 +29,11 @@ const BALL_RINGS = 12;
+ 
+ const UNIT_SCALE = new THREE.Vector3(1, 1, 1);
+ 
++/** Name of the empty group under the head's solid mesh that holds locker headwear. */
++export const HEADWEAR_SLOT_NAME = 'athlete-headwear-slot';
++/** Name of the built-in cap/visor group that predates the locker. */
++const LEGACY_CAP_NAME = 'athletic-cap';
++
+ const _bodyWorld = new THREE.Matrix4();
+ const _desired = new THREE.Matrix4();
+ const _local = new THREE.Matrix4();
+@@ -69,18 +76,50 @@ function getAthleteColors(options = null) {
+   const primary = options?.primaryColor ?? options?.colorOverride ?? defaultPrimary;
+   const bodyGrey = options?.bodyColor ?? defaultBody;
+   const jointGrey = options?.jointColor ?? defaultJoint;
++  // Locker accent: the OPPOSITE of the base layer, so headwear trim reads on
++  // both kits (near-white on the black home kit, near-black on the white away).
++  const defaultAccent = isHome ? (p.homeAccent ?? 0xf1f5f9) : (p.awayAccent ?? 0x0f172a);
+ 
+   const parseColor = (c) => (typeof c === 'string' ? parseInt(c.replace('#', '0x'), 16) : c);
++  const primaryHex = parseColor(primary);
++  // The accent has to read against the headwear's own colour too: a white
++  // accent on the white captain's cap, or a black one on the umpire's black
++  // visor, would vanish. Only the two neutral palettes flip; every real
++  // colour keeps the kit's accent (white trim on yellow is the intent).
++  let accent = parseColor(options?.accentColor ?? defaultAccent);
++  if (options?.accentColor === undefined) {
++    const lum = hexLuminance(primaryHex);
++    if (lum > 0.9) accent = 0x0f172a;
++    else if (lum < 0.12) accent = 0xf1f5f9;
++  }
+ 
+   return {
+-    primary: parseColor(primary),
++    primary: primaryHex,
+     bodyGrey: parseColor(bodyGrey),
+     jointGrey: parseColor(jointGrey),
++    accent,
+     roughness: p.roughness ?? 0.82,
+     metalness: p.metalness ?? 0.04,
+   };
+ }
+ 
++/** Relative luminance of a packed hex colour, 0..1 (sRGB, no gamma). */
++function hexLuminance(hex) {
++  const r = ((hex >> 16) & 0xff) / 255;
++  const g = ((hex >> 8) & 0xff) / 255;
++  const b = (hex & 0xff) / 255;
++  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
++}
++
++/**
++ * The colour a 'visor' role glows. Team primary, except a primary too dark to
++ * emit anything visible (the black kit) borrows the accent so the visor still
++ * reads as lit.
++ */
++function visorGlowHex(colors) {
++  return hexLuminance(colors.primary) < 0.12 ? 0xdbe4f0 : colors.primary;
++}
++
+ /**
+  * Generates an authentic old-style curved baseball cap visor geometry.
+  * Curves seamlessly from the crown rim with downward curl at temples and downward rake.
+@@ -284,6 +323,16 @@ function createSolidAthletePart(item, colors) {
+     capGroup.add(strapMesh);
+ 
+     solidGroup.add(capGroup);
++
++    // 3. LOCKER HEADWEAR SLOT
++    // Empty container at the skull centre that setAthleteHeadwear() fills with
++    // a procedural accessory from cosmeticsBuilders.js. Purely a scene-graph
++    // child of the head's solid mesh: it rides the head body's interpolated
++    // transform and owns no physics of its own.
++    const headwearSlot = new THREE.Group();
++    headwearSlot.name = HEADWEAR_SLOT_NAME;
++    solidGroup.add(headwearSlot);
++
+     return solidGroup;
+   }
+ 
+@@ -436,6 +485,12 @@ export function createRagdollVisuals(rig, options = null) {
+ 
+   updateAthleteVariant({ rig, ...options }, options);
+ 
++  // Locker headwear survives a respawn because athlete.js rebuilds visuals
++  // through here with the same options it stored on the previous ragdoll.
++  if (options?.headwear != null) {
++    setAthleteHeadwear({ rig, ...options }, options.headwear, colors);
++  }
++
+   return group;
+ }
+ 
+@@ -690,6 +745,14 @@ export function updateAthleteVariant(state, options = null) {
+       if (button) button.visible = true;
+       if (band) band.visible = false;
+     }
++
++    // Once an athlete has an explicit locker headwear id (including 'none',
++    // the bare dome), the legacy built-in cap/visor steps aside and the slot
++    // owns the silhouette. Athletes that never touched the locker (headwear
++    // undefined/null) keep the pre-locker look exactly as before.
++    const headwearId = options?.headwear !== undefined ? options.headwear : state.headwear;
++    const legacyCap = head.solidMesh.getObjectByName(LEGACY_CAP_NAME);
++    if (legacyCap) legacyCap.visible = headwearId == null;
+   }
+ 
+   const limbKeys = ['upperArmL', 'upperArmR', 'foreArmL', 'foreArmR', 'thighL', 'thighR', 'calfL', 'calfR'];
+@@ -745,8 +808,19 @@ export function updateAthletePalette(state, options = null) {
+   if (options?.colorOverride !== undefined) state.colorOverride = options.colorOverride;
+   if (options?.bodyColor !== undefined) state.bodyColor = options.bodyColor;
+   if (options?.jointColor !== undefined) state.jointColor = options.jointColor;
++  if (options?.accentColor !== undefined) state.accentColor = options.accentColor;
++  const previousHeadwear = state.headwear;
++  if (options?.headwear !== undefined) state.headwear = options.headwear;
+   updateAthleteVariant(state, options);
+   const colors = getAthleteColors(options ?? state);
++
++  // A changed headwear id rebuilds the accessory; an unchanged one is simply
++  // recolored by the role sweep below, since the slot lives under the head's
++  // solid mesh.
++  if (state.headwear !== previousHeadwear && state.headwear != null) {
++    setAthleteHeadwear(state, state.headwear, colors);
++  }
++
+   for (const item of state.rig.values()) {
+     if (!item.solidMesh) continue;
+     item.solidMesh.traverse((child) => {
+@@ -761,15 +835,82 @@ export function updateAthletePalette(state, options = null) {
+         } else if (role === 'hair') {
+           child.material.color.setHex(0x24272e);
+         } else if (role === 'visor') {
+-          child.material.color.setHex(colors.primary);
+-          child.material.emissive.setHex(colors.primary);
+-          child.material.emissiveIntensity = 0.6;
++          const glow = visorGlowHex(colors);
++          child.material.color.setHex(glow);
++          child.material.emissive.setHex(glow);
++          // Locker visors declare their own glow strength (1.5); anything else
++          // keeps the pre-locker default.
++          child.material.emissiveIntensity = child.material.userData.emissiveIntensity ?? 0.6;
++        } else if (role === 'accent') {
++          child.material.color.setHex(colors.accent);
+         }
++        // 'fixed' (greenstone, metal plate engraving) is deliberately untouched.
+       }
+     });
+   }
+ }
+ 
++/**
++ * THE VALLEYBALL LOCKER: swaps the procedural headwear mounted on the head.
++ *
++ * Finds `athlete-headwear-slot` under the head's solid mesh, disposes whatever
++ * accessory is there (geometry AND the accessory's own materials; the base
++ * athlete materials are never touched), then builds and mounts the catalog
++ * entry's item. 'none' (or an unknown id) leaves the slot empty: a bare dome.
++ *
++ * Visual only. Nothing here reads or writes a Rapier body or collider.
++ *
++ * @param {object} state      ragdoll state with `rig` (Map) — `state.headwear` is updated
++ * @param {string} headwearId key in HEADWEAR_CATALOG
++ * @param {object} [colors]   getAthleteColors() output; derived from state when omitted
++ * @returns {THREE.Group | null} the mounted accessory group, or null if the slot is empty
++ */
++export function setAthleteHeadwear(state, headwearId, colors = null) {
++  if (!state || !state.rig) return null;
++  const head = state.rig.get('head');
++  if (!head || !head.solidMesh) return null;
++
++  const slot = head.solidMesh.getObjectByName(HEADWEAR_SLOT_NAME);
++  if (!slot) return null;
++
++  // Tear down the previous accessory.
++  while (slot.children.length > 0) {
++    const child = slot.children[0];
++    child.traverse((obj) => {
++      if (!obj.isMesh) return;
++      if (obj.geometry) obj.geometry.dispose();
++      if (Array.isArray(obj.material)) obj.material.forEach((m) => m.dispose());
++      else if (obj.material) obj.material.dispose();
++    });
++    slot.remove(child);
++  }
++
++  const entry = HEADWEAR_CATALOG[headwearId];
++  const resolvedId = entry ? entry.id : 'none';
++  state.headwear = resolvedId;
++  if (!entry && headwearId != null) {
++    console.warn(`[locker] unknown headwear id "${headwearId}", slot left empty`);
++  }
++
++  // The legacy cap yields to the slot as soon as the locker is in charge.
++  const legacyCap = head.solidMesh.getObjectByName(LEGACY_CAP_NAME);
++  if (legacyCap) legacyCap.visible = false;
++
++  const builderName = entry?.build;
++  if (!builderName) return null;
++  const builder = CosmeticsBuilders[builderName];
++  if (typeof builder !== 'function') {
++    console.warn(`[locker] headwear "${resolvedId}" names missing builder "${builderName}"`);
++    return null;
++  }
++
++  const palette = colors ?? getAthleteColors(state);
++  const accessory = builder(head.radius, palette);
++  accessory.name = accessory.name || `headwear-${resolvedId}`;
++  slot.add(accessory);
++  return accessory;
++}
++
+ /** Applies the athlete and debug visibility toggles. Init- and GUI-time only. */
+ export function applyRagdollVisibility(state, characterRoot) {
+   if (state && state.rig) {
+diff --git a/src/visuals/photoBooth.js b/src/visuals/photoBooth.js
+new file mode 100644
+index 0000000..cd5ad75
+--- /dev/null
++++ b/src/visuals/photoBooth.js
+@@ -0,0 +1,801 @@
++import * as THREE from 'three';
++import {
++  PALETTES, CANONICAL_ROSTER, ROSTER_ORDER, RAINBOW_ORDER, HEADWEAR_CATALOG, HEADWEAR_VARIANTS,
++} from '../config/cosmetics.js';
++
++/**
++ * THE PHOTO BOOTH (`?mode=photobooth`)
++ *
++ * An in-engine portrait studio for the Valleyball Locker. The real match boot
++ * still runs (physics, arena, athletes) so the mannequin stands in its true
++ * held-idle pose, but nothing from the match is rendered. Four shots per
++ * athlete, plus variants and a group photograph:
++ *
++ *   <id>_portrait        head and shoulders, studio backdrop, 512x512
++ *   <id>_portrait_b      the same from the other side, a little lower
++ *   <id>_headgear        the headwear's own hero angle (profile, rear...)
++ *   <id>_headgear_rear   the headwear from behind
++ *   <id>_idle            full body in the arena, a different frame of 'At Rest' each
++ *   <id>_idle_side       the same frame from the side
++ *   <id>_action          full body in the arena, a clip frame matched to personality
++ *   <id>_action_b        a second personality clip
++ *   variant_*            headgear alternatives for an art pick, when any are listed
++ *   group_rainbow_home   the whole roster lined up at centre court, all in the black kit
++ *   group_rainbow_away   the same in the white kit
++ *   group_rainbow_angle  the home line-up from a three-quarter angle
++ *   extra_*              seven editorial shots (see EXTRA_SHOTS): staged
++ *                        scenes with several athletes, free cameras
++ *
++ * POSES are sampled from the character's own animation clips through a
++ * private AnimationMixer on the kinematic ghost, and the ragdoll's visual
++ * groups are posed from the ghost exactly the way the tracker computes its
++ * targets (boneWorld * inv(bindBoneWorld) * bindBodyWorld). The ghost's bone
++ * locals are snapshotted before and restored after every shot.
++ *
++ * RENDER-ONLY. This module never writes to a Rapier body, a velocity or a
++ * force. It changes materials, scene-graph parents, lights, Object3D
++ * transforms and the renderer's output size, and puts the renderer back.
++ *
++ * Exposed on the page as `window.captureRosterAvatars()`, and auto-fired once
++ * the sim has settled unless `?auto=0`. Every capture is POSTed to
++ * `/api/capture` (vite-plugin-capture.js) into captures/avatars/.
++ */
++
++export const PHOTOBOOTH = Object.freeze({
++  endpoint: '/api/capture',
++  outputDir: 'avatars',
++  portraitSize: 512,
++  bodySize: { width: 768, height: 1152 },
++  groupSize: { width: 2560, height: 1080 },
++  sceneSize: { width: 2048, height: 1152 },
++  squareSize: 1536,
++
++  // Light offsets are in CAMERA space around the subject: `right` is the
++  // viewer's right, `toward` is toward the camera (negative = behind the
++  // athlete). Intensities are irradiance at the subject (DirectionalLight
++  // units); the spot's candela value is derived from its distance.
++  keyHex: 0xfff4e6,
++  keyIntensity: 2.2,
++  keyOffset: { right: 0.95, up: 1.05, toward: 0.85 },
++  rimHex: 0x38bdf8,
++  rimIntensity: 3.8,
++  rimOffset: { right: -0.75, up: 0.65, toward: -1.05 },
++  fillHex: 0x5b6b85,
++  fillIntensity: 0.35,
++  // In the arena the stadium lights already carry the scene; the studio rig
++  // only adds shape.
++  arenaKeyIntensity: 1.3,
++  arenaRimIntensity: 3.2,
++
++  // Portrait: chin height, ~1.15 m out, 12 degrees off axis, aimed just
++  // below head centre so the head sits centred.
++  portrait: { distance: 1.15, azimuth: 12, dropBelowHead: 0.16, lookAtRaise: -0.03, fov: 22 },
++  portraitB: { distance: 1.2, azimuth: -24, dropBelowHead: 0.22, lookAtRaise: -0.04, fov: 22 },
++  // Headgear hero shot: tighter, the angle comes from the catalog entry.
++  headgear: { fov: 24, lookAtRaise: 0.0 },
++  headgearRear: { azimuth: 180, elevation: 14, distance: 0.95 },
++  // Full body: lens at hip height looking at the sternum.
++  body: { distance: 3.9, azimuth: 18, lensHeight: 0.95, lookAtHeight: 0.92, fov: 28 },
++  bodySide: { distance: 3.9, azimuth: 72, lensHeight: 0.95, lookAtHeight: 0.92, fov: 28 },
++  action: { distance: 4.4, azimuth: 32, lensHeight: 1.0, lookAtHeight: 0.92, fov: 30 },
++  actionB: { distance: 4.4, azimuth: -28, lensHeight: 1.1, lookAtHeight: 0.92, fov: 30 },
++  // Group: the line-up at centre court.
++  group: { spacing: 1.15, distance: 9.4, lensHeight: 1.3, lookAtHeight: 0.95, fov: 31, azimuth: 0 },
++  groupAngle: { spacing: 1.15, distance: 10.5, lensHeight: 1.6, lookAtHeight: 0.95, fov: 31, azimuth: 28 },
++
++  idleClip: 'At Rest',
++  settleTicks: 180,
++});
++
++/**
++ * THE EDITORIAL SEVEN. Scenes are described in the athlete's own frame:
++ * origin at the feet, x to the right, z toward the back (so negative z is
++ * in front), yaw turns a cast member to its left. Cameras likewise.
++ */
++export const EXTRA_SHOTS = [
++  {
++    // The coin toss: captain and umpire squared up at centre court, shot low from the side.
++    name: 'coin_toss',
++    env: 'arena',
++    cast: [
++      { id: 'white', kit: 'home', clip: 'At Rest', time: 1.2, x: -0.75, z: 0, yaw: -Math.PI / 2 },
++      { id: 'black', kit: 'away', clip: 'At Rest', time: 6.4, x: 0.75, z: 0, yaw: Math.PI / 2 },
++    ],
++    cam: { x: 0.3, y: 0.55, z: -3.6, lookAt: { x: 0, y: 1.05, z: 0 }, fov: 34 },
++    light: { y: 1.1, key: 0.7, rim: 1.2, scale: 3 },
++  },
++  {
++    // The huddle: the whole rainbow in a ring, straight down from above.
++    name: 'huddle_topdown',
++    env: 'arena',
++    square: true,
++    cast: ['white', 'red', 'orange', 'yellow', 'green', 'teal', 'blue', 'purple', 'pink', 'black'].map((id, i) => {
++      const a = (i / 10) * Math.PI * 2;
++      return { id, kit: 'home', clip: 'idle', x: Math.sin(a) * 1.35, z: Math.cos(a) * 1.35, yaw: a };
++    }),
++    cam: { x: 0.001, y: 7.2, z: 0, lookAt: { x: 0, y: 0.6, z: 0 }, fov: 42 },
++    light: { y: 1.4, key: 0.6, rim: 0.8, scale: 5 },
++  },
++  {
++    // The spike: Malik at full extension, from the floor looking up.
++    name: 'spike_lowangle',
++    env: 'arena',
++    cast: [{ id: 'red', kit: 'home', clip: 'Standing Spike Right', time: 0.62, x: 0, z: 0, yaw: 0.35 }],
++    cam: { x: -1.7, y: 0.25, z: -2.8, lookAt: { x: 0.1, y: 1.45, z: 0 }, fov: 48 },
++    light: { y: 1.5, key: 0.9, rim: 1.4, scale: 3 },
++  },
++  {
++    // The dive: Bhavin coming straight at the lens.
++    name: 'dive_headon',
++    env: 'arena',
++    cast: [{ id: 'blue', kit: 'away', clip: 'Running Dive', time: 0.3, x: 0, z: 0, yaw: 0 }],
++    cam: { x: 0.6, y: 0.45, z: -3.4, lookAt: { x: 0, y: 0.9, z: 0 }, fov: 40 },
++    light: { y: 1.0, key: 0.9, rim: 1.3, scale: 3 },
++  },
++  {
++    // The cheer: Kimi at the top of her jump, Catarina calling it.
++    name: 'ouendan_cheer',
++    env: 'arena',
++    cast: [
++      { id: 'pink', kit: 'home', clip: 'Standing Jump', time: 0.95, x: -0.6, z: 0, yaw: 0.2 },
++      { id: 'yellow', kit: 'home', clip: 'Idle Two Hand Volley', time: 0.42, x: 0.7, z: 0.3, yaw: -0.25 },
++    ],
++    cam: { x: 1.3, y: 1.2, z: -4.6, lookAt: { x: 0, y: 1.35, z: 0 }, fov: 38 },
++    light: { y: 1.2, key: 0.8, rim: 1.2, scale: 3 },
++  },
++  {
++    // The walk-off: groundskeeper and rigger heading up court, over the shoulder.
++    name: 'walk_off',
++    env: 'arena',
++    cast: [
++      { id: 'green', kit: 'home', clip: 'Walk Forward', time: 0.55, x: -0.55, z: 0, yaw: 0 },
++      { id: 'teal', kit: 'home', clip: 'Running Forward', time: 0.3, x: 0.6, z: -0.4, yaw: 0 },
++    ],
++    cam: { x: 0.2, y: 0.8, z: 4.4, lookAt: { x: 0, y: 1.0, z: -2 }, fov: 36 },
++    light: { y: 1.2, key: 0.6, rim: 1.4, scale: 3.5 },
++  },
++  {
++    // The roster wall: all ten in the studio, two staggered rows, one slate backdrop.
++    name: 'roster_wall',
++    env: 'studio',
++    backdrop: 'white',
++    cast: [
++      { id: 'white', kit: 'home', clip: 'idle', x: -2.2, z: 0, yaw: 0.15 },
++      { id: 'red', kit: 'home', clip: 'idle', x: -1.1, z: 0, yaw: 0.08 },
++      { id: 'orange', kit: 'home', clip: 'idle', x: 0, z: 0, yaw: 0 },
++      { id: 'yellow', kit: 'home', clip: 'idle', x: 1.1, z: 0, yaw: -0.08 },
++      { id: 'green', kit: 'home', clip: 'idle', x: 2.2, z: 0, yaw: -0.15 },
++      { id: 'teal', kit: 'home', clip: 'idle', x: -1.65, z: 1.1, yaw: 0.1 },
++      { id: 'blue', kit: 'home', clip: 'idle', x: -0.55, z: 1.1, yaw: 0.04 },
++      { id: 'purple', kit: 'home', clip: 'idle', x: 0.55, z: 1.1, yaw: -0.04 },
++      { id: 'pink', kit: 'home', clip: 'idle', x: 1.65, z: 1.1, yaw: -0.1 },
++      { id: 'black', kit: 'home', clip: 'idle', x: 2.75, z: 1.1, yaw: -0.18 },
++    ],
++    cam: { x: 0.3, y: 1.5, z: -5.6, lookAt: { x: 0.25, y: 1.0, z: 0.4 }, fov: 34 },
++    light: { x: 0, y: 1.3, z: 0.5, scale: 5, key: 1.6, rim: 1.2 },
++  },
++];
++
++const _v = new THREE.Vector3();
++const _head = new THREE.Vector3();
++const _feet = new THREE.Vector3();
++const _forward = new THREE.Vector3();
++const _camRight = new THREE.Vector3();
++const _toward = new THREE.Vector3();
++const _lookAt = new THREE.Vector3();
++const _camPos = new THREE.Vector3();
++const _q = new THREE.Quaternion();
++const _m = new THREE.Matrix4();
++const _bindInv = new THREE.Matrix4();
++const _yAxis = new THREE.Vector3(0, 1, 0);
++const _scaleOut = new THREE.Vector3();
++const _rayOrigin = new THREE.Vector3();
++const _rayDown = new THREE.Vector3(0, -1, 0);
++
++/**
++ * @param {object} deps
++ * @param {import('three').WebGLRenderer} deps.renderer
++ * @param {import('three').Scene} deps.scene          the match scene (arena)
++ * @param {import('three').Loop} deps.loop
++ * @param {object[]} deps.athletes                    P1 is photographed; the rest are hidden
++ * @param {() => void} deps.restoreViewport
++ * @param {URLSearchParams} [deps.urlParams]
++ */
++export function createPhotoBooth({ renderer, scene, loop, athletes, restoreViewport, urlParams }) {
++  const params = urlParams || new URLSearchParams(window.location.search);
++  const athlete = athletes[0];
++  for (const other of athletes.slice(1)) {
++    if (other?.ragdoll?.group) other.ragdoll.group.visible = false;
++  }
++
++  // ---------------------------------------------------------------- studio
++  const studio = new THREE.Scene();
++  studio.name = 'photobooth-studio';
++
++  const rig = new THREE.Group();
++  rig.name = 'photobooth-rig';
++  studio.add(rig);
++
++  const key = new THREE.SpotLight(PHOTOBOOTH.keyHex, 1, 6, Math.PI * 0.22, 0.45, 1.2);
++  key.name = 'key';
++  key.castShadow = true;
++  key.shadow.mapSize.set(1024, 1024);
++  key.shadow.bias = -0.0004;
++  key.shadow.normalBias = 0.01;
++  key.shadow.camera.near = 0.2;
++  key.shadow.camera.far = 8;
++  rig.add(key, key.target);
++
++  const rim = new THREE.SpotLight(PHOTOBOOTH.rimHex, 1, 6, Math.PI * 0.26, 0.5, 1.0);
++  rim.name = 'rim';
++  rig.add(rim, rim.target);
++
++  const fill = new THREE.HemisphereLight(PHOTOBOOTH.fillHex, 0x05070b, PHOTOBOOTH.fillIntensity);
++  studio.add(fill);
++
++  const camera = new THREE.PerspectiveCamera(22, 1, 0.05, 60);
++  camera.name = 'photobooth-camera';
++
++  const backdrops = new Map();
++  let currentId = null;
++  let captureDone = null;
++  let previewMode = 'portrait';
++
++  // ------------------------------------------------------------- backdrop
++  function backdropFor(id) {
++    if (backdrops.has(id)) return backdrops.get(id);
++    const { center, edge } = CANONICAL_ROSTER[id].backdrop;
++    const size = 512;
++    const canvas = document.createElement('canvas');
++    canvas.width = size;
++    canvas.height = size;
++    const ctx = canvas.getContext('2d');
++    const grad = ctx.createRadialGradient(size * 0.5, size * 0.42, size * 0.05, size * 0.5, size * 0.5, size * 0.72);
++    grad.addColorStop(0, `#${center.toString(16).padStart(6, '0')}`);
++    grad.addColorStop(1, `#${edge.toString(16).padStart(6, '0')}`);
++    ctx.fillStyle = grad;
++    ctx.fillRect(0, 0, size, size);
++    const tex = new THREE.CanvasTexture(canvas);
++    tex.colorSpace = THREE.SRGBColorSpace;
++    backdrops.set(id, tex);
++    return tex;
++  }
++
++  // ------------------------------------------------------------ geometry
++  const headPart = () => athlete?.ragdoll?.rig?.get('head') || null;
++  const pelvisPart = () => athlete?.ragdoll?.rig?.get('pelvis') || null;
++
++  /** Head centre, flattened facing, and foot level, from the current visual pose. */
++  function measure() {
++    const head = headPart();
++    const pelvis = pelvisPart();
++    if (!head?.solidMesh || !pelvis?.mesh) return false;
++    athlete.ragdoll.group.updateMatrixWorld(true);
++    head.solidMesh.getWorldPosition(_head);
++    head.mesh.getWorldQuaternion(_q);
++    _forward.set(0, 0, -1).applyQuaternion(_q);
++    _forward.y = 0;
++    if (_forward.lengthSq() < 1e-6) _forward.set(0, 0, -1);
++    _forward.normalize();
++    // Foot level: the lowest extremity, or the motor's resting floor.
++    let minY = Infinity;
++    for (const k of ['footL', 'footR']) {
++      const f = athlete.ragdoll.rig.get(k);
++      if (f?.mesh) { f.mesh.getWorldPosition(_v); minY = Math.min(minY, _v.y - f.radius); }
++    }
++    pelvis.mesh.getWorldPosition(_feet);
++    _feet.y = Number.isFinite(minY) ? minY : _feet.y - 0.95;
++    return true;
++  }
++
++  /**
++   * Puts the camera `distance` from `target`, swung `azimuthDeg` from the
++   * facing direction (positive toward the athlete's right), raised
++   * `elevationDeg` above the target plane, and aims it at `lookAt`.
++   */
++  function placeCamera(target, distance, azimuthDeg, elevationDeg, lookAt, fov, aspect) {
++    const az = THREE.MathUtils.degToRad(azimuthDeg);
++    const el = THREE.MathUtils.degToRad(elevationDeg);
++    _camPos.copy(_forward).applyAxisAngle(_yAxis, -az).multiplyScalar(Math.cos(el) * distance);
++    _camPos.y = Math.sin(el) * distance;
++    _camPos.add(target);
++    camera.position.copy(_camPos);
++    camera.fov = fov;
++    camera.aspect = aspect;
++    camera.updateProjectionMatrix();
++    camera.lookAt(lookAt);
++  }
++
++  function placeLight(light, offset, irradiance) {
++    light.position.set(0, 0, 0)
++      .addScaledVector(_camRight, offset.right)
++      .addScaledVector(_yAxis, offset.up)
++      .addScaledVector(_toward, offset.toward);
++    light.target.position.set(0, 0, 0);
++    const d2 = light.position.lengthSq();
++    light.intensity = irradiance * d2;
++    light.distance = Math.sqrt(d2) * 3;
++  }
++
++  /** Parks the lighting rig on `anchor`, oriented to the camera. */
++  function lightFrom(anchor, keyI, rimI, scale = 1) {
++    rig.position.copy(anchor);
++    _toward.subVectors(camera.position, anchor);
++    _toward.y = 0;
++    _toward.normalize();
++    _camRight.crossVectors(_toward, _yAxis).normalize();
++    const k = PHOTOBOOTH.keyOffset;
++    const r = PHOTOBOOTH.rimOffset;
++    placeLight(key, { right: k.right * scale, up: k.up * scale, toward: k.toward * scale }, keyI);
++    placeLight(rim, { right: r.right * scale, up: r.up * scale, toward: r.toward * scale }, rimI);
++  }
++
++  // ---------------------------------------------------------------- poses
++  /**
++   * Poses the ragdoll VISUALS from a clip frame on the kinematic ghost.
++   * Returns a restore function. Nothing physical is touched.
++   */
++  function poseFromClip(clipName, time) {
++    const at = athlete.animTarget;
++    const rig = athlete.ragdoll?.rig;
++    if (!at?.root || !rig) return () => {};
++    const clip = at.clips.find((c) => c.name === clipName);
++    if (!clip) {
++      console.warn(`[photobooth] clip "${clipName}" not found; keeping the live pose`);
++      return () => {};
++    }
++
++    const saved = [];
++    at.root.traverse((o) => {
++      if (o.isBone) saved.push([o, o.position.clone(), o.quaternion.clone(), o.scale.clone()]);
++    });
++
++    const mixer = new THREE.AnimationMixer(at.root);
++    const action = mixer.clipAction(clip);
++    action.play();
++    mixer.setTime(Math.max(0, Math.min(clip.duration - 1e-3, time)));
++
++    // L5 root strip, as animtarget applies it: hips pinned horizontally to bind.
++    if (at.hips) {
++      at.hips.position[at.hipsAxisA] = at.hipsBindA;
++      at.hips.position[at.hipsAxisB] = at.hipsBindB;
++    }
++    at.root.updateMatrixWorld(true);
++
++    for (const [k, item] of rig) {
++      const bone = at.bones.get(k);
++      if (!bone || !item.mesh) continue;
++      _bindInv.copy(item.bindBoneWorld).invert();
++      _m.multiplyMatrices(bone.matrixWorld, _bindInv).multiply(item.bindBodyWorld);
++      _m.decompose(item.mesh.position, item.mesh.quaternion, _scaleOut);
++    }
++
++    return () => {
++      for (const [o, p, q, s] of saved) { o.position.copy(p); o.quaternion.copy(q); o.scale.copy(s); }
++      mixer.stopAllAction();
++      mixer.uncacheRoot(at.root);
++      at.root.updateMatrixWorld(true);
++    };
++  }
++
++  // ------------------------------------------------------------- dressing
++  function dress(id, headwearOverride = null, kitOverride = null) {
++    const entry = CANONICAL_ROSTER[id];
++    if (!entry) throw new Error(`[photobooth] unknown roster id "${id}"`);
++    const palette = PALETTES[entry.palette];
++    const headwear = headwearOverride || (HEADWEAR_CATALOG[entry.headwear] ? entry.headwear : 'none');
++    athlete.setTeamAndVariant(kitOverride || entry.kit, entry.variant, { primaryColor: palette.hex, headwear });
++    currentId = id;
++    return entry;
++  }
++
++  // ------------------------------------------------------------ rendering
++  function borrow(target) {
++    const group = athlete?.ragdoll?.group;
++    if (!group) return null;
++    if (group.parent !== target) target.add(group);
++    group.visible = true;
++    return group;
++  }
++
++  function withOutputSize(width, height, fn) {
++    const previousPixelRatio = renderer.getPixelRatio();
++    renderer.setPixelRatio(1);
++    renderer.setSize(width, height, false);
++    renderer.setScissorTest(false);
++    renderer.setViewport(0, 0, width, height);
++    try {
++      return fn();
++    } finally {
++      renderer.setPixelRatio(previousPixelRatio);
++      restoreViewport();
++    }
++  }
++
++  function snap(target) {
++    renderer.shadowMap.needsUpdate = true;
++    renderer.render(target, camera);
++    return renderer.domElement.toDataURL('image/png');
++  }
++
++  /** Portrait or headgear shot in the studio. */
++  function studioShot(kind, aspect, id, view = null) {
++    borrow(studio);
++    athlete.renderPose(1);
++    studio.background = backdropFor(id);
++    const head = headPart();
++    const headR = (head?.radius ?? 0.11) * (head?.solidMesh?.scale.x ?? 1);
++    measure();
++    if (kind === 'portrait') {
++      const p = view || PHOTOBOOTH.portrait;
++      _lookAt.copy(_head);
++      _lookAt.y += p.lookAtRaise;
++      const target = _head.clone();
++      target.y -= p.dropBelowHead;
++      placeCamera(target, p.distance, p.azimuth, 0, _lookAt, p.fov, aspect);
++    } else {
++      const entry = HEADWEAR_CATALOG[athlete.ragdoll.headwear] || HEADWEAR_CATALOG.none;
++      const s = view || entry.showcase;
++      _lookAt.copy(_head);
++      _lookAt.y += PHOTOBOOTH.headgear.lookAtRaise + headR * 0.15;
++      placeCamera(_head, s.distance, s.azimuth, s.elevation, _lookAt, PHOTOBOOTH.headgear.fov, aspect);
++    }
++    if (rig.parent !== studio) studio.add(rig);
++    lightFrom(_head, PHOTOBOOTH.keyIntensity, PHOTOBOOTH.rimIntensity);
++    return snap(studio);
++  }
++
++  /** Full-body shot in the arena, posed from a clip frame. */
++  function arenaShot(clipName, time, view, aspect) {
++    borrow(scene);
++    athlete.renderPose(1);
++    const restore = poseFromClip(clipName, time);
++    try {
++      measure();
++      const target = _feet.clone();
++      target.y += view.lensHeight;
++      _lookAt.copy(_feet);
++      _lookAt.y += view.lookAtHeight;
++      placeCamera(target, view.distance, view.azimuth, 0, _lookAt, view.fov, aspect);
++      if (rig.parent !== scene) scene.add(rig);
++      const anchor = _feet.clone();
++      anchor.y += 1.0;
++      lightFrom(anchor, PHOTOBOOTH.arenaKeyIntensity, PHOTOBOOTH.arenaRimIntensity, 2.2);
++      const data = snap(scene);
++      studio.add(rig);
++      return data;
++    } finally {
++      restore();
++    }
++  }
++
++  /** Floor height under a world XZ, from the arena meshes; null if none. */
++  const raycaster = new THREE.Raycaster();
++  function floorAt(x, z, fallbackY) {
++    const arena = scene.getObjectByName('arena-court') || scene.getObjectByName('arena-bowl') || scene;
++    _rayOrigin.set(x, fallbackY + 4, z);
++    raycaster.set(_rayOrigin, _rayDown);
++    raycaster.far = 12;
++    const hits = raycaster.intersectObject(arena, true);
++    for (const h of hits) {
++      if (h.object.isMesh && h.object.visible) return h.point.y;
++    }
++    return fallbackY;
++  }
++
++  /**
++   * A posed, dressed clone of the athlete, re-centred so its feet sit at the
++   * wrapper's origin and it faces the wrapper's -Z. Caller positions and
++   * yaws the wrapper. Returns { wrapper, dispose }.
++   */
++  function makeClone(id, kit, clipName, time, origin, forward) {
++    const entry = dress(id, null, kit);
++    athlete.renderPose(1);
++    const restore = poseFromClip(clipName === 'idle' ? PHOTOBOOTH.idleClip : clipName, clipName === 'idle' ? entry.idleTime : time);
++    athlete.ragdoll.group.updateMatrixWorld(true);
++    const clone = athlete.ragdoll.group.clone(true);
++    clone.visible = true; // the live group may be hidden while a scene is staged
++    clone.traverse((o) => {
++      if (o.isMesh) {
++        o.material = Array.isArray(o.material) ? o.material.map((m) => m.clone()) : o.material.clone();
++        o.visible = o.visible && !o.name.startsWith('ragdoll-wire');
++      }
++    });
++    restore();
++    // Re-centre: undo the athlete's world placement and facing.
++    const inner = new THREE.Group();
++    const yaw = Math.atan2(-forward.x, -forward.z); // athlete facing -> -Z
++    inner.rotation.y = -yaw;
++    clone.position.copy(origin).negate();
++    inner.add(clone);
++    const wrapper = new THREE.Group();
++    wrapper.add(inner);
++    const dispose = () => clone.traverse((o) => {
++      if (o.isMesh) { if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose()); else o.material.dispose(); }
++    });
++    return { wrapper, dispose };
++  }
++
++  /**
++   * A staged scene: `cast` is a list of { id, kit, clip, time, x, z, yaw }
++   * in a frame whose origin is the athlete's current feet and whose -Z is
++   * the athlete's facing (x is to the athlete's right, z toward its back).
++   * `cam` is { x, y, z, lookAt: {x,y,z}, fov } in the same frame.
++   */
++  function sceneShot(spec, aspect) {
++    borrow(scene);
++    athlete.renderPose(1);
++    measure();
++    const origin = _feet.clone();
++    const forward = _forward.clone();
++    const right = new THREE.Vector3().crossVectors(forward, _yAxis).normalize();
++    const toWorld = (x, y, z) => origin.clone().addScaledVector(right, x).addScaledVector(_yAxis, y).addScaledVector(forward, -z);
++
++    const target = spec.env === 'studio' ? studio : scene;
++    const stage = new THREE.Group();
++    stage.name = 'photobooth-stage';
++    const disposers = [];
++    athlete.ragdoll.group.visible = false;
++    for (const c of spec.cast) {
++      const x = c.x || 0;
++      const z = c.z || 0;
++      const w = toWorld(x, 0, z);
++      const y = spec.env === 'studio' ? origin.y : floorAt(w.x, w.z, origin.y);
++      const { wrapper, dispose } = makeClone(c.id, c.kit || 'home', c.clip || 'idle', c.time || 0, origin, forward);
++      wrapper.position.set(w.x, y + (c.lift || 0), w.z);
++      // Facing: yaw 0 faces the athlete's original direction; +ve turns to its left.
++      const faceWorld = Math.atan2(-forward.x, -forward.z) + (c.yaw || 0);
++      wrapper.rotation.y = faceWorld;
++      stage.add(wrapper);
++      disposers.push(dispose);
++    }
++    target.add(stage);
++    try {
++      if (spec.env === 'studio') studio.background = backdropFor(spec.backdrop || 'black');
++      const camPos = toWorld(spec.cam.x, spec.cam.y, spec.cam.z);
++      const look = toWorld(spec.cam.lookAt.x, spec.cam.lookAt.y, spec.cam.lookAt.z);
++      camera.position.copy(camPos);
++      camera.fov = spec.cam.fov;
++      camera.aspect = aspect;
++      camera.updateProjectionMatrix();
++      camera.lookAt(look);
++      if (rig.parent !== target) target.add(rig);
++      const anchor = toWorld(spec.light?.x || 0, spec.light?.y ?? 1.0, spec.light?.z || 0);
++      if (spec.env === 'studio') lightFrom(anchor, PHOTOBOOTH.keyIntensity * (spec.light?.key ?? 1), PHOTOBOOTH.rimIntensity * (spec.light?.rim ?? 1), spec.light?.scale || 2.4);
++      else lightFrom(anchor, PHOTOBOOTH.arenaKeyIntensity * (spec.light?.key ?? 0.8), PHOTOBOOTH.arenaRimIntensity * (spec.light?.rim ?? 1), spec.light?.scale || 3.5);
++      const data = snap(target);
++      studio.add(rig);
++      return data;
++    } finally {
++      target.remove(stage);
++      disposers.forEach((d) => d());
++      athlete.ragdoll.group.visible = true;
++    }
++  }
++
++  /** The rainbow line-up: clones of the dressed, posed athlete along a line at centre court. */
++  function groupShot(aspect, kit = 'home', g = PHOTOBOOTH.group) {
++    borrow(scene);
++    athlete.renderPose(1);
++    measure();
++    const origin = _feet.clone();
++    const forward = _forward.clone();
++    const right = new THREE.Vector3().crossVectors(forward, _yAxis).normalize();
++
++    const lineup = new THREE.Group();
++    lineup.name = 'photobooth-lineup';
++    const n = RAINBOW_ORDER.length;
++    // Floor heights first, with nothing of ours in the way of the rays.
++    athlete.ragdoll.group.visible = false;
++    const floors = RAINBOW_ORDER.map((_, i) => {
++      const offset = -(i - (n - 1) / 2) * g.spacing;
++      return floorAt(origin.x + right.x * offset, origin.z + right.z * offset, origin.y);
++    });
++    athlete.ragdoll.group.visible = true;
++    RAINBOW_ORDER.forEach((id, i) => {
++      const entry = dress(id, null, kit);
++      athlete.renderPose(1);
++      const restore = poseFromClip(PHOTOBOOTH.idleClip, entry.idleTime);
++      athlete.ragdoll.group.updateMatrixWorld(true);
++      const clone = athlete.ragdoll.group.clone(true);
++      clone.traverse((o) => {
++        if (o.isMesh) {
++          o.material = Array.isArray(o.material) ? o.material.map((m) => m.clone()) : o.material.clone();
++          o.visible = o.visible && !o.name.startsWith('ragdoll-wire');
++        }
++      });
++      restore();
++      const offset = -(i - (n - 1) / 2) * g.spacing;
++      clone.position.set(right.x * offset, floors[i] - origin.y, right.z * offset);
++      lineup.add(clone);
++    });
++    scene.add(lineup);
++    athlete.ragdoll.group.visible = false;
++
++    try {
++      const centre = origin.clone();
++      centre.y += g.lookAtHeight;
++      const target = origin.clone();
++      target.y += g.lensHeight;
++      _forward.copy(forward);
++      placeCamera(target, g.distance, g.azimuth, 0, centre, g.fov, aspect);
++      if (rig.parent !== scene) scene.add(rig);
++      const anchor = origin.clone();
++      anchor.y += 1.0;
++      lightFrom(anchor, PHOTOBOOTH.arenaKeyIntensity * 0.5, PHOTOBOOTH.arenaRimIntensity, 5.0);
++      const data = snap(scene);
++      studio.add(rig);
++      return data;
++    } finally {
++      scene.remove(lineup);
++      lineup.traverse((o) => {
++        if (o.isMesh) { if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose()); else o.material.dispose(); }
++      });
++      athlete.ragdoll.group.visible = true;
++    }
++  }
++
++  // ---------------------------------------------------------------- posts
++  async function post(name, dataUrl, tick) {
++    const response = await fetch(PHOTOBOOTH.endpoint, {
++      method: 'POST',
++      headers: { 'content-type': 'application/json' },
++      body: JSON.stringify({ name, dir: PHOTOBOOTH.outputDir, exact: true, tick, dataUrl }),
++    });
++    const body = await response.json().catch(() => null);
++    if (!response.ok) throw new Error(`[photobooth] ${response.status} ${(body && body.error) || 'capture failed'}`);
++    return body.path;
++  }
++
++  // --------------------------------------------------------------- shoots
++  /**
++   * Shoots the whole roster at the current tick: four shots each, the
++   * headgear variants, and the group photograph. Renders happen inside one
++   * JS turn; uploads follow.
++   */
++  async function captureRosterAvatars() {
++    const tick = loop.tick;
++    const P = PHOTOBOOTH.portraitSize;
++    const B = PHOTOBOOTH.bodySize;
++    const G = PHOTOBOOTH.groupSize;
++    const shots = [];
++    const started = currentId;
++
++    const bodyAspect = B.width / B.height;
++    for (const id of ROSTER_ORDER) {
++      const entry = dress(id);
++      const a2 = entry.action2 || entry.action;
++      shots.push({ name: `${id}_portrait`, data: withOutputSize(P, P, () => studioShot('portrait', 1, id)) });
++      shots.push({ name: `${id}_portrait_b`, data: withOutputSize(P, P, () => studioShot('portrait', 1, id, PHOTOBOOTH.portraitB)) });
++      shots.push({ name: `${id}_headgear`, data: withOutputSize(P, P, () => studioShot('headgear', 1, id)) });
++      shots.push({ name: `${id}_headgear_rear`, data: withOutputSize(P, P, () => studioShot('headgear', 1, id, PHOTOBOOTH.headgearRear)) });
++      shots.push({ name: `${id}_idle`, data: withOutputSize(B.width, B.height, () => arenaShot(PHOTOBOOTH.idleClip, entry.idleTime, PHOTOBOOTH.body, bodyAspect)) });
++      shots.push({ name: `${id}_idle_side`, data: withOutputSize(B.width, B.height, () => arenaShot(PHOTOBOOTH.idleClip, entry.idleTime, PHOTOBOOTH.bodySide, bodyAspect)) });
++      shots.push({ name: `${id}_action`, data: withOutputSize(B.width, B.height, () => arenaShot(entry.action.clip, entry.action.time, PHOTOBOOTH.action, bodyAspect)) });
++      shots.push({ name: `${id}_action_b`, data: withOutputSize(B.width, B.height, () => arenaShot(a2.clip, a2.time, PHOTOBOOTH.actionB, bodyAspect)) });
++    }
++    for (const [id, variants] of Object.entries(HEADWEAR_VARIANTS)) {
++      for (const hw of variants) {
++        dress(id, hw);
++        shots.push({ name: `variant_${id}_${hw}`, data: withOutputSize(P, P, () => studioShot('headgear', 1, id)) });
++      }
++    }
++    const groupAspect = G.width / G.height;
++    shots.push({ name: 'group_rainbow_home', data: withOutputSize(G.width, G.height, () => groupShot(groupAspect, 'home')) });
++    shots.push({ name: 'group_rainbow_away', data: withOutputSize(G.width, G.height, () => groupShot(groupAspect, 'away')) });
++    shots.push({ name: 'group_rainbow_angle', data: withOutputSize(G.width, G.height, () => groupShot(groupAspect, 'home', PHOTOBOOTH.groupAngle)) });
++    for (const extra of EXTRA_SHOTS) {
++      const w = extra.square ? PHOTOBOOTH.squareSize : PHOTOBOOTH.sceneSize.width;
++      const h = extra.square ? PHOTOBOOTH.squareSize : PHOTOBOOTH.sceneSize.height;
++      shots.push({ name: `extra_${extra.name}`, data: withOutputSize(w, h, () => sceneShot(extra, w / h)) });
++    }
++    dress(started || ROSTER_ORDER[0]);
++
++    const results = [];
++    for (const shot of shots) {
++      const path = await post(shot.name, shot.data, tick);
++      results.push({ name: shot.name, path });
++    }
++    // Spec-compatible aliases: avatars/<id>.png is the portrait.
++    for (const id of ROSTER_ORDER) {
++      const portrait = shots.find((s) => s.name === `${id}_portrait`);
++      if (portrait) results.push({ name: id, path: await post(id, portrait.data, tick) });
++    }
++    console.log(`[photobooth] ${results.length} files captured at tick ${tick}`);
++    captureDone = { tick, results };
++    window.__photoboothDone = captureDone;
++    return results;
++  }
++
++  /** Live preview: the current athlete in the chosen view, filling the canvas. */
++  function renderPreview(width, height) {
++    const aspect = width / height;
++    const id = currentId || ROSTER_ORDER[0];
++    const entry = CANONICAL_ROSTER[id];
++    renderer.setScissorTest(false);
++    renderer.setViewport(0, 0, width, height);
++    if (previewMode === 'idle' || previewMode === 'action') {
++      const clipName = previewMode === 'idle' ? PHOTOBOOTH.idleClip : entry.action.clip;
++      const time = previewMode === 'idle' ? entry.idleTime : entry.action.time;
++      borrow(scene);
++      const restore = poseFromClip(clipName, time);
++      measure();
++      const view = previewMode === 'idle' ? PHOTOBOOTH.body : PHOTOBOOTH.action;
++      const target = _feet.clone(); target.y += view.lensHeight;
++      _lookAt.copy(_feet); _lookAt.y += view.lookAtHeight;
++      placeCamera(target, view.distance, view.azimuth, 0, _lookAt, view.fov, aspect);
++      if (rig.parent !== scene) scene.add(rig);
++      const anchor = _feet.clone(); anchor.y += 1.0;
++      lightFrom(anchor, PHOTOBOOTH.arenaKeyIntensity, PHOTOBOOTH.arenaRimIntensity, 2.2);
++      renderer.shadowMap.needsUpdate = true;
++      renderer.render(scene, camera);
++      restore();
++      return;
++    }
++    borrow(studio);
++    studio.background = backdropFor(id);
++    measure();
++    if (previewMode === 'headgear') {
++      const hw = HEADWEAR_CATALOG[athlete.ragdoll.headwear] || HEADWEAR_CATALOG.none;
++      _lookAt.copy(_head);
++      placeCamera(_head, hw.showcase.distance, hw.showcase.azimuth, hw.showcase.elevation, _lookAt, PHOTOBOOTH.headgear.fov, aspect);
++    } else {
++      const p = PHOTOBOOTH.portrait;
++      _lookAt.copy(_head); _lookAt.y += p.lookAtRaise;
++      const target = _head.clone(); target.y -= p.dropBelowHead;
++      placeCamera(target, p.distance, p.azimuth, 0, _lookAt, p.fov, aspect);
++    }
++    if (rig.parent !== studio) studio.add(rig);
++    lightFrom(_head, PHOTOBOOTH.keyIntensity, PHOTOBOOTH.rimIntensity);
++    renderer.shadowMap.needsUpdate = true;
++    renderer.render(studio, camera);
++  }
++
++  // ----------------------------------------------------------- controls
++  const MODES = ['portrait', 'headgear', 'idle', 'action'];
++  function cycle(step) {
++    const index = Math.max(0, ROSTER_ORDER.indexOf(currentId));
++    const next = ROSTER_ORDER[(index + step + ROSTER_ORDER.length) % ROSTER_ORDER.length];
++    dress(next);
++    console.log(`[photobooth] previewing ${next}: ${CANONICAL_ROSTER[next].name} (${previewMode})`);
++  }
++  window.addEventListener('keydown', (event) => {
++    if (event.repeat) return;
++    if (event.code === 'ArrowRight') cycle(1);
++    else if (event.code === 'ArrowLeft') cycle(-1);
++    else if (event.code === 'ArrowUp' || event.code === 'ArrowDown') {
++      const i = MODES.indexOf(previewMode);
++      previewMode = MODES[(i + (event.code === 'ArrowDown' ? 1 : MODES.length - 1)) % MODES.length];
++      console.log(`[photobooth] view: ${previewMode}`);
++    } else if (event.code === 'Enter') captureRosterAvatars().catch((e) => console.error(String(e)));
++  });
++
++  // ------------------------------------------------------------- start-up
++  const previewId = params.get('athlete');
++  const autoCapture = params.get('auto') !== '0';
++  const settleTicks = Number(params.get('settleTick')) > 0 ? Number(params.get('settleTick')) : PHOTOBOOTH.settleTicks;
++  if (MODES.includes(params.get('view'))) previewMode = params.get('view');
++
++  dress(previewId && CANONICAL_ROSTER[previewId] ? previewId : ROSTER_ORDER[0]);
++
++  if (autoCapture) {
++    loop.onTick((tick) => {
++      if (tick === settleTicks) captureRosterAvatars().catch((e) => console.error(String(e)));
++      return undefined;
++    });
++  }
++
++  console.log(
++    `[photobooth] studio ready; previewing "${currentId}" (${previewMode}); ` +
++      (autoCapture ? `auto-capture at tick ${settleTicks}. ` : 'auto-capture off. ') +
++      'Left/Right cycle the roster, Up/Down cycle the view, Enter shoots everything (window.captureRosterAvatars()).',
++  );
++
++  return {
++    studio, camera, renderPreview, captureRosterAvatars, dress, poseFromClip,
++    get currentId() { return currentId; },
++    get done() { return captureDone; },
++    set view(mode) { if (MODES.includes(mode)) previewMode = mode; },
++    get view() { return previewMode; },
++  };
++}
+diff --git a/vite-plugin-capture.js b/vite-plugin-capture.js
+index 404e9d7..e0ce64a 100644
+--- a/vite-plugin-capture.js
++++ b/vite-plugin-capture.js
+@@ -77,6 +77,13 @@ export function createCaptureHandler(options = {}) {
+       const name = sanitiseName(payload && payload.name);
+       if (!name) return respond(res, 400, { error: 'capture name is empty after sanitising' });
+ 
++      // Optional sub-directory under captures/ (the Locker's avatars/), one
++      // segment only, sanitised exactly like the name so it cannot climb out.
++      const dir = payload && payload.dir !== undefined ? sanitiseName(payload.dir) : '';
++      if (payload && payload.dir !== undefined && !dir) {
++        return respond(res, 400, { error: 'capture dir is empty after sanitising' });
++      }
++
+       const tick = payload && payload.tick;
+       if (!Number.isFinite(tick)) return respond(res, 400, { error: 'tick must be a finite number' });
+ 
+@@ -92,14 +99,17 @@ export function createCaptureHandler(options = {}) {
+       // overwrites rather than accumulating. Only a capture that explicitly asks
+       // to be kept alongside its predecessors gets a timestamp — ISO 8601, with
+       // the characters that are illegal in filenames on Windows folded to '-'.
+-      const stem = `${name}_t${Math.trunc(tick)}`;
++      // `exact: true` writes `<name>.png` with no tick suffix: the file IS the
++      // deliverable (an avatar), not one frame of a comparison series.
++      const stem = payload.exact === true ? name : `${name}_t${Math.trunc(tick)}`;
+       const file = payload.timestamped === true
+         ? `${stem}_${new Date().toISOString().replace(/[:.]/g, '-')}.png`
+         : `${stem}.png`;
+-      const full = path.join(outDir, file);
++      const targetDir = dir ? path.join(outDir, dir) : outDir;
++      const full = path.join(targetDir, file);
+ 
+       try {
+-        fs.mkdirSync(outDir, { recursive: true });
++        fs.mkdirSync(targetDir, { recursive: true });
+         fs.writeFileSync(full, buffer);
+       } catch (error) {
+         return respond(res, 500, { error: `could not write capture: ${error.message}` });
+@@ -120,6 +130,9 @@ export default function capturePlugin(options = {}) {
+     configureServer(server) {
+       const handler = createCaptureHandler({ root: server.config.root, ...options });
+       server.middlewares.use('/__capture', handler);
++      // Same handler, the name the Locker spec uses. Both resolve from the
++      // server root regardless of Vite's `base`.
++      server.middlewares.use('/api/capture', handler);
+     },
+   };
+ }

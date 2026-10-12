@@ -1,0 +1,1980 @@
+diff --git a/package.json b/package.json
+index ee347ad..c9ca7af 100644
+--- a/package.json
++++ b/package.json
+@@ -5,7 +5,7 @@
+   "type": "module",
+   "description": "Valleyball \u2014 Physics volleyball simulation featuring deterministic ragdoll physics and AI opponents.",
+   "scripts": {
+-    "dev": "vite",
++    "dev": "vite --port 5176 --strictPort",
+     "build": "vite build",
+     "preview": "vite preview",
+     "deploy": "gh-pages -d dist",
+diff --git a/src/config/cosmetics.js b/src/config/cosmetics.js
+new file mode 100644
+index 0000000..d44c1b1
+--- /dev/null
++++ b/src/config/cosmetics.js
+@@ -0,0 +1,120 @@
++/**
++ * THE VALLEYBALL LOCKER REGISTRY
++ * Canonical color palettes, headwear catalog, and athlete presets.
++ *
++ * Pure data. No Rapier, no three.js, no wall-clock APIs: this file is safe to
++ * import from src/sim/, from the menus, and from offline scripts alike.
++ *
++ * Headwear `build` names resolve to exported functions in
++ * src/sim/cosmeticsBuilders.js. `null` means the slot stays empty.
++ *
++ * `showcase` on a headwear entry is the Photo Booth's hero angle for that
++ * piece: azimuth in degrees around the head from the face (positive swings
++ * the camera toward the athlete's RIGHT), elevation in degrees above the eye
++ * line, and distance in metres.
++ */
++
++export const PALETTES = {
++  white:   { hex: 0xF8FAFC, name: 'White',   role: 'captain' },
++  black:   { hex: 0x0F172A, name: 'Black',   role: 'umpire' },
++  blue:    { hex: 0x1D4ED8, name: 'Blue',    role: 'catcher' },
++  red:     { hex: 0xD90429, name: 'Red',     role: 'slugger' },
++  green:   { hex: 0x15803D, name: 'Green',   role: 'groundskeeper' },
++  purple:  { hex: 0x8B5CF6, name: 'Purple',  role: 'costumer' },
++  teal:    { hex: 0x06B6D4, name: 'Teal',    role: 'rigger' },
++  yellow:  { hex: 0xFFD60A, name: 'Yellow',  role: 'announcer' },
++  orange:  { hex: 0xEA580C, name: 'Orange',  role: 'scout' },
++  pink:    { hex: 0xEC4899, name: 'Pink',    role: 'fan' },
++};
++
++/**
++ * Base layers. `home` is the black kit, `away` the white kit; the accent
++ * colour on headwear is always the OPPOSITE of the base so trim reads.
++ */
++export const KITS = {
++  home: { name: 'Home (black)', body: 0x383b42, joint: 0x22242a, accent: 0xf1f5f9 },
++  away: { name: 'Away (white)', body: 0xffffff, joint: 0xd0d5dd, accent: 0x0f172a },
++};
++
++export const HEADWEAR_CATALOG = {
++  none:            { id: 'none',            name: 'Bare Dome',           tier: 'free',    slot: 'headwear', build: null,
++                     showcase: { azimuth: 60, elevation: 10, distance: 0.9 } },
++  manager_cap:     { id: 'manager_cap',     name: 'Manager Classic Cap', tier: 'free',    slot: 'headwear', build: 'createManagerCap',
++                     showcase: { azimuth: 45, elevation: -4, distance: 0.95 } },
++  sensor_visor:    { id: 'sensor_visor',    name: 'Sensor VISOR',        tier: 'premium', slot: 'headwear', build: 'createSensorVisor',
++                     showcase: { azimuth: 78, elevation: 2, distance: 0.9 } },
++  wicket_grill:    { id: 'wicket_grill',    name: 'Wicketkeeper Helmet', tier: 'premium', slot: 'headwear', build: 'createWicketGrill',
++                     showcase: { azimuth: 38, elevation: 8, distance: 0.95 } },
++  wrestler_bands:  { id: 'wrestler_bands',  name: 'Combat Horns',        tier: 'premium', slot: 'headwear', build: 'createCombatHorns',
++                     showcase: { azimuth: 25, elevation: 24, distance: 0.95 } },
++  wrestler_scrum:  { id: 'wrestler_scrum',  name: 'Scrum Cap Horns',     tier: 'premium', slot: 'headwear', build: 'createScrumCapHorns',
++                     showcase: { azimuth: 40, elevation: 18, distance: 0.95 } },
++  wrestler_laamb:  { id: 'wrestler_laamb',  name: 'Laamb Headband',      tier: 'premium', slot: 'headwear', build: 'createLaambBand',
++                     showcase: { azimuth: 55, elevation: 6, distance: 0.9 } },
++  terrace_visor:   { id: 'terrace_visor',   name: 'Terrace Field Hat',   tier: 'premium', slot: 'headwear', build: 'createTerraceFieldHat',
++                     showcase: { azimuth: 50, elevation: 28, distance: 1.0 } },
++  terrace_chullo:  { id: 'terrace_chullo',  name: 'Terrace Chullo',      tier: 'premium', slot: 'headwear', build: 'createTerraceChullo',
++                     showcase: { azimuth: 45, elevation: 12, distance: 0.95 } },
++  terrace_montera: { id: 'terrace_montera', name: 'Terrace Montera',     tier: 'premium', slot: 'headwear', build: 'createTerraceMontera',
++                     showcase: { azimuth: 50, elevation: 22, distance: 0.95 } },
++  couture_wrap:    { id: 'couture_wrap',    name: 'Silk Road Diadem',    tier: 'premium', slot: 'headwear', build: 'createCoutureDiadem',
++                     showcase: { azimuth: 12, elevation: 26, distance: 0.95 } },
++  rigger_band:     { id: 'rigger_band',     name: 'Wayfinder Cord',      tier: 'premium', slot: 'headwear', build: 'createWayfinderCord',
++                     showcase: { azimuth: 105, elevation: 8, distance: 0.9 } },
++  broadcaster_mic: { id: 'broadcaster_mic', name: 'Stadium Headset',     tier: 'premium', slot: 'headwear', build: 'createBroadcasterHeadset',
++                     showcase: { azimuth: -82, elevation: 4, distance: 0.95 } },
++  cursor_cap:      { id: 'cursor_cap',      name: 'Winged Courier Cap',  tier: 'premium', slot: 'headwear', build: 'createCourierCap',
++                     showcase: { azimuth: 150, elevation: 14, distance: 0.95 } },
++  ouendan_knot:    { id: 'ouendan_knot',    name: 'Bleacher Hachimaki',  tier: 'premium', slot: 'headwear', build: 'createOuendanHeadband',
++                     showcase: { azimuth: 135, elevation: 10, distance: 0.95 } },
++};
++
++/**
++ * Alternatives the Photo Booth renders side by side for an art pick. The
++ * roster's `headwear` is the current default of each set.
++ */
++export const HEADWEAR_VARIANTS = {
++  green: ['terrace_visor', 'terrace_chullo', 'terrace_montera'],
++  red:   ['wrestler_scrum', 'wrestler_bands', 'wrestler_laamb'],
++};
++
++/**
++ * `variant` is the silhouette ('classic' | 'masculine' | 'feminine'), `kit`
++ * the base layer. `idleTime` is the second of the 'At Rest' clip the Photo
++ * Booth freezes for the full-body idle (spread out so no two share a frame);
++ * `action` is the clip and second for the personality pose. `backdrop` is the
++ * portrait gradient (centre, edge), chosen for contrast against the kit.
++ */
++export const CANONICAL_ROSTER = {
++  white:  { id: 'white',  name: 'John Valleyball',             palette: 'white',  headwear: 'manager_cap',     variant: 'classic',   kit: 'home',
++            idleTime: 1.2,  action: { clip: 'Stop Walking', time: 1.35 },             backdrop: { center: 0x8a94a6, edge: 0x2b3240 } },
++  black:  { id: 'black',  name: 'Umpire Bot',                  palette: 'black',  headwear: 'sensor_visor',    variant: 'classic',   kit: 'away',
++            idleTime: 2.9,  action: { clip: 'Bash Hit Right', time: 1.05 },           backdrop: { center: 0x334155, edge: 0x0b1020 } },
++  blue:   { id: 'blue',   name: 'Bhavin "The Anchor" Bhasin',  palette: 'blue',   headwear: 'wicket_grill',    variant: 'masculine', kit: 'away',
++            idleTime: 4.6,  action: { clip: 'Running Dive', time: 0.30 },             backdrop: { center: 0x4a5a86, edge: 0x111a33 } },
++  red:    { id: 'red',    name: 'Malik "Striker" Modou',       palette: 'red',    headwear: 'wrestler_scrum',  variant: 'masculine', kit: 'home',
++            idleTime: 6.3,  action: { clip: 'Standing Spike Right', time: 0.62 },     backdrop: { center: 0xa36b6b, edge: 0x2e1416 } },
++  green:  { id: 'green',  name: 'Tupac "The Terrace" Quispe',  palette: 'green',  headwear: 'terrace_visor',   variant: 'classic',   kit: 'home',
++            idleTime: 8.0,  action: { clip: 'Walk Forward', time: 0.55 },             backdrop: { center: 0x7f9a86, edge: 0x1a2a1e } },
++  purple: { id: 'purple', name: 'Parisa "The Palette" Shirin', palette: 'purple', headwear: 'couture_wrap',    variant: 'feminine',  kit: 'away',
++            idleTime: 9.7,  action: { clip: 'Walk Strafe Right', time: 0.40 },        backdrop: { center: 0x5c4a86, edge: 0x1a1230 } },
++  teal:   { id: 'teal',   name: 'Kahu "The Toki" Manaaki',     palette: 'teal',   headwear: 'rigger_band',     variant: 'masculine', kit: 'home',
++            idleTime: 11.4, action: { clip: 'Running Forward', time: 0.30 },          backdrop: { center: 0x6f9aa3, edge: 0x14282e } },
++  yellow: { id: 'yellow', name: 'Doña Catarina Sol',           palette: 'yellow', headwear: 'broadcaster_mic', variant: 'feminine',  kit: 'home',
++            idleTime: 13.1, action: { clip: 'Idle Two Hand Volley', time: 0.42 },     backdrop: { center: 0xa3955c, edge: 0x2e2810 } },
++  orange: { id: 'orange', name: 'Vinny Valerius',              palette: 'orange', headwear: 'cursor_cap',      variant: 'classic',   kit: 'away',
++            idleTime: 14.8, action: { clip: 'Running Sprint', time: 0.24 },           backdrop: { center: 0x7a4a33, edge: 0x24130b } },
++  pink:   { id: 'pink',   name: 'Kimi "Hana" Kizuna',          palette: 'pink',   headwear: 'ouendan_knot',    variant: 'feminine',  kit: 'away',
++            idleTime: 16.0, action: { clip: 'Standing Jump', time: 0.95 },            backdrop: { center: 0x8a4a6e, edge: 0x2a1020 } },
++};
++
++/**
++ * Stable iteration order for the roster (object key order is insertion order
++ * in practice, but the photo booth and menus should not have to rely on it).
++ */
++export const ROSTER_ORDER = Object.freeze(Object.keys(CANONICAL_ROSTER));
++
++/** The rainbow line-up for the group photograph: neutrals as bookends. */
++export const RAINBOW_ORDER = Object.freeze([
++  'white', 'red', 'orange', 'yellow', 'green', 'teal', 'blue', 'purple', 'pink', 'black',
++]);
+diff --git a/src/main.js b/src/main.js
+index faedd85..7f7e05e 100644
+--- a/src/main.js
++++ b/src/main.js
+@@ -96,6 +96,7 @@ import { displayCoordinator } from './visuals/displayCoordinator.js';
+ import { soundManager } from './audio/soundManager.js';
+ import { createGui } from './debug/gui.js';
+ import { initCapture } from './debug/capture.js';
++import { createPhotoBooth } from './visuals/photoBooth.js';
+ import { initStateTrace } from './debug/stateTrace.js';
+ import { readFixture, applyFixtureServes, fixtureParksBall } from './debug/fixture.js';
+ 
+@@ -534,7 +535,9 @@ const spectatorCamera = new THREE.PerspectiveCamera(
+ );
+ 
+ const cinematicCamera = new CinematicCamera();
+-let gameState = 'menu'; // 'menu' | 'flyover' | 'match' | 'practice'
++let gameState = 'menu'; // 'menu' | 'flyover' | 'match' | 'practice' | 'photobooth'
++/** The Locker portrait studio, present only under `?mode=photobooth`. */
++let photoBooth = null;
+ let victoryCameraActive = false;
+ 
+ const _camTarget = new THREE.Vector3();
+@@ -1895,7 +1898,7 @@ function fixedUpdate(dt, tick) {
+ 
+   // 3 to 10 — ATHLETE PRE-PHYSICS MECHANICS (Drive, Jump, Slide, Dive, Strikes, Ghost, Tracking)
+   const isCountingDown = (gameState === 'match') && !!(matchState && matchState.isCountingDown);
+-  const isAthleteHeld = isCountingDown || (gameState === 'menu') || (gameState === 'flyover');
++  const isAthleteHeld = isCountingDown || (gameState === 'menu') || (gameState === 'flyover') || (gameState === 'photobooth');
+   const isBallHeld = (gameState === 'match' && isCountingDown) || (gameState === 'flyover');
+   const hoopNorthZ = TUNING.match?.hoopNorthZ ?? -40.0;
+   const hoopSouthZ = TUNING.match?.hoopSouthZ ?? 40.0;
+@@ -2340,6 +2343,12 @@ function render(alpha) {
+     athlete.renderPose(alpha);
+   }
+ 
++  // PHOTO BOOTH: the studio owns the whole canvas; no cameras, boards or HUD.
++  if (gameState === 'photobooth' && photoBooth) {
++    photoBooth.renderPreview(window.innerWidth, window.innerHeight);
++    return;
++  }
++
+   const frameDelta = Math.min(loop.frameTimeMs / 1000, TUNING.loop.maxFrameTime);
+   turfParticles.update(frameDelta);
+   goalCelebration.update(frameDelta);
+@@ -3849,6 +3858,40 @@ async function boot() {
+     }
+   }
+ 
++  // THE PHOTO BOOTH (`?mode=photobooth`): the Locker's portrait studio.
++  // Everything above still ran (physics, arena, athletes) so P1 stands in the
++  // real held-idle pose; from here on nothing match-related is shown or driven.
++  if (modeParam === 'photobooth') {
++    hideMainMenu();
++    hideInGameMenu();
++    hideVictoryScreen();
++    setHudVisible(false);
++    applyRenderSettings({ showControlsOverlay: false });
++    gameState = 'photobooth';
++    if (athletes[1]) athletes[1].setEnabled(false);
++    // Centre court, facing the camera side, via the same sanctioned teleport
++    // the determinism capture uses at boot (construction-class, not play).
++    if (athletes[0]) {
++      athletes[0].teleportTo((arenaPreset && arenaPreset.spawn) || { x: 0, y: 1.2, z: 0 }, 0);
++      playerCameras[0].resetSmoothing();
++    }
++    photoBooth = createPhotoBooth({
++      renderer,
++      scene,
++      loop,
++      athletes,
++      restoreViewport: applyViewportSize,
++      urlParams,
++    });
++    window.captureRosterAvatars = () => photoBooth.captureRosterAvatars();
++    window.__vb.photoBooth = photoBooth;
++    applyViewportSize();
++    if (loadingStatus) loadingStatus.textContent = 'OPENING THE PHOTO BOOTH...';
++    hideLoadingScreen();
++    loop.start();
++    return;
++  }
++
+   const skipMenuParam = urlParams.get('skipMenu');
+   const isCaptureRun = armedCaptureTick !== null || urlParams.has('captureTick');
+   const shouldSkipMenu = skipMenuParam === 'true' || isCaptureRun;
+diff --git a/src/sim/athlete.js b/src/sim/athlete.js
+index e7a521c..e569657 100644
+--- a/src/sim/athlete.js
++++ b/src/sim/athlete.js
+@@ -66,6 +66,7 @@ export function createAthlete({
+   variant = 'masculine',
+   primaryColor = null,
+   colorOverride = null,
++  headwear = null,
+   spawn = { x: 0, y: 1.5, z: 0, yaw: 0 },
+   assistPreset = 'standard',
+   scene,
+@@ -82,6 +83,8 @@ export function createAthlete({
+   let currentVariant = variant;
+   let currentPrimaryColor = primaryColor;
+   let currentColorOverride = colorOverride;
++  // Locker headwear id (HEADWEAR_CATALOG key). null = pre-locker legacy cap.
++  let currentHeadwear = headwear;
+ 
+   // 1. Motor sphere
+   const motor = createMotor();
+@@ -146,12 +149,14 @@ export function createAthlete({
+       variant: currentVariant,
+       primaryColor: currentPrimaryColor,
+       colorOverride: currentColorOverride,
++      headwear: currentHeadwear,
+     });
+     built.characterRoot = characterRoot;
+     built.team = currentTeam;
+     built.variant = currentVariant;
+     built.primaryColor = currentPrimaryColor;
+     built.colorOverride = currentColorOverride;
++    built.headwear = currentHeadwear;
+ 
+     scene.add(built.group);
+     ragdoll = built;
+@@ -259,6 +264,8 @@ export function createAthlete({
+     set primaryColor(val) { currentPrimaryColor = val; },
+     get colorOverride() { return currentColorOverride; },
+     set colorOverride(val) { currentColorOverride = val; },
++    get headwear() { return currentHeadwear; },
++    set headwear(val) { currentHeadwear = val; },
+     motor,
+     get ragdoll() { return ragdoll; },
+     get animTarget() { return animTarget; },
+@@ -295,6 +302,7 @@ export function createAthlete({
+           variant: currentVariant,
+           primaryColor: currentPrimaryColor,
+           colorOverride: currentColorOverride,
++          headwear: currentHeadwear,
+         });
+       }
+     },
+@@ -304,6 +312,13 @@ export function createAthlete({
+       if (newVariant) currentVariant = newVariant;
+       if (newColors?.primaryColor !== undefined) currentPrimaryColor = newColors.primaryColor;
+       if (newColors?.colorOverride !== undefined) currentColorOverride = newColors.colorOverride;
++      if (newColors?.headwear !== undefined) currentHeadwear = newColors.headwear;
++      athlete.refreshVisuals();
++    },
++
++    /** Locker: equip a HEADWEAR_CATALOG id (or 'none'). Survives respawns. */
++    setHeadwear(headwearId) {
++      currentHeadwear = headwearId;
+       athlete.refreshVisuals();
+     },
+ 
+diff --git a/src/sim/cosmeticsBuilders.js b/src/sim/cosmeticsBuilders.js
+new file mode 100644
+index 0000000..087adca
+--- /dev/null
++++ b/src/sim/cosmeticsBuilders.js
+@@ -0,0 +1,816 @@
++import * as THREE from 'three';
++
++/**
++ * THE VALLEYBALL LOCKER: procedural headwear builders.
++ *
++ * Every export is `create<Item>(radius, colors) -> THREE.Group`, where
++ * `radius` is the head sphere radius and `colors` is the object returned by
++ * getAthleteColors() in ragdoll.js ({ primary, bodyGrey, jointGrey, accent }).
++ *
++ * HEAD-LOCAL FRAME (matches the existing athletic cap in ragdoll.js):
++ *   origin = skull centre, +Y = up, -Z = forward (face), +Z = back, +X = right.
++ * Everything is expressed as a multiple of `radius`, so an item fits any head
++ * the rig derives and survives the feminine variant's 0.92 head scale.
++ *
++ * STRICTLY VISUAL. Nothing in this file knows Rapier exists: no colliders, no
++ * bodies, no mass. These groups are mounted under the head's solid mesh group
++ * and ride along with it; they never feed anything back into the simulation.
++ *
++ * DIRECTORY RULE (src/sim/): nothing here names a wall-clock or scheduler API.
++ *
++ * MATERIAL ROLES: every material carries `userData.colorRole` so that
++ * updateAthletePalette() recolors it when the kit or palette changes:
++ *   'primary'  team-colored fabric / metal                 -> colors.primary
++ *   'accent'   trim in the OPPOSITE of the base layer      -> colors.accent
++ *   'bodyGrey' neutral matte body-tone fixtures            -> colors.bodyGrey
++ *   'visor'    glowing elements (emissive 1.5)             -> primary (or accent on a black kit)
++ *   'fixed'    never recolored (greenstone, leather, foam)
++ */
++
++/** Emissive strength for 'visor' role materials, read back by updateAthletePalette. */
++export const VISOR_EMISSIVE_INTENSITY = 1.5;
++
++/** Pounamu / jade greenstone used by the Wayfinder Cord toki. Not team-tinted. */
++export const JADE_HEX = 0x2f8f6a;
++const LEATHER_HEX = 0x5b3a1e;
++const FOAM_HEX = 0x24262b;
++const PEARL_HEX = 0xf3ecdc;
++
++const UP = new THREE.Vector3(0, 1, 0);
++const _dir = new THREE.Vector3();
++const _mid = new THREE.Vector3();
++
++// ---------------------------------------------------------------------------
++// Materials
++// ---------------------------------------------------------------------------
++
++function roleMaterial(role, color, extra) {
++  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.62, metalness: 0.06, ...extra });
++  mat.userData.colorRole = role;
++  return mat;
++}
++const primaryMaterial = (c, extra = {}) => roleMaterial('primary', c.primary, extra);
++const accentMaterial = (c, extra = {}) => roleMaterial('accent', c.accent, { roughness: 0.55, metalness: 0.1, ...extra });
++const bodyGreyMaterial = (c, extra = {}) => roleMaterial('bodyGrey', c.bodyGrey, { roughness: c.roughness ?? 0.82, metalness: c.metalness ?? 0.04, ...extra });
++const fixedMaterial = (hex, extra = {}) => roleMaterial('fixed', hex, { roughness: 0.5, metalness: 0.08, ...extra });
++
++function visorMaterial(colors, extra = {}) {
++  const mat = new THREE.MeshStandardMaterial({
++    color: colors.primary,
++    emissive: colors.primary,
++    emissiveIntensity: VISOR_EMISSIVE_INTENSITY,
++    roughness: 0.28,
++    metalness: 0.18,
++    ...extra,
++  });
++  mat.userData.colorRole = 'visor';
++  mat.userData.emissiveIntensity = VISOR_EMISSIVE_INTENSITY;
++  return mat;
++}
++
++const METAL = { roughness: 0.28, metalness: 0.7 };
++
++// ---------------------------------------------------------------------------
++// Geometry helpers
++// ---------------------------------------------------------------------------
++
++function mesh(geometry, material, name) {
++  const m = new THREE.Mesh(geometry, material);
++  m.castShadow = true;
++  m.receiveShadow = false;
++  if (name) m.name = name;
++  return m;
++}
++
++/**
++ * A horizontal ring (or ring segment) around the skull, centred on the face.
++ * `arc` is the swept angle; `arc = 2π` is a full headband. `facing` rotates
++ * the segment's centre around +Y: 0 = forward (-Z), π = backward (+Z).
++ * After the lay-flat the mesh's LOCAL Z is world-up: scale `.z` to make a
++ * band taller or flatter.
++ */
++function ring(radius, tube, arc, material, { y = 0, facing = 0, name, tall = 1 } = {}) {
++  const geo = new THREE.TorusGeometry(radius, tube, 10, Math.max(16, Math.round(arc * 14)), arc);
++  const m = mesh(geo, material, name);
++  m.rotation.set(0, (Math.PI - arc) / 2 + facing, 0);
++  m.rotateX(-Math.PI / 2);
++  m.position.y = y;
++  m.scale.z = tall;
++  return m;
++}
++
++/** A straight strut between two head-local points. */
++function strut(from, to, thickness, material, name) {
++  _dir.subVectors(to, from);
++  const length = _dir.length();
++  const geo = new THREE.CylinderGeometry(thickness, thickness, length, 10, 1);
++  const m = mesh(geo, material, name);
++  _mid.addVectors(from, to).multiplyScalar(0.5);
++  m.position.copy(_mid);
++  m.quaternion.setFromUnitVectors(UP, _dir.normalize());
++  return m;
++}
++
++/** Upper skull dome: a sphere cap from the apex down to polar angle `phi`. */
++function dome(radius, phi, material, name) {
++  return mesh(new THREE.SphereGeometry(radius, 36, 18, 0, Math.PI * 2, 0, phi), material, name);
++}
++
++/** A conical skirt: a brim that droops (`drop` > 0) or lifts (`drop` < 0) from `inner` to `outer`. */
++function brim(inner, outer, drop, thickness, material, name) {
++  const h = Math.max(Math.abs(drop), thickness);
++  const geo = new THREE.CylinderGeometry(drop >= 0 ? inner : outer, drop >= 0 ? outer : inner, h, 48, 1, true);
++  const m = mesh(geo, material, name);
++  m.material.side = THREE.DoubleSide;
++  return m;
++}
++
++/**
++ * A curved baseball bill extending forward from the crown rim: pitched down,
++ * curled at the sides. `direction` -1 = forward, +1 = backward.
++ */
++function curvedBill(radius, rimRadius, rimY, length, thickness, material, direction, name) {
++  const uSteps = 20;
++  const tSteps = 8;
++  const thetaMax = Math.PI * 0.40;
++  const pitch = 0.30;
++  const curl = radius * 0.16;
++  const positions = [];
++  const indices = [];
++  const point = (u, t, layer) => {
++    const theta = u * thetaMax;
++    const profile = Math.max(0, Math.cos(u * Math.PI * 0.5));
++    const bx = rimRadius * Math.sin(theta);
++    const bz = direction * rimRadius * Math.cos(theta);
++    const off = layer === 'top' ? thickness * 0.5 : -thickness * 0.5;
++    if (t <= 0) return [bx * 0.94, rimY + off, bz * 0.94];
++    const L = length * Math.pow(profile, 0.6) * t;
++    const x = bx + Math.sin(theta * 0.6) * L * Math.cos(pitch);
++    const z = bz + direction * Math.cos(theta * 0.6) * L * Math.cos(pitch);
++    const y = rimY - L * Math.sin(pitch) - curl * u * u * t + off;
++    return [x, y, z];
++  };
++  for (const layer of ['top', 'bottom']) {
++    for (let j = 0; j <= tSteps; j++) {
++      const t = j === 0 ? -0.1 : j / tSteps;
++      for (let i = 0; i <= uSteps; i++) positions.push(...point((i / uSteps) * 2 - 1, t, layer));
++    }
++  }
++  const row = uSteps + 1;
++  const layerSize = (tSteps + 1) * row;
++  for (let j = 0; j < tSteps; j++) {
++    for (let i = 0; i < uSteps; i++) {
++      const a = j * row + i;
++      indices.push(a, a + row + 1, a + 1, a, a + row, a + row + 1);
++      const b = layerSize + a;
++      indices.push(b, b + 1, b + row + 1, b, b + row + 1, b + row);
++    }
++  }
++  for (let i = 0; i < uSteps; i++) {
++    const t = tSteps * row + i;
++    const b = layerSize + t;
++    indices.push(t, t + 1, b + 1, t, b + 1, b);
++  }
++  const geo = new THREE.BufferGeometry();
++  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
++  geo.setIndex(indices);
++  geo.computeVertexNormals();
++  const m = mesh(geo, material, name);
++  m.material.side = THREE.DoubleSide;
++  return m;
++}
++
++function group(name) {
++  const g = new THREE.Group();
++  g.name = name;
++  return g;
++}
++
++/** Position on the skull surface at yaw `a` (0 = face, +ve toward +X) and height `y`. */
++function onSkull(R, a, y) {
++  return new THREE.Vector3(R * Math.sin(a), y, -R * Math.cos(a));
++}
++
++// ---------------------------------------------------------------------------
++// WHITE: Manager Classic Cap
++// ---------------------------------------------------------------------------
++
++/**
++ * A classic six-panel ball cap: high crown with panel seams, curved bill,
++ * squatchee button, sweatband trim and a rear strap.
++ */
++export function createManagerCap(radius, colors) {
++  const g = group('headwear-manager_cap');
++  const fabric = primaryMaterial(colors, { roughness: 0.7 });
++  const trim = accentMaterial(colors);
++
++  const crownR = radius * 1.10;
++  const phiRim = Math.PI * 0.46;
++  const yRim = crownR * Math.cos(phiRim);
++  const rRim = crownR * Math.sin(phiRim);
++
++  const crown = dome(crownR, phiRim, fabric, 'crown');
++  crown.position.y = radius * 0.04;
++  crown.scale.y = 1.12; // the taller crown of a classic cap
++  g.add(crown);
++
++  // Six panel seams: meridians from the button down to the rim.
++  for (let i = 0; i < 6; i++) {
++    const a = (i / 6) * Math.PI * 2;
++    const seam = mesh(new THREE.TorusGeometry(crownR * 1.005, radius * 0.012, 6, 24, phiRim), trim, `seam-${i}`);
++    seam.rotation.set(0, 0, Math.PI / 2); // arc starts at +Y (the button)
++    seam.rotateX(Math.PI / 2 + a);
++    seam.position.y = radius * 0.04;
++    seam.scale.y = 1.12;
++    g.add(seam);
++  }
++
++  g.add(ring(rRim, radius * 0.045, Math.PI * 2, trim, { y: yRim + radius * 0.02, name: 'sweatband' }));
++
++  g.add(curvedBill(radius, rRim, yRim + radius * 0.01, radius * 1.05, radius * 0.045, fabric, -1, 'bill'));
++
++  const button = mesh(new THREE.SphereGeometry(radius * 0.09, 14, 10), trim, 'button');
++  button.position.y = crownR * 1.12 + radius * 0.02;
++  g.add(button);
++
++  const strap = ring(rRim * 0.98, radius * 0.05, Math.PI * 0.45, trim, { y: yRim + radius * 0.06, facing: Math.PI, name: 'strap', tall: 1.4 });
++  g.add(strap);
++  return g;
++}
++
++// ---------------------------------------------------------------------------
++// BLACK: Sensor VISOR
++// ---------------------------------------------------------------------------
++
++/**
++ * A temple-to-temple curved VISOR in the La Forge tradition: a flat metallic
++ * band with ribbed emissive slits, clipped at the temples.
++ */
++export function createSensorVisor(radius, colors) {
++  const g = group('headwear-sensor_visor');
++  const housing = accentMaterial(colors, { roughness: 0.4, metalness: 0.55 });
++  const glow = visorMaterial(colors);
++
++  const yEye = radius * 0.10;
++  const R = radius * 1.10;
++
++  // The band: wide, flat, wrapping past the temples.
++  g.add(ring(R, radius * 0.16, Math.PI * 1.08, housing, { y: yEye, name: 'band', tall: 0.72 }));
++
++  // Ribbed emissive slits across the front.
++  for (const dy of [-0.055, 0, 0.055]) {
++    g.add(ring(R + radius * 0.165, radius * 0.024, Math.PI * 0.98, glow, { y: yEye + radius * dy, name: `slit-${dy}` }));
++  }
++
++  // Temple clips: blocky anchors with an emissive status dot.
++  for (const side of [-1, 1]) {
++    const tag = side < 0 ? 'l' : 'r';
++    const clip = mesh(new THREE.BoxGeometry(radius * 0.16, radius * 0.26, radius * 0.34), housing, `clip-${tag}`);
++    clip.position.set(side * radius * 1.12, yEye, radius * 0.12);
++    clip.rotation.y = side * 0.28;
++    g.add(clip);
++    const dot = mesh(new THREE.SphereGeometry(radius * 0.05, 10, 8), glow, `dot-${tag}`);
++    dot.position.set(side * radius * 1.21, yEye + radius * 0.08, radius * 0.05);
++    g.add(dot);
++    // Arm back over the ear to the skull.
++    g.add(strut(new THREE.Vector3(side * radius * 1.1, yEye, radius * 0.28), new THREE.Vector3(side * radius * 0.95, yEye + radius * 0.05, radius * 0.72), radius * 0.035, housing, `arm-${tag}`));
++  }
++  return g;
++}
++
++// ---------------------------------------------------------------------------
++// BLUE: Wicketkeeper Helmet
++// ---------------------------------------------------------------------------
++
++/**
++ * A proper protective helmet: shell down over the ears, short peak, ear
++ * guards, and a full face grille in the accent colour.
++ */
++export function createWicketGrill(radius, colors) {
++  const g = group('headwear-wicket_grill');
++  const shell = primaryMaterial(colors, { roughness: 0.4, metalness: 0.15 });
++  const bars = accentMaterial(colors, { roughness: 0.45, metalness: 0.5 });
++
++  const shellR = radius * 1.12;
++  const phiShell = Math.PI * 0.58;
++  g.add(dome(shellR, phiShell, shell, 'shell'));
++
++  // Short peak over the brow.
++  const yRim = shellR * Math.cos(phiShell);
++  const rRim = shellR * Math.sin(phiShell);
++  g.add(curvedBill(radius, rRim, yRim + radius * 0.14, radius * 0.5, radius * 0.05, shell, -1, 'peak'));
++
++  // Ear guards.
++  for (const side of [-1, 1]) {
++    const guard = mesh(new THREE.CylinderGeometry(radius * 0.36, radius * 0.36, radius * 0.14, 24), shell, side < 0 ? 'ear-l' : 'ear-r');
++    guard.rotation.z = Math.PI / 2;
++    guard.position.set(side * radius * 1.06, -radius * 0.05, 0);
++    g.add(guard);
++  }
++
++  // Face grille: hoops and uprights from the eye line to below the chin.
++  const R = radius * 1.18;
++  const bar = radius * 0.034;
++  for (const y of [0.12, -0.08, -0.28, -0.48]) {
++    g.add(ring(R, bar, Math.PI * 0.9, bars, { y: radius * y, name: `hoop-${y}` }));
++  }
++  for (const a of [-0.8, -0.27, 0.27, 0.8]) {
++    g.add(strut(onSkull(R, a, radius * 0.2), onSkull(R, a, -radius * 0.6), bar, bars, `upright-${a}`));
++  }
++  // Grille anchors up to the ear guards.
++  for (const side of [-1, 1]) {
++    g.add(strut(onSkull(R, side * 0.8, radius * 0.2), new THREE.Vector3(side * radius * 1.05, radius * 0.05, -radius * 0.2), bar, bars, `anchor-${side}`));
++  }
++  return g;
++}
++
++// ---------------------------------------------------------------------------
++// RED: three takes on the Combat Horns
++// ---------------------------------------------------------------------------
++
++function horn(radius, material, side, height, baseR, name) {
++  const spike = mesh(new THREE.ConeGeometry(baseR, height, 14), material, name);
++  spike.position.set(side * radius * 0.84, radius * 0.72 + height * 0.42, -radius * 0.12);
++  spike.rotation.set(-0.22, 0, side * -0.66);
++  return spike;
++}
++
++/** The original: angled horns rising from flattened temple pads and a brow band. */
++export function createCombatHorns(radius, colors) {
++  const g = group('headwear-wrestler_bands');
++  const hornMat = primaryMaterial(colors, { roughness: 0.45 });
++  const pad = accentMaterial(colors);
++
++  for (const side of [-1, 1]) {
++    const tag = side < 0 ? 'l' : 'r';
++    const temple = mesh(new THREE.SphereGeometry(radius * 0.40, 18, 14), pad, `pad-${tag}`);
++    temple.position.set(side * radius * 0.90, radius * 0.30, -radius * 0.10);
++    temple.scale.set(0.38, 1, 1);
++    g.add(temple);
++    g.add(horn(radius, hornMat, side, radius * 1.05, radius * 0.24, `horn-${tag}`));
++  }
++  g.add(ring(radius * 1.04, radius * 0.06, Math.PI * 1.35, pad, { y: radius * 0.30, facing: Math.PI, name: 'band' }));
++  return g;
++}
++
++/** A laced rugby scrum cap in the accent colour, horns rising out of the ear pads. */
++export function createScrumCapHorns(radius, colors) {
++  const g = group('headwear-wrestler_scrum');
++  const cap = accentMaterial(colors, { roughness: 0.8 });
++  const lace = primaryMaterial(colors, { roughness: 0.7 });
++  const hornMat = primaryMaterial(colors, { roughness: 0.45 });
++
++  // Padded skull cap down over the ears.
++  // Skull cap to the eye line; the face stays open.
++  const capR = radius * 1.09;
++  g.add(dome(capR, Math.PI * 0.5, cap, 'cap'));
++  // Quilted ridges.
++  for (const phi of [0.2, 0.34, 0.48]) {
++    const y = capR * Math.cos(Math.PI * phi);
++    g.add(ring(capR * Math.sin(Math.PI * phi) * 1.01, radius * 0.025, Math.PI * 2, cap, { y, name: `ridge-${phi}` }));
++  }
++  // Ear pads.
++  for (const side of [-1, 1]) {
++    const tag = side < 0 ? 'l' : 'r';
++    const pad = mesh(new THREE.CylinderGeometry(radius * 0.38, radius * 0.38, radius * 0.16, 24), cap, `earpad-${tag}`);
++    pad.rotation.z = Math.PI / 2;
++    pad.position.set(side * radius * 1.06, -radius * 0.02, 0);
++    g.add(pad);
++    const rim = mesh(new THREE.TorusGeometry(radius * 0.30, radius * 0.04, 8, 24), cap, `earrim-${tag}`);
++    rim.rotation.y = Math.PI / 2;
++    rim.position.set(side * radius * 1.15, -radius * 0.02, 0);
++    g.add(rim);
++    g.add(horn(radius, hornMat, side, radius * 1.2, radius * 0.26, `horn-${tag}`));
++  }
++  // Front lace: three crosses up the forehead opening.
++  for (const y of [0.1, 0.28, 0.46]) {
++    const w = radius * 0.16;
++    const z = -Math.sqrt(Math.max(0, capR * capR - (y * radius) ** 2)) * 1.01;
++    g.add(strut(new THREE.Vector3(-w, radius * (y - 0.06), z), new THREE.Vector3(w, radius * (y + 0.06), z), radius * 0.02, lace, `lace-a-${y}`));
++    g.add(strut(new THREE.Vector3(w, radius * (y - 0.06), z), new THREE.Vector3(-w, radius * (y + 0.06), z), radius * 0.02, lace, `lace-b-${y}`));
++  }
++  // Chin strap: hugs the jaw from ear pad to ear pad under the chin.
++  g.add(ring(radius * 0.74, radius * 0.035, Math.PI * 0.95, cap, { y: -radius * 0.72, facing: 0, name: 'chinstrap', tall: 1.6 }));
++  return g;
++}
++
++/** Senegalese Laamb: a tied cloth headband hung with gris-gris amulet pouches. */
++export function createLaambBand(radius, colors) {
++  const g = group('headwear-wrestler_laamb');
++  const cloth = primaryMaterial(colors, { roughness: 0.85 });
++  const cord = accentMaterial(colors, { roughness: 0.9 });
++  const leather = fixedMaterial(LEATHER_HEX, { roughness: 0.75 });
++
++  const yBand = radius * 0.30;
++  g.add(ring(radius * 1.05, radius * 0.075, Math.PI * 2, cloth, { y: yBand, name: 'band', tall: 2.1 }));
++
++  // Knot at the back-left with two cloth tails.
++  const k = onSkull(radius * 1.08, Math.PI * 0.82, yBand);
++  const knot = mesh(new THREE.SphereGeometry(radius * 0.15, 14, 10), cloth, 'knot');
++  knot.position.copy(k);
++  g.add(knot);
++  for (const [dx, dy, dz, tag] of [[0.12, -0.42, 0.22, 'a'], [-0.08, -0.5, 0.3, 'b']]) {
++    const tail = mesh(new THREE.BoxGeometry(radius * 0.11, radius * 0.02, radius * 0.5), cloth, `tail-${tag}`);
++    tail.position.set(k.x + radius * dx, k.y + radius * dy, k.z + radius * dz);
++    tail.rotation.set(1.1, dx * 2, 0);
++    g.add(tail);
++  }
++
++  // Gris-gris: leather pouches on cords at the brow and both temples.
++  for (const a of [-0.55, 0, 0.55]) {
++    const top = onSkull(radius * 1.05, a, yBand - radius * 0.06);
++    const bottom = onSkull(radius * 1.08, a, yBand - radius * 0.34);
++    g.add(strut(top, bottom, radius * 0.018, cord, `cord-${a}`));
++    const pouch = mesh(new THREE.BoxGeometry(radius * 0.17, radius * 0.2, radius * 0.08), leather, `pouch-${a}`);
++    pouch.position.copy(bottom);
++    pouch.position.y -= radius * 0.1;
++    pouch.rotation.y = a;
++    g.add(pouch);
++  }
++  return g;
++}
++
++// ---------------------------------------------------------------------------
++// GREEN: three takes on the Terrace hat
++// ---------------------------------------------------------------------------
++
++/** A wide-brim field hat: tall crown, drooping brim, accent hat band. */
++export function createTerraceFieldHat(radius, colors) {
++  const g = group('headwear-terrace_visor');
++  const felt = primaryMaterial(colors, { roughness: 0.85 });
++  const band = accentMaterial(colors, { roughness: 0.7 });
++
++  const yBase = radius * 0.30;
++  const crownR = radius * 1.08;
++  const crownH = radius * 0.55;
++  const wall = mesh(new THREE.CylinderGeometry(crownR * 0.94, crownR, crownH, 36, 1, true), felt, 'crown-wall');
++  wall.material.side = THREE.DoubleSide;
++  wall.position.y = yBase + crownH / 2;
++  g.add(wall);
++  const top = dome(crownR * 0.94, Math.PI * 0.5, felt, 'crown-top');
++  top.position.y = yBase + crownH;
++  top.scale.y = 0.55;
++  g.add(top);
++
++  const b = brim(crownR, radius * 1.95, radius * 0.28, radius * 0.03, felt, 'brim');
++  b.position.y = yBase - radius * 0.12;
++  g.add(b);
++
++  g.add(ring(crownR * 1.01, radius * 0.06, Math.PI * 2, band, { y: yBase + radius * 0.12, name: 'hatband', tall: 1.5 }));
++  // Band knot and tail at the back.
++  const knot = mesh(new THREE.SphereGeometry(radius * 0.09, 12, 8), band, 'band-knot');
++  knot.position.copy(onSkull(crownR * 1.06, Math.PI, yBase + radius * 0.12));
++  g.add(knot);
++  return g;
++}
++
++/** An Andean chullo: knitted cap with stripes, ear flaps, tassels and pompoms. */
++export function createTerraceChullo(radius, colors) {
++  const g = group('headwear-terrace_chullo');
++  const knit = primaryMaterial(colors, { roughness: 0.95 });
++  const stripe = accentMaterial(colors, { roughness: 0.95 });
++
++  const capR = radius * 1.10;
++  g.add(dome(capR, Math.PI * 0.6, knit, 'cap'));
++  for (const phi of [0.18, 0.34, 0.5]) {
++    const y = capR * Math.cos(Math.PI * phi);
++    g.add(ring(capR * Math.sin(Math.PI * phi) * 1.01, radius * 0.04, Math.PI * 2, stripe, { y, name: `stripe-${phi}`, tall: 1.3 }));
++  }
++  // Top pompom on a short stalk.
++  g.add(strut(new THREE.Vector3(0, capR, 0), new THREE.Vector3(0, capR + radius * 0.18, 0), radius * 0.03, stripe, 'stalk'));
++  const pom = mesh(new THREE.SphereGeometry(radius * 0.16, 14, 10), stripe, 'pompom');
++  pom.position.y = capR + radius * 0.3;
++  g.add(pom);
++
++  // Ear flaps with braided tassels and pompoms.
++  for (const side of [-1, 1]) {
++    const tag = side < 0 ? 'l' : 'r';
++    // Ear flap: a thin tapered panel hanging just outside the ear.
++    const flap = mesh(new THREE.CylinderGeometry(radius * 0.36, radius * 0.16, radius * 0.75, 4, 1), knit, `flap-${tag}`);
++    flap.position.set(side * radius * 1.08, -radius * 0.28, 0.0);
++    flap.rotation.set(0, Math.PI / 4, side * 0.1);
++    flap.scale.set(0.22, 1, 1);
++    g.add(flap);
++    const a = new THREE.Vector3(side * radius * 1.02, -radius * 0.55, 0);
++    const b = new THREE.Vector3(side * radius * 1.08, -radius * 1.05, radius * 0.06);
++    g.add(strut(a, b, radius * 0.025, stripe, `tassel-${tag}`));
++    const tip = mesh(new THREE.SphereGeometry(radius * 0.1, 12, 8), stripe, `tassel-pom-${tag}`);
++    tip.position.copy(b);
++    g.add(tip);
++  }
++  return g;
++}
++
++/** A highland montera: shallow round crown, flat upturned brim, beaded fringe. */
++export function createTerraceMontera(radius, colors) {
++  const g = group('headwear-terrace_montera');
++  const wool = primaryMaterial(colors, { roughness: 0.9 });
++  const trim = accentMaterial(colors, { roughness: 0.7 });
++
++  // The montera perches on top of the skull: crown and brim clear the dome.
++  const yBase = radius * 0.62;
++  const crownR = radius * 0.98;
++  const crownH = radius * 0.5;
++  const wall = mesh(new THREE.CylinderGeometry(crownR * 0.96, crownR, crownH, 36), wool, 'crown');
++  wall.position.y = yBase + crownH / 2;
++  g.add(wall);
++
++  const b = brim(radius * 0.7, radius * 2.0, -radius * 0.16, radius * 0.035, wool, 'brim');
++  b.position.y = yBase + radius * 0.02;
++  g.add(b);
++
++  g.add(ring(crownR * 1.01, radius * 0.05, Math.PI * 2, trim, { y: yBase + radius * 0.08, name: 'band', tall: 1.4 }));
++  // Beaded fringe around the brim edge.
++  for (let i = 0; i < 18; i++) {
++    const a = (i / 18) * Math.PI * 2;
++    const bead = mesh(new THREE.SphereGeometry(radius * 0.05, 8, 6), trim, `bead-${i}`);
++    bead.position.set(Math.sin(a) * radius * 1.98, yBase + radius * 0.16, -Math.cos(a) * radius * 1.98);
++    g.add(bead);
++  }
++  return g;
++}
++
++// ---------------------------------------------------------------------------
++// PURPLE: Silk Road Diadem
++// ---------------------------------------------------------------------------
++
++/**
++ * A regal diadem: a tall centre spire flanked by stepped spires, pearls set
++ * between them along a metallic band, and jewel drops at the temples.
++ */
++export function createCoutureDiadem(radius, colors) {
++  const g = group('headwear-couture_wrap');
++  const metal = primaryMaterial(colors, METAL);
++  const filigree = accentMaterial(colors, METAL);
++  const jewel = visorMaterial(colors);
++  const pearl = fixedMaterial(PEARL_HEX, { roughness: 0.3, metalness: 0.1 });
++
++  const yBand = radius * 0.44;
++  const R = radius * 1.05;
++  g.add(ring(R, radius * 0.06, Math.PI * 1.5, metal, { y: yBand, name: 'band', tall: 1.5 }));
++  g.add(ring(R + radius * 0.02, radius * 0.02, Math.PI * 1.5, filigree, { y: yBand + radius * 0.08, name: 'filigree' }));
++
++  const spires = [
++    { a: 0, h: 1.05, r: 0.13 },
++    { a: -0.42, h: 0.72, r: 0.1 },
++    { a: 0.42, h: 0.72, r: 0.1 },
++    { a: -0.84, h: 0.46, r: 0.08 },
++    { a: 0.84, h: 0.46, r: 0.08 },
++  ];
++  for (const s of spires) {
++    const base = onSkull(R, s.a, yBand + radius * 0.06);
++    const spire = mesh(new THREE.ConeGeometry(radius * s.r, radius * s.h, 10), metal, `spire-${s.a}`);
++    spire.position.copy(base);
++    spire.position.y += radius * s.h * 0.5;
++    spire.rotation.set(-0.2 * Math.cos(s.a), 0, -0.2 * Math.sin(s.a));
++    g.add(spire);
++    const gem = mesh(new THREE.SphereGeometry(radius * s.r * 0.9, 14, 10), jewel, `gem-${s.a}`);
++    gem.position.copy(onSkull(R * 1.04, s.a, yBand + radius * 0.02));
++    g.add(gem);
++    const tip = mesh(new THREE.SphereGeometry(radius * s.r * 0.5, 10, 8), jewel, `tip-${s.a}`);
++    tip.position.copy(base);
++    tip.position.y += radius * s.h;
++    g.add(tip);
++  }
++  for (const a of [-0.63, -0.21, 0.21, 0.63]) {
++    const p = mesh(new THREE.SphereGeometry(radius * 0.055, 10, 8), pearl, `pearl-${a}`);
++    p.position.copy(onSkull(R * 1.04, a, yBand + radius * 0.14));
++    g.add(p);
++  }
++  // Jewel drops at the temples.
++  for (const side of [-1, 1]) {
++    const top = onSkull(R, side * 1.25, yBand);
++    const bottom = onSkull(R * 1.03, side * 1.25, yBand - radius * 0.3);
++    g.add(strut(top, bottom, radius * 0.015, filigree, `drop-chain-${side}`));
++    const drop = mesh(new THREE.SphereGeometry(radius * 0.08, 12, 8), jewel, `drop-${side}`);
++    drop.position.copy(bottom);
++    drop.scale.y = 1.5;
++    g.add(drop);
++  }
++  return g;
++}
++
++// ---------------------------------------------------------------------------
++// TEAL: Wayfinder Cord
++// ---------------------------------------------------------------------------
++
++/**
++ * A two-tone braided band with a hanging cord and a large pounamu toki (adze
++ * blade) at the right temple, tied off at the back.
++ */
++export function createWayfinderCord(radius, colors) {
++  const g = group('headwear-rigger_band');
++  const cordTeam = primaryMaterial(colors, { roughness: 0.85 });
++  const cordAccent = accentMaterial(colors, { roughness: 0.85 });
++  const leather = fixedMaterial(LEATHER_HEX, { roughness: 0.8 });
++  const jade = fixedMaterial(JADE_HEX, { roughness: 0.3, metalness: 0.15 });
++
++  const R = radius * 1.05;
++  const yBand = radius * 0.30;
++  // Braid: alternating segments, each a short arc, offset up and down.
++  const segments = 14;
++  for (let i = 0; i < segments; i++) {
++    const arc = (Math.PI * 2) / segments;
++    const facing = i * arc;
++    const seg = ring(R, radius * 0.065, arc * 1.08, i % 2 ? cordAccent : cordTeam, { y: yBand + (i % 2 ? radius * 0.03 : -radius * 0.03), facing, name: `braid-${i}` });
++    g.add(seg);
++  }
++  // Second, thinner leather cord below.
++  g.add(ring(R, radius * 0.03, Math.PI * 2, leather, { y: yBand - radius * 0.13, name: 'cord' }));
++
++  // Knot at the back-right with cord tails.
++  const k = onSkull(R * 1.02, Math.PI * 0.75, yBand - radius * 0.05);
++  const knot = mesh(new THREE.SphereGeometry(radius * 0.11, 14, 10), cordAccent, 'knot');
++  knot.position.copy(k);
++  g.add(knot);
++  g.add(strut(k, new THREE.Vector3(k.x + radius * 0.1, k.y - radius * 0.5, k.z + radius * 0.14), radius * 0.028, cordTeam, 'tail-a'));
++  g.add(strut(k, new THREE.Vector3(k.x - radius * 0.05, k.y - radius * 0.42, k.z + radius * 0.22), radius * 0.028, cordAccent, 'tail-b'));
++
++  // The toki: a big jade adze blade hanging from the right temple.
++  const anchor = onSkull(R, 0.78, yBand - radius * 0.1);
++  const blade = new THREE.Vector3(anchor.x + radius * 0.06, anchor.y - radius * 0.46, anchor.z - radius * 0.02);
++  g.add(strut(anchor, blade, radius * 0.02, leather, 'toki-cord'));
++  const toki = mesh(new THREE.BoxGeometry(radius * 0.16, radius * 0.4, radius * 0.06), jade, 'toki');
++  toki.position.copy(blade);
++  toki.position.y -= radius * 0.14;
++  toki.rotation.set(0, 0.78, 0.08);
++  g.add(toki);
++  const edge = mesh(new THREE.ConeGeometry(radius * 0.09, radius * 0.16, 4), jade, 'toki-edge');
++  edge.position.copy(toki.position);
++  edge.position.y -= radius * 0.27;
++  edge.rotation.set(Math.PI, 0.78 + Math.PI / 4, 0);
++  g.add(edge);
++  return g;
++}
++
++// ---------------------------------------------------------------------------
++// YELLOW: Stadium Headset
++// ---------------------------------------------------------------------------
++
++/**
++ * Big broadcast cans: oversized cups on both ears, a thick padded headband,
++ * a chunky boom with a foam windscreen, and an on-air lamp.
++ */
++export function createBroadcasterHeadset(radius, colors) {
++  const g = group('headwear-broadcaster_mic');
++  const shell = primaryMaterial(colors, { roughness: 0.45, metalness: 0.2 });
++  const trim = accentMaterial(colors, { roughness: 0.5, metalness: 0.3 });
++  const foam = fixedMaterial(FOAM_HEX, { roughness: 0.95 });
++  const lamp = visorMaterial(colors);
++
++  const yEar = -radius * 0.02;
++  const xEar = radius * 1.0;
++  for (const side of [-1, 1]) {
++    const tag = side < 0 ? 'l' : 'r';
++    const cup = mesh(new THREE.CylinderGeometry(radius * 0.5, radius * 0.5, radius * 0.26, 28), shell, `cup-${tag}`);
++    cup.rotation.z = Math.PI / 2;
++    cup.position.set(side * (xEar + radius * 0.14), yEar, 0);
++    g.add(cup);
++    const pad = mesh(new THREE.TorusGeometry(radius * 0.38, radius * 0.1, 10, 28), trim, `pad-${tag}`);
++    pad.rotation.y = Math.PI / 2;
++    pad.position.set(side * (xEar + radius * 0.02), yEar, 0);
++    g.add(pad);
++    const yoke = mesh(new THREE.BoxGeometry(radius * 0.1, radius * 0.5, radius * 0.16), trim, `yoke-${tag}`);
++    yoke.position.set(side * (xEar + radius * 0.2), yEar + radius * 0.32, 0);
++    g.add(yoke);
++  }
++
++  // Thick padded headband plus an outer rail.
++  const band = mesh(new THREE.TorusGeometry(radius * 1.16, radius * 0.09, 10, 36, Math.PI), trim, 'headband');
++  band.position.y = yEar + radius * 0.06;
++  band.scale.z = 1.6;
++  g.add(band);
++  const rail = mesh(new THREE.TorusGeometry(radius * 1.28, radius * 0.035, 8, 36, Math.PI), shell, 'rail');
++  rail.position.y = yEar + radius * 0.06;
++  g.add(rail);
++
++  // Boom mic: thick articulated arm from the left cup to a foam windscreen.
++  const a = new THREE.Vector3(-xEar - radius * 0.28, yEar - radius * 0.3, -radius * 0.1);
++  const b = new THREE.Vector3(-radius * 0.85, -radius * 0.55, -radius * 0.75);
++  const c = new THREE.Vector3(-radius * 0.3, -radius * 0.62, -radius * 1.1);
++  g.add(strut(a, b, radius * 0.045, trim, 'boom-a'));
++  g.add(strut(b, c, radius * 0.045, trim, 'boom-b'));
++  const joint = mesh(new THREE.SphereGeometry(radius * 0.07, 10, 8), trim, 'boom-joint');
++  joint.position.copy(b);
++  g.add(joint);
++  const windscreen = mesh(new THREE.SphereGeometry(radius * 0.17, 14, 10), foam, 'windscreen');
++  windscreen.position.copy(c);
++  g.add(windscreen);
++
++  const onAir = mesh(new THREE.SphereGeometry(radius * 0.06, 10, 8), lamp, 'on-air');
++  onAir.position.set(-(xEar + radius * 0.28), yEar + radius * 0.2, -radius * 0.25);
++  g.add(onAir);
++  return g;
++}
++
++// ---------------------------------------------------------------------------
++// ORANGE: Winged Courier Cap
++// ---------------------------------------------------------------------------
++
++/**
++ * An aerodynamic runner's cap worn backwards, bill to the rear, with swept
++ * accent wings on both sides.
++ */
++export function createCourierCap(radius, colors) {
++  const g = group('headwear-cursor_cap');
++  const fabric = primaryMaterial(colors, { roughness: 0.5 });
++  const wing = accentMaterial(colors, { roughness: 0.45, metalness: 0.25 });
++
++  const crownR = radius * 1.08;
++  const phiRim = Math.PI * 0.44;
++  const yRim = crownR * Math.cos(phiRim);
++  const rRim = crownR * Math.sin(phiRim);
++
++  const crown = dome(crownR, phiRim, fabric, 'crown');
++  crown.rotation.x = -0.1;
++  g.add(crown);
++  g.add(curvedBill(radius, rRim, yRim + radius * 0.02, radius * 0.9, radius * 0.04, fabric, +1, 'rear-bill'));
++  g.add(ring(rRim, radius * 0.04, Math.PI * 2, wing, { y: yRim + radius * 0.02, name: 'trim' }));
++
++  for (const side of [-1, 1]) {
++    const tag = side < 0 ? 'l' : 'r';
++    const main = mesh(new THREE.BoxGeometry(radius * 0.035, radius * 0.34, radius * 0.9), wing, `wing-${tag}`);
++    main.position.set(side * radius * 1.02, radius * 0.5, radius * 0.25);
++    main.rotation.set(-0.6, 0, side * 0.1);
++    g.add(main);
++    const feather = mesh(new THREE.BoxGeometry(radius * 0.03, radius * 0.2, radius * 0.6), wing, `feather-${tag}`);
++    feather.position.set(side * radius * 1.0, radius * 0.3, radius * 0.45);
++    feather.rotation.set(-0.45, 0, side * 0.1);
++    g.add(feather);
++  }
++  const stud = mesh(new THREE.SphereGeometry(radius * 0.07, 12, 8), wing, 'stud');
++  stud.position.y = crownR;
++  g.add(stud);
++  return g;
++}
++
++// ---------------------------------------------------------------------------
++// PINK: Bleacher Hachimaki
++// ---------------------------------------------------------------------------
++
++/**
++ * A wide cloth headband with a curved metal forehead plate bearing the
++ * Valleyball "V", tied at the back with long trailing ribbons.
++ */
++export function createOuendanHeadband(radius, colors) {
++  const g = group('headwear-ouendan_knot');
++  const cloth = primaryMaterial(colors, { roughness: 0.8 });
++  const plate = accentMaterial(colors, METAL);
++  const engraving = fixedMaterial(0x6b7280, { roughness: 0.4, metalness: 0.6 });
++
++  const yBand = radius * 0.26;
++  const R = radius * 1.05;
++  g.add(ring(R, radius * 0.08, Math.PI * 2, cloth, { y: yBand, name: 'band', tall: 2.4 }));
++
++  // The plate: a curved rectangle on the forehead.
++  g.add(ring(R + radius * 0.06, radius * 0.11, Math.PI * 0.5, plate, { y: yBand, name: 'plate', tall: 2.0 }));
++  // Engraved V.
++  const pz = -(R + radius * 0.2);
++  g.add(strut(new THREE.Vector3(-radius * 0.11, yBand + radius * 0.12, pz + radius * 0.01), new THREE.Vector3(0, yBand - radius * 0.1, pz - radius * 0.03), radius * 0.018, engraving, 'v-a'));
++  g.add(strut(new THREE.Vector3(radius * 0.11, yBand + radius * 0.12, pz + radius * 0.01), new THREE.Vector3(0, yBand - radius * 0.1, pz - radius * 0.03), radius * 0.018, engraving, 'v-b'));
++  // Rivets at the plate corners.
++  for (const sx of [-1, 1]) for (const sy of [-1, 1]) {
++    const rivet = mesh(new THREE.SphereGeometry(radius * 0.03, 8, 6), engraving, `rivet-${sx}${sy}`);
++    rivet.position.copy(onSkull(R + radius * 0.17, sx * 0.62, yBand + sy * radius * 0.16));
++    g.add(rivet);
++  }
++
++  // Knot and long ribbons.
++  const knot = mesh(new THREE.SphereGeometry(radius * 0.15, 14, 10), cloth, 'knot');
++  knot.position.set(0, yBand, radius * 1.05);
++  knot.scale.set(1.3, 0.8, 0.8);
++  g.add(knot);
++  for (const side of [-1, 1]) {
++    const tag = side < 0 ? 'l' : 'r';
++    const segs = [
++      { x: 0.16, y: -0.08, z: 1.35, rx: 0.4, len: 0.6 },
++      { x: 0.3, y: -0.45, z: 1.7, rx: 0.95, len: 0.6 },
++      { x: 0.38, y: -0.95, z: 1.88, rx: 1.35, len: 0.55 },
++    ];
++    segs.forEach((s, i) => {
++      const rib = mesh(new THREE.BoxGeometry(radius * 0.13, radius * 0.02, radius * s.len), cloth, `ribbon-${tag}-${i}`);
++      rib.position.set(side * radius * s.x, yBand + radius * s.y, radius * s.z);
++      rib.rotation.set(s.rx, side * 0.3, 0);
++      g.add(rib);
++    });
++  }
++  return g;
++}
++
++/** Object form, for callers that resolve builders by catalog `build` name. */
++export const CosmeticsBuilders = {
++  createManagerCap,
++  createSensorVisor,
++  createWicketGrill,
++  createCombatHorns,
++  createScrumCapHorns,
++  createLaambBand,
++  createTerraceFieldHat,
++  createTerraceChullo,
++  createTerraceMontera,
++  createCoutureDiadem,
++  createWayfinderCord,
++  createBroadcasterHeadset,
++  createCourierCap,
++  createOuendanHeadband,
++};
+diff --git a/src/sim/ragdoll.js b/src/sim/ragdoll.js
+index dd91e12..940f724 100644
+--- a/src/sim/ragdoll.js
++++ b/src/sim/ragdoll.js
+@@ -1,6 +1,8 @@
+ import * as THREE from 'three';
+ import { TUNING } from '../config/tuning.js';
++import { HEADWEAR_CATALOG } from '../config/cosmetics.js';
+ import { Interpolated } from '../core/Interpolated.js';
++import * as CosmeticsBuilders from './cosmeticsBuilders.js';
+ 
+ /**
+  * Physics -> pose sync, and the ragdoll's debug skin.
+@@ -27,6 +29,11 @@ const BALL_RINGS = 12;
+ 
+ const UNIT_SCALE = new THREE.Vector3(1, 1, 1);
+ 
++/** Name of the empty group under the head's solid mesh that holds locker headwear. */
++export const HEADWEAR_SLOT_NAME = 'athlete-headwear-slot';
++/** Name of the built-in cap/visor group that predates the locker. */
++const LEGACY_CAP_NAME = 'athletic-cap';
++
+ const _bodyWorld = new THREE.Matrix4();
+ const _desired = new THREE.Matrix4();
+ const _local = new THREE.Matrix4();
+@@ -69,6 +76,10 @@ function getAthleteColors(options = null) {
+   const primary = options?.primaryColor ?? options?.colorOverride ?? defaultPrimary;
+   const bodyGrey = options?.bodyColor ?? defaultBody;
+   const jointGrey = options?.jointColor ?? defaultJoint;
++  // Locker accent: the OPPOSITE of the base layer, so headwear trim reads on
++  // both kits (near-white on the black home kit, near-black on the white away).
++  const defaultAccent = isHome ? (p.homeAccent ?? 0xf1f5f9) : (p.awayAccent ?? 0x0f172a);
++  const accent = options?.accentColor ?? defaultAccent;
+ 
+   const parseColor = (c) => (typeof c === 'string' ? parseInt(c.replace('#', '0x'), 16) : c);
+ 
+@@ -76,11 +87,29 @@ function getAthleteColors(options = null) {
+     primary: parseColor(primary),
+     bodyGrey: parseColor(bodyGrey),
+     jointGrey: parseColor(jointGrey),
++    accent: parseColor(accent),
+     roughness: p.roughness ?? 0.82,
+     metalness: p.metalness ?? 0.04,
+   };
+ }
+ 
++/** Relative luminance of a packed hex colour, 0..1 (sRGB, no gamma). */
++function hexLuminance(hex) {
++  const r = ((hex >> 16) & 0xff) / 255;
++  const g = ((hex >> 8) & 0xff) / 255;
++  const b = (hex & 0xff) / 255;
++  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
++}
++
++/**
++ * The colour a 'visor' role glows. Team primary, except a primary too dark to
++ * emit anything visible (the black kit) borrows the accent so the visor still
++ * reads as lit.
++ */
++function visorGlowHex(colors) {
++  return hexLuminance(colors.primary) < 0.12 ? 0xdbe4f0 : colors.primary;
++}
++
+ /**
+  * Generates an authentic old-style curved baseball cap visor geometry.
+  * Curves seamlessly from the crown rim with downward curl at temples and downward rake.
+@@ -284,6 +313,16 @@ function createSolidAthletePart(item, colors) {
+     capGroup.add(strapMesh);
+ 
+     solidGroup.add(capGroup);
++
++    // 3. LOCKER HEADWEAR SLOT
++    // Empty container at the skull centre that setAthleteHeadwear() fills with
++    // a procedural accessory from cosmeticsBuilders.js. Purely a scene-graph
++    // child of the head's solid mesh: it rides the head body's interpolated
++    // transform and owns no physics of its own.
++    const headwearSlot = new THREE.Group();
++    headwearSlot.name = HEADWEAR_SLOT_NAME;
++    solidGroup.add(headwearSlot);
++
+     return solidGroup;
+   }
+ 
+@@ -436,6 +475,12 @@ export function createRagdollVisuals(rig, options = null) {
+ 
+   updateAthleteVariant({ rig, ...options }, options);
+ 
++  // Locker headwear survives a respawn because athlete.js rebuilds visuals
++  // through here with the same options it stored on the previous ragdoll.
++  if (options?.headwear != null) {
++    setAthleteHeadwear({ rig, ...options }, options.headwear, colors);
++  }
++
+   return group;
+ }
+ 
+@@ -690,6 +735,14 @@ export function updateAthleteVariant(state, options = null) {
+       if (button) button.visible = true;
+       if (band) band.visible = false;
+     }
++
++    // Once an athlete has an explicit locker headwear id (including 'none',
++    // the bare dome), the legacy built-in cap/visor steps aside and the slot
++    // owns the silhouette. Athletes that never touched the locker (headwear
++    // undefined/null) keep the pre-locker look exactly as before.
++    const headwearId = options?.headwear !== undefined ? options.headwear : state.headwear;
++    const legacyCap = head.solidMesh.getObjectByName(LEGACY_CAP_NAME);
++    if (legacyCap) legacyCap.visible = headwearId == null;
+   }
+ 
+   const limbKeys = ['upperArmL', 'upperArmR', 'foreArmL', 'foreArmR', 'thighL', 'thighR', 'calfL', 'calfR'];
+@@ -745,8 +798,19 @@ export function updateAthletePalette(state, options = null) {
+   if (options?.colorOverride !== undefined) state.colorOverride = options.colorOverride;
+   if (options?.bodyColor !== undefined) state.bodyColor = options.bodyColor;
+   if (options?.jointColor !== undefined) state.jointColor = options.jointColor;
++  if (options?.accentColor !== undefined) state.accentColor = options.accentColor;
++  const previousHeadwear = state.headwear;
++  if (options?.headwear !== undefined) state.headwear = options.headwear;
+   updateAthleteVariant(state, options);
+   const colors = getAthleteColors(options ?? state);
++
++  // A changed headwear id rebuilds the accessory; an unchanged one is simply
++  // recolored by the role sweep below, since the slot lives under the head's
++  // solid mesh.
++  if (state.headwear !== previousHeadwear && state.headwear != null) {
++    setAthleteHeadwear(state, state.headwear, colors);
++  }
++
+   for (const item of state.rig.values()) {
+     if (!item.solidMesh) continue;
+     item.solidMesh.traverse((child) => {
+@@ -761,15 +825,82 @@ export function updateAthletePalette(state, options = null) {
+         } else if (role === 'hair') {
+           child.material.color.setHex(0x24272e);
+         } else if (role === 'visor') {
+-          child.material.color.setHex(colors.primary);
+-          child.material.emissive.setHex(colors.primary);
+-          child.material.emissiveIntensity = 0.6;
++          const glow = visorGlowHex(colors);
++          child.material.color.setHex(glow);
++          child.material.emissive.setHex(glow);
++          // Locker visors declare their own glow strength (1.5); anything else
++          // keeps the pre-locker default.
++          child.material.emissiveIntensity = child.material.userData.emissiveIntensity ?? 0.6;
++        } else if (role === 'accent') {
++          child.material.color.setHex(colors.accent);
+         }
++        // 'fixed' (greenstone, metal plate engraving) is deliberately untouched.
+       }
+     });
+   }
+ }
+ 
++/**
++ * THE VALLEYBALL LOCKER: swaps the procedural headwear mounted on the head.
++ *
++ * Finds `athlete-headwear-slot` under the head's solid mesh, disposes whatever
++ * accessory is there (geometry AND the accessory's own materials; the base
++ * athlete materials are never touched), then builds and mounts the catalog
++ * entry's item. 'none' (or an unknown id) leaves the slot empty: a bare dome.
++ *
++ * Visual only. Nothing here reads or writes a Rapier body or collider.
++ *
++ * @param {object} state      ragdoll state with `rig` (Map) — `state.headwear` is updated
++ * @param {string} headwearId key in HEADWEAR_CATALOG
++ * @param {object} [colors]   getAthleteColors() output; derived from state when omitted
++ * @returns {THREE.Group | null} the mounted accessory group, or null if the slot is empty
++ */
++export function setAthleteHeadwear(state, headwearId, colors = null) {
++  if (!state || !state.rig) return null;
++  const head = state.rig.get('head');
++  if (!head || !head.solidMesh) return null;
++
++  const slot = head.solidMesh.getObjectByName(HEADWEAR_SLOT_NAME);
++  if (!slot) return null;
++
++  // Tear down the previous accessory.
++  while (slot.children.length > 0) {
++    const child = slot.children[0];
++    child.traverse((obj) => {
++      if (!obj.isMesh) return;
++      if (obj.geometry) obj.geometry.dispose();
++      if (Array.isArray(obj.material)) obj.material.forEach((m) => m.dispose());
++      else if (obj.material) obj.material.dispose();
++    });
++    slot.remove(child);
++  }
++
++  const entry = HEADWEAR_CATALOG[headwearId];
++  const resolvedId = entry ? entry.id : 'none';
++  state.headwear = resolvedId;
++  if (!entry && headwearId != null) {
++    console.warn(`[locker] unknown headwear id "${headwearId}", slot left empty`);
++  }
++
++  // The legacy cap yields to the slot as soon as the locker is in charge.
++  const legacyCap = head.solidMesh.getObjectByName(LEGACY_CAP_NAME);
++  if (legacyCap) legacyCap.visible = false;
++
++  const builderName = entry?.build;
++  if (!builderName) return null;
++  const builder = CosmeticsBuilders[builderName];
++  if (typeof builder !== 'function') {
++    console.warn(`[locker] headwear "${resolvedId}" names missing builder "${builderName}"`);
++    return null;
++  }
++
++  const palette = colors ?? getAthleteColors(state);
++  const accessory = builder(head.radius, palette);
++  accessory.name = accessory.name || `headwear-${resolvedId}`;
++  slot.add(accessory);
++  return accessory;
++}
++
+ /** Applies the athlete and debug visibility toggles. Init- and GUI-time only. */
+ export function applyRagdollVisibility(state, characterRoot) {
+   if (state && state.rig) {
+diff --git a/src/visuals/photoBooth.js b/src/visuals/photoBooth.js
+new file mode 100644
+index 0000000..1a5d7c9
+--- /dev/null
++++ b/src/visuals/photoBooth.js
+@@ -0,0 +1,594 @@
++import * as THREE from 'three';
++import {
++  PALETTES, CANONICAL_ROSTER, ROSTER_ORDER, RAINBOW_ORDER, HEADWEAR_CATALOG, HEADWEAR_VARIANTS,
++} from '../config/cosmetics.js';
++
++/**
++ * THE PHOTO BOOTH (`?mode=photobooth`)
++ *
++ * An in-engine portrait studio for the Valleyball Locker. The real match boot
++ * still runs (physics, arena, athletes) so the mannequin stands in its true
++ * held-idle pose, but nothing from the match is rendered. Four shots per
++ * athlete, plus variants and a group photograph:
++ *
++ *   <id>_portrait   head and shoulders, studio backdrop, 512x512
++ *   <id>_headgear   the headwear's own hero angle (profile, rear...), 512x512
++ *   <id>_idle       full body in the arena, a different frame of 'At Rest' each
++ *   <id>_action     full body in the arena, a clip frame matched to personality
++ *   variant_*       headgear alternatives for an art pick
++ *   group_rainbow   the whole roster lined up at centre court
++ *
++ * POSES are sampled from the character's own animation clips through a
++ * private AnimationMixer on the kinematic ghost, and the ragdoll's visual
++ * groups are posed from the ghost exactly the way the tracker computes its
++ * targets (boneWorld * inv(bindBoneWorld) * bindBodyWorld). The ghost's bone
++ * locals are snapshotted before and restored after every shot.
++ *
++ * RENDER-ONLY. This module never writes to a Rapier body, a velocity or a
++ * force. It changes materials, scene-graph parents, lights, Object3D
++ * transforms and the renderer's output size, and puts the renderer back.
++ *
++ * Exposed on the page as `window.captureRosterAvatars()`, and auto-fired once
++ * the sim has settled unless `?auto=0`. Every capture is POSTed to
++ * `/api/capture` (vite-plugin-capture.js) into captures/avatars/.
++ */
++
++export const PHOTOBOOTH = Object.freeze({
++  endpoint: '/api/capture',
++  outputDir: 'avatars',
++  portraitSize: 512,
++  bodySize: { width: 768, height: 1152 },
++  groupSize: { width: 2560, height: 1080 },
++
++  // Light offsets are in CAMERA space around the subject: `right` is the
++  // viewer's right, `toward` is toward the camera (negative = behind the
++  // athlete). Intensities are irradiance at the subject (DirectionalLight
++  // units); the spot's candela value is derived from its distance.
++  keyHex: 0xfff4e6,
++  keyIntensity: 2.2,
++  keyOffset: { right: 0.95, up: 1.05, toward: 0.85 },
++  rimHex: 0x38bdf8,
++  rimIntensity: 3.8,
++  rimOffset: { right: -0.75, up: 0.65, toward: -1.05 },
++  fillHex: 0x5b6b85,
++  fillIntensity: 0.35,
++  // In the arena the stadium lights already carry the scene; the studio rig
++  // only adds shape.
++  arenaKeyIntensity: 1.3,
++  arenaRimIntensity: 3.2,
++
++  // Portrait: chin height, ~1.15 m out, 12 degrees off axis, aimed just
++  // below head centre so the head sits centred.
++  portrait: { distance: 1.15, azimuth: 12, dropBelowHead: 0.16, lookAtRaise: -0.03, fov: 22 },
++  // Headgear hero shot: tighter, the angle comes from the catalog entry.
++  headgear: { fov: 24, lookAtRaise: 0.0 },
++  // Full body: lens at hip height looking at the sternum.
++  body: { distance: 3.9, azimuth: 18, lensHeight: 0.95, lookAtHeight: 0.92, fov: 28 },
++  action: { distance: 4.4, azimuth: 32, lensHeight: 1.0, lookAtHeight: 0.92, fov: 30 },
++  // Group: the line-up at centre court.
++  group: { spacing: 1.15, distance: 9.4, lensHeight: 1.3, lookAtHeight: 0.95, fov: 31, azimuth: 0 },
++
++  idleClip: 'At Rest',
++  settleTicks: 180,
++});
++
++const _v = new THREE.Vector3();
++const _head = new THREE.Vector3();
++const _feet = new THREE.Vector3();
++const _forward = new THREE.Vector3();
++const _camRight = new THREE.Vector3();
++const _toward = new THREE.Vector3();
++const _lookAt = new THREE.Vector3();
++const _camPos = new THREE.Vector3();
++const _q = new THREE.Quaternion();
++const _m = new THREE.Matrix4();
++const _bindInv = new THREE.Matrix4();
++const _yAxis = new THREE.Vector3(0, 1, 0);
++const _scaleOut = new THREE.Vector3();
++const _rayOrigin = new THREE.Vector3();
++const _rayDown = new THREE.Vector3(0, -1, 0);
++
++/**
++ * @param {object} deps
++ * @param {import('three').WebGLRenderer} deps.renderer
++ * @param {import('three').Scene} deps.scene          the match scene (arena)
++ * @param {import('three').Loop} deps.loop
++ * @param {object[]} deps.athletes                    P1 is photographed; the rest are hidden
++ * @param {() => void} deps.restoreViewport
++ * @param {URLSearchParams} [deps.urlParams]
++ */
++export function createPhotoBooth({ renderer, scene, loop, athletes, restoreViewport, urlParams }) {
++  const params = urlParams || new URLSearchParams(window.location.search);
++  const athlete = athletes[0];
++  for (const other of athletes.slice(1)) {
++    if (other?.ragdoll?.group) other.ragdoll.group.visible = false;
++  }
++
++  // ---------------------------------------------------------------- studio
++  const studio = new THREE.Scene();
++  studio.name = 'photobooth-studio';
++
++  const rig = new THREE.Group();
++  rig.name = 'photobooth-rig';
++  studio.add(rig);
++
++  const key = new THREE.SpotLight(PHOTOBOOTH.keyHex, 1, 6, Math.PI * 0.22, 0.45, 1.2);
++  key.name = 'key';
++  key.castShadow = true;
++  key.shadow.mapSize.set(1024, 1024);
++  key.shadow.bias = -0.0004;
++  key.shadow.normalBias = 0.01;
++  key.shadow.camera.near = 0.2;
++  key.shadow.camera.far = 8;
++  rig.add(key, key.target);
++
++  const rim = new THREE.SpotLight(PHOTOBOOTH.rimHex, 1, 6, Math.PI * 0.26, 0.5, 1.0);
++  rim.name = 'rim';
++  rig.add(rim, rim.target);
++
++  const fill = new THREE.HemisphereLight(PHOTOBOOTH.fillHex, 0x05070b, PHOTOBOOTH.fillIntensity);
++  studio.add(fill);
++
++  const camera = new THREE.PerspectiveCamera(22, 1, 0.05, 60);
++  camera.name = 'photobooth-camera';
++
++  const backdrops = new Map();
++  let currentId = null;
++  let captureDone = null;
++  let previewMode = 'portrait';
++
++  // ------------------------------------------------------------- backdrop
++  function backdropFor(id) {
++    if (backdrops.has(id)) return backdrops.get(id);
++    const { center, edge } = CANONICAL_ROSTER[id].backdrop;
++    const size = 512;
++    const canvas = document.createElement('canvas');
++    canvas.width = size;
++    canvas.height = size;
++    const ctx = canvas.getContext('2d');
++    const grad = ctx.createRadialGradient(size * 0.5, size * 0.42, size * 0.05, size * 0.5, size * 0.5, size * 0.72);
++    grad.addColorStop(0, `#${center.toString(16).padStart(6, '0')}`);
++    grad.addColorStop(1, `#${edge.toString(16).padStart(6, '0')}`);
++    ctx.fillStyle = grad;
++    ctx.fillRect(0, 0, size, size);
++    const tex = new THREE.CanvasTexture(canvas);
++    tex.colorSpace = THREE.SRGBColorSpace;
++    backdrops.set(id, tex);
++    return tex;
++  }
++
++  // ------------------------------------------------------------ geometry
++  const headPart = () => athlete?.ragdoll?.rig?.get('head') || null;
++  const pelvisPart = () => athlete?.ragdoll?.rig?.get('pelvis') || null;
++
++  /** Head centre, flattened facing, and foot level, from the current visual pose. */
++  function measure() {
++    const head = headPart();
++    const pelvis = pelvisPart();
++    if (!head?.solidMesh || !pelvis?.mesh) return false;
++    athlete.ragdoll.group.updateMatrixWorld(true);
++    head.solidMesh.getWorldPosition(_head);
++    head.mesh.getWorldQuaternion(_q);
++    _forward.set(0, 0, -1).applyQuaternion(_q);
++    _forward.y = 0;
++    if (_forward.lengthSq() < 1e-6) _forward.set(0, 0, -1);
++    _forward.normalize();
++    // Foot level: the lowest extremity, or the motor's resting floor.
++    let minY = Infinity;
++    for (const k of ['footL', 'footR']) {
++      const f = athlete.ragdoll.rig.get(k);
++      if (f?.mesh) { f.mesh.getWorldPosition(_v); minY = Math.min(minY, _v.y - f.radius); }
++    }
++    pelvis.mesh.getWorldPosition(_feet);
++    _feet.y = Number.isFinite(minY) ? minY : _feet.y - 0.95;
++    return true;
++  }
++
++  /**
++   * Puts the camera `distance` from `target`, swung `azimuthDeg` from the
++   * facing direction (positive toward the athlete's right), raised
++   * `elevationDeg` above the target plane, and aims it at `lookAt`.
++   */
++  function placeCamera(target, distance, azimuthDeg, elevationDeg, lookAt, fov, aspect) {
++    const az = THREE.MathUtils.degToRad(azimuthDeg);
++    const el = THREE.MathUtils.degToRad(elevationDeg);
++    _camPos.copy(_forward).applyAxisAngle(_yAxis, -az).multiplyScalar(Math.cos(el) * distance);
++    _camPos.y = Math.sin(el) * distance;
++    _camPos.add(target);
++    camera.position.copy(_camPos);
++    camera.fov = fov;
++    camera.aspect = aspect;
++    camera.updateProjectionMatrix();
++    camera.lookAt(lookAt);
++  }
++
++  function placeLight(light, offset, irradiance) {
++    light.position.set(0, 0, 0)
++      .addScaledVector(_camRight, offset.right)
++      .addScaledVector(_yAxis, offset.up)
++      .addScaledVector(_toward, offset.toward);
++    light.target.position.set(0, 0, 0);
++    const d2 = light.position.lengthSq();
++    light.intensity = irradiance * d2;
++    light.distance = Math.sqrt(d2) * 3;
++  }
++
++  /** Parks the lighting rig on `anchor`, oriented to the camera. */
++  function lightFrom(anchor, keyI, rimI, scale = 1) {
++    rig.position.copy(anchor);
++    _toward.subVectors(camera.position, anchor);
++    _toward.y = 0;
++    _toward.normalize();
++    _camRight.crossVectors(_toward, _yAxis).normalize();
++    const k = PHOTOBOOTH.keyOffset;
++    const r = PHOTOBOOTH.rimOffset;
++    placeLight(key, { right: k.right * scale, up: k.up * scale, toward: k.toward * scale }, keyI);
++    placeLight(rim, { right: r.right * scale, up: r.up * scale, toward: r.toward * scale }, rimI);
++  }
++
++  // ---------------------------------------------------------------- poses
++  /**
++   * Poses the ragdoll VISUALS from a clip frame on the kinematic ghost.
++   * Returns a restore function. Nothing physical is touched.
++   */
++  function poseFromClip(clipName, time) {
++    const at = athlete.animTarget;
++    const rig = athlete.ragdoll?.rig;
++    if (!at?.root || !rig) return () => {};
++    const clip = at.clips.find((c) => c.name === clipName);
++    if (!clip) {
++      console.warn(`[photobooth] clip "${clipName}" not found; keeping the live pose`);
++      return () => {};
++    }
++
++    const saved = [];
++    at.root.traverse((o) => {
++      if (o.isBone) saved.push([o, o.position.clone(), o.quaternion.clone(), o.scale.clone()]);
++    });
++
++    const mixer = new THREE.AnimationMixer(at.root);
++    const action = mixer.clipAction(clip);
++    action.play();
++    mixer.setTime(Math.max(0, Math.min(clip.duration - 1e-3, time)));
++
++    // L5 root strip, as animtarget applies it: hips pinned horizontally to bind.
++    if (at.hips) {
++      at.hips.position[at.hipsAxisA] = at.hipsBindA;
++      at.hips.position[at.hipsAxisB] = at.hipsBindB;
++    }
++    at.root.updateMatrixWorld(true);
++
++    for (const [k, item] of rig) {
++      const bone = at.bones.get(k);
++      if (!bone || !item.mesh) continue;
++      _bindInv.copy(item.bindBoneWorld).invert();
++      _m.multiplyMatrices(bone.matrixWorld, _bindInv).multiply(item.bindBodyWorld);
++      _m.decompose(item.mesh.position, item.mesh.quaternion, _scaleOut);
++    }
++
++    return () => {
++      for (const [o, p, q, s] of saved) { o.position.copy(p); o.quaternion.copy(q); o.scale.copy(s); }
++      mixer.stopAllAction();
++      mixer.uncacheRoot(at.root);
++      at.root.updateMatrixWorld(true);
++    };
++  }
++
++  // ------------------------------------------------------------- dressing
++  function dress(id, headwearOverride = null) {
++    const entry = CANONICAL_ROSTER[id];
++    if (!entry) throw new Error(`[photobooth] unknown roster id "${id}"`);
++    const palette = PALETTES[entry.palette];
++    const headwear = headwearOverride || (HEADWEAR_CATALOG[entry.headwear] ? entry.headwear : 'none');
++    athlete.setTeamAndVariant(entry.kit, entry.variant, { primaryColor: palette.hex, headwear });
++    currentId = id;
++    return entry;
++  }
++
++  // ------------------------------------------------------------ rendering
++  function borrow(target) {
++    const group = athlete?.ragdoll?.group;
++    if (!group) return null;
++    if (group.parent !== target) target.add(group);
++    group.visible = true;
++    return group;
++  }
++
++  function withOutputSize(width, height, fn) {
++    const previousPixelRatio = renderer.getPixelRatio();
++    renderer.setPixelRatio(1);
++    renderer.setSize(width, height, false);
++    renderer.setScissorTest(false);
++    renderer.setViewport(0, 0, width, height);
++    try {
++      return fn();
++    } finally {
++      renderer.setPixelRatio(previousPixelRatio);
++      restoreViewport();
++    }
++  }
++
++  function snap(target) {
++    renderer.shadowMap.needsUpdate = true;
++    renderer.render(target, camera);
++    return renderer.domElement.toDataURL('image/png');
++  }
++
++  /** Portrait or headgear shot in the studio. */
++  function studioShot(kind, aspect, id) {
++    borrow(studio);
++    athlete.renderPose(1);
++    studio.background = backdropFor(id);
++    const head = headPart();
++    const headR = (head?.radius ?? 0.11) * (head?.solidMesh?.scale.x ?? 1);
++    measure();
++    if (kind === 'portrait') {
++      const p = PHOTOBOOTH.portrait;
++      _lookAt.copy(_head);
++      _lookAt.y += p.lookAtRaise;
++      const target = _head.clone();
++      target.y -= p.dropBelowHead;
++      placeCamera(target, p.distance, p.azimuth, 0, _lookAt, p.fov, aspect);
++    } else {
++      const entry = HEADWEAR_CATALOG[athlete.ragdoll.headwear] || HEADWEAR_CATALOG.none;
++      const s = entry.showcase;
++      _lookAt.copy(_head);
++      _lookAt.y += PHOTOBOOTH.headgear.lookAtRaise + headR * 0.15;
++      placeCamera(_head, s.distance, s.azimuth, s.elevation, _lookAt, PHOTOBOOTH.headgear.fov, aspect);
++    }
++    if (rig.parent !== studio) studio.add(rig);
++    lightFrom(_head, PHOTOBOOTH.keyIntensity, PHOTOBOOTH.rimIntensity);
++    return snap(studio);
++  }
++
++  /** Full-body shot in the arena, posed from a clip frame. */
++  function arenaShot(clipName, time, view, aspect) {
++    borrow(scene);
++    athlete.renderPose(1);
++    const restore = poseFromClip(clipName, time);
++    try {
++      measure();
++      const target = _feet.clone();
++      target.y += view.lensHeight;
++      _lookAt.copy(_feet);
++      _lookAt.y += view.lookAtHeight;
++      placeCamera(target, view.distance, view.azimuth, 0, _lookAt, view.fov, aspect);
++      if (rig.parent !== scene) scene.add(rig);
++      const anchor = _feet.clone();
++      anchor.y += 1.0;
++      lightFrom(anchor, PHOTOBOOTH.arenaKeyIntensity, PHOTOBOOTH.arenaRimIntensity, 2.2);
++      const data = snap(scene);
++      studio.add(rig);
++      return data;
++    } finally {
++      restore();
++    }
++  }
++
++  /** Floor height under a world XZ, from the arena meshes; null if none. */
++  const raycaster = new THREE.Raycaster();
++  function floorAt(x, z, fallbackY) {
++    const arena = scene.getObjectByName('arena-court') || scene.getObjectByName('arena-bowl') || scene;
++    _rayOrigin.set(x, fallbackY + 4, z);
++    raycaster.set(_rayOrigin, _rayDown);
++    raycaster.far = 12;
++    const hits = raycaster.intersectObject(arena, true);
++    for (const h of hits) {
++      if (h.object.isMesh && h.object.visible) return h.point.y;
++    }
++    return fallbackY;
++  }
++
++  /** The rainbow line-up: clones of the dressed, posed athlete along a line at centre court. */
++  function groupShot(aspect) {
++    const g = PHOTOBOOTH.group;
++    borrow(scene);
++    athlete.renderPose(1);
++    measure();
++    const origin = _feet.clone();
++    const forward = _forward.clone();
++    const right = new THREE.Vector3().crossVectors(forward, _yAxis).normalize();
++
++    const lineup = new THREE.Group();
++    lineup.name = 'photobooth-lineup';
++    const n = RAINBOW_ORDER.length;
++    // Floor heights first, with nothing of ours in the way of the rays.
++    athlete.ragdoll.group.visible = false;
++    const floors = RAINBOW_ORDER.map((_, i) => {
++      const offset = -(i - (n - 1) / 2) * g.spacing;
++      return floorAt(origin.x + right.x * offset, origin.z + right.z * offset, origin.y);
++    });
++    athlete.ragdoll.group.visible = true;
++    RAINBOW_ORDER.forEach((id, i) => {
++      const entry = dress(id);
++      athlete.renderPose(1);
++      const restore = poseFromClip(PHOTOBOOTH.idleClip, entry.idleTime);
++      athlete.ragdoll.group.updateMatrixWorld(true);
++      const clone = athlete.ragdoll.group.clone(true);
++      clone.traverse((o) => {
++        if (o.isMesh) {
++          o.material = Array.isArray(o.material) ? o.material.map((m) => m.clone()) : o.material.clone();
++          o.visible = o.visible && !o.name.startsWith('ragdoll-wire');
++        }
++      });
++      restore();
++      const offset = -(i - (n - 1) / 2) * g.spacing;
++      clone.position.set(right.x * offset, floors[i] - origin.y, right.z * offset);
++      lineup.add(clone);
++    });
++    scene.add(lineup);
++    athlete.ragdoll.group.visible = false;
++
++    try {
++      const centre = origin.clone();
++      centre.y += g.lookAtHeight;
++      const target = origin.clone();
++      target.y += g.lensHeight;
++      _forward.copy(forward);
++      placeCamera(target, g.distance, g.azimuth, 0, centre, g.fov, aspect);
++      if (rig.parent !== scene) scene.add(rig);
++      const anchor = origin.clone();
++      anchor.y += 1.0;
++      lightFrom(anchor, PHOTOBOOTH.arenaKeyIntensity * 0.5, PHOTOBOOTH.arenaRimIntensity, 5.0);
++      const data = snap(scene);
++      studio.add(rig);
++      return data;
++    } finally {
++      scene.remove(lineup);
++      lineup.traverse((o) => {
++        if (o.isMesh) { if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose()); else o.material.dispose(); }
++      });
++      athlete.ragdoll.group.visible = true;
++    }
++  }
++
++  // ---------------------------------------------------------------- posts
++  async function post(name, dataUrl, tick) {
++    const response = await fetch(PHOTOBOOTH.endpoint, {
++      method: 'POST',
++      headers: { 'content-type': 'application/json' },
++      body: JSON.stringify({ name, dir: PHOTOBOOTH.outputDir, exact: true, tick, dataUrl }),
++    });
++    const body = await response.json().catch(() => null);
++    if (!response.ok) throw new Error(`[photobooth] ${response.status} ${(body && body.error) || 'capture failed'}`);
++    return body.path;
++  }
++
++  // --------------------------------------------------------------- shoots
++  /**
++   * Shoots the whole roster at the current tick: four shots each, the
++   * headgear variants, and the group photograph. Renders happen inside one
++   * JS turn; uploads follow.
++   */
++  async function captureRosterAvatars() {
++    const tick = loop.tick;
++    const P = PHOTOBOOTH.portraitSize;
++    const B = PHOTOBOOTH.bodySize;
++    const G = PHOTOBOOTH.groupSize;
++    const shots = [];
++    const started = currentId;
++
++    for (const id of ROSTER_ORDER) {
++      const entry = dress(id);
++      shots.push({ name: `${id}_portrait`, data: withOutputSize(P, P, () => studioShot('portrait', 1, id)) });
++      shots.push({ name: `${id}_headgear`, data: withOutputSize(P, P, () => studioShot('headgear', 1, id)) });
++      shots.push({ name: `${id}_idle`, data: withOutputSize(B.width, B.height, () => arenaShot(PHOTOBOOTH.idleClip, entry.idleTime, PHOTOBOOTH.body, B.width / B.height)) });
++      shots.push({ name: `${id}_action`, data: withOutputSize(B.width, B.height, () => arenaShot(entry.action.clip, entry.action.time, PHOTOBOOTH.action, B.width / B.height)) });
++    }
++    for (const [id, variants] of Object.entries(HEADWEAR_VARIANTS)) {
++      for (const hw of variants) {
++        dress(id, hw);
++        shots.push({ name: `variant_${id}_${hw}`, data: withOutputSize(P, P, () => studioShot('headgear', 1, id)) });
++      }
++    }
++    shots.push({ name: 'group_rainbow', data: withOutputSize(G.width, G.height, () => groupShot(G.width / G.height)) });
++    dress(started || ROSTER_ORDER[0]);
++
++    const results = [];
++    for (const shot of shots) {
++      const path = await post(shot.name, shot.data, tick);
++      results.push({ name: shot.name, path });
++    }
++    // Spec-compatible aliases: avatars/<id>.png is the portrait.
++    for (const id of ROSTER_ORDER) {
++      const portrait = shots.find((s) => s.name === `${id}_portrait`);
++      if (portrait) results.push({ name: id, path: await post(id, portrait.data, tick) });
++    }
++    console.log(`[photobooth] ${results.length} files captured at tick ${tick}`);
++    captureDone = { tick, results };
++    window.__photoboothDone = captureDone;
++    return results;
++  }
++
++  /** Live preview: the current athlete in the chosen view, filling the canvas. */
++  function renderPreview(width, height) {
++    const aspect = width / height;
++    const id = currentId || ROSTER_ORDER[0];
++    const entry = CANONICAL_ROSTER[id];
++    renderer.setScissorTest(false);
++    renderer.setViewport(0, 0, width, height);
++    if (previewMode === 'idle' || previewMode === 'action') {
++      const clipName = previewMode === 'idle' ? PHOTOBOOTH.idleClip : entry.action.clip;
++      const time = previewMode === 'idle' ? entry.idleTime : entry.action.time;
++      borrow(scene);
++      const restore = poseFromClip(clipName, time);
++      measure();
++      const view = previewMode === 'idle' ? PHOTOBOOTH.body : PHOTOBOOTH.action;
++      const target = _feet.clone(); target.y += view.lensHeight;
++      _lookAt.copy(_feet); _lookAt.y += view.lookAtHeight;
++      placeCamera(target, view.distance, view.azimuth, 0, _lookAt, view.fov, aspect);
++      if (rig.parent !== scene) scene.add(rig);
++      const anchor = _feet.clone(); anchor.y += 1.0;
++      lightFrom(anchor, PHOTOBOOTH.arenaKeyIntensity, PHOTOBOOTH.arenaRimIntensity, 2.2);
++      renderer.shadowMap.needsUpdate = true;
++      renderer.render(scene, camera);
++      restore();
++      return;
++    }
++    borrow(studio);
++    studio.background = backdropFor(id);
++    measure();
++    if (previewMode === 'headgear') {
++      const hw = HEADWEAR_CATALOG[athlete.ragdoll.headwear] || HEADWEAR_CATALOG.none;
++      _lookAt.copy(_head);
++      placeCamera(_head, hw.showcase.distance, hw.showcase.azimuth, hw.showcase.elevation, _lookAt, PHOTOBOOTH.headgear.fov, aspect);
++    } else {
++      const p = PHOTOBOOTH.portrait;
++      _lookAt.copy(_head); _lookAt.y += p.lookAtRaise;
++      const target = _head.clone(); target.y -= p.dropBelowHead;
++      placeCamera(target, p.distance, p.azimuth, 0, _lookAt, p.fov, aspect);
++    }
++    if (rig.parent !== studio) studio.add(rig);
++    lightFrom(_head, PHOTOBOOTH.keyIntensity, PHOTOBOOTH.rimIntensity);
++    renderer.shadowMap.needsUpdate = true;
++    renderer.render(studio, camera);
++  }
++
++  // ----------------------------------------------------------- controls
++  const MODES = ['portrait', 'headgear', 'idle', 'action'];
++  function cycle(step) {
++    const index = Math.max(0, ROSTER_ORDER.indexOf(currentId));
++    const next = ROSTER_ORDER[(index + step + ROSTER_ORDER.length) % ROSTER_ORDER.length];
++    dress(next);
++    console.log(`[photobooth] previewing ${next}: ${CANONICAL_ROSTER[next].name} (${previewMode})`);
++  }
++  window.addEventListener('keydown', (event) => {
++    if (event.repeat) return;
++    if (event.code === 'ArrowRight') cycle(1);
++    else if (event.code === 'ArrowLeft') cycle(-1);
++    else if (event.code === 'ArrowUp' || event.code === 'ArrowDown') {
++      const i = MODES.indexOf(previewMode);
++      previewMode = MODES[(i + (event.code === 'ArrowDown' ? 1 : MODES.length - 1)) % MODES.length];
++      console.log(`[photobooth] view: ${previewMode}`);
++    } else if (event.code === 'Enter') captureRosterAvatars().catch((e) => console.error(String(e)));
++  });
++
++  // ------------------------------------------------------------- start-up
++  const previewId = params.get('athlete');
++  const autoCapture = params.get('auto') !== '0';
++  const settleTicks = Number(params.get('settleTick')) > 0 ? Number(params.get('settleTick')) : PHOTOBOOTH.settleTicks;
++  if (MODES.includes(params.get('view'))) previewMode = params.get('view');
++
++  dress(previewId && CANONICAL_ROSTER[previewId] ? previewId : ROSTER_ORDER[0]);
++
++  if (autoCapture) {
++    loop.onTick((tick) => {
++      if (tick === settleTicks) captureRosterAvatars().catch((e) => console.error(String(e)));
++      return undefined;
++    });
++  }
++
++  console.log(
++    `[photobooth] studio ready; previewing "${currentId}" (${previewMode}); ` +
++      (autoCapture ? `auto-capture at tick ${settleTicks}. ` : 'auto-capture off. ') +
++      'Left/Right cycle the roster, Up/Down cycle the view, Enter shoots everything (window.captureRosterAvatars()).',
++  );
++
++  return {
++    studio, camera, renderPreview, captureRosterAvatars, dress, poseFromClip,
++    get currentId() { return currentId; },
++    get done() { return captureDone; },
++    set view(mode) { if (MODES.includes(mode)) previewMode = mode; },
++    get view() { return previewMode; },
++  };
++}
+diff --git a/vite-plugin-capture.js b/vite-plugin-capture.js
+index 404e9d7..e0ce64a 100644
+--- a/vite-plugin-capture.js
++++ b/vite-plugin-capture.js
+@@ -77,6 +77,13 @@ export function createCaptureHandler(options = {}) {
+       const name = sanitiseName(payload && payload.name);
+       if (!name) return respond(res, 400, { error: 'capture name is empty after sanitising' });
+ 
++      // Optional sub-directory under captures/ (the Locker's avatars/), one
++      // segment only, sanitised exactly like the name so it cannot climb out.
++      const dir = payload && payload.dir !== undefined ? sanitiseName(payload.dir) : '';
++      if (payload && payload.dir !== undefined && !dir) {
++        return respond(res, 400, { error: 'capture dir is empty after sanitising' });
++      }
++
+       const tick = payload && payload.tick;
+       if (!Number.isFinite(tick)) return respond(res, 400, { error: 'tick must be a finite number' });
+ 
+@@ -92,14 +99,17 @@ export function createCaptureHandler(options = {}) {
+       // overwrites rather than accumulating. Only a capture that explicitly asks
+       // to be kept alongside its predecessors gets a timestamp — ISO 8601, with
+       // the characters that are illegal in filenames on Windows folded to '-'.
+-      const stem = `${name}_t${Math.trunc(tick)}`;
++      // `exact: true` writes `<name>.png` with no tick suffix: the file IS the
++      // deliverable (an avatar), not one frame of a comparison series.
++      const stem = payload.exact === true ? name : `${name}_t${Math.trunc(tick)}`;
+       const file = payload.timestamped === true
+         ? `${stem}_${new Date().toISOString().replace(/[:.]/g, '-')}.png`
+         : `${stem}.png`;
+-      const full = path.join(outDir, file);
++      const targetDir = dir ? path.join(outDir, dir) : outDir;
++      const full = path.join(targetDir, file);
+ 
+       try {
+-        fs.mkdirSync(outDir, { recursive: true });
++        fs.mkdirSync(targetDir, { recursive: true });
+         fs.writeFileSync(full, buffer);
+       } catch (error) {
+         return respond(res, 500, { error: `could not write capture: ${error.message}` });
+@@ -120,6 +130,9 @@ export default function capturePlugin(options = {}) {
+     configureServer(server) {
+       const handler = createCaptureHandler({ root: server.config.root, ...options });
+       server.middlewares.use('/__capture', handler);
++      // Same handler, the name the Locker spec uses. Both resolve from the
++      // server root regardless of Vite's `base`.
++      server.middlewares.use('/api/capture', handler);
+     },
+   };
+ }
