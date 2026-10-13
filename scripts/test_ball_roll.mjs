@@ -53,17 +53,25 @@ const SEAM_MAX_VY_HOP = 0.15;            // m/s upward while airborne in crossin
 const BOUNDARY_MAX_VY_KICK = 0.15;       // m/s upward while airborne in crossing window
 const CROSS_WINDOW_HALF = 1.0;           // m, half-width of the seam crossing window
 
-// Perimeter barrier / corner entrapment certification (COL_Barriers).
-// The corner "fan" entrapment ledges were replaced with a vertical curtain:
-// the terrain rim tops out at ~11 m (ball base) and a glass-bottom cap sits at
-// ~13 m. A rolling ball must climb to the rim, strike the curtain, and roll
-// back into play WITHOUT ever topping the curtain onto the shelf, WITHOUT an
-// unnatural upward pop, and WITHOUT wedging to rest perched on the rim.
-const SHELF_CAP_BASE = 13.0;             // m, glass-bottom cap height in the corners
-const CORNER_MAX_CLIMB_BASE = 12.0;      // m, ball base must stay below this (no shelf reach)
-const CORNER_MAX_VY_POP = 0.50;          // m/s, unnatural upward kick at the curtain
-const RIM_REST_BASE = 9.5;               // m, resting above this = perched on rim/shelf (wedge risk)
-const WEDGE_TICKS = 90;                  // 1.5 s of near-zero horizontal speed while perched = trapped
+// Perimeter barrier / corner "fan" certification (COL_Barriers). The v10.11
+// fan model restores the SLOPED RADIAL FAN: each corner rises continuously from
+// the ~11 m terrain rim to the 13 m apex at the outer corner (|x|=25, |z|=60),
+// where it meets the glass-wall top. A rolling ball must ride the fan to the
+// apex and roll back into play WITHOUT topping the wall (base at/below the
+// apex), WITHOUT an unnatural upward pop, and WITHOUT wedging to rest perched
+// on the fan. A positive minimum-climb check guards against a curtain or shelf
+// silently returning: if the fan is repaired into a wall, the ball stalls at
+// the ~11 m rim and never reaches the minimum.
+const FAN_APEX_BASE = 13.0;          // m, fan apex = glass-wall top = ball-base ceiling
+const CORNER_MIN_CLIMB_BASE = 11.5;  // m, ball base must REACH this (rode the fan past the rim)
+const CORNER_MAX_VY_POP = 0.50;      // m/s, unnatural upward kick at the fan apex / sill
+const FAN_REST_BASE = 11.0;          // m, base above this = on the fan (wedge risk)
+const WEDGE_TICKS = 90;              // 1.5 s of near-zero horizontal speed while perched = trapped
+
+// Long-side lower glass sill (separate feature, no corner fan): the ball must
+// not top the lower sill or wedge to rest perched on it.
+const SILL_MAX_CLIMB_BASE = 12.0;    // m, ball base must stay below this (no sill reach)
+const SILL_REST_BASE = 9.5;          // m, resting above this = perched on the sill (wedge risk)
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -464,11 +472,12 @@ function boundaryScenario(envs, dir, label) {
 function round3(v) { return Math.round(v * 1000) / 1000; }
 
 /**
- * CERTIFICATION: rolling ball cannot reach the corner glass shelf. Approaches
- * each corner from the terrain rim (ball base ~10.5 m) and rolls hard into the
- * corner curtain. The ball must climb to the rim, strike the vertical curtain,
- * and roll back into play without topping the curtain onto the shelf cap, and
- * without wedging to a rest perched on the rim.
+ * CERTIFICATION: rolling ball rides the corner sloped fan and rolls back.
+ * Approaches each corner from the terrain rim (ball base ~10.5 m) and rolls hard
+ * into the corner fan. The ball must ride the fan up to at least the minimum
+ * climb (proving the fan is present, not a curtain), must never top the glass
+ * wall (base stays at/below the 13 m apex), must not pop unnaturally, and must
+ * not wedge to rest perched on the fan.
  */
 function cornerBarrierScenario(envs, sx, sz, label) {
   const x = 20.0 * sx;
@@ -489,12 +498,12 @@ function cornerBarrierScenario(envs, sx, sz, label) {
   }
   const vyPop = maxAirborneVy(samples);
   // Wedge trap: consecutive ticks resting (near-zero horizontal speed) while
-  // perched above the rim base height.
+  // perched on the sloped fan (above the rim base height).
   let runLen = 0;
   let maxRunLen = 0;
   for (const s of samples) {
     const hsp = Math.hypot(s.vx, s.vz);
-    if (s.y - BALL_RADIUS > RIM_REST_BASE && hsp < 0.1) {
+    if (s.y - BALL_RADIUS > FAN_REST_BASE && hsp < 0.1) {
       runLen += 1;
       maxRunLen = Math.max(maxRunLen, runLen);
     } else {
@@ -505,16 +514,17 @@ function cornerBarrierScenario(envs, sx, sz, label) {
   return {
     group: 'barrier-corner', label,
     metrics: {
-      maxClimbBase: { value: round3(maxClimbBase), threshold: CORNER_MAX_CLIMB_BASE, pass: maxClimbBase < CORNER_MAX_CLIMB_BASE, below: true },
+      climbToFan: { value: round3(maxClimbBase), threshold: CORNER_MIN_CLIMB_BASE, pass: maxClimbBase >= CORNER_MIN_CLIMB_BASE, ge: true },
+      ceilingBase: { value: round3(maxClimbBase), threshold: FAN_APEX_BASE, pass: maxClimbBase <= FAN_APEX_BASE },
       vyPop: { value: round3(vyPop), threshold: CORNER_MAX_VY_POP, pass: vyPop <= CORNER_MAX_VY_POP },
       wedgeTicks: { value: maxRunLen, threshold: WEDGE_TICKS, pass: maxRunLen < WEDGE_TICKS, below: true },
     },
     diagnostics: {
-      shelfCapBase: SHELF_CAP_BASE,
+      fanApexBase: FAN_APEX_BASE,
       maxAbsX: round3(maxAbsX),
       maxAbsZ: round3(maxAbsZ),
       finalBase: round3(last.y - BALL_RADIUS),
-      note: 'vertical corner curtain (rim ~11m -> cap ~13m) must stop the ball below the shelf cap',
+      note: 'sloped corner fan (rim ~11m -> apex ~13m) must ride the ball to the apex and roll it back without popping or wedging',
     },
     spawn: { x, z, vx: 6.0 * sx, vz: 6.0 * sz, gapAboveSurface: SPAWN_GAP },
   };
@@ -544,7 +554,7 @@ function sillScenario(envs, side, label) {
       const base = s.y - BALL_RADIUS;
       maxClimbBase = Math.max(maxClimbBase, base);
       const hsp = Math.hypot(s.vx, s.vz);
-      if (base > RIM_REST_BASE && hsp < 0.1) {
+      if (base > SILL_REST_BASE && hsp < 0.1) {
         runLen += 1;
         maxRunLen = Math.max(maxRunLen, runLen);
       } else {
@@ -568,7 +578,7 @@ function sillScenario(envs, side, label) {
     metrics: {
       vyHop: { value: worstHop, threshold: CORNER_MAX_VY_POP, pass: worstHop <= CORNER_MAX_VY_POP },
       wedgeTicks: { value: worstWedge, threshold: WEDGE_TICKS, pass: worstWedge < WEDGE_TICKS, below: true },
-      maxClimbBase: { value: worstClimb, threshold: CORNER_MAX_CLIMB_BASE, pass: worstClimb < CORNER_MAX_CLIMB_BASE, below: true },
+      maxClimbBase: { value: worstClimb, threshold: SILL_MAX_CLIMB_BASE, pass: worstClimb < SILL_MAX_CLIMB_BASE, below: true },
     },
     stations,
     spawn: { x: 18.0 * side, vx: 7.0 * side, vz: 0, gapAboveSurface: SPAWN_GAP },
@@ -608,7 +618,7 @@ async function main() {
     const parts = [];
     let pass = true;
     for (const [k, m] of Object.entries(sc.metrics)) {
-      parts.push(`${k}=${m.value}/${m.threshold}${m.below ? '(<)' : '(<=)'}`);
+      parts.push(`${k}=${m.value}/${m.threshold}${m.below ? '(<)' : m.ge ? '(>=)' : '(<=)'}`);
       pass = pass && m.pass;
     }
     rows.push({ label: sc.label, group: sc.group, pass, detail: parts.join(' ') });
