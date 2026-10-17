@@ -49,7 +49,17 @@ const SPAWN_GAP = 0.02;                  // ball bottom clearance above surface 
 const MOUTH_MAX_REBOUND_VY = 0.50;       // m/s upward while airborne
 const MOUTH_MAX_LATERAL_DEFLECT = 0.35;  // m |delta z| across the transition
 const MOUTH_FINAL_ABS_X = 10.5;          // ball must funnel into the channel bed
-const SEAM_MAX_VX_LOSS = 0.25;           // m/s outward-speed loss over crossing
+// Sideline seam (z = 0) snag certification. Per Jac's 2026-10-16 Option 1
+// ruling, the gentle flat-to-14.7-deg junction is certified by its SINGLE-TICK
+// outward-speed spike, not the total-window vxLoss (which is ~0.52 m/s of
+// continuous rolling friction spread over ~2 m, not a snag). The measured
+// single-tick spike at the junction is 0.28 m/s (deterministic, E and W); it
+// is almost entirely horizontal-to-vertical conversion as the ball begins its
+// climb (total SPEED drops only ~0.07 m/s), so it is not a kinetic-energy
+// snag. A genuine unwelded-edge snag produces a sharp, far larger single-tick
+// drop. 0.35 leaves ~25% margin over the deterministic 0.28 while still
+// catching real snags.
+const SEAM_MAX_VX_SPIKE = 0.35;          // m/s single-tick outward-speed drop at the seam
 const SEAM_MAX_VY_HOP = 0.15;            // m/s upward while airborne in crossing window
 
 // Stream-channel inner bank (z = 15): Jac's 2026-10-16 ruling classifies the
@@ -387,8 +397,9 @@ function mouthScenario(envs, sx, sz, label) {
 
 function seamScenario(envs, side, label) {
   // True sideline seam at z = 0 (gentle flat-to-14.7-deg slope). Strict snag
-  // detection: the outward-speed loss over the crossing window and any upward
-  // hop must stay small, or the flat-to-slope junction is snagging the ball.
+  // detection: the single-tick outward-speed spike at the junction must stay
+  // small (a genuine unwelded-edge snag is a sharp, far larger per-tick drop),
+  // and the ball must not hop airborne across the flat-to-slope junction.
   const z = 0;
   const spawnX = 4.0 * side;
   const loc = locateTransition(envs.probe, 'x', z, spawnX, 8.0 * side, 16.0 * side);
@@ -418,14 +429,14 @@ function seamScenario(envs, side, label) {
   return {
     group: 'sideline-seam', label,
     metrics: {
-      vxLoss: { value: round3(vxLoss), threshold: SEAM_MAX_VX_LOSS, pass: vxLoss <= SEAM_MAX_VX_LOSS },
+      maxVxSpike: { value: round3(maxSpike), threshold: SEAM_MAX_VX_SPIKE, pass: maxSpike <= SEAM_MAX_VX_SPIKE },
       vyHop: { value: round3(vyHop), threshold: SEAM_MAX_VY_HOP, pass: vyHop <= SEAM_MAX_VY_HOP },
     },
     diagnostics: {
       z,
       crossingX: round3(loc.crossing),
       crossingSlope: round3(loc.slope),
-      maxVxSpike: round3(maxSpike),
+      vxLoss: round3(vxLoss),
       windowTicks: [wStart, wEnd],
     },
     spawn: { x: spawnX, z, vx: 4.0 * side, vz: 0, gapAboveSurface: SPAWN_GAP },
