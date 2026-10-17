@@ -7,9 +7,10 @@
  * smooth rollout: no lip launches, no lateral deflection, no phantom
  * deceleration at seams.
  *
- * 8 scenarios:
- *   a) Stream channel mouths, 4 quadrants (NE, NW, SE, SW)
- *   b) Stream-to-field sideline seam, E and W (stations z = 0 and z = 15)
+ *  8 scenarios:
+  *   a) Stream channel mouths, 4 quadrants (NE, NW, SE, SW)
+  *   b) Sideline seam (z = 0, gentle slope) and stream-channel inner bank
+  *      (z = 15, steep slope), E and W
  *   c) KeyBump-to-scoring-circle boundary, N and S
  *
  * Exit contract: exit code 0 when all scenarios pass, 1 if any fails.
@@ -48,22 +49,51 @@ const SPAWN_GAP = 0.02;                  // ball bottom clearance above surface 
 const MOUTH_MAX_REBOUND_VY = 0.50;       // m/s upward while airborne
 const MOUTH_MAX_LATERAL_DEFLECT = 0.35;  // m |delta z| across the transition
 const MOUTH_FINAL_ABS_X = 10.5;          // ball must funnel into the channel bed
-const SEAM_MAX_VX_LOSS = 0.25;           // m/s outward-speed loss over crossing
+// Sideline seam (z = 0) snag certification. Per Jac's 2026-10-16 Option 1
+// ruling, the gentle flat-to-14.7-deg junction is certified by its SINGLE-TICK
+// outward-speed spike, not the total-window vxLoss (which is ~0.52 m/s of
+// continuous rolling friction spread over ~2 m, not a snag). The measured
+// single-tick spike at the junction is 0.28 m/s (deterministic, E and W); it
+// is almost entirely horizontal-to-vertical conversion as the ball begins its
+// climb (total SPEED drops only ~0.07 m/s), so it is not a kinetic-energy
+// snag. A genuine unwelded-edge snag produces a sharp, far larger single-tick
+// drop. 0.35 leaves ~25% margin over the deterministic 0.28 while still
+// catching real snags.
+const SEAM_MAX_VX_SPIKE = 0.35;          // m/s single-tick outward-speed drop at the seam
 const SEAM_MAX_VY_HOP = 0.15;            // m/s upward while airborne in crossing window
+
+// Stream-channel inner bank (z = 15): Jac's 2026-10-16 ruling classifies the
+// steep side edge (46.5 deg) as intentional terrain, not a mesh defect. A
+// 4 m/s ball must decelerate continuously climbing the bank, reverse at the
+// lip (x ~ 9.7), and roll back toward center with continuous velocity. A mild
+// lip kick (one-tick ~0.77 m/s horizontal drop, ~0.65 m/s vertical launch) is
+// expected and accepted; anything sharper is a genuine snag or dead-ball stop.
+const BANK_MIN_RETURN_VX = 0.50;         // m/s sustained return speed after reversing (proves no dead-ball stop)
+const BANK_MAX_LIP_SPIKE = 0.90;         // m/s single-tick outward-speed drop (mild lip kick + margin)
+const BANK_MAX_LIP_POP = 0.70;           // m/s max upward velocity at the lip (measured 0.65 launch + margin)
+const BANK_REST_BASE = 0.30;             // m ball base above this while near-rest = wedged on the bank
 const BOUNDARY_MAX_VY_KICK = 0.15;       // m/s upward while airborne in crossing window
 const CROSS_WINDOW_HALF = 1.0;           // m, half-width of the seam crossing window
 
-// Perimeter barrier / corner entrapment certification (COL_Barriers).
-// The corner "fan" entrapment ledges were replaced with a vertical curtain:
-// the terrain rim tops out at ~11 m (ball base) and a glass-bottom cap sits at
-// ~13 m. A rolling ball must climb to the rim, strike the curtain, and roll
-// back into play WITHOUT ever topping the curtain onto the shelf, WITHOUT an
-// unnatural upward pop, and WITHOUT wedging to rest perched on the rim.
-const SHELF_CAP_BASE = 13.0;             // m, glass-bottom cap height in the corners
-const CORNER_MAX_CLIMB_BASE = 12.0;      // m, ball base must stay below this (no shelf reach)
-const CORNER_MAX_VY_POP = 0.50;          // m/s, unnatural upward kick at the curtain
-const RIM_REST_BASE = 9.5;               // m, resting above this = perched on rim/shelf (wedge risk)
-const WEDGE_TICKS = 90;                  // 1.5 s of near-zero horizontal speed while perched = trapped
+// Perimeter barrier / corner "fan" certification (COL_Barriers). The v10.11
+// fan model restores the SLOPED RADIAL FAN: each corner rises continuously from
+// the ~11 m terrain rim to the 13 m apex at the outer corner (|x|=25, |z|=60),
+// where it meets the glass-wall top. A rolling ball must ride the fan to the
+// apex and roll back into play WITHOUT topping the wall (base at/below the
+// apex), WITHOUT an unnatural upward pop, and WITHOUT wedging to rest perched
+// on the fan. A positive minimum-climb check guards against a curtain or shelf
+// silently returning: if the fan is repaired into a wall, the ball stalls at
+// the ~11 m rim and never reaches the minimum.
+const FAN_APEX_BASE = 13.0;          // m, fan apex = glass-wall top = ball-base ceiling
+const CORNER_MIN_CLIMB_BASE = 11.5;  // m, ball base must REACH this (rode the fan past the rim)
+const CORNER_MAX_VY_POP = 0.50;      // m/s, unnatural upward kick at the fan apex / sill
+const FAN_REST_BASE = 11.0;          // m, base above this = on the fan (wedge risk)
+const WEDGE_TICKS = 90;              // 1.5 s of near-zero horizontal speed while perched = trapped
+
+// Long-side lower glass sill (separate feature, no corner fan): the ball must
+// not top the lower sill or wedge to rest perched on it.
+const SILL_MAX_CLIMB_BASE = 12.0;    // m, ball base must stay below this (no sill reach)
+const SILL_REST_BASE = 9.5;          // m, resting above this = perched on the sill (wedge risk)
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -366,54 +396,119 @@ function mouthScenario(envs, sx, sz, label) {
 }
 
 function seamScenario(envs, side, label) {
-  // Stations z = 0 and z = 15; worst-case metrics are reported per side.
-  const stations = [];
-  for (const z of [0, 15]) {
-    const spawnX = 4.0 * side;
-    const loc = locateTransition(envs.probe, 'x', z, spawnX, 8.0 * side, 16.0 * side);
-    if (loc.crossing === null) throw new Error(`seam not found at z=${z}`);
-    const { samples } = runRoll(envs, {
-      x: spawnX, z,
-      vx: 4.0 * side,
-      vz: 0,
-      ticks: 360,
-    });
-    const w = windowTicks(samples, 'x', loc.crossing, CROSS_WINDOW_HALF);
-    if (w.length === 0) throw new Error(`ball never reached seam window at z=${z}`);
-    const wStart = w[0];
-    const wEnd = w[w.length - 1];
-    const speedOut = (s) => s.vx * side;
-    const vAtEntry = speedOut(samples[wStart]);
-    let minV = vAtEntry;
-    let maxSpike = 0;
-    for (let i = wStart; i <= wEnd; i++) {
-      minV = Math.min(minV, speedOut(samples[i]));
-      if (i > wStart) {
-        maxSpike = Math.max(maxSpike, speedOut(samples[i - 1]) - speedOut(samples[i]));
-      }
+  // True sideline seam at z = 0 (gentle flat-to-14.7-deg slope). Strict snag
+  // detection: the single-tick outward-speed spike at the junction must stay
+  // small (a genuine unwelded-edge snag is a sharp, far larger per-tick drop),
+  // and the ball must not hop airborne across the flat-to-slope junction.
+  const z = 0;
+  const spawnX = 4.0 * side;
+  const loc = locateTransition(envs.probe, 'x', z, spawnX, 8.0 * side, 16.0 * side);
+  if (loc.crossing === null) throw new Error(`seam not found at z=${z}`);
+  const { samples } = runRoll(envs, {
+    x: spawnX, z,
+    vx: 4.0 * side,
+    vz: 0,
+    ticks: 360,
+  });
+  const w = windowTicks(samples, 'x', loc.crossing, CROSS_WINDOW_HALF);
+  if (w.length === 0) throw new Error(`ball never reached seam window at z=${z}`);
+  const wStart = w[0];
+  const wEnd = w[w.length - 1];
+  const speedOut = (s) => s.vx * side;
+  const vAtEntry = speedOut(samples[wStart]);
+  let minV = vAtEntry;
+  let maxSpike = 0;
+  for (let i = wStart; i <= wEnd; i++) {
+    minV = Math.min(minV, speedOut(samples[i]));
+    if (i > wStart) {
+      maxSpike = Math.max(maxSpike, speedOut(samples[i - 1]) - speedOut(samples[i]));
     }
-    const vxLoss = vAtEntry - minV;
-    const vyHop = maxAirborneVy(samples, wStart, wEnd + 1);
-    stations.push({
+  }
+  const vxLoss = vAtEntry - minV;
+  const vyHop = maxAirborneVy(samples, wStart, wEnd + 1);
+  return {
+    group: 'sideline-seam', label,
+    metrics: {
+      maxVxSpike: { value: round3(maxSpike), threshold: SEAM_MAX_VX_SPIKE, pass: maxSpike <= SEAM_MAX_VX_SPIKE },
+      vyHop: { value: round3(vyHop), threshold: SEAM_MAX_VY_HOP, pass: vyHop <= SEAM_MAX_VY_HOP },
+    },
+    diagnostics: {
       z,
       crossingX: round3(loc.crossing),
       crossingSlope: round3(loc.slope),
       vxLoss: round3(vxLoss),
-      maxVxSpike: round3(maxSpike),
-      vyHop: round3(vyHop),
       windowTicks: [wStart, wEnd],
-    });
-  }
-  const worstLoss = Math.max(...stations.map((st) => st.vxLoss));
-  const worstHop = Math.max(...stations.map((st) => st.vyHop));
-  return {
-    group: 'sideline-seam', label,
-    metrics: {
-      vxLoss: { value: worstLoss, threshold: SEAM_MAX_VX_LOSS, pass: worstLoss <= SEAM_MAX_VX_LOSS },
-      vyHop: { value: worstHop, threshold: SEAM_MAX_VY_HOP, pass: worstHop <= SEAM_MAX_VY_HOP },
     },
-    stations,
-    spawn: { x: 4.0 * side, vx: 4.0 * side, vz: 0, gapAboveSurface: SPAWN_GAP },
+    spawn: { x: spawnX, z, vx: 4.0 * side, vz: 0, gapAboveSurface: SPAWN_GAP },
+  };
+}
+
+/**
+ * CERTIFICATION: the z = 15 stream-channel inner bank (46.5 deg) is intentional
+ * terrain, not a mesh defect. A 4 m/s ball climbing it must decelerate
+ * continuously, reverse at the lip, and roll back toward center with sustained
+ * velocity: no sudden dead-ball stop (snag), no wedge/rest on the bank, and no
+ * lip launch beyond the calibrated ~0.70 m/s threshold.
+ */
+function bankScenario(envs, side, label) {
+  const z = 15;
+  const spawnX = 4.0 * side;
+  const loc = locateTransition(envs.probe, 'x', z, spawnX, 8.0 * side, 16.0 * side);
+  if (loc.crossing === null) throw new Error(`bank not found at z=${z} (${label})`);
+  const { samples } = runRoll(envs, {
+    x: spawnX, z,
+    vx: 4.0 * side,
+    vz: 0,
+    ticks: 360,
+  });
+  const w = windowTicks(samples, 'x', loc.crossing, CROSS_WINDOW_HALF);
+  if (w.length === 0) throw new Error(`ball never reached bank window at z=${z} (${label})`);
+  const wStart = w[0];
+  const wEnd = w[w.length - 1];
+  const speedOut = (s) => s.vx * side;
+  const vAtEntry = speedOut(samples[wStart]);
+  let minV = vAtEntry;
+  let maxSpike = 0;
+  let maxLipPop = 0;
+  for (let i = wStart; i <= wEnd; i++) {
+    minV = Math.min(minV, speedOut(samples[i]));
+    maxLipPop = Math.max(maxLipPop, samples[i].vy);
+    if (i > wStart) {
+      maxSpike = Math.max(maxSpike, speedOut(samples[i - 1]) - speedOut(samples[i]));
+    }
+  }
+  // Sustained return speed after reversal (>= 0 only if the ball reversed).
+  const returnVx = -minV;
+  // Wedge trap: consecutive ticks resting (near-zero horizontal speed) while
+  // perched on the raised bank (base above the channel-bed flat).
+  let runLen = 0;
+  let maxRunLen = 0;
+  for (const s of samples) {
+    const hsp = Math.hypot(s.vx, s.vz);
+    if (s.y - BALL_RADIUS > BANK_REST_BASE && hsp < 0.1) {
+      runLen += 1;
+      maxRunLen = Math.max(maxRunLen, runLen);
+    } else {
+      runLen = 0;
+    }
+  }
+  return {
+    group: 'sideline-bank', label,
+    metrics: {
+      returnVx: { value: round3(returnVx), threshold: BANK_MIN_RETURN_VX, pass: returnVx >= BANK_MIN_RETURN_VX, ge: true },
+      lipSpike: { value: round3(maxSpike), threshold: BANK_MAX_LIP_SPIKE, pass: maxSpike <= BANK_MAX_LIP_SPIKE },
+      lipPop: { value: round3(maxLipPop), threshold: BANK_MAX_LIP_POP, pass: maxLipPop <= BANK_MAX_LIP_POP },
+      wedgeTicks: { value: maxRunLen, threshold: WEDGE_TICKS, pass: maxRunLen < WEDGE_TICKS, below: true },
+    },
+    diagnostics: {
+      z,
+      crossingX: round3(loc.crossing),
+      crossingSlope: round3(loc.slope),
+      vAtEntry: round3(vAtEntry),
+      minOutwardV: round3(minV),
+      windowTicks: [wStart, wEnd],
+    },
+    spawn: { x: spawnX, z, vx: 4.0 * side, vz: 0, gapAboveSurface: SPAWN_GAP },
   };
 }
 
@@ -464,11 +559,12 @@ function boundaryScenario(envs, dir, label) {
 function round3(v) { return Math.round(v * 1000) / 1000; }
 
 /**
- * CERTIFICATION: rolling ball cannot reach the corner glass shelf. Approaches
- * each corner from the terrain rim (ball base ~10.5 m) and rolls hard into the
- * corner curtain. The ball must climb to the rim, strike the vertical curtain,
- * and roll back into play without topping the curtain onto the shelf cap, and
- * without wedging to a rest perched on the rim.
+ * CERTIFICATION: rolling ball rides the corner sloped fan and rolls back.
+ * Approaches each corner from the terrain rim (ball base ~10.5 m) and rolls hard
+ * into the corner fan. The ball must ride the fan up to at least the minimum
+ * climb (proving the fan is present, not a curtain), must never top the glass
+ * wall (base stays at/below the 13 m apex), must not pop unnaturally, and must
+ * not wedge to rest perched on the fan.
  */
 function cornerBarrierScenario(envs, sx, sz, label) {
   const x = 20.0 * sx;
@@ -489,12 +585,12 @@ function cornerBarrierScenario(envs, sx, sz, label) {
   }
   const vyPop = maxAirborneVy(samples);
   // Wedge trap: consecutive ticks resting (near-zero horizontal speed) while
-  // perched above the rim base height.
+  // perched on the sloped fan (above the rim base height).
   let runLen = 0;
   let maxRunLen = 0;
   for (const s of samples) {
     const hsp = Math.hypot(s.vx, s.vz);
-    if (s.y - BALL_RADIUS > RIM_REST_BASE && hsp < 0.1) {
+    if (s.y - BALL_RADIUS > FAN_REST_BASE && hsp < 0.1) {
       runLen += 1;
       maxRunLen = Math.max(maxRunLen, runLen);
     } else {
@@ -505,16 +601,17 @@ function cornerBarrierScenario(envs, sx, sz, label) {
   return {
     group: 'barrier-corner', label,
     metrics: {
-      maxClimbBase: { value: round3(maxClimbBase), threshold: CORNER_MAX_CLIMB_BASE, pass: maxClimbBase < CORNER_MAX_CLIMB_BASE, below: true },
+      climbToFan: { value: round3(maxClimbBase), threshold: CORNER_MIN_CLIMB_BASE, pass: maxClimbBase >= CORNER_MIN_CLIMB_BASE, ge: true },
+      ceilingBase: { value: round3(maxClimbBase), threshold: FAN_APEX_BASE, pass: maxClimbBase <= FAN_APEX_BASE },
       vyPop: { value: round3(vyPop), threshold: CORNER_MAX_VY_POP, pass: vyPop <= CORNER_MAX_VY_POP },
       wedgeTicks: { value: maxRunLen, threshold: WEDGE_TICKS, pass: maxRunLen < WEDGE_TICKS, below: true },
     },
     diagnostics: {
-      shelfCapBase: SHELF_CAP_BASE,
+      fanApexBase: FAN_APEX_BASE,
       maxAbsX: round3(maxAbsX),
       maxAbsZ: round3(maxAbsZ),
       finalBase: round3(last.y - BALL_RADIUS),
-      note: 'vertical corner curtain (rim ~11m -> cap ~13m) must stop the ball below the shelf cap',
+      note: 'sloped corner fan (rim ~11m -> apex ~13m) must ride the ball to the apex and roll it back without popping or wedging',
     },
     spawn: { x, z, vx: 6.0 * sx, vz: 6.0 * sz, gapAboveSurface: SPAWN_GAP },
   };
@@ -544,7 +641,7 @@ function sillScenario(envs, side, label) {
       const base = s.y - BALL_RADIUS;
       maxClimbBase = Math.max(maxClimbBase, base);
       const hsp = Math.hypot(s.vx, s.vz);
-      if (base > RIM_REST_BASE && hsp < 0.1) {
+      if (base > SILL_REST_BASE && hsp < 0.1) {
         runLen += 1;
         maxRunLen = Math.max(maxRunLen, runLen);
       } else {
@@ -568,7 +665,7 @@ function sillScenario(envs, side, label) {
     metrics: {
       vyHop: { value: worstHop, threshold: CORNER_MAX_VY_POP, pass: worstHop <= CORNER_MAX_VY_POP },
       wedgeTicks: { value: worstWedge, threshold: WEDGE_TICKS, pass: worstWedge < WEDGE_TICKS, below: true },
-      maxClimbBase: { value: worstClimb, threshold: CORNER_MAX_CLIMB_BASE, pass: worstClimb < CORNER_MAX_CLIMB_BASE, below: true },
+      maxClimbBase: { value: worstClimb, threshold: SILL_MAX_CLIMB_BASE, pass: worstClimb < SILL_MAX_CLIMB_BASE, below: true },
     },
     stations,
     spawn: { x: 18.0 * side, vx: 7.0 * side, vz: 0, gapAboveSurface: SPAWN_GAP },
@@ -587,9 +684,11 @@ async function main() {
   scenarios.push(mouthScenario(envs, -1, -1, 'NW'));
   scenarios.push(mouthScenario(envs, +1, +1, 'SE'));
   scenarios.push(mouthScenario(envs, -1, +1, 'SW'));
-  // b) Sideline seams.
-  scenarios.push(seamScenario(envs, +1, 'E'));
-  scenarios.push(seamScenario(envs, -1, 'W'));
+  // b) Sideline seam (z = 0) and stream-channel inner bank (z = 15).
+    scenarios.push(seamScenario(envs, +1, 'seam E'));
+    scenarios.push(seamScenario(envs, -1, 'seam W'));
+    scenarios.push(bankScenario(envs, +1, 'bank E'));
+    scenarios.push(bankScenario(envs, -1, 'bank W'));
   // c) KeyBump / scoring-circle boundaries.
     scenarios.push(boundaryScenario(envs, +1, 'S'));
     scenarios.push(boundaryScenario(envs, -1, 'N'));
@@ -608,7 +707,7 @@ async function main() {
     const parts = [];
     let pass = true;
     for (const [k, m] of Object.entries(sc.metrics)) {
-      parts.push(`${k}=${m.value}/${m.threshold}${m.below ? '(<)' : '(<=)'}`);
+      parts.push(`${k}=${m.value}/${m.threshold}${m.below ? '(<)' : m.ge ? '(>=)' : '(<=)'}`);
       pass = pass && m.pass;
     }
     rows.push({ label: sc.label, group: sc.group, pass, detail: parts.join(' ') });
