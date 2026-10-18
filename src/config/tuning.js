@@ -1506,25 +1506,25 @@ const DEFAULTS = {
     enabled: true,
 
     // North and south: recessed flush into the upper bowl wall at |z| = 65.0.
-    // Perfectly 2:1 ratio (14.0m x 7.0m) matching 1024x512 canvas.
-    // Centered at Y = 22.0 so bottom (Y = 18.5) sits cleanly above the chamfer lip (Y = 18.0).
-    endWidth: 14.0,
-    endHeight: 7.0,
+    // Monumental scale: 16.0m x 8.0m (2:1 ratio) matching 1024x512 canvas.
+    // Centered at Y = 22.0 so bottom (Y = 18.0) sits cleanly above the chamfer lip.
+    endWidth: 16.0,
+    endHeight: 8.0,
     endCenterY: 22.0,
     endZ: 64.98, // 2cm in front of |z|=65 wall: perfectly flush / recessed
 
     // East and west: centerline ribbon boards on the side wall at |x| = 25.0.
-    // Prominently widened (28.0m x 3.2m, ~8.75:1 ratio) to fit directional attack readouts comfortably.
+    // Monumental scale: 28.0m x 5.4m (~5.18:1 ratio) on the unified lower wall pane.
     sideWidth: 28.0,
-    sideHeight: 3.2,
-    sideCenterY: 9.2,
+    sideHeight: 5.4,
+    sideCenterY: 9.8,
     sideX: 24.98, // 2cm in front of |x|=25 wall: perfectly flush / recessed
 
     /** Texture resolutions */
     endCanvasWidth: 1024,
     endCanvasHeight: 512,
     sideCanvasWidth: 2048,
-    sideCanvasHeight: 256,
+    sideCanvasHeight: 512,
 
     /** Ticks per celebration flash half-cycle. 15 ticks = four flashes/second. */
     flashTicks: 15,
