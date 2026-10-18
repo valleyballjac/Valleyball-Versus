@@ -59,9 +59,9 @@ export function initCelestialSkybox(scene) {
       void main() {
         vec3 d = vWorldDir;
 
-        // Base celestial void: obsidian black to deep navy horizon
-        vec3 voidColor = vec3(0.012, 0.020, 0.048);     // Deep zenith void
-        vec3 horizonColor = vec3(0.028, 0.052, 0.110);  // Luminous deep horizon haze
+        // Base celestial void: obsidian black with gentle deep navy horizon
+        vec3 voidColor = vec3(0.010, 0.016, 0.038);     // Deep zenith void
+        vec3 horizonColor = vec3(0.018, 0.032, 0.070);  // Deep horizon haze
 
         float h = clamp(d.y * 0.5 + 0.5, 0.0, 1.0);
         vec3 col = mix(horizonColor, voidColor, h);
@@ -75,27 +75,28 @@ export function initCelestialSkybox(scene) {
         // Soft Gaussian falloff along the galactic disc
         float milkyWayHaze = exp(-galDist * galDist * 18.0);
         float mwTurbulence = (sin(d.x * 4.2 + d.z * 3.5) * cos(d.y * 3.8 + d.x * 1.5)) * 0.5 + 0.5;
-        vec3 mwCore = vec3(0.14, 0.11, 0.28); // Vibrant twilight lavender
-        vec3 mwTeal = vec3(0.03, 0.20, 0.26); // Ethereal cyan dust rim
-        col += mix(mwCore, mwTeal, mwTurbulence) * milkyWayHaze * 0.78;
+        vec3 mwCore = vec3(0.12, 0.09, 0.24); // Ethereal twilight lavender
+        vec3 mwTeal = vec3(0.02, 0.16, 0.22); // Subtle cyan dust rim
+        // Subtly blended galactic river (toned down to sit gracefully in background)
+        col += mix(mwCore, mwTeal, mwTurbulence) * milkyWayHaze * 0.42;
 
         // ---------------------------------------------------------------------
         // 2. 3D CONTINUOUS NEBULAR HARMONICS (100% SEAMLESS, NO UV SEAMS)
         // ---------------------------------------------------------------------
         // Lobe 1: Deep twilight indigo cloud
         float n1 = sin(d.x * 2.2 + d.y * 1.5) * cos(d.z * 2.2);
-        float nebIndigo = smoothstep(0.24, 0.88, n1);
-        col += vec3(0.12, 0.08, 0.28) * nebIndigo * 0.65;
+        float nebIndigo = smoothstep(0.26, 0.88, n1);
+        col += vec3(0.10, 0.06, 0.24) * nebIndigo * 0.36;
 
         // Lobe 2: Cosmic cyan / ocean azure dust
         float n2 = sin(d.z * 2.8 - d.x * 1.6) * cos(d.y * 2.4);
-        float nebCyan = smoothstep(0.28, 0.90, n2);
-        col += vec3(0.04, 0.18, 0.25) * nebCyan * 0.55;
+        float nebCyan = smoothstep(0.30, 0.90, n2);
+        col += vec3(0.03, 0.14, 0.20) * nebCyan * 0.28;
 
         // Lobe 3: Soft magenta / stellar nursery core
         float n3 = cos(d.x * 3.4 + d.z * 1.8) * sin(d.y * 3.0);
-        float nebViolet = smoothstep(0.38, 0.94, n3);
-        col += vec3(0.20, 0.06, 0.24) * nebViolet * 0.45;
+        float nebViolet = smoothstep(0.40, 0.94, n3);
+        col += vec3(0.16, 0.04, 0.20) * nebViolet * 0.22;
 
         gl_FragColor = vec4(col, 1.0);
       }
@@ -116,8 +117,8 @@ export function initCelestialSkybox(scene) {
   const sctx = starCanvas.getContext('2d');
   const sGrad = sctx.createRadialGradient(32, 32, 0, 32, 32, 30);
   sGrad.addColorStop(0.0, 'rgba(255, 255, 255, 1.0)');
-  sGrad.addColorStop(0.2, 'rgba(255, 255, 255, 0.85)');
-  sGrad.addColorStop(0.5, 'rgba(255, 255, 255, 0.25)');
+  sGrad.addColorStop(0.38, 'rgba(255, 255, 255, 1.0)');
+  sGrad.addColorStop(0.70, 'rgba(255, 255, 255, 0.65)');
   sGrad.addColorStop(1.0, 'rgba(255, 255, 255, 0.0)');
   sctx.fillStyle = sGrad;
   sctx.fillRect(0, 0, 64, 64);
@@ -125,8 +126,8 @@ export function initCelestialSkybox(scene) {
   const starTexture = new THREE.CanvasTexture(starCanvas);
   starTexture.needsUpdate = true;
 
-  // Generate 3,400 stars uniformly on sphere using Fibonacci spiral + seeded jitter
-  const starCount = 3400;
+  // Generate 4,200 stars uniformly on sphere using Fibonacci spiral + seeded jitter
+  const starCount = 4200;
   const positions = new Float32Array(starCount * 3);
   const colors = new Float32Array(starCount * 3);
 
@@ -158,22 +159,22 @@ export function initCelestialSkybox(scene) {
 
     // Real stellar temperature and magnitude weighting
     const mag = rnd(); // 0 (faint) to 1 (bright)
-    // 75% background stars (0.40 - 0.75), 20% medium (0.75 - 0.95), 5% brilliant gems (1.0 - 1.4)
-    let brightness = 0.42 + mag * 0.48;
-    if (mag > 0.90) brightness = 0.95 + (mag - 0.90) * 4.0;
+    // Clearly perceptible baseline brightness: 75% stars (0.72 - 1.10), 20% medium (1.10 - 1.45), 5% brilliant gems (1.50 - 2.0)
+    let brightness = 0.72 + mag * 0.42;
+    if (mag > 0.80) brightness = 1.14 + (mag - 0.80) * 4.2;
 
     // Stellar spectral tint
     const colorRoll = rnd();
-    let r = 0.96, g = 0.98, b = 1.0; // Class A/F diamond white (70%)
-    if (colorRoll > 0.82) {
+    let r = 0.98, g = 0.99, b = 1.0; // Class A/F diamond white (70%)
+    if (colorRoll > 0.80) {
       // Class B: Ice blue
-      r = 0.70; g = 0.88; b = 1.0;
+      r = 0.75; g = 0.90; b = 1.0;
     } else if (colorRoll < 0.12) {
       // Class G/K: Warm gold
-      r = 1.0; g = 0.92; b = 0.65;
-    } else if (colorRoll >= 0.76 && colorRoll <= 0.82) {
+      r = 1.0; g = 0.94; b = 0.68;
+    } else if (colorRoll >= 0.74 && colorRoll <= 0.80) {
       // Class M: Soft lavender / rose
-      r = 0.98; g = 0.82; b = 0.98;
+      r = 1.0; g = 0.84; b = 0.98;
     }
 
     colors[i * 3 + 0] = Math.min(1.0, r * brightness);
@@ -186,7 +187,7 @@ export function initCelestialSkybox(scene) {
   starGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
   const starMat = new THREE.PointsMaterial({
-    size: 1.6, // Native screen-space size in pixels
+    size: 3.2, // Clearly visible, crisp subpixel pinpoints on screen
     sizeAttenuation: false, // PREVENTS PIXELATION: Each star is a subpixel pinpoint
     map: starTexture,
     vertexColors: true,
