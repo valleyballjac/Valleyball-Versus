@@ -294,16 +294,46 @@ async function main() {
     const setP1 = (id) => page.evaluate((value) => window.__hwTest.p1Ctrl.setValue(value), id);
     const shot = (name) => page.screenshot({ path: path.join(EVIDENCE_DIR, name) });
 
-    // The menu route itself: open the real lil-gui cosmetics folder so the
-    // capture shows the dropdowns the playtest uses, then hide the gui so the
+    // The menu route itself: SHOW the real lil-gui panel (main.js hides it at
+    // boot), collapse every other top-level folder and open only the cosmetics
+    // (headwear) folder so its P1/P2 dropdowns sit near the top of the panel
+    // and stay inside the 720px viewport. Assert the panel and both dropdown
+    // rows are visibly in view before capturing, then hide the gui so the
     // piece and action shots are unobstructed.
     await setP1('manager_cap');
-    await page.evaluate(() => {
+    const menuVis = await page.evaluate(() => {
       const gui = window.__vb.gui;
-      const openAll = (g) => { g.open(); g.folders.forEach(openAll); };
-      openAll(gui);
+      // createGui() ends with gui.close(), so the root is collapsed at boot in
+      // addition to being hidden (main.js calls hide()). Un-collapse, un-hide,
+      // then open only the cosmetics folder.
+      gui.open();
+      gui.show();
+      let cosmetics = null;
+      for (const f of gui.folders) {
+        if (f._title === 'cosmetics (headwear)') {
+          cosmetics = f;
+          f.open();
+        } else {
+          f.close();
+        }
+      }
+      const inView = (el) => {
+        if (!el) return false;
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0 && r.top >= 0 && r.bottom <= window.innerHeight;
+      };
+      return {
+        panelVisible: !gui._hidden && inView(gui.domElement),
+        cosmeticsOpen: !!cosmetics && !cosmetics._closed,
+        p1Visible: inView(window.__hwTest.p1Ctrl?.domElement),
+        p2Visible: inView(window.__hwTest.p2Ctrl?.domElement),
+      };
     });
     await page.waitForTimeout(300);
+    check(menuVis.panelVisible, 'menu shot: lil-gui panel is visible in viewport');
+    check(menuVis.cosmeticsOpen, 'menu shot: cosmetics (headwear) folder is open');
+    check(menuVis.p1Visible, 'menu shot: P1 headwear dropdown is visibly in viewport');
+    check(menuVis.p2Visible, 'menu shot: P2 headwear dropdown is visibly in viewport');
     await shot('00_menu_cosmetics_folder.png');
     await page.evaluate(() => window.__vb.gui.hide());
 
