@@ -10,6 +10,7 @@ test_*.mjs
 !scripts/test_boundary_drops.mjs
 !scripts/test_corner_cap_negative.mjs
 !scripts/test_athlete_corner_traversal.mjs
+!scripts/test_headwear_selector.mjs
 test_ball_roll_report.json
 test_boundary_drops_report.json
 test_athlete_corner_traversal_report.json
