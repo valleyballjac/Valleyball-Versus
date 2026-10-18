@@ -3039,21 +3039,25 @@ function handleStartMatch(configs, matchRulesOrBall = {}) {
   // 1. Apply configurations
   if (configs && configs[0] && athletes[0]) {
     athletes[0].setTeamAndVariant(configs[0].team, configs[0].variant, { primaryColor: configs[0].primaryColor });
+    if (configs[0].headwear !== undefined && athletes[0].headwear !== configs[0].headwear) athletes[0].setHeadwear(configs[0].headwear);
     playerCameras[0].setMode(configs[0].cameraMode);
     if (TUNING.players[0]) {
       TUNING.players[0].team = configs[0].team;
       TUNING.players[0].variant = configs[0].variant;
       TUNING.players[0].primaryColor = configs[0].primaryColor;
+      TUNING.players[0].headwear = configs[0].headwear;
       TUNING.players[0].cameraMode = configs[0].cameraMode;
     }
   }
   if (configs && configs[1] && athletes[1]) {
     athletes[1].setTeamAndVariant(configs[1].team, configs[1].variant, { primaryColor: configs[1].primaryColor });
+    if (configs[1].headwear !== undefined && athletes[1].headwear !== configs[1].headwear) athletes[1].setHeadwear(configs[1].headwear);
     playerCameras[1].setMode(configs[1].cameraMode);
     if (TUNING.players[1]) {
       TUNING.players[1].team = configs[1].team;
       TUNING.players[1].variant = configs[1].variant;
       TUNING.players[1].primaryColor = configs[1].primaryColor;
+      TUNING.players[1].headwear = configs[1].headwear;
       TUNING.players[1].cameraMode = configs[1].cameraMode;
     }
   }
@@ -3212,11 +3216,13 @@ function handleStartPractice(playerConfig = null, ballChoice = 'all') {
   // 1. Apply customized solo athlete options
   if (playerConfig && athletes[0]) {
     athletes[0].setTeamAndVariant(playerConfig.team || 'home', playerConfig.variant || 'classic', { primaryColor: playerConfig.primaryColor });
+    if (playerConfig.headwear !== undefined && athletes[0].headwear !== playerConfig.headwear) athletes[0].setHeadwear(playerConfig.headwear);
     playerCameras[0].setMode(playerConfig.cameraMode || 'chase');
     if (TUNING.players[0]) {
       TUNING.players[0].team = playerConfig.team;
       TUNING.players[0].variant = playerConfig.variant;
       TUNING.players[0].primaryColor = playerConfig.primaryColor;
+      TUNING.players[0].headwear = playerConfig.headwear;
       TUNING.players[0].cameraMode = playerConfig.cameraMode;
     }
     TUNING.camera.mode = playerCameras[0].mode;
@@ -3485,6 +3491,11 @@ function handleEnterSetup(mode = 'match') {
   }
 
   athleteManager.stageForLobby(mode);
+  const setupCfgs = getPlayerConfigs();
+  for (let i = 0; i < 2; i++) {
+    const hw = setupCfgs[i]?.headwear;
+    if (hw && athletes[i] && athletes[i].headwear !== hw) athletes[i].setHeadwear(hw);
+  }
   cinematicCamera.startSetupPreview();
   console.log(`[mainMenu] entered setup (${mode}) -> 3D athlete staging active`);
 }
@@ -3499,10 +3510,12 @@ function handleExitSetup() {
 function handlePlayerConfigChange(idx, config) {
   if (athletes[idx]) {
     athletes[idx].setTeamAndVariant(config.team, config.variant, { primaryColor: config.primaryColor });
+    if (config.headwear !== undefined && athletes[idx].headwear !== config.headwear) athletes[idx].setHeadwear(config.headwear);
     if (TUNING.players[idx]) {
       TUNING.players[idx].team = config.team;
       TUNING.players[idx].variant = config.variant;
       TUNING.players[idx].primaryColor = config.primaryColor;
+      TUNING.players[idx].headwear = config.headwear;
       TUNING.players[idx].cameraMode = config.cameraMode;
     }
   }

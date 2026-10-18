@@ -65,6 +65,7 @@ class AthleteManager {
         team,
         variant,
         primaryColor,
+        headwear: slotConfig.headwear,
         assistPreset: slotConfig.assistPreset || 'standard',
         spawn: { x: 0, y: 1.5, z: 0, yaw: 0 },
         scene: this.scene,
@@ -111,6 +112,7 @@ class AthleteManager {
     const team = config.team || athlete.team;
     const variant = config.variant || athlete.variant;
     athlete.setTeamAndVariant(team, variant, { primaryColor: config.primaryColor });
+    if (config.headwear !== undefined && athlete.headwear !== config.headwear) athlete.setHeadwear(config.headwear);
     if (config.assistPreset && athlete.setAssistPreset) {
       athlete.setAssistPreset(config.assistPreset);
     }

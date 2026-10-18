@@ -10,6 +10,7 @@ import { state } from './state.js';
 import {
   PALETTE_SWATCHES,
   getColorName,
+  HEADWEAR_OPTIONS,
   PHYSIQUE_OPTIONS,
   CAMERA_OPTIONS,
   MATCH_BALL_OPTIONS,
@@ -18,6 +19,7 @@ import {
   PRACTICE_BALL_OPTIONS,
   ASSIST_OPTIONS,
 } from './constants.js';
+import { getCanonHeadwearIdForColorName } from '../../../config/cosmetics.js';
 
 let rootEl = null;
 let playerSetupEl = null;
@@ -49,6 +51,7 @@ let playerConfigs = [
     difficulty: 'medium',
     aggressiveness: 0.60,
     team: 'home',
+    headwear: 'wrestler_bands',
     variant: 'classic',
     primaryColor: 0xd90429,
     cameraMode: 'chase',
@@ -60,6 +63,7 @@ let playerConfigs = [
     difficulty: 'medium',
     aggressiveness: 0.60,
     team: 'away',
+    headwear: 'wicket_grill',
     variant: 'classic',
     primaryColor: 0x1d4ed8,
     cameraMode: 'chase',
@@ -97,6 +101,7 @@ let playerTypeButtons = [[], []];
 let playerTeamButtons = [[], []];
 let playerSwatchButtons = [[], []];
 let playerPhysiqueButtons = [[], []];
+const playerHeadwearLabelEls = [null, null];
 let playerCameraSelects = [null, null];
 let playerAssistButtons = [[], []];
 let playerAssistDescEls = [null, null];
@@ -1035,6 +1040,15 @@ export function setPlayerColor(idx, colorHex) {
   }
 
   playerConfigs[idx].primaryColor = colorHex;
+  const canon = getCanonHeadwearIdForColorName(getColorName(colorHex).toLowerCase());
+  if (canon) {
+    playerConfigs[idx].headwear = canon;
+    const labelEl = playerHeadwearLabelEls[idx];
+    if (labelEl) {
+      const opt = HEADWEAR_OPTIONS.find((o) => o.id === canon);
+      labelEl.textContent = opt ? opt.label : canon;
+    }
+  }
   playerReadyState[idx] = false;
   updateReadyUI();
 
@@ -1056,6 +1070,15 @@ export function enforceColorExclusivity() {
     const alt = PALETTE_SWATCHES.find((s) => s.hex !== homeColor);
     if (alt) {
       playerConfigs[awayIdx].primaryColor = alt.hex;
+      const canon = getCanonHeadwearIdForColorName(getColorName(alt.hex).toLowerCase());
+      if (canon) {
+        playerConfigs[awayIdx].headwear = canon;
+        const labelEl = playerHeadwearLabelEls[awayIdx];
+        if (labelEl) {
+          const opt = HEADWEAR_OPTIONS.find((o) => o.id === canon);
+          labelEl.textContent = opt ? opt.label : canon;
+        }
+      }
       notifyPlayerUpdate(awayIdx);
     }
   }
@@ -1093,6 +1116,31 @@ export function updateSwatchUI() {
       }
     });
   });
+}
+
+export function setPlayerHeadwear(idx, headwearId) {
+  if (!playerConfigs[idx]) return;
+  playerConfigs[idx].headwear = headwearId;
+  playerReadyState[idx] = false;
+  updateReadyUI();
+
+  const labelEl = playerHeadwearLabelEls[idx];
+  if (labelEl) {
+    const opt = HEADWEAR_OPTIONS.find((o) => o.id === headwearId);
+    labelEl.textContent = opt ? opt.label : (headwearId || 'NONE');
+  }
+
+  notifyPlayerUpdate(idx);
+}
+
+export function cyclePlayerHeadwear(idx, dir = 1) {
+  if (!playerConfigs[idx]) return;
+  const curId = playerConfigs[idx].headwear;
+  const curIdx = HEADWEAR_OPTIONS.findIndex((o) => o.id === curId);
+  const nextIdx = curIdx === -1
+    ? (dir > 0 ? 0 : HEADWEAR_OPTIONS.length - 1)
+    : (curIdx + dir + HEADWEAR_OPTIONS.length) % HEADWEAR_OPTIONS.length;
+  setPlayerHeadwear(idx, HEADWEAR_OPTIONS[nextIdx].id);
 }
 
 export function setPlayerPhysique(idx, variant) {
@@ -1177,14 +1225,16 @@ export function cycleOption(playerIdx, rowIdx, direction = 1) {
       const nextIdx = (curIdx + direction + allowed.length) % allowed.length;
       setPlayerColor(playerIdx, allowed[nextIdx].hex);
     } else if (rowIdx === 3) {
+      cyclePlayerHeadwear(playerIdx, direction);
+    } else if (rowIdx === 4) {
       const curIdx = PHYSIQUE_OPTIONS.indexOf(playerConfigs[playerIdx].variant);
       const nextIdx = (curIdx + direction + PHYSIQUE_OPTIONS.length) % PHYSIQUE_OPTIONS.length;
       setPlayerPhysique(playerIdx, PHYSIQUE_OPTIONS[nextIdx]);
-    } else if (rowIdx === 4) {
+    } else if (rowIdx === 5) {
       const curIdx = CAMERA_OPTIONS.findIndex((c) => c.id === playerConfigs[playerIdx].cameraMode);
       const nextIdx = (curIdx + direction + CAMERA_OPTIONS.length) % CAMERA_OPTIONS.length;
       setPlayerCamera(playerIdx, CAMERA_OPTIONS[nextIdx].id);
-    } else if (rowIdx === 5) {
+    } else if (rowIdx === 6) {
       const curPreset = playerConfigs[playerIdx].assistPreset || 'standard';
       const curIdx = ASSIST_OPTIONS.findIndex((a) => a.id === curPreset);
       const nextIdx = (curIdx + direction + ASSIST_OPTIONS.length) % ASSIST_OPTIONS.length;
@@ -1219,19 +1269,21 @@ export function cycleOption(playerIdx, rowIdx, direction = 1) {
     const nextIdx = (curIdx + direction + allowed.length) % allowed.length;
     setPlayerColor(playerIdx, allowed[nextIdx].hex);
   } else if (rowIdx === 4) {
+    cyclePlayerHeadwear(playerIdx, direction);
+  } else if (rowIdx === 5) {
     const curIdx = PHYSIQUE_OPTIONS.indexOf(playerConfigs[playerIdx].variant);
     const nextIdx = (curIdx + direction + PHYSIQUE_OPTIONS.length) % PHYSIQUE_OPTIONS.length;
     setPlayerPhysique(playerIdx, PHYSIQUE_OPTIONS[nextIdx]);
-  } else if (rowIdx === 5) {
+  } else if (rowIdx === 6) {
     const curIdx = CAMERA_OPTIONS.findIndex((c) => c.id === playerConfigs[playerIdx].cameraMode);
     const nextIdx = (curIdx + direction + CAMERA_OPTIONS.length) % CAMERA_OPTIONS.length;
     setPlayerCamera(playerIdx, CAMERA_OPTIONS[nextIdx].id);
-  } else if (rowIdx === 6) {
+  } else if (rowIdx === 7) {
     const curPreset = playerConfigs[playerIdx].assistPreset || 'standard';
     const curIdx = ASSIST_OPTIONS.findIndex((a) => a.id === curPreset);
     const nextIdx = (curIdx + direction + ASSIST_OPTIONS.length) % ASSIST_OPTIONS.length;
     setPlayerAssist(playerIdx, ASSIST_OPTIONS[nextIdx].id);
-  } else if (rowIdx === 7) {
+  } else if (rowIdx === 8) {
     if (screen1ActionCol === 0) {
       if (navActions.showTitleScreen) navActions.showTitleScreen();
     } else {
@@ -1856,7 +1908,86 @@ export function buildPlayerColumn(idx, label, themeColor) {
   `;
   charCard.innerHTML = `<div style="font-size: 10.5px; font-weight: 800; letter-spacing: 0.1em; color: ${themeColor}; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 2px;">CHARACTER OPTIONS</div>`;
 
-  // Row 3: Player Physique
+  // Row 4 (Match) / Row 3 (Practice): Headwear
+  const headwearRow = document.createElement('div');
+  headwearRow.id = `row-headwear-p${idx + 1}`;
+  headwearRow.style.cssText = 'display: flex; flex-direction: column; gap: 4px; padding: 4px; border-radius: 6px; transition: all 0.15s ease;';
+  headwearRow.innerHTML = '<div style="font-size: 10px; font-weight: 700; color: #94a3b8;">HEADWEAR</div>';
+
+  const headwearCyclerRow = document.createElement('div');
+  headwearCyclerRow.style.cssText = 'display: flex; gap: 6px; align-items: center;';
+
+  const btnPrevHw = document.createElement('button');
+  btnPrevHw.textContent = '<';
+  btnPrevHw.style.cssText = `
+    padding: 6px 10px;
+    font-size: 11px;
+    font-weight: 800;
+    font-family: inherit;
+    color: #ffffff;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 5px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  `;
+  btnPrevHw.onclick = () => {
+    playerFocusRow[idx] = currentSetupMode === 'practice' ? 3 : 4;
+    focusedColumn = idx;
+    cyclePlayerHeadwear(idx, -1);
+    updateFocusUI();
+  };
+
+  const headwearLabelEl = document.createElement('div');
+  headwearLabelEl.id = `label-headwear-p${idx + 1}`;
+  headwearLabelEl.style.cssText = `
+    flex: 1;
+    padding: 6px 8px;
+    font-size: 10px;
+    font-weight: 800;
+    font-family: inherit;
+    text-align: center;
+    color: #ffffff;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  `;
+  const initialHwOpt = HEADWEAR_OPTIONS.find((o) => o.id === playerConfigs[idx].headwear);
+  headwearLabelEl.textContent = initialHwOpt ? initialHwOpt.label : (playerConfigs[idx].headwear || 'NONE');
+  playerHeadwearLabelEls[idx] = headwearLabelEl;
+
+  const btnNextHw = document.createElement('button');
+  btnNextHw.textContent = '>';
+  btnNextHw.style.cssText = `
+    padding: 6px 10px;
+    font-size: 11px;
+    font-weight: 800;
+    font-family: inherit;
+    color: #ffffff;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 5px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  `;
+  btnNextHw.onclick = () => {
+    playerFocusRow[idx] = currentSetupMode === 'practice' ? 3 : 4;
+    focusedColumn = idx;
+    cyclePlayerHeadwear(idx, 1);
+    updateFocusUI();
+  };
+
+  headwearCyclerRow.appendChild(btnPrevHw);
+  headwearCyclerRow.appendChild(headwearLabelEl);
+  headwearCyclerRow.appendChild(btnNextHw);
+  headwearRow.appendChild(headwearCyclerRow);
+  charCard.appendChild(headwearRow);
+  playerRowElements[idx][4] = headwearRow;
+
+  // Row 5 (Match) / Row 4 (Practice): Player Physique
   const physiqueRow = document.createElement('div');
   physiqueRow.id = `row-physique-p${idx + 1}`;
   physiqueRow.style.cssText = 'display: flex; flex-direction: column; gap: 4px; padding: 4px; border-radius: 6px; transition: all 0.15s ease;';
@@ -1884,7 +2015,7 @@ export function buildPlayerColumn(idx, label, themeColor) {
       cursor: pointer;
     `;
     btn.onclick = () => {
-      playerFocusRow[idx] = currentSetupMode === 'practice' ? 3 : 4;
+      playerFocusRow[idx] = currentSetupMode === 'practice' ? 4 : 5;
       focusedColumn = idx;
       updateFocusUI();
       setPlayerPhysique(idx, variant);
@@ -1894,9 +2025,9 @@ export function buildPlayerColumn(idx, label, themeColor) {
   });
   physiqueRow.appendChild(physiqueBtnRow);
   charCard.appendChild(physiqueRow);
-  playerRowElements[idx][4] = physiqueRow;
+  playerRowElements[idx][5] = physiqueRow;
 
-  // Row 4: Preferred Camera
+  // Row 6 (Match) / Row 5 (Practice): Preferred Camera
   const cameraRow = document.createElement('div');
   cameraRow.id = `row-camera-p${idx + 1}`;
   cameraRow.style.cssText = 'display: flex; flex-direction: column; gap: 4px; padding: 4px; border-radius: 6px; transition: all 0.15s ease;';
@@ -1925,22 +2056,22 @@ export function buildPlayerColumn(idx, label, themeColor) {
     camSelect.appendChild(el);
   });
   camSelect.onchange = (e) => {
-    playerFocusRow[idx] = currentSetupMode === 'practice' ? 4 : 5;
+    playerFocusRow[idx] = currentSetupMode === 'practice' ? 5 : 6;
     focusedColumn = idx;
     updateFocusUI();
     setPlayerCamera(idx, e.target.value);
   };
   camSelect.onfocus = () => {
-    playerFocusRow[idx] = currentSetupMode === 'practice' ? 4 : 5;
+    playerFocusRow[idx] = currentSetupMode === 'practice' ? 5 : 6;
     focusedColumn = idx;
     updateFocusUI();
   };
   playerCameraSelects[idx] = camSelect;
   cameraRow.appendChild(camSelect);
   charCard.appendChild(cameraRow);
-  playerRowElements[idx][5] = cameraRow;
+  playerRowElements[idx][6] = cameraRow;
 
-  // Row 5: Strike Assist Preset
+  // Row 7 (Match) / Row 6 (Practice): Strike Assist Preset
   const assistRow = document.createElement('div');
   assistRow.id = `row-assist-p${idx + 1}`;
   assistRow.style.cssText = 'display: flex; flex-direction: column; gap: 4px; padding: 4px; border-radius: 6px; transition: all 0.15s ease;';
@@ -1969,7 +2100,7 @@ export function buildPlayerColumn(idx, label, themeColor) {
       transition: all 0.15s ease;
     `;
     btn.onclick = () => {
-      playerFocusRow[idx] = currentSetupMode === 'practice' ? 5 : 6;
+      playerFocusRow[idx] = currentSetupMode === 'practice' ? 6 : 7;
       focusedColumn = idx;
       updateFocusUI();
       setPlayerAssist(idx, opt.id);
@@ -1987,10 +2118,10 @@ export function buildPlayerColumn(idx, label, themeColor) {
   assistRow.appendChild(assistDescEl);
 
   charCard.appendChild(assistRow);
-  playerRowElements[idx][6] = assistRow;
+  playerRowElements[idx][7] = assistRow;
 
-  // Row 6: Next Button
-  playerRowElements[idx][7] = btnNext;
+  // Row 8: Next Button
+  playerRowElements[idx][8] = btnNext;
 
   col.appendChild(charCard);
 
@@ -2014,17 +2145,18 @@ export function updateFocusUI() {
     const activeRow = playerFocusRow[0];
 
     // Practice Mode Athlete Column:
-    // Rows 1..5: Team Status, Team Color, Physique, Camera, Strike Assist
-    // Map practice row indices (1..5) to elements in playerRowElements[0] (indices 2..6)
+    // Rows 1..6: Team Status, Team Color, Headwear, Physique, Camera, Strike Assist
+    // Map practice row indices (1..6) to elements in playerRowElements[0] (indices 2..7)
     const practiceRowMap = {
       1: playerRowElements[0]?.[2], // Team Status
       2: playerRowElements[0]?.[3], // Team Color
-      3: playerRowElements[0]?.[4], // Physique
-      4: playerRowElements[0]?.[5], // Camera
-      5: playerRowElements[0]?.[6], // Strike Assist
+      3: playerRowElements[0]?.[4], // Headwear
+      4: playerRowElements[0]?.[5], // Physique
+      5: playerRowElements[0]?.[6], // Camera
+      6: playerRowElements[0]?.[7], // Strike Assist
     };
 
-    [1, 2, 3, 4, 5].forEach((rIdx) => {
+    [1, 2, 3, 4, 5, 6].forEach((rIdx) => {
       const el = practiceRowMap[rIdx];
       if (!el) return;
       if (rIdx === activeRow) {
@@ -2050,9 +2182,9 @@ export function updateFocusUI() {
       }
     });
 
-    // Row 6: Practice Ball Selector Box
+    // Row 7: Practice Ball Selector Box
     if (ballBox) {
-      if (activeRow === 6) {
+      if (activeRow === 7) {
         ballBox.classList.add('rainbow-focused');
       } else {
         ballBox.classList.remove('rainbow-focused');
@@ -2063,9 +2195,9 @@ export function updateFocusUI() {
       }
     }
 
-    // Row 7: Action Row (Back and Start Drill)
+    // Row 8: Action Row (Back and Start Drill)
     if (btnBack && btnStartMatch) {
-      if (activeRow === 7) {
+      if (activeRow === 8) {
         if (practiceActionCol === 0) {
           btnBack.classList.add('rainbow-focused');
           btnStartMatch.classList.remove('rainbow-focused');
@@ -2175,8 +2307,8 @@ export function updateFocusUI() {
     const activeRow = playerFocusRow[idx];
     const isThisColActive = !isSingleController || focusedColumn === idx;
 
-    // Rows 0..6: Type, AI Agg, Team, Color, Physique, Camera, Strike Assist
-    [0, 1, 2, 3, 4, 5, 6].forEach((rIdx) => {
+    // Rows 0..7: Type, AI Agg, Team, Color, Headwear, Physique, Camera, Strike Assist
+    [0, 1, 2, 3, 4, 5, 6, 7].forEach((rIdx) => {
       const el = playerRowElements[idx]?.[rIdx];
       if (!el) return;
       const isFocused = (rIdx === activeRow && isThisColActive);
@@ -2204,11 +2336,11 @@ export function updateFocusUI() {
     });
   });
 
-  // Row 7: Action Row (Back and Next)
+  // Row 8: Action Row (Back and Next)
   if (btnBack && btnNext) {
     const isActionFocused = isSingleController
-      ? (playerFocusRow[focusedColumn] === 7)
-      : (playerFocusRow[0] === 7 || playerFocusRow[1] === 7);
+      ? (playerFocusRow[focusedColumn] === 8)
+      : (playerFocusRow[0] === 8 || playerFocusRow[1] === 8);
     if (isActionFocused) {
       if (screen1ActionCol === 0) {
         btnBack.classList.add('rainbow-focused');
@@ -2321,4 +2453,6 @@ export const playerSetup = {
   updateInputBadgesUI,
   applyControllerAssignments,
   setPlayerType,
+  setPlayerHeadwear,
+  cyclePlayerHeadwear,
 };

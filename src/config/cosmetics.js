@@ -478,3 +478,32 @@ export function validateCosmeticSelection(selection = {}) {
 
   return { valid: errors.length === 0, errors };
 }
+
+const PLAYTEST_ID_BY_CATALOG_ID = Object.freeze(
+  new Map(
+    SERIES_1_PLAYTEST_CYCLE
+      .filter((entry) => entry.counterpartCatalogId)
+      .map((entry) => [entry.counterpartCatalogId, entry.id])
+  )
+);
+
+const CANON_PLAYTEST_BY_COLORKEY = Object.freeze(
+  new Map(
+    Object.values(CANONICAL_ROSTER)
+      .filter((athlete) => athlete.colorKey && PLAYTEST_ID_BY_CATALOG_ID.has(athlete.signatureHeadwearId))
+      .map((athlete) => [
+        String(athlete.colorKey).toLowerCase(),
+        PLAYTEST_ID_BY_CATALOG_ID.get(athlete.signatureHeadwearId),
+      ])
+  )
+);
+
+/**
+ * Return the playtest headwear ID associated with a canon team color name, or null.
+ * Zero allocation at call time.
+ * @param {string} colorName
+ * @returns {string|null}
+ */
+export function getCanonHeadwearIdForColorName(colorName) {
+  return CANON_PLAYTEST_BY_COLORKEY.get(String(colorName || '').toLowerCase()) || null;
+}
