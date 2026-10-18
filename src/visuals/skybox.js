@@ -108,7 +108,7 @@ export function initCelestialSkybox(scene) {
   skyboxGroup.add(domeMesh);
 
   // ---------------------------------------------------------------------------
-  // 2. PRECISION SUBPIXEL PARTICLE STARFIELD (NO PIXELATION)
+  // 2. PRECISION SUBPIXEL PARTICLE STARFIELD (CLUSTERS + COLOR VARIETY + SIZES)
   // ---------------------------------------------------------------------------
   // Smooth circular Gaussian point sprite on offscreen canvas (64x64)
   const starCanvas = document.createElement('canvas');
@@ -126,80 +126,134 @@ export function initCelestialSkybox(scene) {
   const starTexture = new THREE.CanvasTexture(starCanvas);
   starTexture.needsUpdate = true;
 
-  // Generate 4,200 stars uniformly on sphere using Fibonacci spiral + seeded jitter
-  const starCount = 4200;
-  const positions = new Float32Array(starCount * 3);
-  const colors = new Float32Array(starCount * 3);
-
-  let seed = 918273;
+  // LCG pseudo-random generator with fixed seed for deterministic placement
+  let seed = 421337;
   function rnd() {
     seed = (seed * 1664525 + 1013904223) % 4294967296;
     return seed / 4294967296;
   }
 
-  const phi = (1 + Math.sqrt(5)) / 2; // Golden ratio
-  const starRadius = domeRadius - 4;  // Just inside the dome shell
+  const starRadius = domeRadius - 4; // Just inside the dome shell
+  const galPlane = new THREE.Vector3(0.55, 0.78, -0.28).normalize();
 
-  for (let i = 0; i < starCount; i++) {
-    // Fibonacci sphere distribution for perfectly uniform non-clustering coverage
-    const y = 1 - (i / (starCount - 1)) * 2; // y goes from 1 to -1
-    const radiusAtY = Math.sqrt(Math.max(0, 1 - y * y));
-    const theta = (2 * Math.PI * i) / phi;
-
-    // Small pseudo-random angular jitter to avoid rigid spiral pattern
-    const jitterTheta = (rnd() - 0.5) * 0.08;
-    const jitterY = (rnd() - 0.5) * 0.02;
-    const finalY = Math.max(-0.98, Math.min(0.98, y + jitterY));
-    const finalR = Math.sqrt(Math.max(0, 1 - finalY * finalY));
-    const finalTheta = theta + jitterTheta;
-
-    positions[i * 3 + 0] = Math.cos(finalTheta) * finalR * starRadius;
-    positions[i * 3 + 1] = finalY * starRadius;
-    positions[i * 3 + 2] = Math.sin(finalTheta) * finalR * starRadius;
-
-    // Real stellar temperature and magnitude weighting
-    const mag = rnd(); // 0 (faint) to 1 (bright)
-    // Clearly perceptible baseline brightness: 75% stars (0.72 - 1.10), 20% medium (1.10 - 1.45), 5% brilliant gems (1.50 - 2.0)
-    let brightness = 0.72 + mag * 0.42;
-    if (mag > 0.80) brightness = 1.14 + (mag - 0.80) * 4.2;
-
-    // Stellar spectral tint
-    const colorRoll = rnd();
-    let r = 0.98, g = 0.99, b = 1.0; // Class A/F diamond white (70%)
-    if (colorRoll > 0.80) {
-      // Class B: Ice blue
-      r = 0.75; g = 0.90; b = 1.0;
-    } else if (colorRoll < 0.12) {
-      // Class G/K: Warm gold
-      r = 1.0; g = 0.94; b = 0.68;
-    } else if (colorRoll >= 0.74 && colorRoll <= 0.80) {
-      // Class M: Soft lavender / rose
-      r = 1.0; g = 0.84; b = 0.98;
-    }
-
-    colors[i * 3 + 0] = Math.min(1.0, r * brightness);
-    colors[i * 3 + 1] = Math.min(1.0, g * brightness);
-    colors[i * 3 + 2] = Math.min(1.0, b * brightness);
+  // 12 Open Star Cluster centers (Pleiades, Hyades, Perseus style groupings)
+  const clusters = [];
+  for (let c = 0; c < 12; c++) {
+    const u = rnd() * 2 - 1; // -1 to 1
+    const theta = rnd() * Math.PI * 2;
+    const rXZ = Math.sqrt(Math.max(0, 1 - u * u));
+    clusters.push({
+      center: new THREE.Vector3(Math.cos(theta) * rXZ, u, Math.sin(theta) * rXZ).normalize(),
+      spread: 0.035 + rnd() * 0.055, // angular radius in radians
+      density: 25 + Math.floor(rnd() * 40),
+    });
   }
 
-  const starGeo = new THREE.BufferGeometry();
-  starGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-  starGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  // Generate 3 size tiers for authentic stellar depth:
+  // - Small (2.2px): faint micro-pinpricks
+  // - Medium (3.4px): colorful sparkling stars
+  // - Large (4.8px): radiant gems and cluster cores
+  const tierSmall = { pos: [], col: [], size: 2.2 };
+  const tierMedium = { pos: [], col: [], size: 3.4 };
+  const tierLarge = { pos: [], col: [], size: 4.8 };
 
-  const starMat = new THREE.PointsMaterial({
-    size: 3.2, // Clearly visible, crisp subpixel pinpoints on screen
-    sizeAttenuation: false, // PREVENTS PIXELATION: Each star is a subpixel pinpoint
-    map: starTexture,
-    vertexColors: true,
-    transparent: true,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-    depthTest: true,
-  });
+  function addStar(dir, mag) {
+    const d = dir.clone().normalize();
+    const x = d.x * starRadius;
+    const y = d.y * starRadius;
+    const z = d.z * starRadius;
 
-  const starPoints = new THREE.Points(starGeo, starMat);
-  starPoints.renderOrder = -190;
-  skyboxGroup.add(starPoints);
+    // Vibrant spectral colors matching original palette
+    const colorRoll = rnd();
+    let r = 0.98, g = 0.99, b = 1.0; // Pure diamond white (50%)
+    if (colorRoll > 0.76) {
+      // Ice Blue / Cyan (#bae6fd)
+      r = 0.58; g = 0.84; b = 1.0;
+    } else if (colorRoll < 0.14) {
+      // Warm Amber / Gold (#fef08a)
+      r = 1.0; g = 0.88; b = 0.42;
+    } else if (colorRoll >= 0.68 && colorRoll <= 0.76) {
+      // Amethyst / Pale Lavender (#e9d5ff)
+      r = 0.92; g = 0.72; b = 1.0;
+    } else if (colorRoll >= 0.14 && colorRoll <= 0.18) {
+      // Soft Rose / Coral (#fecdd3)
+      r = 1.0; g = 0.62; b = 0.72;
+    }
+
+    const brightness = 0.75 + mag * 0.65;
+    const cr = Math.min(1.0, r * brightness);
+    const cg = Math.min(1.0, g * brightness);
+    const cb = Math.min(1.0, b * brightness);
+
+    if (mag > 0.88) {
+      tierLarge.pos.push(x, y, z);
+      tierLarge.col.push(cr, cg, cb);
+    } else if (mag > 0.45) {
+      tierMedium.pos.push(x, y, z);
+      tierMedium.col.push(cr, cg, cb);
+    } else {
+      tierSmall.pos.push(x, y, z);
+      tierSmall.col.push(cr, cg, cb);
+    }
+  }
+
+  // 1. Natural Poisson random field stars (forms natural constellations & voids)
+  const fieldCount = 2400;
+  for (let i = 0; i < fieldCount; i++) {
+    const u = rnd() * 2 - 1;
+    const theta = rnd() * Math.PI * 2;
+    const rXZ = Math.sqrt(Math.max(0, 1 - u * u));
+    const dir = new THREE.Vector3(Math.cos(theta) * rXZ, u, Math.sin(theta) * rXZ);
+
+    // Natural galactic plane density boost
+    const galDist = Math.abs(dir.dot(galPlane));
+    if (galDist > 0.45 && rnd() < 0.35) continue; // higher density along galactic stream
+
+    addStar(dir, rnd());
+  }
+
+  // 2. Open Star Clusters (dense clumps with radiant cores)
+  for (const c of clusters) {
+    for (let i = 0; i < c.density; i++) {
+      // Gaussian distribution around cluster center
+      const angle = rnd() * Math.PI * 2;
+      const dist = (rnd() + rnd() - 1) * c.spread; // triangular / quasi-gaussian
+      const perpA = new THREE.Vector3(1, 0, 0).cross(c.center).normalize();
+      if (perpA.lengthSq() < 0.01) perpA.set(0, 1, 0).cross(c.center).normalize();
+      const perpB = perpA.clone().cross(c.center).normalize();
+
+      const offset = perpA.clone().multiplyScalar(Math.cos(angle) * dist)
+        .add(perpB.clone().multiplyScalar(Math.sin(angle) * dist));
+
+      const dir = c.center.clone().add(offset).normalize();
+      // Clusters have high concentration of bright, colorful stars
+      const clusterMag = 0.40 + rnd() * 0.60;
+      addStar(dir, clusterMag);
+    }
+  }
+
+  // Construct THREE.Points for each size tier
+  const tiers = [tierSmall, tierMedium, tierLarge];
+  for (const tier of tiers) {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(tier.pos, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(tier.col, 3));
+
+    const mat = new THREE.PointsMaterial({
+      size: tier.size,
+      sizeAttenuation: false, // Crisp screen-space subpixel pinpoints
+      map: starTexture,
+      vertexColors: true,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      depthTest: true,
+    });
+
+    const pts = new THREE.Points(geo, mat);
+    pts.renderOrder = -190;
+    skyboxGroup.add(pts);
+  }
 
   scene.add(skyboxGroup);
   return skyboxGroup;
