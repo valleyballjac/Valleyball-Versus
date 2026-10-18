@@ -67,7 +67,7 @@ export function createAthlete({
   variant = 'masculine',
   primaryColor = null,
   colorOverride = null,
-  headwear = 'cap_forward',
+  headwear = 'manager_cap',
   spawn = { x: 0, y: 1.5, z: 0, yaw: 0 },
   assistPreset = 'standard',
   scene,
@@ -84,7 +84,7 @@ export function createAthlete({
   let currentVariant = variant;
   let currentPrimaryColor = primaryColor;
   let currentColorOverride = colorOverride;
-  let currentHeadwear = headwear ?? 'cap_forward';
+  let currentHeadwear = headwear ?? 'manager_cap';
 
   // 1. Motor sphere
   const motor = createMotor();

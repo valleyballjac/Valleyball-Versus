@@ -51,7 +51,7 @@ export function createGui({
   // Series 1 headwear selector. headwearControls is a MAIN-OWNED mutable holder
   // ({ p1, p2 }) so the hotkeys and this panel read and write the same state,
   // and .listen() keeps the dropdown honest when the hotkey cycles it.
-  headwearControls = { p1: 'cap_forward', p2: 'cap_forward' },
+  headwearControls = { p1: 'manager_cap', p2: 'manager_cap' },
   onHeadwearChange = () => {},
 }) {
   const gui = new GUI({ title: 'VALLEYBALL / TUNING' });
@@ -126,9 +126,10 @@ export function createGui({
   debug.add(TUNING.debug, 'showBallWireframe').onChange(onShowBallWireframeChange);
 
   // ═══ COSMETICS (Series 1 headwear playtest selector) ═══
-  // The eight-choice in-match selector, mounted here as the required debug HUD
-  // route. .listen() keeps each dropdown honest when its hotkey (Digit3 / Digit8)
-  // cycles the athlete, and onChange drives the same setAthleteHeadwear path.
+  // The in-match selector (ten approved Locker Headgear Pack pieces plus
+  // none), mounted here as the required debug HUD route. .listen() keeps each
+  // dropdown honest when its hotkey (Digit3 / Digit8) cycles the athlete, and
+  // onChange drives the same setAthleteHeadwear path.
   const cosmeticsFolder = gui.addFolder('cosmetics (headwear)');
   cosmeticsFolder.add(headwearControls, 'p1', SERIES_1_PLAYTEST_IDS)
     .name('P1 headwear [3]')

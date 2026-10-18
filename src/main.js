@@ -932,7 +932,7 @@ let athletes = [];
  * the Digit3/Digit8 hotkeys and the gui panel read and write the same live state;
  * the gui's .listen() keeps each dropdown honest after a hotkey cycle.
  */
-const headwearControls = { p1: 'cap_forward', p2: 'cap_forward' };
+const headwearControls = { p1: 'manager_cap', p2: 'manager_cap' };
 /**
  * BOT CONTROLLERS — one per AI-controlled slot. Empty means all human.
  * Created by handleStartMatch when a player is configured as 'ai'.

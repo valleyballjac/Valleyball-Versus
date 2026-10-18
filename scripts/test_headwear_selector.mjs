@@ -10,12 +10,13 @@
  * live before the first keypress.
  *
  * WHAT IT ASSERTS (hard failures):
- *   1. Eight-state cycling. Digit3 (P1) and Digit8 (P2) walk exactly the eight
- *      stated playtest ids in catalog order, wrapping cleanly, over two full
- *      P1 laps (16 presses): cap_forward, cap_backward, beanie, visor,
- *      headband, goggles, bucket_hat, none.
+ *   1. Eleven-state cycling. Digit3 (P1) and Digit8 (P2) walk exactly the
+ *      eleven stated playtest ids in roster order, wrapping cleanly, over two
+ *      full P1 laps: manager_cap, sensor_visor, wicket_grill, wrestler_bands,
+ *      terrace_visor, couture_wrap, rigger_band, broadcaster_mic, cursor_cap,
+ *      ouendan_knot, none.
  *   2. Debug HUD route. The lil-gui "cosmetics (headwear)" P1/P2 dropdown
- *      controllers exist and every one of the eight ids can be set through
+ *      controllers exist and every one of the eleven ids can be set through
  *      them, landing on the athlete and syncing the shared holder.
  *   3. Sole-child scene-graph attachment. After every single change the head's
  *      render-only headwearSlot holds exactly one child named headwear-<id>,
@@ -28,15 +29,16 @@
  *      this includes the once-a-second invariant audits in main.js.
  *
  * EVIDENCE (best effort, written to captures/headwear_selector/):
- *   idle, running (KeyW held), diving (requestKnockdown) and striking
- *   (volleyQueued via the input router slot) screenshots with headwear
- *   mounted, so the fit can be eyeballed in action poses.
+ *   the lil-gui menu with the cosmetics folder open, an idle shot of every one
+ *   of the ten approved pieces on P1 in cycle order, plus running (KeyW held),
+ *   diving (requestKnockdown) and striking (volleyQueued via the input router
+ *   slot) screenshots, so the fit can be eyeballed in action poses.
  *
  * ONE-TIME SETUP: npx playwright install chromium  (same as determinism).
  * Exit code is SET, never forced (see determinism.mjs for why).
  */
 
-import { mkdir } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -56,17 +58,20 @@ const CHROMIUM_ARGS = [
   '--ignore-gpu-blocklist',
 ];
 
-/** The eight stated playtest ids, in cycle order. Stated here independently on
+/** The eleven stated playtest ids, in cycle order. Stated here independently on
  *  purpose: the test must not import its expectations from the module under
  *  test, or a rename would silently pass. */
 const EXPECTED_IDS = [
-  'cap_forward',
-  'cap_backward',
-  'beanie',
-  'visor',
-  'headband',
-  'goggles',
-  'bucket_hat',
+  'manager_cap',
+  'sensor_visor',
+  'wicket_grill',
+  'wrestler_bands',
+  'terrace_visor',
+  'couture_wrap',
+  'rigger_band',
+  'broadcaster_mic',
+  'cursor_cap',
+  'ouendan_knot',
   'none',
 ];
 
@@ -90,6 +95,9 @@ async function main() {
   if (await portInUse(PORT)) {
     fail(`port ${PORT} is already in use. Stop the other server or set VITE_PORT to a free port.`);
   }
+  // Wipe stale captures from earlier cycles so the evidence dir holds exactly
+  // this run's files.
+  await rm(EVIDENCE_DIR, { recursive: true, force: true });
   await mkdir(EVIDENCE_DIR, { recursive: true });
 
   const failures = [];
@@ -175,7 +183,7 @@ async function main() {
     const labelsInPage = await page.evaluate(() => window.__hwTest.labels);
     check(
       JSON.stringify(idsInPage) === JSON.stringify(EXPECTED_IDS),
-      `selector exposes exactly the eight stated ids in order (got ${JSON.stringify(idsInPage)})`,
+      `selector exposes exactly the eleven stated ids in order (got ${JSON.stringify(idsInPage)})`,
     );
 
     const readState = (playerIndex) => page.evaluate((pi) => {
@@ -212,7 +220,7 @@ async function main() {
     const tickStart = (await readState(0)).tick;
     console.log(`[headwear-selector] baseline: ${baseColliders} colliders, tick ${tickStart}\n`);
 
-    // ---- 1. Keyboard cycling, P1: two full laps (16 presses) ----
+    // ---- 1. Keyboard cycling, P1: two full laps ----
     console.log('[headwear-selector] phase 1: Digit3 keyboard cycling, P1, two laps');
     const initial = await readState(0);
     check(EXPECTED_IDS.includes(initial.headwear), `P1 boots on a playtest id (${initial.headwear})`);
@@ -221,9 +229,9 @@ async function main() {
     let lastTick = initial.tick;
     let monotonic = true;
     let cycleOk = true;
-    for (let press = 1; press <= 16; press += 1) {
+    for (let press = 1; press <= 2 * EXPECTED_IDS.length; press += 1) {
       await page.keyboard.press('Digit3');
-      const expected = EXPECTED_IDS[(startIdx + press) % 8];
+      const expected = EXPECTED_IDS[(startIdx + press) % EXPECTED_IDS.length];
       const st = await readState(0);
       if (st.tick < lastTick) monotonic = false;
       lastTick = st.tick;
@@ -233,12 +241,12 @@ async function main() {
         cycleOk = false;
         console.log(`  press ${press}: expected ${expected}, got ${JSON.stringify(st)}`);
       }
-      if (press === 1 || press === 8) {
+      if (press === 1 || press === EXPECTED_IDS.length) {
         check(toastOk, `press ${press}: HUD toast shows the label for ${expected}`);
       }
     }
-    check(cycleOk, 'Digit3 walked all eight ids twice, wrapping, sole child every step');
-    check(monotonic, 'loop.tick never went backwards across 16 keypresses');
+    check(cycleOk, 'Digit3 walked all eleven ids twice, wrapping, sole child every step');
+    check(monotonic, 'loop.tick never went backwards across two full laps');
 
     // ---- 2. Keyboard cycling, P2: one lap ----
     console.log('[headwear-selector] phase 2: Digit8 keyboard cycling, P2, one lap');
@@ -246,16 +254,16 @@ async function main() {
     check(p2Initial !== null && slotOk(p2Initial, p2Initial.headwear), 'P2 default mount is sole child');
     startIdx = EXPECTED_IDS.indexOf(p2Initial.headwear);
     let p2Ok = true;
-    for (let press = 1; press <= 8; press += 1) {
+    for (let press = 1; press <= EXPECTED_IDS.length; press += 1) {
       await page.keyboard.press('Digit8');
-      const expected = EXPECTED_IDS[(startIdx + press) % 8];
+      const expected = EXPECTED_IDS[(startIdx + press) % EXPECTED_IDS.length];
       const st = await readState(1);
       if (!(st.headwear === expected && slotOk(st, expected) && st.holderValue === expected)) {
         p2Ok = false;
         console.log(`  press ${press}: expected ${expected}, got ${JSON.stringify(st)}`);
       }
     }
-    check(p2Ok, 'Digit8 walked all eight ids on P2, sole child every step');
+    check(p2Ok, 'Digit8 walked all eleven ids on P2, sole child every step');
 
     // ---- 3. Debug HUD dropdown route, both players ----
     console.log('[headwear-selector] phase 3: lil-gui dropdown route, P1 and P2');
@@ -269,7 +277,7 @@ async function main() {
           console.log(`  P${pi + 1} gui set ${id}: got ${JSON.stringify(st)}`);
         }
       }
-      check(guiOk, `gui dropdown drove all eight ids onto P${pi + 1} with sole-child attachment`);
+      check(guiOk, `gui dropdown drove all eleven ids onto P${pi + 1} with sole-child attachment`);
     }
 
     // ---- 4. Collider invariance ----
@@ -281,28 +289,48 @@ async function main() {
     const midTick = (await readState(0)).tick;
     check(midTick - tickStart >= 30, `render loop still ticking (gained ${midTick - tickStart} ticks over the session)`);
 
-    // ---- 6. Evidence screenshots: idle, running, diving, striking ----
-    console.log('[headwear-selector] phase 4: action-pose evidence screenshots');
+    // ---- 6. Evidence screenshots: the menu, all ten pieces, action poses ----
+    console.log('[headwear-selector] phase 4: menu, ten-piece sweep and action-pose evidence screenshots');
     const setP1 = (id) => page.evaluate((value) => window.__hwTest.p1Ctrl.setValue(value), id);
     const shot = (name) => page.screenshot({ path: path.join(EVIDENCE_DIR, name) });
 
-    await setP1('cap_forward');
+    // The menu route itself: open the real lil-gui cosmetics folder so the
+    // capture shows the dropdowns the playtest uses, then hide the gui so the
+    // piece and action shots are unobstructed.
+    await setP1('manager_cap');
+    await page.evaluate(() => {
+      const gui = window.__vb.gui;
+      const openAll = (g) => { g.open(); g.folders.forEach(openAll); };
+      openAll(gui);
+    });
     await page.waitForTimeout(300);
-    await shot('01_idle_cap_forward.png');
+    await shot('00_menu_cosmetics_folder.png');
+    await page.evaluate(() => window.__vb.gui.hide());
 
-    await setP1('bucket_hat');
+    // Every one of the ten approved pieces on P1, in cycle order. The pack
+    // renders in each athlete's authored palette, so these shots double as
+    // the visual record QA checks piece by piece.
+    const pieceIds = EXPECTED_IDS.filter((id) => id !== 'none');
+    for (let i = 0; i < pieceIds.length; i += 1) {
+      await setP1(pieceIds[i]);
+      await page.waitForTimeout(250);
+      await shot(`${String(i + 1).padStart(2, '0')}_idle_${pieceIds[i]}.png`);
+    }
+
+    // Action poses so the fit can be judged in motion.
+    await setP1('terrace_visor');
     await page.keyboard.down('KeyW');
     await page.waitForTimeout(800);
-    await shot('02_running_bucket_hat.png');
+    await shot('11_running_terrace_visor.png');
     await page.keyboard.up('KeyW');
 
-    await setP1('beanie');
+    await setP1('ouendan_knot');
     await page.evaluate(() => window.__vb.athletes[0].requestKnockdown());
     await page.waitForTimeout(500);
-    await shot('03_diving_beanie.png');
+    await shot('12_diving_ouendan_knot.png');
     await page.waitForTimeout(2500); // let the knockdown recover
 
-    await setP1('cap_backward');
+    await setP1('cursor_cap');
     // The swing is shorter than a screenshot round trip, so a fixed wait (or
     // even resolving on the live phase and then shooting) captures idle. Queue
     // the volley through the real input-router slot, and STOP THE LOOP inside
@@ -323,13 +351,10 @@ async function main() {
         .then(() => true)
         .catch(() => false);
     }
-    await shot('04_striking_cap_backward.png');
+    await shot('13_striking_cursor_cap.png');
     await page.evaluate(() => window.__vb.loop.start());
     console.log(`  strike pose ${strikeCaught ? 'captured mid-swing (loop frozen on the live frame)' : 'NOT caught mid-swing (screenshot may show idle)'}`);
     check(strikeCaught, 'strike evidence captured while the swing was live');
-    await setP1('goggles');
-    await page.waitForTimeout(200);
-    await shot('05_idle_goggles.png');
     console.log(`  evidence written to ${path.relative(ROOT, EVIDENCE_DIR)}`);
 
     const finalTick = (await readState(0)).tick;

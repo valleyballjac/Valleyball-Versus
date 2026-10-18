@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { HEADWEAR_CATALOG } from '../config/cosmetics.js';
+import * as HeadgearRoster from './valleyballHeadgear.js';
 
 /**
  * PROCEDURAL THREE.JS HEADWEAR BUILDERS (Operation "Suit Up & Step Out", Phase 2).
@@ -355,10 +356,10 @@ export function buildCap(options = {}) {
     group.add(stripeMesh);
   }
 
-  // Backwards cap (playtest id `cap_backward`): one group yaw flips the bill to
-  // sit over the nape and the adjustment strap to face forward. Crown, button
-  // and (absent) stripe are radially symmetric, so a single rotation is the
-  // whole visual change; no new geometry, no new materials.
+  // Backwards cap (catalog spec `billBackward: true`): one group yaw flips the
+  // bill to sit over the nape and the adjustment strap to face forward. Crown,
+  // button and (absent) stripe are radially symmetric, so a single rotation is
+  // the whole visual change; no new geometry, no new materials.
   if (options.billBackward === true) {
     group.rotation.y = Math.PI;
   }
@@ -928,6 +929,71 @@ export function buildBandana(options = {}) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// APPROVED PASS-7 ROSTER PIECES (the Locker Headgear Pack)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The ten finalized, approved signature pieces (pass 7, 2026-10-17) live in
+ * src/sim/valleyballHeadgear.js, a single self-contained module that takes
+ * THREE as an argument rather than importing it. Each entry renders in its
+ * AUTHORED palette (Bhavin's helmet stays blue, Malik's horns stay red), which
+ * is exactly what Jac approved in the portraits. Zero physics: Group / Mesh
+ * only, every dimension scaled by options.radius, nothing feeds the sim.
+ *
+ * The league mark is one shared texture, loaded lazily once and reused by
+ * every piece, so the globe decal costs a single async load per session rather
+ * than one per mount. Loading is render-side only and never enters the fixed
+ * 60 Hz step (Law 4 / Law 6).
+ */
+
+let _leagueMark = null;
+function getLeagueMark() {
+  if (_leagueMark === null) {
+    // Headless physics harnesses (npm test scripts) run without a DOM, so
+    // THREE.TextureLoader cannot exist there. The pack treats a missing mark
+    // as "decal omitted", which is fine for sim-only runs.
+    if (typeof document === 'undefined') return null;
+    _leagueMark = HeadgearRoster.loadLeagueMark(THREE);
+  }
+  return _leagueMark;
+}
+
+// item id -> { fn, athleteId }. The item id doubles as the builder key in
+// HEADWEAR_BUILDERS below, so SERIES_1_PLAYTEST_CYCLE can reference this tier
+// with the same vocabulary the portraits used.
+const ROSTER_HEADWEAR = Object.freeze({
+  manager_cap:     { fn: HeadgearRoster.buildManagerClassicCap,  athleteId: 'white' },
+  sensor_visor:    { fn: HeadgearRoster.buildSensorVisor,        athleteId: 'black' },
+  wicket_grill:    { fn: HeadgearRoster.buildWicketkeeperHelmet, athleteId: 'blue' },
+  wrestler_bands:  { fn: HeadgearRoster.buildGridironHorns,      athleteId: 'red' },
+  terrace_visor:   { fn: HeadgearRoster.buildTerraceMontera,     athleteId: 'green' },
+  couture_wrap:    { fn: HeadgearRoster.buildSilkRoadDiadem,     athleteId: 'purple' },
+  rigger_band:     { fn: HeadgearRoster.buildWayfinderCord,      athleteId: 'teal' },
+  broadcaster_mic: { fn: HeadgearRoster.buildStadiumHeadset,     athleteId: 'yellow' },
+  cursor_cap:      { fn: HeadgearRoster.buildWingedCourierCap,   athleteId: 'orange' },
+  ouendan_knot:    { fn: HeadgearRoster.buildBleacherHachimaki,  athleteId: 'pink' },
+});
+
+/**
+ * Wrap an approved roster builder into this module's local `(options) => group`
+ * contract. A roster piece always renders in its authored palette, at the
+ * mount head's radius, with the shared league mark decal applied.
+ */
+function makeRosterBuilder({ fn, athleteId }) {
+  return function buildApprovedPiece(options = {}) {
+    const radius = options.radius ?? DEFAULT_HEAD_RADIUS;
+    const palette = HeadgearRoster.paletteFor(athleteId);
+    return fn(THREE, palette, { radius, markTexture: getLeagueMark() });
+  };
+}
+
+const APPROVED_ROSTER_BUILDERS = Object.freeze(
+  Object.fromEntries(
+    Object.entries(ROSTER_HEADWEAR).map(([key, spec]) => [key, makeRosterBuilder(spec)]),
+  ),
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // BUILDER REGISTRY & COMPOSITE BUILDER
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -946,6 +1012,7 @@ export const HEADWEAR_BUILDERS = Object.freeze({
   buckethat: buildBuckethat,
   beanie: buildBeanie,
   bandana: buildBandana,
+  ...APPROVED_ROSTER_BUILDERS,
 });
 
 /**

@@ -209,8 +209,9 @@ export const MESH_BUILDER_KEYS = Object.freeze(
  * Every catalog id an athlete may cycle through in the eventual locker: the
  * standard common rack first, then the signature silhouettes, then `none`.
  * Frozen so the locker order cannot drift from the catalog. This is distinct
- * from SERIES_1_PLAYTEST_CYCLE below, which is the eight-choice in-match
- * selector and is keyed by the playtest vocabulary, not catalog ids.
+ * from SERIES_1_PLAYTEST_CYCLE below, which is the in-match selector (the ten
+ * approved Locker Headgear Pack pieces plus `none`) and is keyed by the
+ * playtest vocabulary, not catalog ids.
  */
 export const SERIES_1_HEADWEAR_IDS = Object.freeze([
   ...HEADWEAR_IDS.filter((id) => HEADWEAR_CATALOG[id].tier === 'standard'),
@@ -375,23 +376,28 @@ export function listHeadwearForAthlete(athleteId) {
 /**
  * THE SERIES 1 PLAYTEST CYCLE (in-match headwear selector).
  *
- * The exact eight visual choices Jac trials against, in order. These ids are
- * the playtest vocabulary and are authoritative; they are deliberately NOT
- * catalog ids, because cap_forward / cap_backward are the same catalog
- * silhouette with the bill flipped, and bucket_hat reuses the bucket silhouette
- * that the catalog ships only as Vinny's signature piece. Each entry therefore
- * carries the builder key and bill orientation it renders, plus the catalog id
- * whose silhouette it reuses, for locker traceability. Frozen so the trial
- * order can never drift from the data.
+ * The approved Locker Headgear Pack (pass 7, 2026-10-17): the ten canonical
+ * athlete signature pieces authored in `src/sim/valleyballHeadgear.js`, in
+ * roster order, plus `none` (bare head). The generic placeholder rack
+ * (cap_forward, cap_backward, beanie, visor, headband, goggles, bucket_hat)
+ * is retired from the live selector; the catalog silhouettes remain for the
+ * locker data below. Each entry's `builderKey` is the headgear-pack key that
+ * `cosmeticsBuilders.js` resolves through its pack registry, and
+ * `counterpartCatalogId` keeps locker traceability to the catalog silhouette
+ * each athlete's signature piece supersedes. Frozen so the trial order can
+ * never drift from the data.
  */
 export const SERIES_1_PLAYTEST_CYCLE = Object.freeze([
-  Object.freeze({ id: 'cap_forward', label: 'CAP FORWARD', builderKey: 'cap', billBackward: false, counterpartCatalogId: 'std-cap' }),
-  Object.freeze({ id: 'cap_backward', label: 'CAP BACKWARD', builderKey: 'cap', billBackward: true, counterpartCatalogId: 'std-cap' }),
-  Object.freeze({ id: 'beanie', label: 'BEANIE', builderKey: 'beanie', billBackward: false, counterpartCatalogId: 'std-beanie' }),
-  Object.freeze({ id: 'visor', label: 'VISOR', builderKey: 'visor', billBackward: false, counterpartCatalogId: 'std-visor' }),
-  Object.freeze({ id: 'headband', label: 'HEADBAND', builderKey: 'headband', billBackward: false, counterpartCatalogId: 'std-headband' }),
-  Object.freeze({ id: 'goggles', label: 'GOGGLES', builderKey: 'goggles', billBackward: false, counterpartCatalogId: 'std-goggles' }),
-  Object.freeze({ id: 'bucket_hat', label: 'BUCKET HAT', builderKey: 'buckethat', billBackward: false, counterpartCatalogId: 'vinny-scouts-bucket-hat' }),
+  Object.freeze({ id: 'manager_cap', label: 'MANAGER CLASSIC CAP', builderKey: 'manager_cap', billBackward: false, counterpartCatalogId: 'john-captains-visor' }),
+  Object.freeze({ id: 'sensor_visor', label: 'SENSOR VISOR', builderKey: 'sensor_visor', billBackward: false, counterpartCatalogId: 'umpire-ref-cap' }),
+  Object.freeze({ id: 'wicket_grill', label: 'WICKETKEEPER HELMET', builderKey: 'wicket_grill', billBackward: false, counterpartCatalogId: 'bhavin-keepers-helmet' }),
+  Object.freeze({ id: 'wrestler_bands', label: 'GRIDIRON HORNS', builderKey: 'wrestler_bands', billBackward: false, counterpartCatalogId: 'malik-sluggers-headband' }),
+  Object.freeze({ id: 'terrace_visor', label: 'TERRACE MONTERA', builderKey: 'terrace_visor', billBackward: false, counterpartCatalogId: 'tupac-groundsmans-sunhat' }),
+  Object.freeze({ id: 'couture_wrap', label: 'SILK ROAD DIADEM', builderKey: 'couture_wrap', billBackward: false, counterpartCatalogId: 'parisa-costumers-beret' }),
+  Object.freeze({ id: 'rigger_band', label: 'WAYFINDER CORD', builderKey: 'rigger_band', billBackward: false, counterpartCatalogId: 'kahu-riggers-goggles' }),
+  Object.freeze({ id: 'broadcaster_mic', label: 'STADIUM HEADSET', builderKey: 'broadcaster_mic', billBackward: false, counterpartCatalogId: 'catarina-broadcast-headset' }),
+  Object.freeze({ id: 'cursor_cap', label: 'WINGED COURIER CAP', builderKey: 'cursor_cap', billBackward: false, counterpartCatalogId: 'vinny-scouts-bucket-hat' }),
+  Object.freeze({ id: 'ouendan_knot', label: 'BLEACHER HACHIMAKI', builderKey: 'ouendan_knot', billBackward: false, counterpartCatalogId: 'kimi-fans-beanie' }),
   Object.freeze({ id: 'none', label: 'NONE', builderKey: null, billBackward: false, counterpartCatalogId: null }),
 ]);
 
@@ -402,7 +408,7 @@ const PLAYTEST_SPEC_BY_ID = new Map(SERIES_1_PLAYTEST_CYCLE.map((entry) => [entr
 
 /**
  * Resolve a headwear reference to the build spec the builders module consumes.
- * Accepts a playtest id (`cap_forward`, `beanie`, ...), a catalog id
+ * Accepts a playtest id (`manager_cap`, `wicket_grill`, ...), a catalog id
  * (`std-cap`, ...), a raw builder key (`cap`, `helmet`, ...), or `none`.
  * Returns `{ builderKey, billBackward }`, or null for `none` / an unknown id.
  * This is the single reconciliation point between the playtest vocabulary and
@@ -435,7 +441,7 @@ export function getHeadwearLabel(headwearId) {
 }
 
 /**
- * Next playtest id, wrapping around the eight-choice cycle. Zero allocation.
+ * Next playtest id, wrapping around the eleven-state cycle. Zero allocation.
  * @param {string} currentId
  * @returns {string}
  */

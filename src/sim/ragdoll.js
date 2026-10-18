@@ -399,10 +399,11 @@ export function createRagdollVisuals(rig, options = null) {
 
   updateAthleteVariant(state, options);
 
-  // Mount the modular headwear: default from options / TUNING, else the plain
-  // cap. setAthleteHeadwear is render-only and builds at mount time, never in
+  // Mount the modular headwear: default from options / TUNING, else the first
+  // piece of the approved Locker Headgear Pack (John's Manager Classic Cap).
+  // setAthleteHeadwear is render-only and builds at mount time, never in
   // the fixed step.
-  const headwearId = options?.headwear ?? TUNING.athlete?.headwear ?? 'cap_forward';
+  const headwearId = options?.headwear ?? TUNING.athlete?.headwear ?? 'manager_cap';
   setAthleteHeadwear(state, headwearId, options);
 
   return group;
@@ -435,7 +436,7 @@ function disposeHeadwearSlot(slot) {
  * athlete's jersey without any hard-coded color.
  *
  * @param {object} state Ragdoll state (must carry `.rig`).
- * @param {string} headwearId Playtest id ('cap_forward', ...), catalog id, builder key ('cap', 'beanie', ...), or 'none'.
+ * @param {string} headwearId Playtest id ('manager_cap', 'wicket_grill', ...), catalog id, builder key, or 'none'.
  * @param {object} [options] Team/variant/palette overrides.
  * @returns {THREE.Group | null}
  */
@@ -447,7 +448,7 @@ export function setAthleteHeadwear(state, headwearId, options = null) {
 
   disposeHeadwearSlot(slot);
 
-  // Reconcile the playtest vocabulary (cap_forward, cap_backward, bucket_hat,
+  // Reconcile the playtest vocabulary (manager_cap, wicket_grill, ...,
   // 'none'), any catalog id, or a raw builder key into a builder key plus bill
   // orientation. 'none' still means a bare skull.
   const spec = resolveHeadwearSpec(headwearId);
