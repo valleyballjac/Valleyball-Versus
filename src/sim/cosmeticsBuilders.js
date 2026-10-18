@@ -355,6 +355,14 @@ export function buildCap(options = {}) {
     group.add(stripeMesh);
   }
 
+  // Backwards cap (playtest id `cap_backward`): one group yaw flips the bill to
+  // sit over the nape and the adjustment strap to face forward. Crown, button
+  // and (absent) stripe are radially symmetric, so a single rotation is the
+  // whole visual change; no new geometry, no new materials.
+  if (options.billBackward === true) {
+    group.rotation.y = Math.PI;
+  }
+
   return group;
 }
 

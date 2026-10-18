@@ -204,18 +204,13 @@ export const MESH_BUILDER_KEYS = Object.freeze(
 );
 
 /**
- * THE SERIES 1 PLAYTEST CYCLE.
+ * THE SERIES 1 LOCKER RACK.
  *
- * The exact order the in-match headwear hotkey steps through for Jac's trial
- * runs: the standard common rack first (every athlete can wear these), then the
- * ten signature silhouettes, then 'none' to return to a bare skull. Frozen at
- * load so the cycle cannot drift from the catalog.
- *
- * This supersedes the placeholder names in the original brief (`cap_forward`,
- * `cap_backward`, `bucket_hat`, `visor`, ...). Those are not separate Series 1
- * SKUs: forward/backward cap tilt is a builder characteristic, not a catalog
- * id, and the only bucket hat shipped is Vinny's signature piece. The cycle
- * walks the real catalog so trial order never drifts from the data.
+ * Every catalog id an athlete may cycle through in the eventual locker: the
+ * standard common rack first, then the signature silhouettes, then `none`.
+ * Frozen so the locker order cannot drift from the catalog. This is distinct
+ * from SERIES_1_PLAYTEST_CYCLE below, which is the eight-choice in-match
+ * selector and is keyed by the playtest vocabulary, not catalog ids.
  */
 export const SERIES_1_HEADWEAR_IDS = Object.freeze([
   ...HEADWEAR_IDS.filter((id) => HEADWEAR_CATALOG[id].tier === 'standard'),
@@ -378,46 +373,75 @@ export function listHeadwearForAthlete(athleteId) {
  * @returns {{valid: boolean, errors: string[]}}
  */
 /**
- * Live `[C]` preview cycle: the closed set of builder keys plus the `none`
- * sentinel. Built from MESH_BUILDER_KEYS so the playtest loop and the builder
- * registry can never drift. The athlete stores a builder key (or `none`), not a
- * catalog id, because this is a debug/playtest cycle, not the owner-locked
- * locker selection (which is a later card) .
+ * THE SERIES 1 PLAYTEST CYCLE (in-match headwear selector).
+ *
+ * The exact eight visual choices Jac trials against, in order. These ids are
+ * the playtest vocabulary and are authoritative; they are deliberately NOT
+ * catalog ids, because cap_forward / cap_backward are the same catalog
+ * silhouette with the bill flipped, and bucket_hat reuses the bucket silhouette
+ * that the catalog ships only as Vinny's signature piece. Each entry therefore
+ * carries the builder key and bill orientation it renders, plus the catalog id
+ * whose silhouette it reuses, for locker traceability. Frozen so the trial
+ * order can never drift from the data.
  */
-export const HEADWEAR_LIVE_CYCLE = Object.freeze([...MESH_BUILDER_KEYS, 'none']);
+export const SERIES_1_PLAYTEST_CYCLE = Object.freeze([
+  Object.freeze({ id: 'cap_forward', label: 'CAP FORWARD', builderKey: 'cap', billBackward: false, counterpartCatalogId: 'std-cap' }),
+  Object.freeze({ id: 'cap_backward', label: 'CAP BACKWARD', builderKey: 'cap', billBackward: true, counterpartCatalogId: 'std-cap' }),
+  Object.freeze({ id: 'beanie', label: 'BEANIE', builderKey: 'beanie', billBackward: false, counterpartCatalogId: 'std-beanie' }),
+  Object.freeze({ id: 'visor', label: 'VISOR', builderKey: 'visor', billBackward: false, counterpartCatalogId: 'std-visor' }),
+  Object.freeze({ id: 'headband', label: 'HEADBAND', builderKey: 'headband', billBackward: false, counterpartCatalogId: 'std-headband' }),
+  Object.freeze({ id: 'goggles', label: 'GOGGLES', builderKey: 'goggles', billBackward: false, counterpartCatalogId: 'std-goggles' }),
+  Object.freeze({ id: 'bucket_hat', label: 'BUCKET HAT', builderKey: 'buckethat', billBackward: false, counterpartCatalogId: 'vinny-scouts-bucket-hat' }),
+  Object.freeze({ id: 'none', label: 'NONE', builderKey: null, billBackward: false, counterpartCatalogId: null }),
+]);
 
-const HEADWEAR_DISPLAY_LABELS = Object.freeze({
-  cap: 'CAP',
-  helmet: 'HELMET',
-  headband: 'HEADBAND',
-  sunhat: 'SUN HAT',
-  beret: 'BERET',
-  goggles: 'GOGGLES',
-  headset: 'HEADSET',
-  buckethat: 'BUCKET HAT',
-  beanie: 'BEANIE',
-  visor: 'VISOR',
-  bandana: 'BANDANA',
-  none: 'NONE',
-});
+/** The playtest cycle ids in trial order. Frozen, zero allocation. */
+export const SERIES_1_PLAYTEST_IDS = Object.freeze(SERIES_1_PLAYTEST_CYCLE.map((entry) => entry.id));
+
+const PLAYTEST_SPEC_BY_ID = new Map(SERIES_1_PLAYTEST_CYCLE.map((entry) => [entry.id, entry]));
 
 /**
- * Human-readable label for a builder key or `none`. Zero allocation.
+ * Resolve a headwear reference to the build spec the builders module consumes.
+ * Accepts a playtest id (`cap_forward`, `beanie`, ...), a catalog id
+ * (`std-cap`, ...), a raw builder key (`cap`, `helmet`, ...), or `none`.
+ * Returns `{ builderKey, billBackward }`, or null for `none` / an unknown id.
+ * This is the single reconciliation point between the playtest vocabulary and
+ * the catalog; the ragdoll mounts whatever this returns.
+ */
+export function resolveHeadwearSpec(headwearId) {
+  if (!headwearId || headwearId === 'none') return null;
+  const playtest = PLAYTEST_SPEC_BY_ID.get(headwearId);
+  if (playtest) return { builderKey: playtest.builderKey, billBackward: playtest.billBackward };
+  if (HEADWEAR_CATALOG[headwearId]) {
+    return { builderKey: HEADWEAR_CATALOG[headwearId].meshBuilderKey, billBackward: false };
+  }
+  if (MESH_BUILDER_KEYS.includes(headwearId)) {
+    return { builderKey: headwearId, billBackward: false };
+  }
+  return null;
+}
+
+/**
+ * Human-readable label for a playtest id, catalog id, builder key, or `none`.
+ * Zero allocation.
  * @param {string} headwearId
  * @returns {string}
  */
 export function getHeadwearLabel(headwearId) {
-  return HEADWEAR_DISPLAY_LABELS[headwearId] || String(headwearId || 'none').toUpperCase();
+  const playtest = PLAYTEST_SPEC_BY_ID.get(headwearId);
+  if (playtest) return playtest.label;
+  if (HEADWEAR_CATALOG[headwearId]) return HEADWEAR_CATALOG[headwearId].label;
+  return String(headwearId || 'none').toUpperCase();
 }
 
 /**
- * Next id in the live cycle, wrapping around. Zero allocation.
+ * Next playtest id, wrapping around the eight-choice cycle. Zero allocation.
  * @param {string} currentId
  * @returns {string}
  */
 export function getNextHeadwearId(currentId) {
-  const index = HEADWEAR_LIVE_CYCLE.indexOf(currentId);
-  return HEADWEAR_LIVE_CYCLE[(index + 1) % HEADWEAR_LIVE_CYCLE.length];
+  const index = SERIES_1_PLAYTEST_IDS.indexOf(currentId);
+  return SERIES_1_PLAYTEST_IDS[(index + 1) % SERIES_1_PLAYTEST_IDS.length];
 }
 
 export function validateCosmeticSelection(selection = {}) {

@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { TUNING } from '../config/tuning.js';
 import { Interpolated } from '../core/Interpolated.js';
 import { buildHeadwear } from './cosmeticsBuilders.js';
+import { resolveHeadwearSpec } from '../config/cosmetics.js';
 
 /**
  * Physics -> pose sync, and the ragdoll's debug skin.
@@ -401,7 +402,7 @@ export function createRagdollVisuals(rig, options = null) {
   // Mount the modular headwear: default from options / TUNING, else the plain
   // cap. setAthleteHeadwear is render-only and builds at mount time, never in
   // the fixed step.
-  const headwearId = options?.headwear ?? TUNING.athlete?.headwear ?? 'cap';
+  const headwearId = options?.headwear ?? TUNING.athlete?.headwear ?? 'cap_forward';
   setAthleteHeadwear(state, headwearId, options);
 
   return group;
@@ -434,7 +435,7 @@ function disposeHeadwearSlot(slot) {
  * athlete's jersey without any hard-coded color.
  *
  * @param {object} state Ragdoll state (must carry `.rig`).
- * @param {string} headwearId Catalog id, builder key ('cap', 'beanie', ...), or 'none'.
+ * @param {string} headwearId Playtest id ('cap_forward', ...), catalog id, builder key ('cap', 'beanie', ...), or 'none'.
  * @param {object} [options] Team/variant/palette overrides.
  * @returns {THREE.Group | null}
  */
@@ -446,19 +447,24 @@ export function setAthleteHeadwear(state, headwearId, options = null) {
 
   disposeHeadwearSlot(slot);
 
-  if (!headwearId || headwearId === 'none') {
+  // Reconcile the playtest vocabulary (cap_forward, cap_backward, bucket_hat,
+  // 'none'), any catalog id, or a raw builder key into a builder key plus bill
+  // orientation. 'none' still means a bare skull.
+  const spec = resolveHeadwearSpec(headwearId);
+  if (!spec) {
     head.headwearId = 'none';
     return null;
   }
 
   const colors = getAthleteColors(options ?? state);
-  const piece = buildHeadwear(headwearId, {
+  const piece = buildHeadwear(spec.builderKey, {
     radius: head.radius,
     primaryColor: colors.primary,
     accentColor: colors.accent,
     jointColor: colors.jointGrey,
     roughness: colors.roughness,
     metalness: colors.metalness,
+    billBackward: spec.billBackward,
   });
 
   if (!piece) {
