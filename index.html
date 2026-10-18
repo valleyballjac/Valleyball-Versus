@@ -205,9 +205,42 @@
         transform: translate(-50%, 0);
       }
       #camera-toast.fade-out {
-        opacity: 0;
-        transform: translate(-50%, -6px);
-      }
+              opacity: 0;
+              transform: translate(-50%, -6px);
+            }
+
+            #headwear-toast {
+              display: none;
+              position: fixed;
+              top: 56px;
+              left: 50%;
+              transform: translate(-50%, 0);
+              padding: 8px 18px;
+              background: rgba(6, 12, 22, 0.85);
+              border: 1px solid rgba(217, 70, 239, 0.4);
+              border-radius: 20px;
+              box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5), 0 0 14px rgba(217, 70, 239, 0.2);
+              backdrop-filter: blur(10px);
+              -webkit-backdrop-filter: blur(10px);
+              font-size: 12px;
+              font-weight: 700;
+              letter-spacing: 0.08em;
+              color: #ffffff;
+              pointer-events: none;
+              user-select: none;
+              z-index: 9999;
+              opacity: 0;
+              transition: opacity 0.35s ease, transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+              white-space: nowrap;
+            }
+            #headwear-toast.visible {
+              opacity: 1;
+              transform: translate(-50%, 0);
+            }
+            #headwear-toast.fade-out {
+              opacity: 0;
+              transform: translate(-50%, -6px);
+            }
 
       #splitscreen-divider {
         display: none;
@@ -315,6 +348,7 @@
 
     <div id="splitscreen-divider"></div>
     <div id="camera-toast"></div>
+    <div id="headwear-toast"></div>
 
     <script type="module" src="/src/main.js"></script>
   </body>

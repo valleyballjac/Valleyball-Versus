@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 import { TUNING, assetUrl } from './config/tuning.js';
+import { getNextHeadwearId, getHeadwearLabel } from './config/cosmetics.js';
 import { Loop } from './core/Loop.js';
 import {
   initPhysics, stepPhysics, getWorld, drainContactForces, RAPIER,
@@ -339,6 +340,18 @@ function installRespawnHotkey() {
         if (guiInstance) guiInstance.controllersRecursive().forEach((c) => c.updateDisplay());
       }
     }
+    // "3" — CYCLE HEADWEAR (Series 1 live preview) for P1
+    if (isHotkey(event, 'Digit3') && athletes[0]) {
+      const next = getNextHeadwearId(athletes[0].headwear);
+      athletes[0].setHeadwear(next);
+      showHeadwearToast(getHeadwearLabel(next));
+    }
+    // "8" — CYCLE HEADWEAR (Series 1 live preview) for P2
+    if (isHotkey(event, 'Digit8') && athletes[1]) {
+      const next = getNextHeadwearId(athletes[1].headwear);
+      athletes[1].setHeadwear(next);
+      showHeadwearToast(getHeadwearLabel(next));
+    }
     // "V" — TOGGLE SPLITSCREEN MODE (Shift+V or F8 to avoid conflict with P1 Cut 'KeyV')
     if (isHotkey(event, 'F8') || (isHotkey(event, 'KeyV') && event.shiftKey)) {
       TUNING.camera.splitscreen = !TUNING.camera.splitscreen;
@@ -450,6 +463,8 @@ const CAMERA_MODE_DISPLAY_NAMES = {
 
 let cameraToastTimeout = null;
 let cameraToastFadeTimeout = null;
+let headwearToastTimeout = null;
+let headwearToastFadeTimeout = null;
 
 export function showCameraNotification(playerIndex, mode) {
   if (typeof document === 'undefined') return;
@@ -491,6 +506,38 @@ export function showCameraNotification(playerIndex, mode) {
     cameraToastFadeTimeout = setTimeout(() => {
       toast.style.display = 'none';
       cameraToastFadeTimeout = null;
+    }, 350);
+  }, 1300);
+}
+
+export function showHeadwearToast(headwearLabel) {
+  if (typeof document === 'undefined') return;
+  const loadingScreen = document.getElementById('loading-screen');
+  if (loadingScreen && loadingScreen.style.display !== 'none') return;
+
+  let toast = document.getElementById('headwear-toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'headwear-toast';
+    document.body.appendChild(toast);
+  }
+
+  toast.innerHTML = `<span style="color: #f0abfc; margin-right: 6px;">HEADWEAR:</span><span style="color: #ffffff; font-weight: 800;">${headwearLabel}</span>`;
+  toast.style.left = '50%';
+  toast.style.display = 'block';
+  void toast.offsetWidth;
+  toast.classList.remove('fade-out');
+  toast.classList.add('visible');
+
+  if (headwearToastTimeout) clearTimeout(headwearToastTimeout);
+  if (headwearToastFadeTimeout) clearTimeout(headwearToastFadeTimeout);
+
+  headwearToastTimeout = setTimeout(() => {
+    toast.classList.remove('visible');
+    toast.classList.add('fade-out');
+    headwearToastFadeTimeout = setTimeout(() => {
+      toast.style.display = 'none';
+      headwearToastFadeTimeout = null;
     }, 350);
   }, 1300);
 }
