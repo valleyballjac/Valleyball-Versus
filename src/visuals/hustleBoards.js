@@ -22,6 +22,9 @@ const FACING = {
   west: Math.PI / 2,  // Faces East (+X) into court
 };
 
+/** Canonical athletic broadcast display typography */
+const ATHLETIC_FONT = "Impact, 'Arial Black', 'Trebuchet MS', sans-serif";
+
 function getTeamHex(team = 'home') {
   const p = TUNING.athlete?.palette;
   const num = team === 'away' ? (p?.awayPrimary ?? 0x1d4ed8) : (p?.homePrimary ?? 0xd90429);
@@ -407,8 +410,8 @@ function drawHustleBoard(ctx, W, H, data, outlineColor) {
   const effectiveOutline = darkOutline ? '#e2e8f0' : outlineColor;
   const scale = H / 800;
 
-  // Background
-  ctx.fillStyle = '#060a12';
+  // Background: Canonical Obsidian
+  ctx.fillStyle = '#0b111e';
   ctx.fillRect(0, 0, W, H);
 
   // Subtle angled stadium speedlines
@@ -428,7 +431,7 @@ function drawHustleBoard(ctx, W, H, data, outlineColor) {
 
   // HEADER BAR (Maximized)
   const headerH = Math.round(96 * scale);
-  ctx.fillStyle = 'rgba(10, 16, 28, 0.96)';
+  ctx.fillStyle = 'rgba(11, 17, 30, 0.96)';
   ctx.fillRect(16, 16, W - 32, headerH);
   ctx.strokeStyle = effectiveOutline;
   ctx.lineWidth = 2;
@@ -437,7 +440,7 @@ function drawHustleBoard(ctx, W, H, data, outlineColor) {
   // Header Title
   ctx.textBaseline = 'middle';
   ctx.textAlign = 'left';
-  ctx.font = `900 ${Math.round(46 * scale)}px ui-monospace, SFMono-Regular, Consolas, monospace`;
+  ctx.font = `900 ${Math.round(48 * scale)}px ${ATHLETIC_FONT}`;
   if (darkOutline) {
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
     ctx.lineWidth = 4;
@@ -448,7 +451,7 @@ function drawHustleBoard(ctx, W, H, data, outlineColor) {
 
   // Telemetry Badge Pill in Header (right-aligned, enlarged and bold)
   const badge = data.badgeText || 'LIVE TELEMETRY';
-  ctx.font = `900 ${Math.round(36 * scale)}px ui-monospace, SFMono-Regular, Consolas, monospace`;
+  ctx.font = `900 ${Math.round(34 * scale)}px ${ATHLETIC_FONT}`;
   const badgeWidth = ctx.measureText(badge).width + Math.round(52 * scale);
   const badgeHeight = Math.round(62 * scale);
   const badgeX = W - 32 - badgeWidth;
@@ -470,13 +473,13 @@ function drawHustleBoard(ctx, W, H, data, outlineColor) {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = '#f59e0b';
-    ctx.font = `900 ${Math.round(52 * scale)}px ui-monospace, SFMono-Regular, Consolas, monospace`;
+    ctx.font = `900 ${Math.round(54 * scale)}px ${ATHLETIC_FONT}`;
     ctx.fillText('★  TARGET GOAL SCORED!  ★', W / 2, H * 0.40);
 
-    ctx.font = `900 ${Math.round(38 * scale)}px ui-monospace, SFMono-Regular, Consolas, monospace`;
+    ctx.font = `900 ${Math.round(40 * scale)}px ${ATHLETIC_FONT}`;
     ctx.fillText(`TOTAL TARGET GOALS: ${data.goals}`, W / 2, H * 0.60);
 
-    ctx.font = `700 ${Math.round(24 * scale)}px ui-monospace, SFMono-Regular, Consolas, monospace`;
+    ctx.font = `700 ${Math.round(26 * scale)}px ${ATHLETIC_FONT}`;
     ctx.fillText(`STRIKE ACCURACY: ${data.accuracy}% · SWEET SPOTS: ${data.sweetSpots}`, W / 2, H * 0.78);
     return;
   }
@@ -486,11 +489,11 @@ function drawHustleBoard(ctx, W, H, data, outlineColor) {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
 
-    ctx.font = `900 ${Math.round(48 * scale)}px ui-monospace, SFMono-Regular, Consolas, monospace`;
+    ctx.font = `900 ${Math.round(50 * scale)}px ${ATHLETIC_FONT}`;
     ctx.fillStyle = '#f8fafc';
     ctx.fillText('⚡ ARENA HUSTLE BOARD ⚡', W / 2, H * 0.35);
 
-    ctx.font = `700 ${Math.round(24 * scale)}px ui-monospace, SFMono-Regular, Consolas, monospace`;
+    ctx.font = `700 ${Math.round(26 * scale)}px ${ATHLETIC_FONT}`;
     ctx.fillStyle = '#94a3b8';
     ctx.fillText('ENTER PRACTICE SANDBOX OR 1V1 MATCH FOR LIVE METRICS', W / 2, H * 0.48);
 
@@ -511,12 +514,12 @@ function drawHustleBoard(ctx, W, H, data, outlineColor) {
         ctx.strokeRect(cx, cy, chipW, Math.round(42 * scale));
 
         ctx.fillStyle = effectiveOutline;
-        ctx.font = `800 ${Math.round(15 * scale)}px ui-monospace, SFMono-Regular, Consolas, monospace`;
+        ctx.font = `800 ${Math.round(16 * scale)}px ${ATHLETIC_FONT}`;
         ctx.fillText(label, cx + chipW / 2, cy + Math.round(21 * scale));
       });
     });
 
-    ctx.font = `600 ${Math.round(16 * scale)}px ui-monospace, SFMono-Regular, Consolas, monospace`;
+    ctx.font = `600 ${Math.round(18 * scale)}px ${ATHLETIC_FONT}`;
     ctx.fillStyle = '#64748b';
     ctx.fillText('LIVE TELEMETRY ARMED · 4 ARENA SCREENS', W / 2, H * 0.90);
     return;
@@ -551,7 +554,7 @@ function drawHustleBoard(ctx, W, H, data, outlineColor) {
     // Left: Maximized bold Stat Name with crisp high-contrast offset shadow
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.font = `900 ${Math.round(44 * scale)}px ui-monospace, SFMono-Regular, Consolas, monospace`;
+    ctx.font = `900 ${Math.round(44 * scale)}px ${ATHLETIC_FONT}`;
     ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
     ctx.fillText(item.label, 36, yCenter + 2);
     ctx.fillStyle = item.color;
@@ -560,7 +563,7 @@ function drawHustleBoard(ctx, W, H, data, outlineColor) {
     // Right: Maximized bold glowing Stat Number with crisp high-contrast offset shadow
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
-    ctx.font = `900 ${Math.round(66 * scale)}px ui-monospace, SFMono-Regular, Consolas, monospace`;
+    ctx.font = `900 ${Math.round(66 * scale)}px ${ATHLETIC_FONT}`;
     ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
     ctx.fillText(item.num, W - 32, yCenter + 2);
     ctx.fillStyle = item.color;

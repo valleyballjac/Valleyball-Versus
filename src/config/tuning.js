@@ -1507,10 +1507,10 @@ const DEFAULTS = {
 
     // North and south: recessed flush into the upper bowl wall at |z| = 65.0.
     // Monumental scale: 16.0m x 8.0m (2:1 ratio) matching 1024x512 canvas.
-    // Centered at Y = 22.0 so bottom (Y = 18.0) sits cleanly above the chamfer lip.
+    // Centered at Y = 26.0 to sit centered on the upper boundary wall (Y = 18 to 38).
     endWidth: 16.0,
     endHeight: 8.0,
-    endCenterY: 22.0,
+    endCenterY: 26.0,
     endZ: 64.98, // 2cm in front of |z|=65 wall: perfectly flush / recessed
 
     // East and west: centerline ribbon boards on the side wall at |x| = 25.0.

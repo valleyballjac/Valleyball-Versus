@@ -81,8 +81,8 @@ export function isDarkColor(hex) {
   return brightness < 70;
 }
 
-/** Canonical athletic broadcast typography */
-const ATHLETIC_FONT = "system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif";
+/** Canonical athletic broadcast display typography */
+const ATHLETIC_FONT = "Impact, 'Arial Black', 'Trebuchet MS', sans-serif";
 
 function drawTeamText(ctx, text, x, y, color, strokeWidth = 2.5) {
   if (isDarkColor(color)) {
@@ -104,7 +104,7 @@ function drawMicroClock(ctx, W, H, text, isMatchOver) {
   ctx.clearRect(0, 0, W, H);
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  const fontSize = text.length > 7 ? 32 : 40;
+  const fontSize = text.length > 7 ? 34 : 44;
   ctx.font = `900 ${fontSize}px ${ATHLETIC_FONT}`;
   ctx.fillStyle = isMatchOver ? INK.away : INK.value;
   ctx.fillText(text, W / 2, H / 2 + 1);
@@ -115,7 +115,6 @@ const INK = {
   panelIdle: '#0b111e', // Canonical obsidian stadium backdrop
   panelFlash: '#f0b429',
   screenBorder: '#1e293b', // Anodized metallic bezel
-  accentPink: '#ec4899', // Canonical pink corner accents
   rule: 'rgba(245, 245, 247, 0.20)', // Subtle chalk line divider
   label: '#94a3b8',
   value: '#f8fafc',
@@ -135,7 +134,7 @@ const INK = {
 };
 
 /**
- * Draws an architectural Obsidian stadium bezel with canonical pink corner accents.
+ * Draws a clean architectural Obsidian stadium bezel.
  */
 function drawObsidianBezel(ctx, W, H) {
   ctx.fillStyle = INK.panelIdle;
@@ -145,40 +144,6 @@ function drawObsidianBezel(ctx, W, H) {
   ctx.strokeStyle = INK.screenBorder;
   ctx.lineWidth = 6;
   ctx.strokeRect(3, 3, W - 6, H - 6);
-
-  // Canonical pink corner tick brackets
-  ctx.strokeStyle = INK.accentPink;
-  ctx.lineWidth = 3;
-  const tick = Math.min(28, Math.round(H * 0.08));
-  const pad = 6;
-
-  // Top-left
-  ctx.beginPath();
-  ctx.moveTo(pad, pad + tick);
-  ctx.lineTo(pad, pad);
-  ctx.lineTo(pad + tick, pad);
-  ctx.stroke();
-
-  // Top-right
-  ctx.beginPath();
-  ctx.moveTo(W - pad - tick, pad);
-  ctx.lineTo(W - pad, pad);
-  ctx.lineTo(W - pad, pad + tick);
-  ctx.stroke();
-
-  // Bottom-left
-  ctx.beginPath();
-  ctx.moveTo(pad, H - pad - tick);
-  ctx.lineTo(pad, H - pad);
-  ctx.lineTo(pad + tick, H - pad);
-  ctx.stroke();
-
-  // Bottom-right
-  ctx.beginPath();
-  ctx.moveTo(W - pad - tick, H - pad);
-  ctx.lineTo(W - pad, H - pad);
-  ctx.lineTo(W - pad, H - pad - tick);
-  ctx.stroke();
 }
 
 /**
@@ -501,20 +466,46 @@ function drawEndBoard(board, probe, view) {
   ctx.lineTo(W * 0.92, H * 0.48);
   ctx.stroke();
 
-  // 3. BOTTOM ROW: PROMINENT ATHLETIC SCORE LINE
-  ctx.font = `900 ${Math.round(H * 0.08)}px ${ATHLETIC_FONT}`;
-  drawTeamText(ctx, 'HOME', W * 0.30, H * 0.58, INK.home, 3);
-  drawTeamText(ctx, 'AWAY', W * 0.70, H * 0.58, INK.away, 3);
+  // 3. BOTTOM ROW: PROMINENT ATHLETIC SCORE LINE (STACKED BADGES OVER DIGITS)
+  const homeBadgeW = Math.round(W * 0.22);
+  const homeBadgeH = Math.round(H * 0.10);
+  const badgeY = Math.round(H * 0.56 - homeBadgeH / 2);
 
-  // Bold score numbers in colossal athletic typography
-  ctx.font = `900 ${Math.round(H * 0.28)}px ${ATHLETIC_FONT}`;
+  // Home badge
+  const homeBadgeX = Math.round(W * 0.30 - homeBadgeW / 2);
+  ctx.fillStyle = isDarkColor(INK.home) ? 'rgba(255, 255, 255, 0.15)' : INK.homeTint;
+  ctx.beginPath();
+  ctx.roundRect(homeBadgeX, badgeY, homeBadgeW, homeBadgeH, 8);
+  ctx.fill();
+  ctx.strokeStyle = isDarkColor(INK.home) ? '#e2e8f0' : INK.home;
+  ctx.lineWidth = 2.5;
+  ctx.stroke();
+
+  ctx.font = `900 ${Math.round(H * 0.075)}px ${ATHLETIC_FONT}`;
+  drawTeamText(ctx, 'HOME', W * 0.30, H * 0.56, INK.home, 3);
+
+  // Away badge
+  const awayBadgeX = Math.round(W * 0.70 - homeBadgeW / 2);
+  ctx.fillStyle = isDarkColor(INK.away) ? 'rgba(255, 255, 255, 0.15)' : INK.awayTint;
+  ctx.beginPath();
+  ctx.roundRect(awayBadgeX, badgeY, homeBadgeW, homeBadgeH, 8);
+  ctx.fill();
+  ctx.strokeStyle = isDarkColor(INK.away) ? '#e2e8f0' : INK.away;
+  ctx.lineWidth = 2.5;
+  ctx.stroke();
+
+  ctx.font = `900 ${Math.round(H * 0.075)}px ${ATHLETIC_FONT}`;
+  drawTeamText(ctx, 'AWAY', W * 0.70, H * 0.56, INK.away, 3);
+
+  // Colossal athletic score digits directly below badges
+  ctx.font = `900 ${Math.round(H * 0.32)}px ${ATHLETIC_FONT}`;
   ctx.fillStyle = INK.value;
-  ctx.fillText(String(probe.scoreHome), W * 0.30, H * 0.78);
-  ctx.fillText(String(probe.scoreAway), W * 0.70, H * 0.78);
+  ctx.fillText(String(probe.scoreHome), W * 0.30, H * 0.81);
+  ctx.fillText(String(probe.scoreAway), W * 0.70, H * 0.81);
 
   ctx.fillStyle = INK.label;
-  ctx.font = `900 ${Math.round(H * 0.18)}px ${ATHLETIC_FONT}`;
-  ctx.fillText('-', W * 0.50, H * 0.77);
+  ctx.font = `900 ${Math.round(H * 0.20)}px ${ATHLETIC_FONT}`;
+  ctx.fillText('-', W * 0.50, H * 0.80);
 }
 
 /**
@@ -615,71 +606,64 @@ function drawSideBoard(board, probe, view) {
   ctx.font = `800 ${Math.round(H * 0.105)}px ${ATHLETIC_FONT}`;
   ctx.fillText(`TARGET: ${rightGoalLabel}`, rightX + flankW / 2, flankY + flankH * 0.72);
 
-  // 3. CENTER COLUMN: Clock on top, ATHLETIC SCORE LINE ON BOTTOM
+  // 3. CENTER COLUMN: Clock on top, ATHLETIC SCORE LINE ON BOTTOM (NO VERTICAL DIVIDERS)
   const centerX = W / 2;
 
-  // Vertical boundary dividers separating flanks from center
-  ctx.strokeStyle = INK.rule;
-  ctx.lineWidth = 2.5;
-  ctx.beginPath();
-  ctx.moveTo(leftX + flankW + 16, H * 0.10);
-  ctx.lineTo(leftX + flankW + 16, H * 0.90);
-  ctx.moveTo(rightX - 16, H * 0.10);
-  ctx.lineTo(rightX - 16, H * 0.90);
-  ctx.stroke();
-
   // Horizontal separator between micro-clock and score line
+  ctx.strokeStyle = INK.rule;
+  ctx.lineWidth = 2.0;
   ctx.beginPath();
-  ctx.moveTo(leftX + flankW + 36, H * 0.48);
-  ctx.lineTo(rightX - 36, H * 0.48);
+  ctx.moveTo(leftX + flankW + 48, H * 0.46);
+  ctx.lineTo(rightX - 48, H * 0.46);
   ctx.stroke();
 
-  // PROMINENT ATHLETIC SCORE LINE ON THE BOTTOM
-  const scoreY = H * 0.74;
+  // PROMINENT ATHLETIC SCORE LINE: STACKED BADGES DIRECTLY OVER SCORE NUMBERS
+  const badgeW = 150;
+  const badgeH = 44;
+  const badgeY = Math.round(H * 0.56 - badgeH / 2);
 
-  // HOME pill badge
-  const homeBadgeW = 100;
-  const homeBadgeH = 34;
-  const homeBadgeX = centerX - 190 - homeBadgeW / 2;
-  const homeBadgeY = scoreY - homeBadgeH / 2;
+  // HOME stack (left of center)
+  const homeColX = centerX - 140;
+  const homeBadgeX = Math.round(homeColX - badgeW / 2);
   ctx.fillStyle = isDarkColor(INK.home) ? 'rgba(255, 255, 255, 0.15)' : INK.homeTint;
   ctx.beginPath();
-  ctx.roundRect(homeBadgeX, homeBadgeY, homeBadgeW, homeBadgeH, 6);
+  ctx.roundRect(homeBadgeX, badgeY, badgeW, badgeH, 6);
   ctx.fill();
   ctx.strokeStyle = isDarkColor(INK.home) ? '#e2e8f0' : INK.home;
   ctx.lineWidth = 2;
   ctx.stroke();
 
-  ctx.font = `900 ${Math.round(H * 0.065)}px ${ATHLETIC_FONT}`;
-  drawTeamText(ctx, 'HOME', centerX - 190, scoreY, INK.home, 2.5);
+  ctx.font = `900 ${Math.round(H * 0.08)}px ${ATHLETIC_FONT}`;
+  drawTeamText(ctx, 'HOME', homeColX, H * 0.56, INK.home, 2.5);
 
-  // Home score number
-  ctx.font = `900 ${Math.round(H * 0.28)}px ${ATHLETIC_FONT}`;
+  // Home score number below badge
+  ctx.font = `900 ${Math.round(H * 0.32)}px ${ATHLETIC_FONT}`;
   ctx.fillStyle = INK.value;
-  ctx.fillText(String(probe.scoreHome), centerX - 90, scoreY);
+  ctx.fillText(String(probe.scoreHome), homeColX, H * 0.81);
 
   // Divider dash
   ctx.fillStyle = INK.label;
-  ctx.font = `900 ${Math.round(H * 0.18)}px ${ATHLETIC_FONT}`;
-  ctx.fillText('-', centerX, scoreY - 2);
+  ctx.font = `900 ${Math.round(H * 0.20)}px ${ATHLETIC_FONT}`;
+  ctx.fillText('-', centerX, H * 0.80);
 
-  // Away score number
-  ctx.font = `900 ${Math.round(H * 0.28)}px ${ATHLETIC_FONT}`;
-  ctx.fillStyle = INK.value;
-  ctx.fillText(String(probe.scoreAway), centerX + 90, scoreY);
-
-  // AWAY pill badge
-  const awayBadgeX = centerX + 190 - homeBadgeW / 2;
+  // AWAY stack (right of center)
+  const awayColX = centerX + 140;
+  const awayBadgeX = Math.round(awayColX - badgeW / 2);
   ctx.fillStyle = isDarkColor(INK.away) ? 'rgba(255, 255, 255, 0.15)' : INK.awayTint;
   ctx.beginPath();
-  ctx.roundRect(awayBadgeX, homeBadgeY, homeBadgeW, homeBadgeH, 6);
+  ctx.roundRect(awayBadgeX, badgeY, badgeW, badgeH, 6);
   ctx.fill();
   ctx.strokeStyle = isDarkColor(INK.away) ? '#e2e8f0' : INK.away;
   ctx.lineWidth = 2;
   ctx.stroke();
 
-  ctx.font = `900 ${Math.round(H * 0.065)}px ${ATHLETIC_FONT}`;
-  drawTeamText(ctx, 'AWAY', centerX + 190, scoreY, INK.away, 2.5);
+  ctx.font = `900 ${Math.round(H * 0.08)}px ${ATHLETIC_FONT}`;
+  drawTeamText(ctx, 'AWAY', awayColX, H * 0.56, INK.away, 2.5);
+
+  // Away score number below badge
+  ctx.font = `900 ${Math.round(H * 0.32)}px ${ATHLETIC_FONT}`;
+  ctx.fillStyle = INK.value;
+  ctx.fillText(String(probe.scoreAway), awayColX, H * 0.81);
 }
 
 /**
