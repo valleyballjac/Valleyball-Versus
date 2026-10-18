@@ -45,6 +45,16 @@ export function resolveCosmeticColors(options = {}) {
     }
   }
 
+  if (options.teamColor !== undefined && options.teamColor !== null) {
+    primary = typeof options.teamColor === 'string'
+      ? (HeadgearRoster.PALETTES[options.teamColor.toLowerCase()] ?? parseInt(options.teamColor.replace('#', '0x'), 16))
+      : options.teamColor;
+  }
+  if (options.primaryHex !== undefined && options.primaryHex !== null) {
+    primary = typeof options.primaryHex === 'string'
+      ? parseInt(options.primaryHex.replace('#', '0x'), 16)
+      : options.primaryHex;
+  }
   if (options.tint !== undefined && options.tint !== null) {
     primary = typeof options.tint === 'string'
       ? parseInt(options.tint.replace('#', '0x'), 16)
@@ -59,6 +69,12 @@ export function resolveCosmeticColors(options = {}) {
     accent = typeof options.accentColor === 'string'
       ? parseInt(options.accentColor.replace('#', '0x'), 16)
       : options.accentColor;
+  } else if (options.accent !== undefined && options.accent !== null) {
+    accent = typeof options.accent === 'string'
+      ? parseInt(options.accent.replace('#', '0x'), 16)
+      : options.accent;
+  } else if (options.teamColor !== undefined || options.isHome !== undefined || options.kit !== undefined) {
+    accent = HeadgearRoster.accentFor(primary, options.isHome ?? options.kit ?? 'home');
   }
 
   const joint = options.jointColor !== undefined && options.jointColor !== null
@@ -982,8 +998,8 @@ const ROSTER_HEADWEAR = Object.freeze({
 function makeRosterBuilder({ fn, athleteId }) {
   return function buildApprovedPiece(options = {}) {
     const radius = options.radius ?? DEFAULT_HEAD_RADIUS;
-    const palette = HeadgearRoster.paletteFor(athleteId);
-    return fn(THREE, palette, { radius, markTexture: getLeagueMark() });
+    const palette = HeadgearRoster.resolveHeadwearPalette({ athleteId, ...options });
+    return fn(THREE, palette, { radius, markTexture: getLeagueMark(), ...options, athleteId });
   };
 }
 
@@ -1054,3 +1070,5 @@ export function buildHeadwear(itemOrKey, options = {}) {
   const builderFn = HEADWEAR_BUILDERS[builderKey];
   return builderFn(mergedOptions);
 }
+
+export { resolveHeadwearPalette, recolorHeadgear } from './valleyballHeadgear.js';

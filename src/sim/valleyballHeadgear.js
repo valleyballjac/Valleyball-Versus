@@ -113,8 +113,19 @@ export const ROSTER = {
   pink:   { id: 'pink',   name: 'Kimi "Hana" Kizuna',          item: 'Bleacher Hachimaki',  itemId: 'ouendan_knot',    build: 'buildBleacherHachimaki',  kit: 'away', variant: 'feminine' },
 };
 
+function normalizeHex(c, fallback = 0xd90429) {
+  if (typeof c === 'number' && !Number.isNaN(c)) return c;
+  if (typeof c === 'string') {
+    const s = c.trim().replace(/^#/, '').replace(/^0x/i, '');
+    const parsed = parseInt(s, 16);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  return fallback;
+}
+
 function luminance(hex) {
-  return (0.2126 * ((hex >> 16) & 255) + 0.7152 * ((hex >> 8) & 255) + 0.0722 * (hex & 255)) / 255;
+  const n = normalizeHex(hex, 0);
+  return (0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) / 255;
 }
 
 /**
@@ -122,19 +133,130 @@ function luminance(hex) {
  * neutral palettes flip so the trim still reads against the piece itself.
  */
 export function accentFor(primaryHex, kit = 'home') {
-  const lum = luminance(primaryHex);
+  const hex = normalizeHex(primaryHex, 0xd90429);
+  const kitKey = typeof kit === 'boolean' ? (kit ? 'home' : 'away') : (kit || 'home');
+  const lum = luminance(hex);
   if (lum > 0.9) return 0x0f172a;
   if (lum < 0.12) return 0xf1f5f9;
-  return KITS[kit].accent;
+  return (KITS[kitKey] || KITS.home).accent;
+}
+
+/**
+ * Resolves dynamic palette and kit options into canonical
+ * { primary, secondary, accent, neutral } values.
+ */
+export function resolveHeadwearPalette(options = {}) {
+  const sourcePalette = options.palette && typeof options.palette === 'object' ? options.palette : options;
+
+  let kitKey = 'home';
+  if (typeof options.isHome === 'boolean') {
+    kitKey = options.isHome ? 'home' : 'away';
+  } else if (typeof options.kit === 'boolean') {
+    kitKey = options.kit ? 'home' : 'away';
+  } else if (typeof options.kit === 'string') {
+    kitKey = options.kit.toLowerCase() === 'away' ? 'away' : 'home';
+  } else if (typeof sourcePalette.isHome === 'boolean') {
+    kitKey = sourcePalette.isHome ? 'home' : 'away';
+  } else if (typeof sourcePalette.kit === 'boolean') {
+    kitKey = sourcePalette.kit ? 'home' : 'away';
+  } else if (typeof sourcePalette.kit === 'string') {
+    kitKey = sourcePalette.kit.toLowerCase() === 'away' ? 'away' : 'home';
+  } else if (options.side === 'away' || options.team === 'away' || sourcePalette.side === 'away' || sourcePalette.team === 'away') {
+    kitKey = 'away';
+  } else if (options.athleteId && ROSTER[options.athleteId]?.kit) {
+    kitKey = ROSTER[options.athleteId].kit;
+  }
+
+  const kitData = KITS[kitKey] || KITS.home;
+
+  let primary = null;
+  if (options.primaryHex !== undefined && options.primaryHex !== null) {
+    primary = normalizeHex(options.primaryHex);
+  } else if (sourcePalette.primaryHex !== undefined && sourcePalette.primaryHex !== null) {
+    primary = normalizeHex(sourcePalette.primaryHex);
+  } else if (options.teamColor !== undefined && options.teamColor !== null) {
+    if (typeof options.teamColor === 'string' && PALETTES[options.teamColor.toLowerCase()]) {
+      primary = PALETTES[options.teamColor.toLowerCase()];
+    } else {
+      primary = normalizeHex(options.teamColor);
+    }
+  } else if (sourcePalette.teamColor !== undefined && sourcePalette.teamColor !== null) {
+    if (typeof sourcePalette.teamColor === 'string' && PALETTES[sourcePalette.teamColor.toLowerCase()]) {
+      primary = PALETTES[sourcePalette.teamColor.toLowerCase()];
+    } else {
+      primary = normalizeHex(sourcePalette.teamColor);
+    }
+  } else if (options.primaryColor !== undefined && options.primaryColor !== null) {
+    primary = normalizeHex(options.primaryColor);
+  } else if (sourcePalette.primaryColor !== undefined && sourcePalette.primaryColor !== null) {
+    primary = normalizeHex(sourcePalette.primaryColor);
+  } else if (options.primary !== undefined && options.primary !== null) {
+    primary = normalizeHex(options.primary);
+  } else if (sourcePalette.primary !== undefined && sourcePalette.primary !== null) {
+    primary = normalizeHex(sourcePalette.primary);
+  } else if (options.color !== undefined && options.color !== null) {
+    if (typeof options.color === 'string' && PALETTES[options.color.toLowerCase()]) {
+      primary = PALETTES[options.color.toLowerCase()];
+    } else {
+      primary = normalizeHex(options.color);
+    }
+  } else if (options.tint !== undefined && options.tint !== null) {
+    primary = normalizeHex(options.tint);
+  } else if (options.athleteId && PALETTES[options.athleteId]) {
+    primary = PALETTES[options.athleteId];
+  } else if (sourcePalette.athleteId && PALETTES[sourcePalette.athleteId]) {
+    primary = PALETTES[sourcePalette.athleteId];
+  } else if (typeof sourcePalette.value === 'number') {
+    primary = sourcePalette.value;
+  }
+
+  if (primary === null || Number.isNaN(primary)) {
+    primary = PALETTES.white;
+  }
+
+  const secondary = options.secondary !== undefined && options.secondary !== null
+    ? normalizeHex(options.secondary)
+    : (sourcePalette.secondary !== undefined && sourcePalette.secondary !== null
+      ? normalizeHex(sourcePalette.secondary)
+      : (options.bodyGrey !== undefined && options.bodyGrey !== null
+        ? normalizeHex(options.bodyGrey)
+        : (sourcePalette.bodyGrey !== undefined && sourcePalette.bodyGrey !== null
+          ? normalizeHex(sourcePalette.bodyGrey)
+          : (options.bodyColor !== undefined && options.bodyColor !== null
+            ? normalizeHex(options.bodyColor)
+            : kitData.secondary))));
+
+  const neutral = options.neutral !== undefined && options.neutral !== null
+    ? normalizeHex(options.neutral)
+    : (sourcePalette.neutral !== undefined && sourcePalette.neutral !== null
+      ? normalizeHex(sourcePalette.neutral)
+      : (options.jointGrey !== undefined && options.jointGrey !== null
+        ? normalizeHex(options.jointGrey)
+        : (sourcePalette.jointGrey !== undefined && sourcePalette.jointGrey !== null
+          ? normalizeHex(sourcePalette.jointGrey)
+          : (options.jointColor !== undefined && options.jointColor !== null
+            ? normalizeHex(options.jointColor)
+            : kitData.neutral))));
+
+  const accent = options.accent !== undefined && options.accent !== null
+    ? normalizeHex(options.accent)
+    : (sourcePalette.accent !== undefined && sourcePalette.accent !== null
+      ? normalizeHex(sourcePalette.accent)
+      : accentFor(primary, kitKey));
+
+  return {
+    primary,
+    secondary,
+    accent,
+    neutral,
+  };
 }
 
 /** The full { primary, secondary, accent, neutral } palette for a roster athlete. */
 export function paletteFor(athleteId, kit = null) {
   const entry = ROSTER[athleteId];
   if (!entry) throw new Error(`[headgear] unknown athlete "${athleteId}"`);
-  const k = kit || entry.kit;
-  const primary = PALETTES[entry.id];
-  return { primary, secondary: KITS[k].secondary, neutral: KITS[k].neutral, accent: accentFor(primary, k) };
+  return resolveHeadwearPalette({ athleteId, kit: kit || entry.kit });
 }
 
 /** The league mark as a 512px white-on-black alpha mask (PNG, base64). */
@@ -176,12 +298,15 @@ function makeKit(THREE, markTex) {
   }
   const primaryMaterial = (c, extra = {}) => roleMaterial('primary', c.primary, extra);
   const accentMaterial = (c, extra = {}) => roleMaterial('accent', c.accent, { roughness: 0.55, metalness: 0.1, ...extra });
+  const bodyGreyMaterial = (c, extra = {}) => roleMaterial('bodyGrey', c.bodyGrey, extra);
+  const neutralMaterial = (c, extra = {}) => roleMaterial('neutral', c.jointGrey, extra);
   const fixedMaterial = (hex, extra = {}) => roleMaterial('fixed', hex, { roughness: 0.5, metalness: 0.08, ...extra });
 
   function visorMaterial(colors, extra = {}) {
+    const glow = luminance(colors.primary) < 0.12 ? 0xdbe4f0 : colors.primary;
     const mat = new THREE.MeshStandardMaterial({
-      color: colors.primary,
-      emissive: colors.primary,
+      color: glow,
+      emissive: glow,
       emissiveIntensity: VISOR_EMISSIVE_INTENSITY,
       roughness: 0.28,
       metalness: 0.18,
@@ -342,7 +467,7 @@ function makeKit(THREE, markTex) {
     const params = { color: colors.accent, roughness: 0.75, metalness: 0.02, side: THREE.DoubleSide };
     if (tex) Object.assign(params, { alphaMap: tex, transparent: true, alphaTest: 0.5 });
     const mat = new THREE.MeshStandardMaterial(params);
-    mat.userData.colorRole = 'accent';
+    mat.userData.colorRole = 'fixed';
     const m = mesh(new THREE.CircleGeometry(size, 48), mat, name);
     m.castShadow = false;
     return m;
@@ -973,10 +1098,21 @@ function finish(group, itemId, palette, options) {
   return group;
 }
 
-function make(THREE, palette, options, itemId, fn) {
+function make(THREE, palette, options = {}, itemId, fn) {
+  const resolvedPalette = resolveHeadwearPalette({
+    athleteId: options.athleteId,
+    teamColor: options.teamColor,
+    primaryHex: palette?.primary ?? options.primaryHex,
+    isHome: options.isHome,
+    kit: options.kit,
+    palette,
+    ...options,
+  });
   const radius = options.radius ?? DEFAULT_HEAD_RADIUS;
   const kit = kitFor(THREE, options.markTexture || null);
-  return finish(kit[fn](radius, toColors(palette)), itemId, palette, options);
+  const group = kit[fn](radius, toColors(resolvedPalette));
+  recolorHeadgear(group, resolvedPalette);
+  return finish(group, itemId, resolvedPalette, options);
 }
 
 // ---------------------------------------------------------------------------
@@ -1013,24 +1149,52 @@ export const BUILDERS = {
 export function buildForAthlete(THREE, athleteId, options = {}) {
   const entry = ROSTER[athleteId];
   if (!entry) throw new Error(`[headgear] unknown athlete "${athleteId}"`);
-  return BUILDERS[entry.build](THREE, paletteFor(athleteId, options.kit || null), options);
+  const palette = resolveHeadwearPalette({ athleteId, ...options });
+  return BUILDERS[entry.build](THREE, palette, { ...options, athleteId });
 }
 
 /** Re-tints a built piece in place for a new palette (kit change, Locker mix-and-match). */
 export function recolorHeadgear(group, palette) {
-  const glow = luminance(palette.primary) < 0.12 ? 0xdbe4f0 : palette.primary;
+  if (!group || !palette) return;
+  const resolved = resolveHeadwearPalette({ palette, ...(typeof palette === 'object' ? palette : {}) });
+  const glow = luminance(resolved.primary) < 0.12 ? 0xdbe4f0 : resolved.primary;
   group.traverse((o) => {
-    if (!o.isMesh || !o.material || !o.material.userData) return;
-    const m = o.material;
-    switch (m.userData.colorRole) {
-      case 'primary': m.color.setHex(palette.primary); break;
-      case 'accent': m.color.setHex(palette.accent); break;
-      case 'bodyGrey': m.color.setHex(palette.secondary ?? 0x383b42); break;
-      case 'visor': m.color.setHex(glow); m.emissive.setHex(glow); break;
-      default: break; // 'fixed'
+    if (!o.isMesh || !o.material) return;
+    const materials = Array.isArray(o.material) ? o.material : [o.material];
+    for (const m of materials) {
+      if (!m || !m.userData) continue;
+      switch (m.userData.colorRole) {
+        case 'primary':
+          if (m.color) m.color.setHex(resolved.primary);
+          break;
+        case 'accent':
+          if (m.color) m.color.setHex(resolved.accent);
+          break;
+        case 'secondary':
+        case 'bodyGrey':
+          if (m.color) m.color.setHex(resolved.secondary ?? 0x383b42);
+          break;
+        case 'neutral':
+        case 'jointGrey':
+        case 'joint':
+          if (m.color) m.color.setHex(resolved.neutral ?? 0x22242a);
+          break;
+        case 'visor':
+        case 'lens':
+          if (m.color) m.color.setHex(glow);
+          if (m.emissive) m.emissive.setHex(glow);
+          break;
+        case 'fixed':
+        case 'dark':
+        case 'white':
+        case 'gold':
+          break; // fixed / invariant
+        default:
+          break;
+      }
     }
   });
-  group.userData.palette = { ...palette };
+  group.userData.palette = { ...resolved };
 }
 
 /** Frees a built piece's geometry and materials. */
