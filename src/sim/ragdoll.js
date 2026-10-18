@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { TUNING } from '../config/tuning.js';
 import { Interpolated } from '../core/Interpolated.js';
+import { buildHeadwear } from './cosmeticsBuilders.js';
+import { resolveHeadwearSpec } from '../config/cosmetics.js';
 
 /**
  * Physics -> pose sync, and the ragdoll's debug skin.
@@ -47,6 +49,17 @@ const _quat = new THREE.Quaternion();
  * @returns {THREE.Group}
  */
 /**
+ * Lightens an 0xRRGGBB integer toward white by `amount`. Zero allocation; used
+ * to derive an in-family accent trim tone for headwear from the team primary.
+ */
+function lightenHex(hex, amount = 0.3) {
+  const r = Math.min(255, Math.round(((hex >> 16) & 0xff) + (255 - ((hex >> 16) & 0xff)) * amount));
+  const g = Math.min(255, Math.round(((hex >> 8) & 0xff) + (255 - ((hex >> 8) & 0xff)) * amount));
+  const b = Math.min(255, Math.round((hex & 0xff) + (255 - (hex & 0xff)) * amount));
+  return (r << 16) | (g << 8) | b;
+}
+
+/**
  * Visual palette and styling for the Capsule Athlete.
  */
 function getAthleteColors(options = null) {
@@ -74,6 +87,7 @@ function getAthleteColors(options = null) {
 
   return {
     primary: parseColor(primary),
+    accent: lightenHex(parseColor(primary)),
     bodyGrey: parseColor(bodyGrey),
     jointGrey: parseColor(jointGrey),
     roughness: p.roughness ?? 0.82,
@@ -219,71 +233,13 @@ function createSolidAthletePart(item, colors) {
     headMesh.receiveShadow = true;
     solidGroup.add(headMesh);
 
-    // 2. ATHLETIC BASEBALL CAP (in Team Primary Color)
-    // Sits naturally on the upper 1/3 of the skull with an authentic curved brim.
-    const crownRadius = radius * 1.03;
-    const phiRim = Math.PI * 0.36; // covers upper ~1/3 of head dome down to high brow
-    const capMat = new THREE.MeshStandardMaterial({
-      color: colors.primary,
-      roughness: 0.65,
-      metalness: 0.05,
-    });
-    capMat.userData.colorRole = 'primary';
-
-    const buttonMat = new THREE.MeshStandardMaterial({
-      color: colors.jointGrey,
-      roughness: 0.85,
-      metalness: 0.05,
-    });
-    buttonMat.userData.colorRole = 'joint';
-
-    // Unified cap group with subtle athletic backward tilt so the brow remains clear
-    const capGroup = new THREE.Group();
-    capGroup.name = 'athletic-cap';
-    capGroup.position.set(0, radius * 0.02, 0);
-    capGroup.rotation.x = 0.06;
-
-    // Cap crown dome (for baseball cap)
-    const crownGeo = new THREE.SphereGeometry(crownRadius, 32, 16, 0, Math.PI * 2, 0, phiRim);
-    const crownMesh = new THREE.Mesh(crownGeo, capMat);
-    crownMesh.name = 'cap-crown';
-    crownMesh.castShadow = true;
-    capGroup.add(crownMesh);
-
-    // Open-top sports visor headband (for feminine visor)
-    const phiBandStart = phiRim * 0.60;
-    const phiBandLength = phiRim * 0.40;
-    const bandGeo = new THREE.SphereGeometry(crownRadius, 32, 10, 0, Math.PI * 2, phiBandStart, phiBandLength);
-    const bandMesh = new THREE.Mesh(bandGeo, capMat);
-    bandMesh.name = 'visor-band';
-    bandMesh.visible = false;
-    bandMesh.castShadow = true;
-    capGroup.add(bandMesh);
-
-    // Curved visor bill (seamlessly fused to rim, shared by cap and visor)
-    const visorGeo = createCurvedBaseballVisorGeo(radius, crownRadius, phiRim, Math.PI * 0.38, radius * 0.68, radius * 0.035);
-    const visorMesh = new THREE.Mesh(visorGeo, capMat);
-    visorMesh.name = 'cap-bill';
-    visorMesh.castShadow = true;
-    capGroup.add(visorMesh);
-
-    // Top cap squatchee (button, hidden on visor)
-    const buttonGeo = new THREE.CylinderGeometry(radius * 0.08, radius * 0.08, radius * 0.03, 16);
-    const buttonMesh = new THREE.Mesh(buttonGeo, buttonMat);
-    buttonMesh.name = 'cap-button';
-    buttonMesh.position.set(0, crownRadius * 1.008, 0);
-    buttonMesh.castShadow = true;
-    capGroup.add(buttonMesh);
-
-    // Back strap accent (local +Z = Back)
-    const strapGeo = new THREE.CylinderGeometry(radius * 0.20, radius * 0.20, radius * 0.035, 12);
-    const strapMesh = new THREE.Mesh(strapGeo, buttonMat);
-    strapMesh.name = 'cap-strap';
-    strapMesh.position.set(0, crownRadius * Math.cos(phiRim) * 0.95, crownRadius * Math.sin(phiRim) * 0.98);
-    strapMesh.rotation.x = Math.PI / 2 + 0.12;
-    capGroup.add(strapMesh);
-
-    solidGroup.add(capGroup);
+    // 2. MODULAR HEADWEAR MOUNT (render-only socket). The headwear mesh is
+    // attached later via setAthleteHeadwear(): pure scene graph, zero colliders,
+    // never rebuilt inside the fixed 60 Hz step. This replaces the former inline
+    // cap so Series 1 headwear can be swapped and cycled live.
+    const headwearSlot = new THREE.Group();
+    headwearSlot.name = 'headwearSlot';
+    solidGroup.add(headwearSlot);
     return solidGroup;
   }
 
@@ -390,6 +346,7 @@ export function createRagdollVisuals(rig, options = null) {
   const group = new THREE.Group();
   group.name = 'ragdoll-visuals';
   const colors = getAthleteColors(options);
+  const state = { rig, group, ...options };
 
   for (const item of rig.values()) {
     const bodyGroup = new THREE.Group();
@@ -401,6 +358,12 @@ export function createRagdollVisuals(rig, options = null) {
     solidMesh.visible = TUNING.debug.showCapsuleAthlete !== false;
     bodyGroup.add(solidMesh);
     item.solidMesh = solidMesh;
+
+    // Cache the render-only headwear socket on the head rig item so the setter
+    // below, and live [C] cycling, can reach it without a scene traversal.
+    if (item.key === 'head') {
+      item.headwearSlot = solidMesh.getObjectByName('headwearSlot');
+    }
 
     // 2. Debug wireframe mesh (hidden by default)
     const wireGeo =
@@ -434,9 +397,86 @@ export function createRagdollVisuals(rig, options = null) {
     group.add(bodyGroup);
   }
 
-  updateAthleteVariant({ rig, ...options }, options);
+  updateAthleteVariant(state, options);
+
+  // Mount the modular headwear: default from options / TUNING, else the first
+  // piece of the approved Locker Headgear Pack (John's Manager Classic Cap).
+  // setAthleteHeadwear is render-only and builds at mount time, never in
+  // the fixed step.
+  const headwearId = options?.headwear ?? TUNING.athlete?.headwear ?? 'manager_cap';
+  setAthleteHeadwear(state, headwearId, options);
 
   return group;
+}
+
+/** Frees every mesh mounted on a head's render-only headwear socket. */
+function disposeHeadwearSlot(slot) {
+  if (!slot) return;
+  while (slot.children.length > 0) {
+    const child = slot.children[0];
+    child.traverse((obj) => {
+      if (obj.geometry) obj.geometry.dispose();
+      if (obj.material) obj.material.dispose();
+    });
+    slot.remove(child);
+  }
+}
+
+/**
+ * Mounts a Series 1 headwear piece onto the head's render-only `headwearSlot`.
+ *
+ * Pure scene graph: the returned group carries zero Rapier colliders and is a
+ * direct child of the head's solidMesh, so it inherits the head bone's transform
+ * every tick with no physics bookkeeping. Called at ragdoll build time and on
+ * the live cycle hotkey, never inside the fixed 60 Hz step (Law 4: no new
+ * allocations in the tick loop).
+ *
+ * Team tinting flows through the builders' `resolveCosmeticColors` via the
+ * primary/accent/joint values from `getAthleteColors`, so the piece matches the
+ * athlete's jersey without any hard-coded color.
+ *
+ * @param {object} state Ragdoll state (must carry `.rig`).
+ * @param {string} headwearId Playtest id ('manager_cap', 'wicket_grill', ...), catalog id, builder key, or 'none'.
+ * @param {object} [options] Team/variant/palette overrides.
+ * @returns {THREE.Group | null}
+ */
+export function setAthleteHeadwear(state, headwearId, options = null) {
+  if (!state || !state.rig) return null;
+  const head = state.rig.get('head');
+  const slot = head?.headwearSlot ?? head?.solidMesh?.getObjectByName('headwearSlot') ?? null;
+  if (!slot) return null;
+
+  disposeHeadwearSlot(slot);
+
+  // Reconcile the playtest vocabulary (manager_cap, wicket_grill, ...,
+  // 'none'), any catalog id, or a raw builder key into a builder key plus bill
+  // orientation. 'none' still means a bare skull.
+  const spec = resolveHeadwearSpec(headwearId);
+  if (!spec) {
+    head.headwearId = 'none';
+    return null;
+  }
+
+  const colors = getAthleteColors(options ?? state);
+  const piece = buildHeadwear(spec.builderKey, {
+    radius: head.radius,
+    primaryColor: colors.primary,
+    accentColor: colors.accent,
+    jointColor: colors.jointGrey,
+    roughness: colors.roughness,
+    metalness: colors.metalness,
+    billBackward: spec.billBackward,
+  });
+
+  if (!piece) {
+    head.headwearId = 'none';
+    return null;
+  }
+
+  piece.name = `headwear-${headwearId}`;
+  slot.add(piece);
+  head.headwearId = headwearId;
+  return piece;
 }
 
 /** Frees all athlete geometries and materials when the ragdoll is torn down. */
@@ -663,34 +703,24 @@ export function updateAthleteVariant(state, options = null) {
       item.solidMesh.position.set(0, 0, 0);
     }
   }
-  // Headwear controls (baseball cap vs open-top sports visor)
-  if (head?.solidMesh) {
-    const crown = head.solidMesh.getObjectByName('cap-crown');
-    const button = head.solidMesh.getObjectByName('cap-button');
-    const band = head.solidMesh.getObjectByName('visor-band');
-    const oldPony = head.solidMesh.getObjectByName('athlete-ponytail');
-    if (oldPony) {
-      oldPony.traverse((obj) => {
-        if (obj.geometry) obj.geometry.dispose();
-        if (obj.material) obj.material.dispose();
-      });
-      head.solidMesh.remove(oldPony);
-    }
+  // Hairstyle (feminine ponytail). The actual headwear now lives in the modular
+    // headwearSlot, mounted by setAthleteHeadwear(); it is orthogonal to physique
+    // variant and no longer toggled here.
+    if (head?.solidMesh) {
+      const oldPony = head.solidMesh.getObjectByName('athlete-ponytail');
+      if (oldPony) {
+        oldPony.traverse((obj) => {
+          if (obj.geometry) obj.geometry.dispose();
+          if (obj.material) obj.material.dispose();
+        });
+        head.solidMesh.remove(oldPony);
+      }
 
-    if (variant === 'feminine') {
-      // Cut off the top of the hat and transform into an athletic open-top visor!
-      if (crown) crown.visible = false;
-      if (button) button.visible = false;
-      if (band) band.visible = true;
-      const ponyGroup = createPonytailGroup(head.radius, colors);
-      head.solidMesh.add(ponyGroup);
-    } else {
-      // Standard baseball cap dome
-      if (crown) crown.visible = true;
-      if (button) button.visible = true;
-      if (band) band.visible = false;
+      if (variant === 'feminine') {
+        const ponyGroup = createPonytailGroup(head.radius, colors);
+        head.solidMesh.add(ponyGroup);
+      }
     }
-  }
 
   const limbKeys = ['upperArmL', 'upperArmR', 'foreArmL', 'foreArmR', 'thighL', 'thighR', 'calfL', 'calfR'];
   const handKeys = ['handL', 'handR'];
@@ -754,6 +784,8 @@ export function updateAthletePalette(state, options = null) {
         const role = child.material.userData.colorRole;
         if (role === 'primary') {
           child.material.color.setHex(colors.primary);
+        } else if (role === 'accent') {
+          child.material.color.setHex(colors.accent);
         } else if (role === 'bodyGrey') {
           child.material.color.setHex(colors.bodyGrey);
         } else if (role === 'joint') {
@@ -764,6 +796,9 @@ export function updateAthletePalette(state, options = null) {
           child.material.color.setHex(colors.primary);
           child.material.emissive.setHex(colors.primary);
           child.material.emissiveIntensity = 0.6;
+        } else if (role === 'lens') {
+          child.material.color.setHex(colors.primary);
+          if (child.material.emissive) child.material.emissive.setHex(colors.primary);
         }
       }
     });

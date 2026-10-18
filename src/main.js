@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 import { TUNING, assetUrl } from './config/tuning.js';
+import { getNextHeadwearId, getHeadwearLabel } from './config/cosmetics.js';
 import { Loop } from './core/Loop.js';
 import {
   initPhysics, stepPhysics, getWorld, drainContactForces, RAPIER,
@@ -340,6 +341,20 @@ function installRespawnHotkey() {
         if (guiInstance) guiInstance.controllersRecursive().forEach((c) => c.updateDisplay());
       }
     }
+    // "3" — CYCLE HEADWEAR (Series 1 live preview) for P1
+    if (isHotkey(event, 'Digit3') && athletes[0]) {
+      const next = getNextHeadwearId(athletes[0].headwear);
+      athletes[0].setHeadwear(next);
+      headwearControls.p1 = next;
+      showHeadwearToast(getHeadwearLabel(next));
+    }
+    // "8" — CYCLE HEADWEAR (Series 1 live preview) for P2
+    if (isHotkey(event, 'Digit8') && athletes[1]) {
+      const next = getNextHeadwearId(athletes[1].headwear);
+      athletes[1].setHeadwear(next);
+      headwearControls.p2 = next;
+      showHeadwearToast(getHeadwearLabel(next));
+    }
     // "V" — TOGGLE SPLITSCREEN MODE (Shift+V or F8 to avoid conflict with P1 Cut 'KeyV')
     if (isHotkey(event, 'F8') || (isHotkey(event, 'KeyV') && event.shiftKey)) {
       TUNING.camera.splitscreen = !TUNING.camera.splitscreen;
@@ -449,6 +464,8 @@ const CAMERA_MODE_DISPLAY_NAMES = {
 
 let cameraToastTimeout = null;
 let cameraToastFadeTimeout = null;
+let headwearToastTimeout = null;
+let headwearToastFadeTimeout = null;
 
 export function showCameraNotification(playerIndex, mode) {
   if (typeof document === 'undefined') return;
@@ -490,6 +507,38 @@ export function showCameraNotification(playerIndex, mode) {
     cameraToastFadeTimeout = setTimeout(() => {
       toast.style.display = 'none';
       cameraToastFadeTimeout = null;
+    }, 350);
+  }, 1300);
+}
+
+export function showHeadwearToast(headwearLabel) {
+  if (typeof document === 'undefined') return;
+  const loadingScreen = document.getElementById('loading-screen');
+  if (loadingScreen && loadingScreen.style.display !== 'none') return;
+
+  let toast = document.getElementById('headwear-toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'headwear-toast';
+    document.body.appendChild(toast);
+  }
+
+  toast.innerHTML = `<span style="color: #f0abfc; margin-right: 6px;">HEADWEAR:</span><span style="color: #ffffff; font-weight: 800;">${headwearLabel}</span>`;
+  toast.style.left = '50%';
+  toast.style.display = 'block';
+  void toast.offsetWidth;
+  toast.classList.remove('fade-out');
+  toast.classList.add('visible');
+
+  if (headwearToastTimeout) clearTimeout(headwearToastTimeout);
+  if (headwearToastFadeTimeout) clearTimeout(headwearToastFadeTimeout);
+
+  headwearToastTimeout = setTimeout(() => {
+    toast.classList.remove('visible');
+    toast.classList.add('fade-out');
+    headwearToastFadeTimeout = setTimeout(() => {
+      toast.style.display = 'none';
+      headwearToastFadeTimeout = null;
     }, 350);
   }, 1300);
 }
@@ -877,6 +926,12 @@ function updateHud(match) {
 // ---------------------------------------------------------------------------
 
 let athletes = [];
+/**
+ * Mutable holder for the lil-gui headwear dropdowns ({ p1, p2 }). Owned here so
+ * the Digit3/Digit8 hotkeys and the gui panel read and write the same live state;
+ * the gui's .listen() keeps each dropdown honest after a hotkey cycle.
+ */
+const headwearControls = { p1: 'manager_cap', p2: 'manager_cap' };
 /**
  * BOT CONTROLLERS — one per AI-controlled slot. Empty means all human.
  * Created by handleStartMatch when a player is configured as 'ai'.
@@ -2984,21 +3039,25 @@ function handleStartMatch(configs, matchRulesOrBall = {}) {
   // 1. Apply configurations
   if (configs && configs[0] && athletes[0]) {
     athletes[0].setTeamAndVariant(configs[0].team, configs[0].variant, { primaryColor: configs[0].primaryColor });
+    if (configs[0].headwear !== undefined && athletes[0].headwear !== configs[0].headwear) athletes[0].setHeadwear(configs[0].headwear);
     playerCameras[0].setMode(configs[0].cameraMode);
     if (TUNING.players[0]) {
       TUNING.players[0].team = configs[0].team;
       TUNING.players[0].variant = configs[0].variant;
       TUNING.players[0].primaryColor = configs[0].primaryColor;
+      TUNING.players[0].headwear = configs[0].headwear;
       TUNING.players[0].cameraMode = configs[0].cameraMode;
     }
   }
   if (configs && configs[1] && athletes[1]) {
     athletes[1].setTeamAndVariant(configs[1].team, configs[1].variant, { primaryColor: configs[1].primaryColor });
+    if (configs[1].headwear !== undefined && athletes[1].headwear !== configs[1].headwear) athletes[1].setHeadwear(configs[1].headwear);
     playerCameras[1].setMode(configs[1].cameraMode);
     if (TUNING.players[1]) {
       TUNING.players[1].team = configs[1].team;
       TUNING.players[1].variant = configs[1].variant;
       TUNING.players[1].primaryColor = configs[1].primaryColor;
+      TUNING.players[1].headwear = configs[1].headwear;
       TUNING.players[1].cameraMode = configs[1].cameraMode;
     }
   }
@@ -3157,11 +3216,13 @@ function handleStartPractice(playerConfig = null, ballChoice = 'all') {
   // 1. Apply customized solo athlete options
   if (playerConfig && athletes[0]) {
     athletes[0].setTeamAndVariant(playerConfig.team || 'home', playerConfig.variant || 'classic', { primaryColor: playerConfig.primaryColor });
+    if (playerConfig.headwear !== undefined && athletes[0].headwear !== playerConfig.headwear) athletes[0].setHeadwear(playerConfig.headwear);
     playerCameras[0].setMode(playerConfig.cameraMode || 'chase');
     if (TUNING.players[0]) {
       TUNING.players[0].team = playerConfig.team;
       TUNING.players[0].variant = playerConfig.variant;
       TUNING.players[0].primaryColor = playerConfig.primaryColor;
+      TUNING.players[0].headwear = playerConfig.headwear;
       TUNING.players[0].cameraMode = playerConfig.cameraMode;
     }
     TUNING.camera.mode = playerCameras[0].mode;
@@ -3430,6 +3491,11 @@ function handleEnterSetup(mode = 'match') {
   }
 
   athleteManager.stageForLobby(mode);
+  const setupCfgs = getPlayerConfigs();
+  for (let i = 0; i < 2; i++) {
+    const hw = setupCfgs[i]?.headwear;
+    if (hw && athletes[i] && athletes[i].headwear !== hw) athletes[i].setHeadwear(hw);
+  }
   cinematicCamera.startSetupPreview();
   console.log(`[mainMenu] entered setup (${mode}) -> 3D athlete staging active`);
 }
@@ -3444,10 +3510,12 @@ function handleExitSetup() {
 function handlePlayerConfigChange(idx, config) {
   if (athletes[idx]) {
     athletes[idx].setTeamAndVariant(config.team, config.variant, { primaryColor: config.primaryColor });
+    if (config.headwear !== undefined && athletes[idx].headwear !== config.headwear) athletes[idx].setHeadwear(config.headwear);
     if (TUNING.players[idx]) {
       TUNING.players[idx].team = config.team;
       TUNING.players[idx].variant = config.variant;
       TUNING.players[idx].primaryColor = config.primaryColor;
+      TUNING.players[idx].headwear = config.headwear;
       TUNING.players[idx].cameraMode = config.cameraMode;
     }
   }
@@ -3820,6 +3888,13 @@ async function boot() {
     },
     clipNames: characterClips.map((clip) => clip.name),
     tracker: athletes[0]?.tracker || tracker,
+    headwearControls,
+    onHeadwearChange: (playerIndex, headwearId) => {
+      const a = athletes[playerIndex];
+      if (!a) return;
+      a.setHeadwear(headwearId);
+      showHeadwearToast(getHeadwearLabel(headwearId));
+    },
   });
   window.__vb.gui = guiInstance;
   guiInstance.hide();

@@ -23,6 +23,7 @@ import {
   syncRagdollPose,
   applyRagdollVisibility,
   updateAthletePalette,
+  setAthleteHeadwear,
 } from './ragdoll.js';
 import { applyClampedLinearDamping } from './damping.js';
 import { createMountFollowerState, runMountFollower } from '../mechanics/mountFollower.js';
@@ -66,6 +67,7 @@ export function createAthlete({
   variant = 'masculine',
   primaryColor = null,
   colorOverride = null,
+  headwear = 'manager_cap',
   spawn = { x: 0, y: 1.5, z: 0, yaw: 0 },
   assistPreset = 'standard',
   scene,
@@ -82,6 +84,7 @@ export function createAthlete({
   let currentVariant = variant;
   let currentPrimaryColor = primaryColor;
   let currentColorOverride = colorOverride;
+  let currentHeadwear = headwear ?? 'manager_cap';
 
   // 1. Motor sphere
   const motor = createMotor();
@@ -146,12 +149,14 @@ export function createAthlete({
       variant: currentVariant,
       primaryColor: currentPrimaryColor,
       colorOverride: currentColorOverride,
+      headwear: currentHeadwear,
     });
     built.characterRoot = characterRoot;
     built.team = currentTeam;
     built.variant = currentVariant;
     built.primaryColor = currentPrimaryColor;
     built.colorOverride = currentColorOverride;
+    built.headwear = currentHeadwear;
 
     scene.add(built.group);
     ragdoll = built;
@@ -298,6 +303,23 @@ export function createAthlete({
           colorOverride: currentColorOverride,
         });
       }
+    },
+
+    get headwear() {
+      return currentHeadwear;
+    },
+
+    setHeadwear(headwearId) {
+      currentHeadwear = headwearId;
+      if (ragdoll) {
+        setAthleteHeadwear(ragdoll, headwearId, {
+          team: currentTeam,
+          variant: currentVariant,
+          primaryColor: currentPrimaryColor,
+          colorOverride: currentColorOverride,
+        });
+      }
+      return currentHeadwear;
     },
 
     setTeamAndVariant(newTeam, newVariant, newColors = null) {
