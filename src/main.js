@@ -398,8 +398,6 @@ renderer.shadowMap.needsUpdate = true;
 const scene = new THREE.Scene();
 initCelestialSkybox(scene);
 
-// scene.add(new THREE.AxesHelper(2));
-
 // 4-CORNER STADIUM FLOODLIGHT RIG
 // 4 high towers positioned outside the court corners aimed down at the arena.
 // Produces 4 soft, distinct shadows fanning out under the ball and athlete,
