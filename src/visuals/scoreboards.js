@@ -82,7 +82,7 @@ export function isDarkColor(hex) {
 }
 
 /** Canonical athletic broadcast display typography */
-const ATHLETIC_FONT = "Impact, 'Arial Black', 'Trebuchet MS', sans-serif";
+const ATHLETIC_FONT = "'Orbitron', 'Impact', 'Arial Black', sans-serif";
 
 function drawTeamText(ctx, text, x, y, color, strokeWidth = 2.5) {
   if (isDarkColor(color)) {
@@ -453,8 +453,7 @@ function drawEndBoard(board, probe, view) {
   ctx.stroke();
 
   ctx.font = `900 ${Math.round(H * 0.076)}px ${ATHLETIC_FONT}`;
-  const thisGoalName = isNorth ? 'NORTH' : 'SOUTH';
-  drawTeamText(ctx, `▼  TARGET GOAL ${thisGoalName}  (ATTACKED BY ${attackingTeam})  ▼`, W / 2, pillY + pillH / 2, teamColor, 3);
+  drawTeamText(ctx, `▼  ${attackingTeam} TARGET GOAL  ▼`, W / 2, pillY + pillH / 2, teamColor, 3);
 
   // 2. MIDDLE ROW: Match Clock handled by decoupled micro-clock mesh overlay
 
@@ -581,12 +580,8 @@ function drawSideBoard(board, probe, view) {
   ctx.lineWidth = 3;
   ctx.stroke();
 
-  ctx.font = `900 ${Math.round(H * 0.17)}px ${ATHLETIC_FONT}`;
-  drawTeamText(ctx, `◀◀◀  ${leftTeam}`, leftX + flankW / 2, flankY + flankH * 0.36, leftColor, 3.5);
-
-  ctx.fillStyle = '#f1f5f9';
-  ctx.font = `800 ${Math.round(H * 0.105)}px ${ATHLETIC_FONT}`;
-  ctx.fillText(`TARGET: ${leftGoalLabel}`, leftX + flankW / 2, flankY + flankH * 0.72);
+  ctx.font = `900 ${Math.round(H * 0.22)}px ${ATHLETIC_FONT}`;
+  drawTeamText(ctx, `◀◀◀  ${leftTeam}`, leftX + flankW / 2, flankY + flankH / 2, leftColor, 4);
 
   // 2. RIGHT FLANK (Directional attack indicator toward right goal)
   const rightX = W - flankW - 24;
@@ -599,12 +594,8 @@ function drawSideBoard(board, probe, view) {
   ctx.lineWidth = 3;
   ctx.stroke();
 
-  ctx.font = `900 ${Math.round(H * 0.17)}px ${ATHLETIC_FONT}`;
-  drawTeamText(ctx, `${rightTeam}  ▶▶▶`, rightX + flankW / 2, flankY + flankH * 0.36, rightColor, 3.5);
-
-  ctx.fillStyle = '#f1f5f9';
-  ctx.font = `800 ${Math.round(H * 0.105)}px ${ATHLETIC_FONT}`;
-  ctx.fillText(`TARGET: ${rightGoalLabel}`, rightX + flankW / 2, flankY + flankH * 0.72);
+  ctx.font = `900 ${Math.round(H * 0.22)}px ${ATHLETIC_FONT}`;
+  drawTeamText(ctx, `${rightTeam}  ▶▶▶`, rightX + flankW / 2, flankY + flankH / 2, rightColor, 4);
 
   // 3. CENTER COLUMN: Clock on top, ATHLETIC SCORE LINE ON BOTTOM (NO VERTICAL DIVIDERS)
   const centerX = W / 2;

@@ -23,7 +23,7 @@ const FACING = {
 };
 
 /** Canonical athletic broadcast display typography */
-const ATHLETIC_FONT = "Impact, 'Arial Black', 'Trebuchet MS', sans-serif";
+const ATHLETIC_FONT = "'Orbitron', 'Impact', 'Arial Black', sans-serif";
 
 function getTeamHex(team = 'home') {
   const p = TUNING.athlete?.palette;

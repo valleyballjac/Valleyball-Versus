@@ -93,6 +93,7 @@ import { createMatchState, updateScoring, matchProbe } from './mechanics/scoring
 import { createScoreboards, updateScoreboards } from './visuals/scoreboards.js';
 import { createHustleBoards, updateHustleBoards } from './visuals/hustleBoards.js';
 import { displayCoordinator } from './visuals/displayCoordinator.js';
+import { initCelestialSkybox } from './visuals/skybox.js';
 import { soundManager } from './audio/soundManager.js';
 import { createGui } from './debug/gui.js';
 import { initCapture } from './debug/capture.js';
@@ -395,7 +396,7 @@ renderer.shadowMap.needsUpdate = true;
 // ---------------------------------------------------------------------------
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0a0d12);
+initCelestialSkybox(scene);
 
 // scene.add(new THREE.AxesHelper(2));
 
