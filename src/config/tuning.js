@@ -1537,9 +1537,9 @@ const DEFAULTS = {
     posX: 24.98,
     centerZSouth: 25.0,
     centerZNorth: -25.0,
-    centerY: 11.6,
-    width: 5.8,
-    height: 3.8,
+    centerY: 10.9,
+    width: 5.12,
+    height: 3.2,
     flashTicks: 15,
   },
 

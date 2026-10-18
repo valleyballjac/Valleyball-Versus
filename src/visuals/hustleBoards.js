@@ -430,7 +430,7 @@ function drawHustleBoard(ctx, W, H, data, outlineColor) {
   ctx.strokeRect(6, 6, W - 12, H - 12);
 
   // HEADER BAR (Maximized)
-  const headerH = Math.round(96 * scale);
+  const headerH = Math.round(84 * scale);
   ctx.fillStyle = 'rgba(11, 17, 30, 0.96)';
   ctx.fillRect(16, 16, W - 32, headerH);
   ctx.strokeStyle = effectiveOutline;
@@ -440,28 +440,30 @@ function drawHustleBoard(ctx, W, H, data, outlineColor) {
   // Header Title
   ctx.textBaseline = 'middle';
   ctx.textAlign = 'left';
-  ctx.font = `900 ${Math.round(48 * scale)}px ${ATHLETIC_FONT}`;
+  ctx.font = `900 ${Math.round(38 * scale)}px ${ATHLETIC_FONT}`;
   if (darkOutline) {
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
     ctx.lineWidth = 4;
-    ctx.strokeText('⚡ HUSTLE BOARD', 38, 16 + headerH / 2);
+    ctx.strokeText('⚡ HUSTLE BOARD', 36, 16 + headerH / 2);
   }
   ctx.fillStyle = outlineColor;
-  ctx.fillText('⚡ HUSTLE BOARD', 38, 16 + headerH / 2);
+  ctx.fillText('⚡ HUSTLE BOARD', 36, 16 + headerH / 2);
 
-  // Telemetry Badge Pill in Header (right-aligned, enlarged and bold)
+  // Telemetry Badge Pill in Header (right-aligned, streamlined padding)
   const badge = data.badgeText || 'LIVE TELEMETRY';
-  ctx.font = `900 ${Math.round(34 * scale)}px ${ATHLETIC_FONT}`;
-  const badgeWidth = ctx.measureText(badge).width + Math.round(52 * scale);
-  const badgeHeight = Math.round(62 * scale);
+  ctx.font = `900 ${Math.round(24 * scale)}px ${ATHLETIC_FONT}`;
+  const badgeWidth = ctx.measureText(badge).width + Math.round(36 * scale);
+  const badgeHeight = Math.round(44 * scale);
   const badgeX = W - 32 - badgeWidth;
   const badgeY = 16 + (headerH - badgeHeight) / 2;
 
   ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
   ctx.strokeStyle = effectiveOutline;
   ctx.lineWidth = 2;
-  ctx.fillRect(badgeX, badgeY, badgeWidth, badgeHeight);
-  ctx.strokeRect(badgeX, badgeY, badgeWidth, badgeHeight);
+  ctx.beginPath();
+  ctx.roundRect(badgeX, badgeY, badgeWidth, badgeHeight, 6);
+  ctx.fill();
+  ctx.stroke();
 
   ctx.fillStyle = '#ffffff';
   ctx.textAlign = 'center';
@@ -551,19 +553,19 @@ function drawHustleBoard(ctx, W, H, data, outlineColor) {
       ctx.stroke();
     }
 
-    // Left: Maximized bold Stat Name with crisp high-contrast offset shadow
+    // Left: Streamlined bold Stat Name with crisp high-contrast offset shadow
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.font = `900 ${Math.round(44 * scale)}px ${ATHLETIC_FONT}`;
+    ctx.font = `900 ${Math.round(32 * scale)}px ${ATHLETIC_FONT}`;
     ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
     ctx.fillText(item.label, 36, yCenter + 2);
     ctx.fillStyle = item.color;
     ctx.fillText(item.label, 34, yCenter);
 
-    // Right: Maximized bold glowing Stat Number with crisp high-contrast offset shadow
+    // Right: Streamlined bold glowing Stat Number with crisp high-contrast offset shadow
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
-    ctx.font = `900 ${Math.round(66 * scale)}px ${ATHLETIC_FONT}`;
+    ctx.font = `900 ${Math.round(48 * scale)}px ${ATHLETIC_FONT}`;
     ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
     ctx.fillText(item.num, W - 32, yCenter + 2);
     ctx.fillStyle = item.color;

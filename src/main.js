@@ -93,7 +93,7 @@ import { createMatchState, updateScoring, matchProbe } from './mechanics/scoring
 import { createScoreboards, updateScoreboards } from './visuals/scoreboards.js';
 import { createHustleBoards, updateHustleBoards } from './visuals/hustleBoards.js';
 import { displayCoordinator } from './visuals/displayCoordinator.js';
-import { initCelestialSkybox } from './visuals/skybox.js';
+import { initCelestialSkybox, updateCelestialSkybox } from './visuals/skybox.js';
 import { soundManager } from './audio/soundManager.js';
 import { createGui } from './debug/gui.js';
 import { initCapture } from './debug/capture.js';
@@ -2532,6 +2532,7 @@ function render(alpha) {
 
     activeRenderCamera.aspect = width / height;
     activeRenderCamera.updateProjectionMatrix();
+    updateCelestialSkybox(activeRenderCamera);
     renderer.setViewport(0, 0, width, height);
     renderer.render(scene, activeRenderCamera);
 
