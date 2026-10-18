@@ -344,12 +344,14 @@ function installRespawnHotkey() {
     if (isHotkey(event, 'Digit3') && athletes[0]) {
       const next = getNextHeadwearId(athletes[0].headwear);
       athletes[0].setHeadwear(next);
+      headwearControls.p1 = next;
       showHeadwearToast(getHeadwearLabel(next));
     }
     // "8" — CYCLE HEADWEAR (Series 1 live preview) for P2
     if (isHotkey(event, 'Digit8') && athletes[1]) {
       const next = getNextHeadwearId(athletes[1].headwear);
       athletes[1].setHeadwear(next);
+      headwearControls.p2 = next;
       showHeadwearToast(getHeadwearLabel(next));
     }
     // "V" — TOGGLE SPLITSCREEN MODE (Shift+V or F8 to avoid conflict with P1 Cut 'KeyV')
@@ -925,6 +927,12 @@ function updateHud(match) {
 // ---------------------------------------------------------------------------
 
 let athletes = [];
+/**
+ * Mutable holder for the lil-gui headwear dropdowns ({ p1, p2 }). Owned here so
+ * the Digit3/Digit8 hotkeys and the gui panel read and write the same live state;
+ * the gui's .listen() keeps each dropdown honest after a hotkey cycle.
+ */
+const headwearControls = { p1: 'cap_forward', p2: 'cap_forward' };
 /**
  * BOT CONTROLLERS — one per AI-controlled slot. Empty means all human.
  * Created by handleStartMatch when a player is configured as 'ai'.
@@ -3867,6 +3875,13 @@ async function boot() {
     },
     clipNames: characterClips.map((clip) => clip.name),
     tracker: athletes[0]?.tracker || tracker,
+    headwearControls,
+    onHeadwearChange: (playerIndex, headwearId) => {
+      const a = athletes[playerIndex];
+      if (!a) return;
+      a.setHeadwear(headwearId);
+      showHeadwearToast(getHeadwearLabel(headwearId));
+    },
   });
   window.__vb.gui = guiInstance;
   guiInstance.hide();
