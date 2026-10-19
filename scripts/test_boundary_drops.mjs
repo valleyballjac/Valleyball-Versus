@@ -93,6 +93,15 @@ const WALK_ACCEL = 1.5;
 const COURT_X = 24.0;
 const COURT_Z = 58.0;
 
+// Back-boundary high-speed sweep (seals the vertical gap in the back wall at
+// z = +-60 over the y in [6, 30] band that the COL_BackBoundary wall closes).
+// Entities are fired horizontally at strike speed, straight into the wall at
+// surface height, swept across the full back width. Containment = the entity
+// never crosses the wall plane (|z| <= SWEEP_BREACH_Z) or falls into the void.
+const SWEEP_SPEED = 24.0;       // m/s, hard-strike horizontal speed
+const SWEEP_LAUNCH_INSET = 8.0; // spawn distance in from the wall plane (m)
+const SWEEP_BREACH_Z = 60.6;    // |z| past the wall plane = tunnelled through
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 
@@ -220,6 +229,34 @@ function runPerimeterSpawn(probe, sim, kind, x, z) {
   return { missingSurface: false, fellOut: minY < KILL_FLOOR_Y, minY, spawnSurfaceY: surf };
 }
 
+/**
+ * Back-boundary high-speed sweep: fire `kind` horizontally at SWEEP_SPEED
+ * toward wallZ (+-60) from SWEEP_LAUNCH_INSET inside the wall.
+ * Assert it never breaches (|z| > SWEEP_BREACH_Z) or falls below the kill floor.
+ */
+function runBackBoundarySweep(sim, probe, kind, wallZ, x) {
+  const dir = wallZ > 0 ? 1 : -1;
+  const spawnZ = wallZ - dir * SWEEP_LAUNCH_INSET;
+  const surf = surfaceY(probe, x, spawnZ);
+  if (surf === null) {
+    return { missingSurface: true, fellOut: true, maxAbsZ: null, minY: null };
+  }
+  const lift = liftOf(kind);
+  const body = spawnEntity(sim, kind, x, surf + lift + SPAWN_GAP, spawnZ, 0, 0, false);
+  body.setLinvel({ x: 0, y: 0, z: dir * SWEEP_SPEED }, true);
+  let maxAbsZ = 0;
+  let minY = body.translation().y;
+  for (let t = 0; t < TICKS; t++) {
+    sim.step();
+    const p = body.translation();
+    if (Math.abs(p.z) > maxAbsZ) maxAbsZ = Math.abs(p.z);
+    if (p.y < minY) minY = p.y;
+  }
+  sim.removeRigidBody(body);
+  const fellOut = maxAbsZ > SWEEP_BREACH_Z || minY < KILL_FLOOR_Y;
+  return { missingSurface: false, fellOut, maxAbsZ: +maxAbsZ.toFixed(2), minY: +minY.toFixed(2) };
+}
+
 // ═══ TEST ═══
 
 async function main() {
@@ -265,6 +302,19 @@ async function main() {
     }
   }
 
+  // Back-boundary high-speed sweep: strike speed into both back walls across full width.
+  const sweepXs = range(-24.0, 24.0, 3.0);
+  for (const wallZ of [60.0, -60.0]) {
+    for (const x of sweepXs) {
+      for (const kind of ['ball', 'player']) {
+        const r = runBackBoundarySweep(sim, probe, kind, wallZ, x);
+        const fail = r.fellOut || r.missingSurface;
+        if (fail) failures++;
+        results.push({ region: 'back_boundary_sweep', wallZ, x, kind, ...r, fail });
+      }
+    }
+  }
+
   const pass = failures === 0;
   const report = {
     pass,
@@ -302,6 +352,7 @@ async function main() {
   console.log(`corner fan static rest checks: ${rest.checked} points, ${rest.failures.length} failures`);
   console.log(`corner fan dynamic drops: ${cornerPoints.length} points x 2 entities`);
   console.log(`perimeter roll points: ${perimSpawns.length} x 2 entities`);
+  console.log(`back-boundary high-speed sweeps: ${sweepXs.length * 2} points x 2 entities`);
   console.log(`spawned ${results.length} entities, ${failures} failures`);
   console.log(pass ? 'DROP TEST PASS — corner fan holds, perimeter sealed' : 'DROP TEST FAIL — see report');
   console.log(`report: ${outPath}`);

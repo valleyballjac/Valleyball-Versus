@@ -26,7 +26,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { TUNING } from '../src/config/tuning.js';
-import { toTrimeshArrays } from '../src/sim/arena.js';
+import { toTrimeshArrays, backBoundaryTrimesh } from '../src/sim/arena.js';
 import { mutateCap } from './corner_cap_gate.mjs';
 
 // ═══ CONSTANTS (card spec) ═══
@@ -127,6 +127,13 @@ export async function buildWorld(options = {}) {
           }
         }
       });
+            // Procedural back-boundary seal (see backBoundaryTrimesh in sim/arena.js).
+      // Mirrors the live arena: a double-sided vertical wall at z = +-60 that
+      // closes the gap below the authored V triangle / glass at the back ends.
+      if (!options.skipBackBoundary) {
+        const bb = backBoundaryTrimesh();
+        collected.push({ name: 'COL_BackBoundary', vertices: bb.vertices, indices: bb.indices, isCourtSurface: false });
+      }
       resolve(collected);
     }, reject);
   });
