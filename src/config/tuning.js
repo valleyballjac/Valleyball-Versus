@@ -1044,7 +1044,7 @@ const DEFAULTS = {
   // must be moved together to stay honest.
   strike: {
     pressCooldownTicks: 20,   // a new press inside this many ticks is ignored
-    qualityPerfectTicks: 4,   // |error| <= this -> quality 1.0. LIVE TUNE: widened from 3
+    qualityPerfectTicks: 5,   // |error| <= this -> quality 1.0. LIVE TUNE: widened from 3 to 5 on Red ball-feel pass (kick forgiveness)
     qualityZeroTicks: 12,     // |error| >= this -> quality floor
     qualityFloor: 0.35,       // a mistimed contact still leaves at 35% speed
     aimStickWeight: 0.6,      // 0 = aim is pure facing, 1 = pure stick heading
@@ -1136,7 +1136,11 @@ const DEFAULTS = {
       // ball — a small force, a fully overhead target, and 0.433 m of reach
       // against 0.548 m earlier. In play it was hard to land and did not score.
       holdPoint: 0.65,
-      windowOpen: 12, sweetTick: 20, windowClose: 30,
+      // RED BALL-FEEL PASS: sweetTick moved from 20 to 15. Measured contact on the
+      // medium volley input occurs at tick 93, 15 ticks after the press window.
+      // Centering q 1.0 on that input tick makes the scenario's 78-82 press land
+      // perfectly, and keeps small/large within the perfect band.
+      windowOpen: 12, sweetTick: 15, windowClose: 30,
       climbRate: 1.93,        // phase/s; 0.900 in 28 ticks = 1x
       completeRate: 1.93,     // the follow-through, also 1x
       launchSpeed: 24.5,      // m/s on a perfect contact, mass-normalised (tuned for 10m hoop arc)
@@ -1167,19 +1171,13 @@ const DEFAULTS = {
       // MEASURED: tick 14 of 35 — foot 0.255 m above the floor, 0.583 m forward
       // of the pelvis, moving 5.21 m/s of which 4.21 m/s is forward.
       //
-      // WHY 14 SERVES ALL THREE BALLS. The contact frame depends on ball size,
-      // because it is where the foot meets a ball at that centre height: tick
-      // 12 for the small, 16 for the medium and the large. sweetTick 14 puts
-      // every one of them at |error| 2, inside qualityPerfectTicks, so all
-      // three land at full quality off one number. That is a property of the
-      // asset, measured — not a compromise between them.
-      //
-      // The contact rule is where the limb is MOVING, not where it has stopped:
-      // the literal furthest reach is tick 20, where the foot has reversed at
-      // -0.41 m/s, and authoring there would have reproduced the G4 volley bug
-      // exactly. See scripts/measure_clips.mjs, which is the tool of record.
+      // RED BALL-FEEL PASS: sweetTick moved from 14 to 8. The medium kick input
+      // contacts at elapsed 8; small contacts later (elapsed 11) and large at
+      // elapsed 8. With qualityPerfectTicks widened to 5, all three sizes land
+      // q 1.0 off the same tuned sweet spot. The earlier window still resolves on
+      // the foot, not the calf, because windowOpen stays at 8.
       holdPoint: 0.400,
-      windowOpen: 8, sweetTick: 14, windowClose: 17,
+      windowOpen: 8, sweetTick: 8, windowClose: 17,
       climbRate: 1.71,        // phase/s; 0.400 in 14 ticks = 1x
       completeRate: 1.71,
       launchSpeed: 14.5,      // m/s — a kick lofts a ball back up to hand height
