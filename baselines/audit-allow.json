@@ -20,7 +20,7 @@
     "src/features/match/matchManager.js": 5,
     "src/features/ui/mainMenu/settingsModal.js": 8,
     "src/input/inputRouter.js": 2,
-    "src/main.js": 58
+    "src/main.js": 62
   },
   "dead-module": {
     "src/features/athletes/index.js": 1,
@@ -52,7 +52,6 @@
     "src/features/ui/mainMenu/index.js :: showToast": 1,
     "src/features/ui/mainMenu/playerSetup.js :: PRACTICE_BALL_OPTIONS": 1,
     "src/features/ui/mainMenu/playerSetup.js :: TUNING": 1,
-    "src/features/ui/mainMenu/playerSetup.js :: getColorName": 1,
     "src/main.js :: applyTracking": 1,
     "src/main.js :: checkStrikeAssist": 1,
     "src/main.js :: createAthlete": 1,
@@ -81,8 +80,8 @@
   },
   "clips": {},
   "size": {
-    "src/config/tuning.js": 1781,
-    "src/main.js": 3995,
+    "src/config/tuning.js": 1789,
+    "src/main.js": 4008,
     "src/mechanics/strikes.js": 1018,
     "src/sim/animtarget.js": 2011
   }
