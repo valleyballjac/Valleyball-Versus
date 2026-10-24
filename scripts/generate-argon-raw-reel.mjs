@@ -47,9 +47,30 @@ const RAW_DIR = path.join(OUT_DIR, 'raw_chunks');
 const CLIPS_DIR = path.join(OUT_DIR, 'clips');
 const MASTER_MP4 = path.join(OUT_DIR, 'valleyball_versus_raw_footage_master_1080p60.mp4');
 
+// Headless capture tops out around 40-45 fps on this machine. A clip recorded
+// below MIN_CLIP_FPS means something competed for the GPU, so it is
+// re-recorded, up to MAX_CLIP_ATTEMPTS times.
+const MIN_CLIP_FPS = 30;
+const MAX_CLIP_ATTEMPTS = 3;
+
 fs.mkdirSync(OUT_DIR, { recursive: true });
 fs.mkdirSync(RAW_DIR, { recursive: true });
 fs.mkdirSync(CLIPS_DIR, { recursive: true });
+
+// Recorded frame rate of a MediaRecorder WebM (VFR): packets over their PTS span.
+function measureClipFps(file) {
+  try {
+    const out = execFileSync('ffprobe', [
+      '-v', 'quiet', '-select_streams', 'v:0',
+      '-show_entries', 'packet=pts_time', '-of', 'csv=p=0', file,
+    ], { encoding: 'utf8' });
+    const ts = out.split(/\r?\n/).filter(Boolean).map(Number).filter(Number.isFinite).sort((a, b) => a - b);
+    if (ts.length < 2) return 0;
+    return ts.length / (ts[ts.length - 1] - ts[0]);
+  } catch (_) {
+    return 0;
+  }
+}
 
 // Official Brand Palette Hex Codes
 const PALETTES = {
@@ -82,6 +103,12 @@ const STUNT_TYPES = [
   { type: 'rally', label: 'KINETIC SPRINT RALLY', desc: 'High-speed sprint duel with rapid volley exchanges' },
 ];
 
+// Series 1 headwear ids (src/config/cosmetics.js)
+const HEADWEAR = [
+  'wrestler_bands', 'wicket_grill', 'sensor_visor', 'couture_wrap', 'rigger_band',
+  'ouendan_knot', 'terrace_visor', 'cursor_cap', 'manager_cap', 'broadcaster_mic',
+];
+
 function generate50GameMatrix() {
   const balls = ['medium', 'small', 'large'];
   const builds = ['masculine', 'feminine', 'classic'];
@@ -103,20 +130,39 @@ function generate50GameMatrix() {
     const camInfo = CAMERA_MODES[(i - 1) % CAMERA_MODES.length];
     const stuntInfo = STUNT_TYPES[(i - 1) % STUNT_TYPES.length];
 
+    // Every 5th game is the trailer's bookend look: Red in the Football Helmet
+    // vs Blue in the Cricket Helmet. The rest rotate palettes and headwear.
+    const isRedVsBlue = i % 5 === 0;
+    const rotation = i - 1 - Math.floor(i / 5); // counts only the rotating games
+
     games.push({
       gameId: i,
       ball,
-      home: {
+      home: isRedVsBlue ? {
+        team: 'home',
+        variant: 'masculine',
+        color: PALETTES.crimsonRed.hex,
+        colorName: PALETTES.crimsonRed.name,
+        headwear: 'wrestler_bands',
+      } : {
         team: 'home',
         variant: buildHome,
         color: pair[0].hex,
         colorName: pair[0].name,
+        headwear: HEADWEAR[rotation % HEADWEAR.length],
       },
-      away: {
+      away: isRedVsBlue ? {
+        team: 'away',
+        variant: 'masculine',
+        color: PALETTES.royalBlue.hex,
+        colorName: PALETTES.royalBlue.name,
+        headwear: 'wicket_grill',
+      } : {
         team: 'away',
         variant: buildAway,
         color: pair[1].hex,
         colorName: pair[1].name,
+        headwear: HEADWEAR[(rotation + 5) % HEADWEAR.length],
       },
       cameraMode: camInfo.mode,
       cameraLabel: camInfo.label,
@@ -282,6 +328,7 @@ async function runHarvest() {
   }
 
   const processedClips = [];
+  const attemptsByGame = {};
 
   console.log(`[reel] Beginning recording of ${games.length} matches...\n`);
 
@@ -299,8 +346,8 @@ async function runHarvest() {
     const matchStats = await page.evaluate(async ({ g, chunkPort }) => {
       // Configure athletes and ball
       const configs = [
-        { id: 'p1', name: 'Home Bot', team: g.home.team, variant: g.home.variant, cameraMode: 'chase', type: 'ai', difficulty: 'hard', aggressiveness: g.aggressiveness, primaryColor: g.home.color },
-        { id: 'p2', name: 'Away Bot', team: g.away.team, variant: g.away.variant, cameraMode: 'chase', type: 'ai', difficulty: 'hard', aggressiveness: g.aggressiveness, primaryColor: g.away.color }
+        { id: 'p1', name: 'Home Bot', team: g.home.team, variant: g.home.variant, cameraMode: 'chase', type: 'ai', difficulty: 'hard', aggressiveness: g.aggressiveness, primaryColor: g.home.color, headwear: g.home.headwear },
+        { id: 'p2', name: 'Away Bot', team: g.away.team, variant: g.away.variant, cameraMode: 'chase', type: 'ai', difficulty: 'hard', aggressiveness: g.aggressiveness, primaryColor: g.away.color, headwear: g.away.headwear }
       ];
 
       // Show the v11 stadium scoreboards and hustle boards
@@ -352,10 +399,12 @@ async function runHarvest() {
       if (audioTrack) tracks.push(audioTrack);
       const stream = new MediaStream(tracks);
 
+      // H.264 recorded ~43 fps against VP9's ~37 fps in a side-by-side
+      // headless test on this machine; neither reaches 60.
+      const mimeType = ['video/webm;codecs=h264,opus', 'video/webm;codecs=vp9,opus', 'video/webm']
+        .find(m => MediaRecorder.isTypeSupported(m));
       const recorder = new MediaRecorder(stream, {
-        mimeType: MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
-          ? 'video/webm;codecs=vp9,opus'
-          : 'video/webm',
+        mimeType,
         videoBitsPerSecond: 28000000
       });
 
@@ -445,6 +494,15 @@ async function runHarvest() {
 
     console.log(`    ↳ Recorded: Top Speed: ${matchStats.maxBallSpeed.toFixed(1)} m/s | Dives: ${matchStats.totalDives} | Goals: ${matchStats.goalsScored} (${(rawSizeBytes / (1024*1024)).toFixed(1)} MB)`);
     console.log(`    ↳ Health: ${matchStats.rafFps.toFixed(1)} fps | GPU: ${matchStats.gpu} | hidden events: ${matchStats.hiddenEvents} | visibility: ${matchStats.visibility} | context lost: ${matchStats.contextLost}`);
+
+    const clipFps = measureClipFps(rawFilePath);
+    attemptsByGame[g.gameId] = (attemptsByGame[g.gameId] || 0) + 1;
+    console.log(`    ↳ Recorded clip: ${clipFps.toFixed(1)} fps (attempt ${attemptsByGame[g.gameId]}/${MAX_CLIP_ATTEMPTS})`);
+    if (clipFps < MIN_CLIP_FPS && attemptsByGame[g.gameId] < MAX_CLIP_ATTEMPTS) {
+      console.warn(`    ↳ Below ${MIN_CLIP_FPS} fps, re-recording match ${gameNum}`);
+      idx--; // the loop's idx++ brings us back to this game
+      continue;
+    }
 
     // Transcode and Burn In Machine-Readable Slate with FFmpeg
     const clipId = String(idx + 1).padStart(2, '0');
