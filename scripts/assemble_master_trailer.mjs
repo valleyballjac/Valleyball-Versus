@@ -9,8 +9,8 @@
  *     Phase 1: Monumental Architectural Overture (0:00.00 – 44.20s)
  *     Phase 2: Rhythmic Action Escalation (44.20s – 62.20s)
  *     Phase 3: Rapid-Fire Staccato Climax (62.20s – 76.60s)
- *     Phase 4: Climax Torus Goal & Celestial Ascension (76.60s – 88.00s)
- *     Phase 5: Brand Galaxy Outro & Title Card Lock (88.00s – 94.50s)
+ *     Phase 4: Climax Torus Goal & Celestial Ascension (76.60s – 85.60s)
+ *     Phase 5: Brand Galaxy Outro & Title Card Lock (85.60s – 94.50s)
  * - Dual Audio Stems:
  *     1. Full Stereo Master of "Neon Velocity" (ducked -2.5 dB during heavy impact hits)
  *     2. Isolated in-game SFX stem (spikes, diving thuds, Torus goal sirens, floor squeaks)
@@ -26,11 +26,10 @@ const TEMP_DIR = path.join(ROOT, 'captures', 'trailer_assembly_temp');
 const OUT_DIR = path.join(ROOT, 'captures', 'trailer');
 // Written by scripts/generate-argon-raw-reel.mjs
 const RAW_CHUNKS_DIR = path.join(ROOT, 'captures', 'raw_footage', 'raw_chunks');
-const OVERTURE_SRC = path.join(OUT_DIR, 'valleyball_versus_debut_trailer_1080p60.mp4');
-// The untrimmed in-engine recording behind OVERTURE_SRC (same timeline). The
-// debut trims engine footage at 83.8s of video, which cuts the celestial arc
-// short whenever the engine clock lags the video.
-const INENGINE_RAW_SRC = path.join(OUT_DIR, 'raw_stream.webm');
+// The in-engine trailer sequence from capture-trailer-video.mjs, stepped frame by
+// frame: every engine frame at exactly 60 fps, so video time equals engine time.
+// No fades or title card (the debut composite adds those).
+const INENGINE_SRC = path.join(OUT_DIR, 'raw_footage_1080p60.mp4');
 const MUSIC_SRC = path.join(ROOT, 'public', 'audio', 'music', 'track_trailer_neon_velocity.mp3');
 const TITLE_CARD_SRC = path.join(OUT_DIR, 'title_card_galaxy.png');
 
@@ -57,11 +56,11 @@ const CUT_LIST = [
   {
     id: '01_phase1_overture',
     type: 'video',
-    src: OVERTURE_SRC,
+    src: INENGINE_SRC,
     startSec: 0.0,
     durationSec: 44.200,
-    // No fade here: the capture already fades in from black over its first 2s
-    desc: 'Monumental Architectural Overture (in-engine: stadium reveal, contenders, opening goals)'
+    desc: 'Monumental Architectural Overture (in-engine: stadium reveal, contenders, opening goals, Rally 3 build)',
+    filter: 'fade=t=in:st=0:d=2.0'
   },
 
   // ── PHASE 2: RHYTHMIC ACTION ESCALATION (44.200s – 62.200s | 10 Bars @ 1.800s) ──
@@ -102,38 +101,36 @@ const CUT_LIST = [
   { id: '31_sixteenth1', type: 'raw', file: 'game_15_raw.webm', startSec: 5.1, durationSec: 0.225, desc: '1/8 Note 1: ball at the hoop' },
   { id: '32_sixteenth2', type: 'raw', file: 'game_25_raw.webm', startSec: 1.7, durationSec: 0.225, desc: '1/8 Note 2: Red strike' },
 
-  // ── PHASE 4: CLIMAX TORUS GOAL & CELESTIAL ASCENSION (76.600s – 88.000s | 11.400s) ──
-  // One continuous stretch of the in-engine recording, placed so Goal 6 goes
-  // through the ring on the 78.4s downbeat. Its staged goal is built for this
+  // ── PHASE 4: CLIMAX TORUS GOAL & CELESTIAL ASCENSION (76.600s – 85.600s | 9.000s) ──
+  // In-engine shots on engine time, offset by exactly 3 bars (5.4s) so their
+  // beat-designed events stay on the beat. Its staged goal is built for this
   // shot; a raw-reel physics strike rarely threads the hoop.
-  // Times are VIDEO times measured on the 2026-10-24 07:42 capture: the engine
-  // clock lags video by ~2s here (frames over 0.25s are clamped), so engine
-  // 72.10 (Shot 10B cut) = 74.25s, ring pass = 75.18s, engine 78.40 (Shot 11
-  // cut) = 80.73s. Re-measure these after re-recording the overture.
   {
     id: '33_climax_goal',
     type: 'video',
-    src: INENGINE_RAW_SRC,
-    startSec: 73.380,
-    durationSec: 7.350,
-    desc: 'The Climax Torus Goal: Act III rally, cut on the beat to the ring view, spike through the ring on 78.4s'
+    src: INENGINE_SRC,
+    startSec: 71.200,
+    // Ends 1.8s after the goal: the rest of Shot 10B is a static empty ring
+    durationSec: 3.600,
+    desc: 'The Climax Torus Goal: Act III rally, cut on the 77.5s beat to the ring view, spike through the ring on 78.4s'
   },
   {
     id: '34_celestial_ascend',
     type: 'video',
-    src: INENGINE_RAW_SRC,
-    startSec: 80.730,
-    durationSec: 4.050,
+    src: INENGINE_SRC,
+    startSec: 78.400,
+    durationSec: 5.400,
     desc: 'Celestial Ascension Arc (Shot 11 crane rising over the stadium), dipping to black for the title',
-    filter: 'fade=t=out:st=3.25:d=0.8'
+    filter: 'fade=t=out:st=4.6:d=0.8'
   },
 
-  // ── PHASE 5: BRAND GALAXY OUTRO & TITLE CARD LOCK (88.000s – 94.500s | 6.500s) ──
+  // ── PHASE 5: BRAND GALAXY OUTRO & TITLE CARD LOCK (85.600s – 94.500s | 8.900s) ──
+  // Lands on the 85.6s bar line, over the music's closing phrase (it is silent by ~89s).
   {
     id: '35_galaxy_title',
     type: 'image',
     src: TITLE_CARD_SRC,
-    durationSec: 6.500,
+    durationSec: 8.900,
     desc: 'Brand Galaxy Outro & Title Card Lock (fade in 0.8s, hold release date and URL to 94.5s)',
     filter: 'fade=t=in:st=0:d=0.8'
   }
@@ -337,9 +334,9 @@ async function assembleTrailer() {
     '[0:v]trim=duration=94.500,setpts=PTS-STARTPTS[vout]',
 
     // [1:a] Music Master:
-    // Apply dynamic ducking: 0 dB during overture (0-44.20s), -2.5 dB during kinetic action (44.20-82.20s),
+    // Apply dynamic ducking: 0 dB during overture (0-44.20s), -2.5 dB during kinetic action (44.20-80.20s),
     // restore to 0 dB during celestial outro, and fade out at 89.5s -> 93.8s.
-    '[1:a]volume=enable=\'between(t,44.20,82.20)\':volume=-2.5dB,' +
+    '[1:a]volume=enable=\'between(t,44.20,80.20)\':volume=-2.5dB,' +
     'afade=t=out:st=89.5:d=4.3,' +
     'apad=whole_dur=94.500,atrim=duration=94.500[music]',
 
@@ -347,7 +344,7 @@ async function assembleTrailer() {
     // Boost SFX during action phases for visceral kinetic crunch. The captured
     // game SFX sit ~20 dB under the music (-34.6 vs -15 LUFS over the montage),
     // so +15 dB is what lets strikes and dives actually cut through.
-    '[0:a]volume=enable=\'between(t,44.20,82.20)\':volume=+15dB,' +
+    '[0:a]volume=enable=\'between(t,44.20,80.20)\':volume=+15dB,' +
     'atrim=duration=94.500[sfx]',
 
     // Mix Music + SFX at their own levels (amix's default normalize halves both,
