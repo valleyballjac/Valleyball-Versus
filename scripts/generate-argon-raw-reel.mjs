@@ -247,7 +247,16 @@ async function startChunkReceiver() {
 async function runHarvest() {
   const limitArg = process.argv.find((_, i, arr) => arr[i - 1] === '--limit');
   const maxGames = limitArg ? parseInt(limitArg, 10) : 50;
-  const games = generate50GameMatrix().slice(0, maxGames);
+  // --only 1-38 or --only 2,6,10: re-record just those games and patch them
+  // into the existing manifest and master compilation.
+  const onlyArg = process.argv.find((_, i, arr) => arr[i - 1] === '--only');
+  const onlyIds = onlyArg ? new Set(onlyArg.split(',').flatMap(part => {
+    const [a, b] = part.split('-').map(n => parseInt(n, 10));
+    return Number.isInteger(b) ? Array.from({ length: b - a + 1 }, (_, k) => a + k) : [a];
+  })) : null;
+  const minFpsArg = process.argv.find((_, i, arr) => arr[i - 1] === '--min-fps');
+  const minClipFps = minFpsArg ? parseFloat(minFpsArg) : MIN_CLIP_FPS;
+  const games = generate50GameMatrix().slice(0, maxGames).filter(g => !onlyIds || onlyIds.has(g.gameId));
 
   console.log('╔══════════════════════════════════════════════════════════════════╗');
   console.log(`║     VALLEYBALL VERSUS — GEMINI ARGON RAW FOOTAGE HARVEST         ║`);
@@ -329,6 +338,7 @@ async function runHarvest() {
 
   const processedClips = [];
   const attemptsByGame = {};
+  const bestByGame = {};
 
   console.log(`[reel] Beginning recording of ${games.length} matches...\n`);
 
@@ -340,7 +350,10 @@ async function runHarvest() {
     await loadFreshPage();
 
     const rawFilename = `game_${gameNum}_raw.webm`;
-    receiver.prepareStream(rawFilename);
+    const attempt = (attemptsByGame[g.gameId] || 0) + 1;
+    attemptsByGame[g.gameId] = attempt;
+    const attemptFilename = `game_${gameNum}_raw_attempt${attempt}.webm`;
+    receiver.prepareStream(attemptFilename);
 
     // Setup and trigger match in-browser
     const matchStats = await page.evaluate(async ({ g, chunkPort }) => {
@@ -489,23 +502,39 @@ async function runHarvest() {
     await receiver.waitForDone();
 
     const rawFilePath = path.join(RAW_DIR, rawFilename);
-    const rawExists = fs.existsSync(rawFilePath);
-    const rawSizeBytes = rawExists ? fs.statSync(rawFilePath).size : 0;
+    const attemptPath = path.join(RAW_DIR, attemptFilename);
+    const rawExists = fs.existsSync(attemptPath);
+    const rawSizeBytes = rawExists ? fs.statSync(attemptPath).size : 0;
 
     console.log(`    ↳ Recorded: Top Speed: ${matchStats.maxBallSpeed.toFixed(1)} m/s | Dives: ${matchStats.totalDives} | Goals: ${matchStats.goalsScored} (${(rawSizeBytes / (1024*1024)).toFixed(1)} MB)`);
     console.log(`    ↳ Health: ${matchStats.rafFps.toFixed(1)} fps | GPU: ${matchStats.gpu} | hidden events: ${matchStats.hiddenEvents} | visibility: ${matchStats.visibility} | context lost: ${matchStats.contextLost}`);
 
-    const clipFps = measureClipFps(rawFilePath);
-    attemptsByGame[g.gameId] = (attemptsByGame[g.gameId] || 0) + 1;
-    console.log(`    ↳ Recorded clip: ${clipFps.toFixed(1)} fps (attempt ${attemptsByGame[g.gameId]}/${MAX_CLIP_ATTEMPTS})`);
-    if (clipFps < MIN_CLIP_FPS && attemptsByGame[g.gameId] < MAX_CLIP_ATTEMPTS) {
-      console.warn(`    ↳ Below ${MIN_CLIP_FPS} fps, re-recording match ${gameNum}`);
+    const attemptFps = measureClipFps(attemptPath);
+    console.log(`    ↳ Recorded clip: ${attemptFps.toFixed(1)} fps (attempt ${attempt}/${MAX_CLIP_ATTEMPTS})`);
+
+    // Keep the best attempt so far: a retry can come out worse than the take it replaces.
+    const best = bestByGame[g.gameId];
+    if (!best || attemptFps > best.fps) {
+      if (best) fs.rmSync(best.path, { force: true });
+      bestByGame[g.gameId] = { fps: attemptFps, path: attemptPath, stats: matchStats };
+    } else {
+      fs.rmSync(attemptPath, { force: true });
+    }
+    if (attemptFps < minClipFps && attempt < MAX_CLIP_ATTEMPTS) {
+      console.warn(`    ↳ Below ${minClipFps} fps, re-recording match ${gameNum}`);
       idx--; // the loop's idx++ brings us back to this game
       continue;
     }
 
+    const kept = bestByGame[g.gameId];
+    fs.rmSync(rawFilePath, { force: true });
+    fs.renameSync(kept.path, rawFilePath);
+    const clipFps = kept.fps;
+    const keptStats = kept.stats;
+    console.log(`    ↳ Kept: ${clipFps.toFixed(1)} fps`);
+
     // Transcode and Burn In Machine-Readable Slate with FFmpeg
-    const clipId = String(idx + 1).padStart(2, '0');
+    const clipId = gameNum;
     const clipFilename = `clip_${clipId}_${g.ball}_${g.cameraMode}_${g.stuntType}.mp4`;
     const clipPath = path.join(CLIPS_DIR, clipFilename);
 
@@ -540,7 +569,7 @@ async function runHarvest() {
 
       const clipStat = fs.statSync(clipPath);
       processedClips.push({
-        clipId: idx + 1,
+        clipId: g.gameId,
         clipFilename,
         clipPath,
         gameId: g.gameId,
@@ -553,7 +582,8 @@ async function runHarvest() {
         stuntType: g.stuntType,
         stuntLabel: g.stuntLabel,
         stuntDesc: g.stuntDesc,
-        stats: matchStats,
+        stats: keptStats,
+        recordedFps: clipFps,
         durationSec: 5.8,
         fileSizeBytes: clipStat.size,
       });
@@ -566,6 +596,16 @@ async function runHarvest() {
   await browser.close();
   await viteServer.close();
   receiver.server.close();
+
+  // A partial run (--only) patches its games into the existing manifest, so the
+  // master compilation and manifests below always cover the full set.
+  const manifestJsonPath = path.join(OUT_DIR, 'clips_manifest.json');
+  if (onlyIds && fs.existsSync(manifestJsonPath)) {
+    const redone = new Set(processedClips.map(c => c.gameId));
+    const previous = JSON.parse(fs.readFileSync(manifestJsonPath, 'utf8'));
+    processedClips.push(...previous.filter(c => !redone.has(c.gameId)));
+    processedClips.sort((a, b) => a.gameId - b.gameId);
+  }
 
   // 3. Assemble Single Master MP4 File via Concat Demuxer
   console.log(`\n[reel] === ASSEMBLING SINGLE MASTER COMPILATION FILE (${processedClips.length} CLIPS) ===`);
@@ -604,7 +644,7 @@ async function runHarvest() {
   }
 
   // 5. Write Machine-Readable Manifests (JSON and Markdown)
-  fs.writeFileSync(path.join(OUT_DIR, 'clips_manifest.json'), JSON.stringify(processedClips, null, 2), 'utf8');
+  fs.writeFileSync(manifestJsonPath, JSON.stringify(processedClips, null, 2), 'utf8');
 
   let manifestMd = `# Valleyball Versus — Raw Action Footage Master Compilation\n\n`;
   manifestMd += `Total Matches: **${processedClips.length}** | Total Reel Duration: **${(accumulatedTime / 60).toFixed(2)} minutes** (${accumulatedTime.toFixed(1)}s)\n`;
