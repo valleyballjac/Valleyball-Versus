@@ -32,11 +32,20 @@ const TITLE_CARD_SRC = path.join(OUT_DIR, 'title_card_galaxy.png');
 
 const MASTER_OUTPUT = path.join(OUT_DIR, 'valleyball_versus_official_trailer_1080p60.mp4');
 const SOCIAL_OUTPUT = path.join(OUT_DIR, 'valleyball_versus_official_trailer_social_1080p.mp4');
+const MONTAGE_PREVIEW_OUTPUT = path.join(OUT_DIR, 'montage_preview_1080p60.mp4');
+
+// --montage-only renders just the gameplay cuts (44.2s – 76.6s) with the music
+// from the same point, to review the action edit without the in-engine captures.
+const MONTAGE_ONLY = process.argv.includes('--montage-only');
 
 fs.mkdirSync(TEMP_DIR, { recursive: true });
 fs.mkdirSync(OUT_DIR, { recursive: true });
 
-// Define complete 35-cut sequence strictly quantized to 133.33 BPM
+// Define complete 35-cut sequence strictly quantized to 133.33 BPM.
+// Gameplay cuts come from the trailer/clip-capture reel (2026-10-23): game_NN_raw.webm,
+// startSec = seconds into that raw clip. Games 5, 10, ... 50 are Red (Football Helmet)
+// vs Blue (Cricket Helmet); every cut from 66.7s on uses only those, matching the
+// director's Act III Red vs Blue lock from 67s.
 const CUT_LIST = [
   // ── PHASE 1: MONUMENTAL ARCHITECTURAL OVERTURE (0.000s – 44.200s | 44.200s) ──
   {
@@ -45,290 +54,76 @@ const CUT_LIST = [
     src: OVERTURE_SRC,
     startSec: 0.0,
     durationSec: 44.200,
-    desc: 'Monumental Architectural Overture (Torus flank, ramps, sideline glide, stadium boom, pre-drop push)',
+    desc: 'Monumental Architectural Overture (in-engine: stadium reveal, contenders, opening goals)',
     filter: 'fade=t=in:st=0:d=2.0'
   },
 
   // ── PHASE 2: RHYTHMIC ACTION ESCALATION (44.200s – 62.200s | 10 Bars @ 1.800s) ──
-  {
-    id: '02_cut6_the_drop',
-    type: 'raw',
-    file: 'game_02_raw.webm',
-    startSec: 0.8,
-    durationSec: 1.800,
-    desc: 'CUT 6 (THE DROP | Bar 0): Small Ball Ion Cyan, Low Turf Follow, 72.9 m/s sprint & spike detonation'
-  },
-  {
-    id: '03_cut7_bar1_dive',
-    type: 'raw',
-    file: 'game_09_raw.webm',
-    startSec: 0.5,
-    durationSec: 1.800,
-    desc: 'CUT 7 (Bar 1): Large Ball Classic vs Masculine, Low Turf Action Follow, full-extension turf dive save'
-  },
-  {
-    id: '04_cut8_bar2_spike',
-    type: 'raw',
-    file: 'game_04_raw.webm',
-    startSec: 0.5,
-    durationSec: 1.800,
-    desc: 'CUT 8 (Bar 2): Medium Ball Masculine vs Feminine, Vertical Aerial Spike Cam, skyward leap'
-  },
-  {
-    id: '05_cut9_bar3_bank',
-    type: 'raw',
-    file: 'game_26_raw.webm',
-    startSec: 0.5,
-    durationSec: 1.800,
-    desc: 'CUT 9 (Bar 3): Small Ball Feminine vs Classic, Banked Wall Curve, steep parabolic carve 59.5 m/s'
-  },
-  {
-    id: '06_cut10_bar4_chase',
-    type: 'raw',
-    file: 'game_10_raw.webm',
-    startSec: 0.5,
-    durationSec: 1.800,
-    desc: 'CUT 10 (Bar 4): Medium Ball Masculine vs Feminine, Over-Shoulder Chase Cam, 46.7 m/s attack'
-  },
-  {
-    id: '07_cut11_bar5_orbit',
-    type: 'raw',
-    file: 'game_06_raw.webm',
-    startSec: 0.5,
-    durationSec: 1.800,
-    desc: 'CUT 11 (Bar 5): Large Ball Classic vs Masculine, Dynamic Action Orbit, 62.0 m/s spike'
-  },
-  {
-    id: '08_cut12_bar6_flank',
-    type: 'raw',
-    file: 'game_14_raw.webm',
-    startSec: 0.5,
-    durationSec: 1.800,
-    desc: 'CUT 12 (Bar 6): Small Ball Feminine vs Classic, 3/4 Flank South Torus, 26.1 m/s spike'
-  },
-  {
-    id: '09_cut13_bar7_orbit_dive',
-    type: 'raw',
-    file: 'game_13_raw.webm',
-    startSec: 0.5,
-    durationSec: 1.800,
-    desc: 'CUT 13 (Bar 7): Medium Ball Masculine vs Feminine, Dynamic Action Orbit, dive save'
-  },
-  {
-    id: '10_cut14_bar8_low_sprint',
-    type: 'raw',
-    file: 'game_16_raw.webm',
-    startSec: 0.5,
-    durationSec: 1.800,
-    desc: 'CUT 14 (Bar 8): Medium Ball Masculine vs Feminine, Low Turf Tracking, 19.0 m/s sprint duel'
-  },
-  {
-    id: '11_cut15_bar9_chase_dive',
-    type: 'raw',
-    file: 'game_17_raw.webm',
-    startSec: 0.5,
-    durationSec: 1.800,
-    desc: 'CUT 15 (Bar 9): Small Ball Feminine vs Classic, Over-Shoulder Chase, diving recovery'
-  },
+  { id: '02_bar0_the_drop', type: 'raw', file: 'game_04_raw.webm', startSec: 0.5, durationSec: 1.800, desc: 'THE DROP (Bar 0): Vertical Aerial Spike Cam, the giant black globe fills the frame' },
+  { id: '03_bar1_low_turf', type: 'raw', file: 'game_02_raw.webm', startSec: 2.2, durationSec: 1.800, desc: 'Bar 1: Low Turf Follow, close strike by the red-hat athlete' },
+  { id: '04_bar2_duel', type: 'raw', file: 'game_24_raw.webm', startSec: 1.5, durationSec: 1.800, desc: 'Bar 2: Over-Shoulder Chase, close duel under the globe (purple vs yellow gloves)' },
+  { id: '05_bar3_orbit', type: 'raw', file: 'game_27_raw.webm', startSec: 2.2, durationSec: 1.800, desc: 'Bar 3: Dynamic Action Orbit, globe ball in close-up as the athletes close in' },
+  { id: '06_bar4_strike_dive', type: 'raw', file: 'game_38_raw.webm', startSec: 2.2, durationSec: 1.800, desc: 'Bar 4: Over-Shoulder Chase, close strike into a dive (red gloves)' },
+  { id: '07_bar5_globe_roll', type: 'raw', file: 'game_09_raw.webm', startSec: 3.2, durationSec: 1.800, desc: 'Bar 5: Low Turf Follow, the globe rolls through the athletes' },
+  { id: '08_bar6_black_globe', type: 'raw', file: 'game_31_raw.webm', startSec: 2.5, durationSec: 1.800, desc: 'Bar 6: Over-Shoulder Chase, close strike on the black globe (yellow gloves)' },
+  { id: '09_bar7_large_globe', type: 'raw', file: 'game_48_raw.webm', startSec: 0.5, durationSec: 1.800, desc: 'Bar 7: Dynamic Action Orbit, large globe rolls past the athletes' },
+  { id: '10_bar8_green_gloves', type: 'raw', file: 'game_39_raw.webm', startSec: 1.6, durationSec: 1.800, desc: 'Bar 8: Vertical Aerial Spike, globe and green-gloved athlete' },
+  { id: '11_bar9_red_key', type: 'raw', file: 'game_12_raw.webm', startSec: 0.6, durationSec: 1.800, desc: 'Bar 9: Banked Wall, chase across the red key after the globe' },
 
   // ── PHASE 3: RAPID-FIRE STACCATO CLIMAX (62.200s – 76.600s | 14.400s) ──
   // Part A: 12 Half-Bar Cuts @ 0.900s each = 10.800s (62.200s – 73.000s)
-  {
-    id: '12_cut16_half1',
-    type: 'raw',
-    file: 'game_18_raw.webm',
-    startSec: 0.5,
-    durationSec: 0.900,
-    desc: 'CUT 16 (Half-Bar 1): Large Ball, Vertical Aerial Spike, 44.9 m/s apex strike'
-  },
-  {
-    id: '13_cut17_half2',
-    type: 'raw',
-    file: 'game_19_raw.webm',
-    startSec: 0.5,
-    durationSec: 0.900,
-    desc: 'CUT 17 (Half-Bar 2): Medium Ball, Banked Wall Curve, 31.5 m/s carve'
-  },
-  {
-    id: '14_cut18_half3',
-    type: 'raw',
-    file: 'game_20_raw.webm',
-    startSec: 0.5,
-    durationSec: 0.900,
-    desc: 'CUT 18 (Half-Bar 3): Small Ball, Dynamic Action Orbit, kinetic sprint rally'
-  },
-  {
-    id: '15_cut19_half4',
-    type: 'raw',
-    file: 'game_21_raw.webm',
-    startSec: 0.5,
-    durationSec: 0.900,
-    desc: 'CUT 19 (Half-Bar 4): Large Ball, 3/4 Flank South Torus, turf dive save'
-  },
-  {
-    id: '16_cut20_half5',
-    type: 'raw',
-    file: 'game_22_raw.webm',
-    startSec: 0.5,
-    durationSec: 0.900,
-    desc: 'CUT 20 (Half-Bar 5): Medium Ball, 3/4 Flank North Torus, 50.9 m/s spike'
-  },
-  {
-    id: '17_cut21_half6',
-    type: 'raw',
-    file: 'game_23_raw.webm',
-    startSec: 0.5,
-    durationSec: 0.900,
-    desc: 'CUT 21 (Half-Bar 6): Small Ball, Low Turf Tracking, Torus goal 25.3 m/s'
-  },
-  {
-    id: '18_cut22_half7',
-    type: 'raw',
-    file: 'game_24_raw.webm',
-    startSec: 0.5,
-    durationSec: 0.900,
-    desc: 'CUT 22 (Half-Bar 7): Large Ball, Over-Shoulder Chase, kinetic sprint rally'
-  },
-  {
-    id: '19_cut23_half8',
-    type: 'raw',
-    file: 'game_25_raw.webm',
-    startSec: 0.5,
-    durationSec: 0.900,
-    desc: 'CUT 23 (Half-Bar 8): Medium Ball, Vertical Aerial Spike, dive save'
-  },
-  {
-    id: '20_cut24_half9',
-    type: 'raw',
-    file: 'game_30_raw.webm',
-    startSec: 0.5,
-    durationSec: 0.900,
-    desc: 'CUT 24 (Half-Bar 9): Large Ball, Low Turf Tracking, 62.9 m/s spike'
-  },
-  {
-    id: '21_cut25_half10',
-    type: 'raw',
-    file: 'game_31_raw.webm',
-    startSec: 0.5,
-    durationSec: 0.900,
-    desc: 'CUT 25 (Half-Bar 10): Medium Ball, Over-Shoulder Chase, 59.9 m/s goal blast'
-  },
-  {
-    id: '22_cut26_half11',
-    type: 'raw',
-    file: 'game_32_raw.webm',
-    startSec: 0.5,
-    durationSec: 0.900,
-    desc: 'CUT 26 (Half-Bar 11): Small Ball, Vertical Aerial Spike, sprint rally'
-  },
-  {
-    id: '23_cut27_half12',
-    type: 'raw',
-    file: 'game_33_raw.webm',
-    startSec: 0.5,
-    durationSec: 0.900,
-    desc: 'CUT 27 (Half-Bar 12): Large Ball, Banked Wall Curve, turf dive save'
-  },
+  { id: '12_half1', type: 'raw', file: 'game_17_raw.webm', startSec: 1.0, durationSec: 0.900, desc: 'Half-Bar 1: Over-Shoulder Chase, close sprint (blue gloves)' },
+  { id: '13_half2', type: 'raw', file: 'game_18_raw.webm', startSec: 0.8, durationSec: 0.900, desc: 'Half-Bar 2: Vertical Aerial Spike, the globe fills the frame' },
+  { id: '14_half3', type: 'raw', file: 'game_34_raw.webm', startSec: 2.9, durationSec: 0.900, desc: 'Half-Bar 3: Dynamic Action Orbit, athlete and the black globe close' },
+  { id: '15_half4', type: 'raw', file: 'game_46_raw.webm', startSec: 3.5, durationSec: 0.900, desc: 'Half-Bar 4: Vertical Aerial Spike, athlete in hat meets the black globe' },
+  { id: '16_half5', type: 'raw', file: 'game_03_raw.webm', startSec: 3.3, durationSec: 0.900, desc: 'Half-Bar 5: Over-Shoulder Chase, close athlete and the globe' },
+  { id: '17_half6_rvb', type: 'raw', file: 'game_10_raw.webm', startSec: 2.6, durationSec: 0.900, desc: 'Half-Bar 6 (Red vs Blue): Over-Shoulder Chase, ball overhead' },
+  { id: '18_half7_rvb', type: 'raw', file: 'game_20_raw.webm', startSec: 0.4, durationSec: 0.900, desc: 'Half-Bar 7 (Red vs Blue): Dynamic Action Orbit, close contest' },
+  { id: '19_half8_rvb', type: 'raw', file: 'game_30_raw.webm', startSec: 3.3, durationSec: 0.900, desc: 'Half-Bar 8 (Red vs Blue): Low Turf Follow, Blue chases the globe' },
+  { id: '20_half9_rvb', type: 'raw', file: 'game_45_raw.webm', startSec: 0.2, durationSec: 0.900, desc: 'Half-Bar 9 (Red vs Blue): Over-Shoulder Chase, Red and the globe close' },
+  { id: '21_half10_rvb', type: 'raw', file: 'game_50_raw.webm', startSec: 5.4, durationSec: 0.900, desc: 'Half-Bar 10 (Red vs Blue): 3/4 Flank North, Blue closes in as Red dives' },
+  { id: '22_half11_rvb', type: 'raw', file: 'game_25_raw.webm', startSec: 0.4, durationSec: 0.900, desc: 'Half-Bar 11 (Red vs Blue): Vertical Aerial Spike, Red on the ball' },
+  { id: '23_half12_rvb', type: 'raw', file: 'game_05_raw.webm', startSec: 1.0, durationSec: 0.900, desc: 'Half-Bar 12 (Red vs Blue): Banked Wall, diving exchange' },
 
-  // Part B: Apex Eighth-Note Blitz (3.600s total | 73.000s – 76.600s)
-  {
-    id: '24_cut28_eighth1',
-    type: 'raw',
-    file: 'game_34_raw.webm',
-    startSec: 0.5,
-    durationSec: 0.450,
-    desc: 'CUT 28 (1/4 Note 1): Medium Ball, Action Orbit, 61.5 m/s spike'
-  },
-  {
-    id: '25_cut29_eighth2',
-    type: 'raw',
-    file: 'game_35_raw.webm',
-    startSec: 0.5,
-    durationSec: 0.450,
-    desc: 'CUT 29 (1/4 Note 2): Small Ball, 3/4 Flank South Torus, goal strike'
-  },
-  {
-    id: '26_cut30_eighth3',
-    type: 'raw',
-    file: 'game_38_raw.webm',
-    startSec: 0.5,
-    durationSec: 0.450,
-    desc: 'CUT 30 (1/4 Note 3): Small Ball, Over-Shoulder Chase, 40.7 m/s spike'
-  },
-  {
-    id: '27_cut31_eighth4',
-    type: 'raw',
-    file: 'game_39_raw.webm',
-    startSec: 0.5,
-    durationSec: 0.450,
-    desc: 'CUT 31 (1/4 Note 4): Large Ball, Vertical Aerial Spike, 36.9 m/s goal strike'
-  },
-  {
-    id: '28_cut32_eighth5',
-    type: 'raw',
-    file: 'game_42_raw.webm',
-    startSec: 0.5,
-    durationSec: 0.450,
-    desc: 'CUT 32 (1/4 Note 5): Large Ball, 3/4 Flank South Torus, 61.1 m/s spike'
-  },
-  {
-    id: '29_cut33_eighth6',
-    type: 'raw',
-    file: 'game_43_raw.webm',
-    startSec: 0.5,
-    durationSec: 0.450,
-    desc: 'CUT 33 (1/4 Note 6): Medium Ball, 3/4 Flank North Torus, 49.2 m/s goal'
-  },
-  {
-    id: '30_cut34_eighth7',
-    type: 'raw',
-    file: 'game_46_raw.webm',
-    startSec: 0.5,
-    durationSec: 0.450,
-    desc: 'CUT 34 (1/4 Note 7): Medium Ball, Vertical Aerial Spike, 71.0 m/s spike'
-  },
-  {
-    id: '31_cut35_sixteenth1',
-    type: 'raw',
-    file: 'game_47_raw.webm',
-    startSec: 0.5,
-    durationSec: 0.225,
-    desc: 'CUT 35 (1/8 Note 1): Small Ball, Banked Wall Curve, 53.8 m/s goal'
-  },
-  {
-    id: '32_cut36_sixteenth2',
-    type: 'raw',
-    file: 'game_50_raw.webm',
-    startSec: 0.5,
-    durationSec: 0.225,
-    desc: 'CUT 36 (1/8 Note 2): Small Ball, 3/4 Flank North Torus, 56.3 m/s supersonic spike'
-  },
+  // Part B: Apex Eighth-Note Blitz (3.600s total | 73.000s – 76.600s), Red vs Blue
+  { id: '24_eighth1', type: 'raw', file: 'game_20_raw.webm', startSec: 2.4, durationSec: 0.450, desc: '1/4 Note 1: close contest' },
+  { id: '25_eighth2', type: 'raw', file: 'game_30_raw.webm', startSec: 1.0, durationSec: 0.450, desc: '1/4 Note 2: Blue and the globe' },
+  { id: '26_eighth3', type: 'raw', file: 'game_10_raw.webm', startSec: 4.6, durationSec: 0.450, desc: '1/4 Note 3: Blue strike' },
+  { id: '27_eighth4', type: 'raw', file: 'game_45_raw.webm', startSec: 1.4, durationSec: 0.450, desc: '1/4 Note 4: Red and the globe' },
+  { id: '28_eighth5', type: 'raw', file: 'game_35_raw.webm', startSec: 1.3, durationSec: 0.450, desc: '1/4 Note 5: Red full-stretch dive' },
+  { id: '29_eighth6', type: 'raw', file: 'game_50_raw.webm', startSec: 2.2, durationSec: 0.450, desc: '1/4 Note 6: Red sprints the ball, Blue closing' },
+  { id: '30_eighth7', type: 'raw', file: 'game_40_raw.webm', startSec: 3.7, durationSec: 0.450, desc: '1/4 Note 7: both athletes and the black globe' },
+  { id: '31_sixteenth1', type: 'raw', file: 'game_15_raw.webm', startSec: 5.1, durationSec: 0.225, desc: '1/8 Note 1: ball at the hoop' },
+  { id: '32_sixteenth2', type: 'raw', file: 'game_25_raw.webm', startSec: 1.7, durationSec: 0.225, desc: '1/8 Note 2: Red strike' },
 
   // ── PHASE 4: CLIMAX TORUS GOAL & CELESTIAL ASCENSION (76.600s – 88.000s | 11.400s) ──
+  // Both from the in-engine capture: its staged showcase goal is built for this shot,
+  // where a raw-reel physics strike rarely threads the hoop. Times are provisional
+  // until checked against the re-recorded overture.
   {
-    id: '33_cut37_climax_goal',
-    type: 'raw',
-    file: 'game_07_raw.webm',
-    startSec: 0.5,
-    durationSec: 5.600,
-    desc: 'CUT 37: The Climax Torus Goal in 3/4 Side Profile (61.8 m/s strike through ring, celebratory siren)'
-  },
-  {
-    id: '34_cut38_celestial_ascend',
+    id: '33_climax_goal',
     type: 'video',
     src: OVERTURE_SRC,
-    startSec: 82.200,
+    startSec: 72.800,
+    durationSec: 5.600,
+    desc: 'The Climax Torus Goal in 3/4 Side Profile (in-engine staged goal, Red vs Blue)'
+  },
+  {
+    id: '34_celestial_ascend',
+    type: 'video',
+    src: OVERTURE_SRC,
+    startSec: 77.200,
     durationSec: 5.800,
-    desc: 'CUT 38: Celestial Ascension Arc (high soaring crane expanding upward above stadium floodlights)'
+    desc: 'Celestial Ascension Arc (high soaring crane expanding upward above stadium floodlights)'
   },
 
   // ── PHASE 5: BRAND GALAXY OUTRO & TITLE CARD LOCK (88.000s – 94.500s | 6.500s) ──
   {
-    id: '35_cut39_galaxy_title',
+    id: '35_galaxy_title',
     type: 'image',
     src: TITLE_CARD_SRC,
     durationSec: 6.500,
-    desc: 'CUT 39: Brand Galaxy Outro & Title Card Lock (fade in 0.8s, hold release date and URL to 94.5s)',
+    desc: 'Brand Galaxy Outro & Title Card Lock (fade in 0.8s, hold release date and URL to 94.5s)',
     filter: 'fade=t=in:st=0:d=0.8'
   }
 ];
@@ -348,18 +143,35 @@ async function assembleTrailer() {
     throw new Error(`Duration mismatch: ${totalPlannedDuration} != 94.500`);
   }
 
+  const cuts = MONTAGE_ONLY ? CUT_LIST.filter(c => c.type === 'raw') : CUT_LIST;
+  const montageStartSec = CUT_LIST.slice(0, CUT_LIST.indexOf(cuts[0])).reduce((acc, c) => acc + c.durationSec, 0);
+  const montageDurationSec = cuts.reduce((acc, c) => acc + c.durationSec, 0);
+
   // 1. Process and transcode each cut into standardized CFR 1080p60 MP4
   console.log('\n[assembly] === STEP 1: RENDERING STANDARDIZED CFR VIDEO CHUNKS ===');
   const segmentFiles = [];
+  let timelineSec = montageStartSec;
 
-  for (let i = 0; i < CUT_LIST.length; i++) {
-    const cut = CUT_LIST[i];
+  for (let i = 0; i < cuts.length; i++) {
+    const cut = cuts[i];
     const segPath = path.join(TEMP_DIR, `seg_${String(i + 1).padStart(2, '0')}_${cut.id}.mp4`);
     segmentFiles.push(segPath);
 
-    console.log(`[${i + 1}/${CUT_LIST.length}] ${cut.id} (${cut.durationSec.toFixed(3)}s) - ${cut.desc}`);
+    console.log(`[${i + 1}/${cuts.length}] ${cut.id} (${cut.durationSec.toFixed(3)}s) - ${cut.desc}`);
 
     const args = ['-y'];
+
+    // Every segment must be exactly its beat-grid length or the cuts drift off
+    // the music: resampling VFR captures to 60 fps lands a few frames long (31
+    // cuts drifted ~2s). Trim to an exact frame count, cloning the last frame if
+    // a source runs short, and cut the audio to the same length.
+    // Round on the cumulative timeline (0.225s is 13.5 frames) so every cut stays
+    // within half a frame of its beat and the total stays exact.
+    const frameCount = Math.round((timelineSec + cut.durationSec) * 60) - Math.round(timelineSec * 60);
+    timelineSec += cut.durationSec;
+    const exactVideo = `fps=60,tpad=stop_mode=clone:stop_duration=1,trim=end_frame=${frameCount},setpts=PTS-STARTPTS`;
+    const exactAudio = `aresample=48000,apad,atrim=duration=${(frameCount / 60).toFixed(6)},asetpts=PTS-STARTPTS`;
+    const readSec = String(cut.durationSec + 0.5);
 
     if (cut.type === 'raw') {
       const rawPath = path.join(RAW_CHUNKS_DIR, cut.file);
@@ -367,9 +179,10 @@ async function assembleTrailer() {
       // retimes low-fps clips into fast-forward. Resample on output only.
       args.push(
         '-ss', String(cut.startSec),
-        '-t', String(cut.durationSec),
+        '-t', readSec,
         '-i', rawPath,
-        '-vf', 'scale=1920:1080:flags=lanczos,format=yuv420p',
+        '-vf', `scale=1920:1080:flags=lanczos,format=yuv420p,${exactVideo}`,
+        '-af', exactAudio,
         '-c:v', 'libx264',
         '-preset', 'veryfast',
         '-crf', '18',
@@ -383,14 +196,22 @@ async function assembleTrailer() {
       );
     } else if (cut.type === 'video') {
       const vf = cut.filter
-        ? `scale=1920:1080:flags=lanczos,format=yuv420p,${cut.filter}`
-        : 'scale=1920:1080:flags=lanczos,format=yuv420p';
+        ? `scale=1920:1080:flags=lanczos,format=yuv420p,${cut.filter},${exactVideo}`
+        : `scale=1920:1080:flags=lanczos,format=yuv420p,${exactVideo}`;
 
+      // The in-engine capture's own audio is the music bed, which the master
+      // adds itself, so this segment's SFX stem is silence (no doubled music).
       args.push(
         '-ss', String(cut.startSec),
-        '-t', String(cut.durationSec),
+        '-t', readSec,
         '-i', cut.src,
+        '-f', 'lavfi',
+        '-t', String(cut.durationSec),
+        '-i', 'anullsrc=channel_layout=stereo:sample_rate=48000',
+        '-map', '0:v:0',
+        '-map', '1:a:0',
         '-vf', vf,
+        '-af', exactAudio,
         '-c:v', 'libx264',
         '-preset', 'veryfast',
         '-crf', '18',
@@ -404,8 +225,8 @@ async function assembleTrailer() {
       );
     } else if (cut.type === 'image') {
       const vf = cut.filter
-        ? `scale=1920:1080:flags=lanczos,format=yuv420p,${cut.filter}`
-        : 'scale=1920:1080:flags=lanczos,format=yuv420p';
+        ? `scale=1920:1080:flags=lanczos,format=yuv420p,${cut.filter},${exactVideo}`
+        : `scale=1920:1080:flags=lanczos,format=yuv420p,${exactVideo}`;
 
       // Generate video from still image with silent audio channel
       args.push(
@@ -417,6 +238,7 @@ async function assembleTrailer() {
         '-t', String(cut.durationSec),
         '-i', 'anullsrc=channel_layout=stereo:sample_rate=48000',
         '-vf', vf,
+        '-af', exactAudio,
         '-c:v', 'libx264',
         '-preset', 'veryfast',
         '-crf', '18',
@@ -459,6 +281,39 @@ async function assembleTrailer() {
   ], { stdio: 'inherit' });
 
   console.log(`[assembly] Stitched video+SFX created: ${stitchedVideoSfx}`);
+
+  if (MONTAGE_ONLY) {
+    // Music from the montage's own start so the cuts land on the same beats
+    // as in the full trailer; same ducking and SFX boost as the action phases.
+    const dur = montageDurationSec.toFixed(3);
+    const previewFilter = [
+      `[0:v]trim=duration=${dur},setpts=PTS-STARTPTS[vout]`,
+      `[1:a]volume=-2.5dB,apad=whole_dur=${dur},atrim=duration=${dur}[music]`,
+      `[0:a]volume=+1.5dB,atrim=duration=${dur}[sfx]`,
+      '[music][sfx]amix=inputs=2:duration=first:dropout_transition=0,alimiter=limit=0.95[aout]'
+    ].join(';');
+    execFileSync('ffmpeg', [
+      '-y',
+      '-i', stitchedVideoSfx,
+      '-ss', montageStartSec.toFixed(3),
+      '-i', MUSIC_SRC,
+      '-filter_complex', previewFilter,
+      '-map', '[vout]',
+      '-map', '[aout]',
+      '-c:v', 'libx264',
+      '-preset', 'medium',
+      '-crf', '18',
+      '-r', '60',
+      '-fps_mode', 'cfr',
+      '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac',
+      '-b:a', '256k',
+      '-ar', '48000',
+      MONTAGE_PREVIEW_OUTPUT
+    ], { stdio: 'inherit' });
+    console.log(`\n✓ Montage preview (${montageStartSec.toFixed(1)}s – ${(montageStartSec + montageDurationSec).toFixed(1)}s of the trailer): ${MONTAGE_PREVIEW_OUTPUT}`);
+    return;
+  }
 
   // 3. Audio Layering: Mix "Neon Velocity" Music Master with isolated SFX Stem
   // - "Neon Velocity" runs from 0.0s to 89.85s, with a gentle 3.5s fadeout into silence by 93.5s
