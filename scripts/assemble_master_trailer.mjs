@@ -24,6 +24,7 @@ import { execFileSync } from 'node:child_process';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TEMP_DIR = path.join(ROOT, 'captures', 'trailer_assembly_temp');
 const OUT_DIR = path.join(ROOT, 'captures', 'trailer');
+// Written by scripts/generate-argon-raw-reel.mjs
 const RAW_CHUNKS_DIR = path.join(ROOT, 'captures', 'raw_footage', 'raw_chunks');
 const OVERTURE_SRC = path.join(OUT_DIR, 'valleyball_versus_debut_trailer_1080p60.mp4');
 const MUSIC_SRC = path.join(ROOT, 'public', 'audio', 'music', 'track_trailer_neon_velocity.mp3');
@@ -362,10 +363,11 @@ async function assembleTrailer() {
 
     if (cut.type === 'raw') {
       const rawPath = path.join(RAW_CHUNKS_DIR, cut.file);
+      // No input -r: MediaRecorder WebM is VFR, and forcing 60 fps on input
+      // retimes low-fps clips into fast-forward. Resample on output only.
       args.push(
         '-ss', String(cut.startSec),
         '-t', String(cut.durationSec),
-        '-r', '60',
         '-i', rawPath,
         '-vf', 'scale=1920:1080:flags=lanczos,format=yuv420p',
         '-c:v', 'libx264',

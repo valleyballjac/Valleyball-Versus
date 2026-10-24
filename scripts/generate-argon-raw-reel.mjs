@@ -233,6 +233,9 @@ async function runHarvest() {
       '--autoplay-policy=no-user-gesture-required',
       '--disable-background-timer-throttling',
       '--disable-renderer-backgrounding',
+      // Keep rendering at full rate when the window is covered or unfocused
+      '--disable-backgrounding-occluded-windows',
+      '--disable-features=CalculateNativeWinOcclusion',
       '--window-size=1920,1080',
     ],
   });
@@ -247,25 +250,31 @@ async function runHarvest() {
 
   const url = `http://localhost:${VITE_PORT}/Valleyball-Versus/`;
   console.log(`[reel] Loading application at ${url}...`);
-  await page.goto(url, { waitUntil: 'load', timeout: 120000 });
-  await page.waitForTimeout(5000);
 
-  // Setup UI Hide
-  await page.evaluate(() => {
-    let s = document.getElementById('cap-ui-hide');
-    if (!s) {
-      s = document.createElement('style');
-      s.id = 'cap-ui-hide';
-      document.head.appendChild(s);
-    }
-    s.textContent = `
-      #hud, #controls-card, #splitscreen-divider, .lil-gui, #main-menu-root, #title-screen, #loading-screen, #camera-toast {
-        display: none !important;
-        opacity: 0 !important;
-        visibility: hidden !important;
+  // Fresh page per match: reusing one page leaked a canvas capture stream,
+  // audio destination and match scene per match, and frame rate decayed from
+  // ~58 fps (match 2) to ~6 fps (match 50).
+  async function loadFreshPage() {
+    await page.goto(url, { waitUntil: 'load', timeout: 120000 });
+    await page.waitForTimeout(5000);
+
+    // Setup UI Hide
+    await page.evaluate(() => {
+      let s = document.getElementById('cap-ui-hide');
+      if (!s) {
+        s = document.createElement('style');
+        s.id = 'cap-ui-hide';
+        document.head.appendChild(s);
       }
-    `;
-  });
+      s.textContent = `
+        #hud, #controls-card, #splitscreen-divider, .lil-gui, #main-menu-root, #title-screen, #loading-screen, #camera-toast {
+          display: none !important;
+          opacity: 0 !important;
+          visibility: hidden !important;
+        }
+      `;
+    });
+  }
 
   const processedClips = [];
 
@@ -275,6 +284,8 @@ async function runHarvest() {
     const g = games[idx];
     const gameNum = String(g.gameId).padStart(2, '0');
     console.log(`[reel] ▶ MATCH ${gameNum}/${maxGames} | ${g.ball.toUpperCase()} BALL | ${g.home.variant} vs ${g.away.variant} | ${g.cameraLabel} [${g.stuntLabel}]`);
+
+    await loadFreshPage();
 
     const rawFilename = `game_${gameNum}_raw.webm`;
     receiver.prepareStream(rawFilename);
@@ -376,6 +387,7 @@ async function runHarvest() {
       recorder.stop();
       if (window.__vb?.trailerDirector) window.__vb.trailerDirector.stop();
       await new Promise(r => setTimeout(r, 500));
+      stream.getTracks().forEach(t => t.stop());
       await fetch(`http://127.0.0.1:${chunkPort}/done`, { method: 'POST' });
 
       const goalsScored = (window.__vb?.matchState?.scoreA || 0) - initialScoreA + (window.__vb?.matchState?.scoreB || 0) - initialScoreB;
@@ -413,7 +425,6 @@ async function runHarvest() {
     try {
       execFileSync('ffmpeg', [
         '-y',
-        '-r', '60',
         '-i', rawFilePath,
         '-ss', '0.4', // Skip initial camera settle frame
         '-t', '5.8',  // Clean 5.8s action segment

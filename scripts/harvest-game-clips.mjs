@@ -183,6 +183,9 @@ async function runHarvest() {
       '--autoplay-policy=no-user-gesture-required',
       '--disable-background-timer-throttling',
       '--disable-renderer-backgrounding',
+      // Keep rendering at full rate when the window is covered or unfocused
+      '--disable-backgrounding-occluded-windows',
+      '--disable-features=CalculateNativeWinOcclusion',
       '--window-size=1920,1080',
     ],
   });
@@ -196,26 +199,31 @@ async function runHarvest() {
   page.setDefaultTimeout(600000);
 
   const url = `http://localhost:${VITE_PORT}/Valleyball-Versus/`;
-  console.log(`[harvest] Navigating to ${url}...`);
-  await page.goto(url, { waitUntil: 'load', timeout: 120000 });
-  await page.waitForTimeout(6000);
 
-  // Setup UI Hide
-  await page.evaluate(() => {
-    let s = document.getElementById('cap-ui-hide');
-    if (!s) {
-      s = document.createElement('style');
-      s.id = 'cap-ui-hide';
-      document.head.appendChild(s);
-    }
-    s.textContent = `
-      #hud, #controls-card, #splitscreen-divider, .lil-gui, #main-menu-root, #title-screen, #loading-screen, #camera-toast {
-        display: none !important;
-        opacity: 0 !important;
-        visibility: hidden !important;
+  // Fresh page per game: reusing one page across games leaked a canvas capture
+  // stream, audio destination and match scene per game, and frame rate decayed
+  // from ~58 fps (game 2) to ~6 fps (game 50).
+  async function loadFreshPage() {
+    await page.goto(url, { waitUntil: 'load', timeout: 120000 });
+    await page.waitForTimeout(6000);
+
+    // Setup UI Hide
+    await page.evaluate(() => {
+      let s = document.getElementById('cap-ui-hide');
+      if (!s) {
+        s = document.createElement('style');
+        s.id = 'cap-ui-hide';
+        document.head.appendChild(s);
       }
-    `;
-  });
+      s.textContent = `
+        #hud, #controls-card, #splitscreen-divider, .lil-gui, #main-menu-root, #title-screen, #loading-screen, #camera-toast {
+          display: none !important;
+          opacity: 0 !important;
+          visibility: hidden !important;
+        }
+      `;
+    });
+  }
 
   const manifest = [];
   const selectedClips = [];
@@ -227,6 +235,8 @@ async function runHarvest() {
     const g = games[idx];
     const gameNum = String(g.gameId).padStart(2, '0');
     console.log(`[harvest] --- GAME ${gameNum}/50 | Ball: ${g.ball.toUpperCase()} | ${g.home.variant} (${g.home.colorName}) vs ${g.away.variant} (${g.away.colorName}) ---`);
+
+    await loadFreshPage();
 
     const rawFilename = `game_${gameNum}_raw.webm`;
     receiver.prepareStream(rawFilename);
@@ -333,6 +343,7 @@ async function runHarvest() {
       recorder.stop();
       if (window.__vb?.trailerDirector) window.__vb.trailerDirector.stop();
       await new Promise(r => setTimeout(r, 600));
+      stream.getTracks().forEach(t => t.stop());
       await fetch(`http://127.0.0.1:${chunkPort}/done`, { method: 'POST' });
 
       const goalsScored = (window.__vb?.matchState?.scoreA || 0) - initialScoreA + (window.__vb?.matchState?.scoreB || 0) - initialScoreB;
@@ -379,7 +390,6 @@ async function runHarvest() {
         try {
           execFileSync('ffmpeg', [
             '-y',
-            '-r', '60',
             '-i', rawFilePath,
             '-ss', String(musicOffset),
             '-i', musicPath,
@@ -389,6 +399,7 @@ async function runHarvest() {
             '-c:v', 'libx264',
             '-preset', 'fast',
             '-crf', '22',
+            '-r', '60',
             '-fps_mode', 'cfr',
             '-pix_fmt', 'yuv420p',
             '-c:a', 'aac',
@@ -400,7 +411,6 @@ async function runHarvest() {
           // Fallback if raw chunk audio track absent
           execFileSync('ffmpeg', [
             '-y',
-            '-r', '60',
             '-i', rawFilePath,
             '-ss', String(musicOffset),
             '-i', musicPath,
@@ -409,6 +419,7 @@ async function runHarvest() {
             '-c:v', 'libx264',
             '-preset', 'fast',
             '-crf', '22',
+            '-r', '60',
             '-fps_mode', 'cfr',
             '-pix_fmt', 'yuv420p',
             '-c:a', 'aac',
