@@ -25,6 +25,24 @@ import { RAPIER, getWorld, ENVIRONMENT_GROUPS } from './physics.js';
 const arenaColliderTypes = new Map();
 
 /**
+ * DEBUG: ?showColliders=1 renders the authored collision proxies as colored
+ * wireframes instead of hiding them, so the terrain hand-off can be eyeballed
+ * against the visual mesh. Boundary=cyan, court=green, goal=orange. Off by
+ * default and never active headless, so determinism (LAW 6) is untouched.
+ */
+function wantColliderWireframes() {
+  if (typeof location === 'undefined' || !location.search) return false;
+  return /(?:^|[?&])showColliders=1(?:&|$)/.test(location.search);
+}
+const SHOW_COLLIDERS = wantColliderWireframes();
+
+function colliderDebugColor(owner) {
+  if (owner.includes('Barrier') || owner.includes('Boundary')) return 0x00ffff; // cyan
+  if (owner.includes('Goal') || owner.includes('Hoop')) return 0xffa500; // orange
+  return 0x00ff00; // green — court / anything else
+}
+
+/**
  * Returns the semantic surface type of an arena collider ('court', 'boundary', 'goal')
  * @param {number} handle Rapier collider handle
  * @returns {'court'|'boundary'|'goal'|null}
@@ -419,8 +437,23 @@ async function loadCourtArena(scene) {
 
     if (hasDedicatedColliders) {
       if (isColliderProxy) {
-        // Dedicated collision geometry: invisible in the render pass
-        object.visible = false;
+        if (SHOW_COLLIDERS) {
+          // Debug view: render the collision proxy as a colored wireframe laid
+          // over the scene (depthTest off so it reads through the visual floor).
+          object.material = new THREE.MeshBasicMaterial({
+            color: colliderDebugColor(owner),
+            wireframe: true,
+            transparent: true,
+            opacity: 0.9,
+            depthTest: false,
+            depthWrite: false,
+          });
+          object.renderOrder = 1000;
+          object.visible = true;
+        } else {
+          // Dedicated collision geometry: invisible in the render pass
+          object.visible = false;
+        }
       } else {
         // Visual mesh: normalise materials, render with shadows, skip physics collision
         object.receiveShadow = true;
