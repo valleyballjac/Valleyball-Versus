@@ -196,6 +196,9 @@ export function createBotController({
     pendingSpikeTick: -Infinity, // for apex spike execution after jump
     lastCutTick: -Infinity,
     cutCooldownTicks: 70,     // min cooldown between athletic cuts (~1.16s)
+    lastSlideTick: -Infinity,
+    slideCooldownTicks: 75,   // min cooldown between power slides (~1.25s)
+    slideTicksRemaining: 0,   // active slide frame countdown
 
     // Statistics
     stats: {
@@ -205,6 +208,7 @@ export function createBotController({
       defendTime: 0,
       recoverTime: 0,
       cutCount: 0,
+      slideCount: 0,
       hoopBlocks: 0,
     },
 
@@ -396,6 +400,12 @@ export function updateBot(bot, athlete, opponent, balls, matchState, inputSlot, 
   if (inputSlot) {
     inputSlot.cutQueued = false;
     inputSlot.braceHeld = false;
+    if (bot.slideTicksRemaining > 0) {
+      bot.slideTicksRemaining--;
+      inputSlot.slideHeld = true;
+    } else {
+      inputSlot.slideHeld = false;
+    }
   }
   if (!athlete || !balls || balls.length === 0) {
     steerIdle(inputSlot);
@@ -499,6 +509,7 @@ export function updateBot(bot, athlete, opponent, balls, matchState, inputSlot, 
   // ═══ PREDICTIVE STRIKE & ACTION ARBITRATION ═══
   // Evaluated fresh every tick so animation wind-up timing hits the sweet spot!
   evaluatePredictiveStrikes(bot, freshPerception, params, inputSlot, tick);
+  evaluateSlide(bot, freshPerception, params, inputSlot, tick);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1247,18 +1258,17 @@ function evaluatePredictiveStrikes(bot, freshPerception, params, slot, tick) {
     bot.pendingSpikeTick = -Infinity;
   }
 
-  // ═══ 1. CANDIDATE: SPIKE (Aerial smash on high balls close to hoop or stream head) ═══
-  // A spike strictly requires an actual airborne ball well above court floor (altitude >= 2.0m)
-  const isHighBall = !isGroundBall && (ballAltitude >= 2.0 || (ballRelAthY >= 1.4 && ballAltitude >= 1.6));
-  // A -18° downward spike dives into the turf within 10m. Spikes beyond 10m hit the floor!
-  const maxSpikeDistZ = 10.0;
-  const canSpikeHere = (distToDefendZ > 12.0 && (distToGoalZ <= maxSpikeDistZ || isFinishing)) || isDefendingRim;
+  // ═══ 1. CANDIDATE: SPIKE (Aerial smash on high balls) ═══
+  // A spike strictly requires an actual airborne ball well above court floor (altitude >= 1.5m)
+  const isHighBall = !isGroundBall && (ballAltitude >= 1.5 || (ballRelAthY >= 1.0 && ballAltitude >= 1.3));
+  // Allow spikes across the entire court when attacking or defending!
+  const canSpikeHere = true;
 
-  const canSpikePrediction = canSpikeHere && isHighBall && liveDistXZ <= 2.0 &&
-    (ticksToArrive >= 28 && ticksToArrive <= 46) && distAtArrival <= spikeReach &&
-    (arrivalRelY >= 1.2 && arrivalRelY <= 3.2);
-  const canSpikeImmediate = canSpikeHere && isHighBall &&
-    (liveDistXZ <= 1.35) && (ballRelAthY >= 1.2 && ballRelAthY <= 3.0);
+  const canSpikePrediction = isHighBall && liveDistXZ <= 2.8 &&
+    (ticksToArrive >= 16 && ticksToArrive <= 46) && distAtArrival <= spikeReach &&
+    (arrivalRelY >= 0.8 && arrivalRelY <= 3.4);
+  const canSpikeImmediate = isHighBall &&
+    (liveDistXZ <= 2.0) && (ballRelAthY >= 0.8 && ballRelAthY <= 3.4);
 
   if (canSpikePrediction || canSpikeImmediate) {
     if (freshPerception.self.grounded) {
@@ -1427,25 +1437,26 @@ function evaluatePredictiveStrikes(bot, freshPerception, params, slot, tick) {
     }
   }
 
-  // ═══ 6. EMERGENCY DIVE SAVE (Strictly restricted to goal-line saves in defending mouth) ═══
-  const diveCooldown = params.diveCooldownTicks ?? 180; // 3.0s cooldown
+  // ═══ 6. EMERGENCY DIVE SAVE (Open-court lunges & goal-mouth saves) ═══
+  const diveCooldown = params.diveCooldownTicks ?? 90; // 1.5s hard cooldown
   if (freshPerception.self.grounded && !freshPerception.self.isRecovering && (tick - bot.lastDiveTick >= diveCooldown)) {
     const isDefSouth = defendGoalPos.z > 0;
     const landingX = freshPerception.ballIntercept.position.x;
     const landingZ = freshPerception.ballIntercept.position.z;
 
-    // Must be in defending goal mouth (|X| <= 8m, near net)
+    // Defending goal mouth (|X| <= 8m, near net) OR high-aggression open-court save
     const inGoalMouth = Math.abs(landingX) <= 8.0 && (
       isDefSouth ? (landingZ >= 24.0 && landingZ <= 39.0) : (landingZ <= -24.0 && landingZ >= -39.0)
     );
+    const isOpenCourtDive = (bot.currentAggressiveness ?? 0.6) >= 0.60;
 
-    if (inGoalMouth && freshPerception.threat > 0.35 && !freshPerception.ballIntercept.reachable) {
+    if (inGoalMouth || isOpenCourtDive) {
       const interceptTicks = freshPerception.ballIntercept.ticksToArrive;
-      // Ball must be hitting the floor imminently (6 to 22 ticks)
-      if (interceptTicks >= 6 && interceptTicks <= 22) {
+      // Ball is landing imminently within 4 to 32 ticks (0.06s to 0.53s)
+      if (interceptTicks >= 4 && interceptTicks <= 32) {
         const distToLanding = Math.hypot(landingX - selfPos.x, landingZ - selfPos.z);
-        const diveMin = params.diveDistMin ?? 2.0;
-        const diveMax = params.diveDistMax ?? 4.8;
+        const diveMin = params.diveDistMin ?? 1.4;
+        const diveMax = params.diveDistMax ?? 5.5;
         if (distToLanding >= diveMin && distToLanding <= diveMax) {
           const diveYaw = computeAimYaw(selfPos, freshPerception.ballIntercept.position);
           const diveDirX = Math.sin(diveYaw);
@@ -1453,9 +1464,9 @@ function evaluatePredictiveStrikes(bot, freshPerception, params, slot, tick) {
           const vecToDefend = freshPerception.hoops.vecToDefendGoal;
           const dotDiveDefend = diveDirX * vecToDefend.x + diveDirZ * vecToDefend.z;
 
-          // Strictly diving away from or lateral to defending net (dot <= -0.25)
-          if (dotDiveDefend <= -0.25) {
-            const diveAccuracy = (params.diveAccuracy ?? 0.5) * (0.7 + (bot.currentAggressiveness ?? 0.6) * 0.3);
+          // In goal mouth: strictly dive away from defending net. In open court: any angle toward ball is valid!
+          if (!inGoalMouth || dotDiveDefend <= -0.25) {
+            const diveAccuracy = (params.diveAccuracy ?? 0.7) * (0.8 + (bot.currentAggressiveness ?? 0.6) * 0.3);
             if (bot.rng() < diveAccuracy) {
               bot.lastDiveTick = tick;
               slot.diveQueued = true;
@@ -1469,6 +1480,53 @@ function evaluatePredictiveStrikes(bot, freshPerception, params, slot, tick) {
           }
         }
       }
+    }
+  }
+}
+
+/**
+ * Evaluates whether the bot should execute a power slide (slideHeld) to scoop a low ball
+ * or brake on steep valley terrain.
+ */
+function evaluateSlide(bot, perception, params, slot, tick) {
+  if (bot.slideTicksRemaining > 0) return;
+  const slideCooldown = bot.slideCooldownTicks ?? 75;
+  if (tick - bot.lastSlideTick < slideCooldown) return;
+
+  const athlete = perception.self;
+  if (!athlete.grounded || athlete.isRecovering) return;
+
+  const selfVel = athlete.velocity;
+  const hSpeed = Math.hypot(selfVel.x, selfVel.z);
+  const minSpeed = TUNING.action?.minSlideSpeed ?? 4.0;
+  if (hSpeed < minSpeed) return;
+
+  const selfPos = athlete.position;
+  const ballPos = perception.ball.position;
+  const toBallX = ballPos.x - selfPos.x;
+  const toBallZ = ballPos.z - selfPos.z;
+  const distToBall = Math.hypot(toBallX, toBallZ);
+  const ballRelAthY = ballPos.y - selfPos.y;
+
+  const vNormX = selfVel.x / hSpeed;
+  const vNormZ = selfVel.z / hSpeed;
+  const dotToBall = (toBallX * vNormX + toBallZ * vNormZ) / (distToBall || 1);
+
+  // Scenario 1: Low-altitude ball intercept scoop
+  const isLowBall = ballRelAthY <= 1.6 && ballPos.y <= 2.2;
+  const isApproachingLowBall = isLowBall && distToBall >= 2.0 && distToBall <= 6.5 && dotToBall > 0.45;
+
+  // Scenario 2: Parabolic wall carve / steep slope turn
+  const isSteepCourt = Math.abs(selfPos.z) > 12.0 || Math.abs(selfPos.x) > 12.0;
+  const isSharpSlopeTurn = isSteepCourt && hSpeed > 4.8 && slot.moveWorld && (vNormX * slot.moveWorld.x + vNormZ * slot.moveWorld.z) < 0.25;
+
+  if (isApproachingLowBall || isSharpSlopeTurn) {
+    const agg = bot.currentAggressiveness ?? 0.6;
+    if (bot.rng() < (0.65 + agg * 0.25)) {
+      bot.lastSlideTick = tick;
+      bot.slideTicksRemaining = 18; // ~0.3s of committed sliding
+      slot.slideHeld = true;
+      bot.stats.slideCount = (bot.stats.slideCount || 0) + 1;
     }
   }
 }

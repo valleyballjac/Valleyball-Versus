@@ -1913,10 +1913,15 @@ function fixedUpdate(dt, tick) {
     updateBot(bc, botAthlete, opponent, balls, matchState, botSlot, tick, dt);
   }
 
+  // ─── TRAILER STUNT CHOREOGRAPHY DIRECTIVE ───
+  if (trailerDirector?.isActive) {
+    trailerDirector.choreographTick(tick, dt, athletes, balls, matchState);
+  }
+
   // 3 to 10 — ATHLETE PRE-PHYSICS MECHANICS (Drive, Jump, Slide, Dive, Strikes, Ghost, Tracking)
   const isCountingDown = (gameState === 'match') && !!(matchState && matchState.isCountingDown);
-  const isAthleteHeld = isCountingDown || (gameState === 'menu') || (gameState === 'flyover');
-  const isBallHeld = (gameState === 'match' && isCountingDown) || (gameState === 'flyover');
+  const isAthleteHeld = (isCountingDown && !trailerDirector?.isActive) || (gameState === 'menu') || (gameState === 'flyover');
+  const isBallHeld = ((gameState === 'match' && isCountingDown && !trailerDirector?.isActive)) || (gameState === 'flyover');
   const hoopNorthZ = TUNING.match?.hoopNorthZ ?? -40.0;
   const hoopSouthZ = TUNING.match?.hoopSouthZ ?? 40.0;
   const p1IsHome = (TUNING.players?.[0]?.team || 'home') === 'home';
@@ -3686,7 +3691,7 @@ async function boot() {
   window.__vb.getPlayerConfigs = getPlayerConfigs;
   window.__vb.athleteMatchStats = athleteMatchStats;
   window.__vb.showVictoryScreen = showVictoryScreen;
-  window.__vb.showPracticeSummary = showPracticeSummary;
+  window.__vb.scoreboards = scoreboards;
   window.__vb.hustleBoards = hustleBoards;
   window.__vb.updateHustleBoards = updateHustleBoards;
   window.__vb.displayCoordinator = displayCoordinator;

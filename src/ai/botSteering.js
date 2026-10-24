@@ -235,20 +235,18 @@ export function steerGoalAlignedApproach(inputSlot, selfPos, selfVel, ballPos, a
     // without ramming the ball with rolling sphere momentum!
     const distToBall = Math.hypot(ballPos.x - selfPos.x, ballPos.z - selfPos.z);
     if (distToBall < 2.5) {
-        // Paced approach: target the hitting pocket 1.15m behind the ball along the shot line
-        // (outside the 0.95m physical contact boundary of athlete sphere + ball)
-        const pocketDist = 1.15;
+        // Decisive attack approach: drive directly through hitting pocket toward ball
+        const pocketDist = 0.95;
         _scratchApproachTarget.set(
             ballPos.x - _scratchShotDir.x * pocketDist,
             0,
             ballPos.z - _scratchShotDir.z * pocketDist
         );
         steerToward(inputSlot, selfPos, _scratchApproachTarget, {
-            sprint: false,
-            arrive: true,
-            arriveRadius: 0.7,
-            maxSpeed: (options.maxSpeed ?? 1.0) * 0.70,
-            minDrive: 0.0,
+            sprint: options.sprint ?? true,
+            arrive: false,
+            maxSpeed: options.maxSpeed ?? 1.0,
+            minDrive: 0.75,
             aimYaw,
             currentVel: selfVel,
         });
@@ -416,7 +414,7 @@ export function steerIdle(inputSlot) {
 export function shouldExecuteCut(currentVel, desiredDir, options = {}) {
     if (!currentVel || !desiredDir) return false;
     const hSpeed = Math.hypot(currentVel.x, currentVel.z);
-    const minSpeed = options.minSpeed ?? 3.0;
+    const minSpeed = options.minSpeed ?? 2.4;
     if (hSpeed < minSpeed) return false;
 
     const dirLen = Math.hypot(desiredDir.x, desiredDir.z);
@@ -429,13 +427,13 @@ export function shouldExecuteCut(currentVel, desiredDir, options = {}) {
 
     const alignment = vNormX * dNormX + vNormZ * dNormZ;
 
-    // Dot product < 0.25 corresponds to angle > ~75 degrees (sharp redirect / reversal)
-    if (alignment < 0.25) {
+    // Dot product < 0.35 corresponds to angle > ~69 degrees (sharp redirect / reversal)
+    if (alignment < (options.minAlignment ?? 0.35)) {
         return true;
     }
 
-    // Downhill slope descent check: lower threshold if sliding downhill fast
-    if (options.isDownhill && hSpeed > 2.8 && alignment < 0.5) {
+    // Downhill slope descent check: lower threshold if moving downhill fast
+    if (options.isDownhill && hSpeed > 2.2 && alignment < 0.55) {
         return true;
     }
 

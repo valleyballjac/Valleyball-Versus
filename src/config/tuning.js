@@ -1710,9 +1710,9 @@ const DEFAULTS = {
       interceptLeadFactor: 1.0,     // Exact parabolic pursuit prediction
       strikeTimingJitter: 0,        // 0 ticks jitter — sweet spot precision
       sprintUsage: 0.95,            // Relentless athletic sprints
-      diveAccuracy: 0.85,           // Clutch ground saves on own half
-      diveCooldownTicks: 180,       // 3.0 s cooldown between dives
-      spikeAccuracy: 0.90,          // Dominant downward spikes & jump-spikes
+      diveAccuracy: 0.95,           // Clutch ground saves on own half
+      diveCooldownTicks: 90,        // 1.5 s cooldown between dives
+      spikeAccuracy: 0.95,          // Dominant downward spikes & jump-spikes
       defensiveAwareness: 0.90,     // Active hoop lane blocking
       strategyUpdateInterval: 6,    // Rapid tactical adaptation
       positionOffset: 0.30,         // Clean tight 0.3m strike pocket directly behind ball
@@ -1724,8 +1724,8 @@ const DEFAULTS = {
       arriveRadiusChase: 0.9,
       arriveRadiusPosition: 0.5,
       arriveRadiusStrike: 0.2,
-      jumpHeightThreshold: 1.7,
-      diveDistMin: 2.0,
+      jumpHeightThreshold: 1.6,
+      diveDistMin: 1.6,
       diveDistMax: 4.8,
     },
   },

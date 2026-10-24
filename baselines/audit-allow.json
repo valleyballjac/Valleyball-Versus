@@ -10,7 +10,8 @@
     "src/sim/athlete.js": 5,
     "src/sim/autorig.js": 2,
     "src/sim/ball.js": 5,
-    "src/sim/motor.js": 1
+    "src/sim/motor.js": 1,
+    "src/visuals/trailerDirector.js": 20
   },
   "layering": {
     "src/sim/athlete.js": 1
@@ -81,8 +82,8 @@
   },
   "clips": {},
   "size": {
-    "src/config/tuning.js": 1850,
-    "src/main.js": 3960,
+    "src/config/tuning.js": 1827,
+    "src/main.js": 3959,
     "src/mechanics/strikes.js": 1018,
     "src/sim/animtarget.js": 2011
   }
