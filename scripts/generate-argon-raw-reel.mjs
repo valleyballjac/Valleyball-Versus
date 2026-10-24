@@ -421,13 +421,15 @@ async function runHarvest() {
         videoBitsPerSecond: 28000000
       });
 
-      recorder.ondataavailable = async (e) => {
+      // Upload chunks strictly one after another: concurrent POSTs interleave
+      // their bytes on the server and corrupt the WebM mid-file.
+      let uploadChain = Promise.resolve();
+      recorder.ondataavailable = (e) => {
         if (e.data && e.data.size > 0) {
-          try {
-            await fetch(`http://127.0.0.1:${chunkPort}/chunk`, { method: 'POST', body: e.data });
-          } catch (_) {}
+          uploadChain = uploadChain.then(() => fetch(`http://127.0.0.1:${chunkPort}/chunk`, { method: 'POST', body: e.data }).catch(() => {}));
         }
       };
+      const recorderStopped = new Promise(r => { recorder.onstop = r; });
 
       // Health check: real render rate, GPU, and window/context events while
       // recording, so a degraded clip is detected instead of silently kept.
@@ -480,7 +482,10 @@ async function runHarvest() {
 
       recorder.stop();
       if (window.__vb?.trailerDirector) window.__vb.trailerDirector.stop();
-      await new Promise(r => setTimeout(r, 500));
+      // The final chunk is delivered before onstop; wait for it to be uploaded
+      // so /done never closes the file under an in-flight chunk.
+      await recorderStopped;
+      await uploadChain;
       stream.getTracks().forEach(t => t.stop());
       await fetch(`http://127.0.0.1:${chunkPort}/done`, { method: 'POST' });
 
