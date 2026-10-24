@@ -172,7 +172,11 @@ async function runHarvest() {
   // Launch GPU Chromium
   console.log('[harvest] Spawning GPU-accelerated Chromium (1920x1080)...');
   const browser = await chromium.launch({
-    headless: false,
+    // New headless mode (full Chromium, no window) keeps hardware D3D11
+    // rendering. A headed window gets throttled to ~1 fps by Windows when it
+    // is minimized or loses the foreground, which ruined whole clip batches.
+    headless: true,
+    channel: 'chromium',
     args: [
       '--use-gl=angle',
       '--use-angle=d3d11',

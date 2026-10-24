@@ -126,6 +126,7 @@ function generate50GameMatrix() {
       stuntDesc: stuntInfo.desc,
       aggressiveness: 0.85 + ((i * 3) % 15) * 0.01,
       durationSec: 6.8, // 6.8s per clip (~5.5 minutes total compilation)
+      warmupSec: 6.0, // unrecorded live play before each clip
     });
   }
   return games;
@@ -222,7 +223,11 @@ async function runHarvest() {
   // 2. Launch Chromium with Direct3D 11 hardware acceleration
   console.log('[reel] Launching GPU Direct3D 11 Chromium (1920x1080)...');
   const browser = await chromium.launch({
-    headless: false,
+    // New headless mode (full Chromium, no window) keeps hardware D3D11
+    // rendering. A headed window gets throttled to ~1 fps by Windows when it
+    // is minimized or loses the foreground, which ruined whole clip batches.
+    headless: true,
+    channel: 'chromium',
     args: [
       '--use-gl=angle',
       '--use-angle=d3d11',
@@ -298,9 +303,9 @@ async function runHarvest() {
         { id: 'p2', name: 'Away Bot', team: g.away.team, variant: g.away.variant, cameraMode: 'chase', type: 'ai', difficulty: 'hard', aggressiveness: g.aggressiveness, primaryColor: g.away.color }
       ];
 
-      // Hide stadium scoreboards and hustle boards
-      if (window.__vb.scoreboards?.group) window.__vb.scoreboards.group.visible = false;
-      if (window.__vb.hustleBoards?.group) window.__vb.hustleBoards.group.visible = false;
+      // Show the v11 stadium scoreboards and hustle boards
+      if (window.__vb.scoreboards?.group) window.__vb.scoreboards.group.visible = true;
+      if (window.__vb.hustleBoards?.group) window.__vb.hustleBoards.group.visible = true;
 
       // Start match and activate raw reel director
       if (window.__vb?.startMatch) {
@@ -313,6 +318,10 @@ async function runHarvest() {
         window.__vb.matchState.isCountingDown = false;
         window.__vb.matchState.countdownTicksRemaining = 0;
       }
+
+      // Athletes spawn on the end ramps (z = ±40) and need ~5.5s to reach the
+      // ball, so let play develop before the reel camera and recorder start.
+      await new Promise(r => setTimeout(r, g.warmupSec * 1000));
 
       if (window.__vb?.trailerDirector) {
         window.__vb.trailerDirector.startRawReel(g.cameraMode, { stuntType: g.stuntType, duration: g.durationSec });
@@ -358,6 +367,25 @@ async function runHarvest() {
         }
       };
 
+      // Health check: real render rate, GPU, and window/context events while
+      // recording, so a degraded clip is detected instead of silently kept.
+      const gl = window.__vb?.renderer?.getContext?.();
+      const dbgInfo = gl?.getExtension('WEBGL_debug_renderer_info');
+      const gpu = dbgInfo ? gl.getParameter(dbgInfo.UNMASKED_RENDERER_WEBGL) : 'unknown';
+      let rafFrames = 0;
+      let countingFrames = true;
+      const countFrame = () => {
+        if (!countingFrames) return;
+        rafFrames++;
+        requestAnimationFrame(countFrame);
+      };
+      requestAnimationFrame(countFrame);
+      let hiddenEvents = 0;
+      const onVisibility = () => { if (document.visibilityState === 'hidden') hiddenEvents++; };
+      document.addEventListener('visibilitychange', onVisibility);
+      let contextLost = false;
+      canvas.addEventListener('webglcontextlost', () => { contextLost = true; }, { once: true });
+
       recorder.start(250);
 
       // Track athletic events during the round
@@ -384,6 +412,10 @@ async function runHarvest() {
         }
       }
 
+      countingFrames = false;
+      document.removeEventListener('visibilitychange', onVisibility);
+      const rafFps = rafFrames / g.durationSec;
+
       recorder.stop();
       if (window.__vb?.trailerDirector) window.__vb.trailerDirector.stop();
       await new Promise(r => setTimeout(r, 500));
@@ -397,6 +429,11 @@ async function runHarvest() {
         totalDives,
         sweetSpots,
         goalsScored,
+        rafFps,
+        gpu,
+        hiddenEvents,
+        visibility: document.visibilityState,
+        contextLost,
       };
     }, { g, chunkPort: CHUNK_SERVER_PORT });
 
@@ -407,6 +444,7 @@ async function runHarvest() {
     const rawSizeBytes = rawExists ? fs.statSync(rawFilePath).size : 0;
 
     console.log(`    ↳ Recorded: Top Speed: ${matchStats.maxBallSpeed.toFixed(1)} m/s | Dives: ${matchStats.totalDives} | Goals: ${matchStats.goalsScored} (${(rawSizeBytes / (1024*1024)).toFixed(1)} MB)`);
+    console.log(`    ↳ Health: ${matchStats.rafFps.toFixed(1)} fps | GPU: ${matchStats.gpu} | hidden events: ${matchStats.hiddenEvents} | visibility: ${matchStats.visibility} | context lost: ${matchStats.contextLost}`);
 
     // Transcode and Burn In Machine-Readable Slate with FFmpeg
     const clipId = String(idx + 1).padStart(2, '0');

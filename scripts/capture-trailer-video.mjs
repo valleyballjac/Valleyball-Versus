@@ -114,7 +114,11 @@ async function runCapture() {
   // 3. Launch GPU-Accelerated Chromium
   console.log('[capture] Spawning GPU-accelerated Chromium (1920x1080)...');
   const browser = await chromium.launch({
-    headless: false, // headed ensures full hardware D3D11 rendering at 60fps
+    // New headless mode (full Chromium, no window) keeps hardware D3D11
+    // rendering. A headed window gets throttled to ~1 fps by Windows when it
+    // is minimized or loses the foreground.
+    headless: true,
+    channel: 'chromium',
     args: [
       '--use-gl=angle',
       '--use-angle=d3d11',
