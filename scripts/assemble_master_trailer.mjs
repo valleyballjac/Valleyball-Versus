@@ -27,11 +27,17 @@ const OUT_DIR = path.join(ROOT, 'captures', 'trailer');
 // Written by scripts/generate-argon-raw-reel.mjs
 const RAW_CHUNKS_DIR = path.join(ROOT, 'captures', 'raw_footage', 'raw_chunks');
 const OVERTURE_SRC = path.join(OUT_DIR, 'valleyball_versus_debut_trailer_1080p60.mp4');
+// The untrimmed in-engine recording behind OVERTURE_SRC (same timeline). The
+// debut trims engine footage at 83.8s of video, which cuts the celestial arc
+// short whenever the engine clock lags the video.
+const INENGINE_RAW_SRC = path.join(OUT_DIR, 'raw_stream.webm');
 const MUSIC_SRC = path.join(ROOT, 'public', 'audio', 'music', 'track_trailer_neon_velocity.mp3');
 const TITLE_CARD_SRC = path.join(OUT_DIR, 'title_card_galaxy.png');
 
-const MASTER_OUTPUT = path.join(OUT_DIR, 'valleyball_versus_official_trailer_1080p60.mp4');
-const SOCIAL_OUTPUT = path.join(OUT_DIR, 'valleyball_versus_official_trailer_social_1080p.mp4');
+// Distinct from capture-trailer-video.mjs, which writes its in-engine-only cut
+// to valleyball_versus_official_trailer_*.mp4 and would overwrite these.
+const MASTER_OUTPUT = path.join(OUT_DIR, 'valleyball_versus_master_trailer_1080p60.mp4');
+const SOCIAL_OUTPUT = path.join(OUT_DIR, 'valleyball_versus_master_trailer_social_1080p.mp4');
 const MONTAGE_PREVIEW_OUTPUT = path.join(OUT_DIR, 'montage_preview_1080p60.mp4');
 
 // --montage-only renders just the gameplay cuts (44.2s – 76.6s) with the music
@@ -54,8 +60,8 @@ const CUT_LIST = [
     src: OVERTURE_SRC,
     startSec: 0.0,
     durationSec: 44.200,
-    desc: 'Monumental Architectural Overture (in-engine: stadium reveal, contenders, opening goals)',
-    filter: 'fade=t=in:st=0:d=2.0'
+    // No fade here: the capture already fades in from black over its first 2s
+    desc: 'Monumental Architectural Overture (in-engine: stadium reveal, contenders, opening goals)'
   },
 
   // ── PHASE 2: RHYTHMIC ACTION ESCALATION (44.200s – 62.200s | 10 Bars @ 1.800s) ──
@@ -97,24 +103,29 @@ const CUT_LIST = [
   { id: '32_sixteenth2', type: 'raw', file: 'game_25_raw.webm', startSec: 1.7, durationSec: 0.225, desc: '1/8 Note 2: Red strike' },
 
   // ── PHASE 4: CLIMAX TORUS GOAL & CELESTIAL ASCENSION (76.600s – 88.000s | 11.400s) ──
-  // Both from the in-engine capture: its staged showcase goal is built for this shot,
-  // where a raw-reel physics strike rarely threads the hoop. Times are provisional
-  // until checked against the re-recorded overture.
+  // One continuous stretch of the in-engine recording, placed so Goal 6 goes
+  // through the ring on the 78.4s downbeat. Its staged goal is built for this
+  // shot; a raw-reel physics strike rarely threads the hoop.
+  // Times are VIDEO times measured on the 2026-10-24 07:42 capture: the engine
+  // clock lags video by ~2s here (frames over 0.25s are clamped), so engine
+  // 72.10 (Shot 10B cut) = 74.25s, ring pass = 75.18s, engine 78.40 (Shot 11
+  // cut) = 80.73s. Re-measure these after re-recording the overture.
   {
     id: '33_climax_goal',
     type: 'video',
-    src: OVERTURE_SRC,
-    startSec: 72.800,
-    durationSec: 5.600,
-    desc: 'The Climax Torus Goal in 3/4 Side Profile (in-engine staged goal, Red vs Blue)'
+    src: INENGINE_RAW_SRC,
+    startSec: 73.380,
+    durationSec: 7.350,
+    desc: 'The Climax Torus Goal: Act III rally, cut on the beat to the ring view, spike through the ring on 78.4s'
   },
   {
     id: '34_celestial_ascend',
     type: 'video',
-    src: OVERTURE_SRC,
-    startSec: 77.200,
-    durationSec: 5.800,
-    desc: 'Celestial Ascension Arc (high soaring crane expanding upward above stadium floodlights)'
+    src: INENGINE_RAW_SRC,
+    startSec: 80.730,
+    durationSec: 4.050,
+    desc: 'Celestial Ascension Arc (Shot 11 crane rising over the stadium), dipping to black for the title',
+    filter: 'fade=t=out:st=3.25:d=0.8'
   },
 
   // ── PHASE 5: BRAND GALAXY OUTRO & TITLE CARD LOCK (88.000s – 94.500s | 6.500s) ──
@@ -366,16 +377,26 @@ async function assembleTrailer() {
   console.log(`  Size: ${(masterStat.size / (1024 * 1024)).toFixed(2)} MB`);
 
   // 4. Encode Social Web Cut (<25 MB for Twitter / Discord)
+  // Two-pass to a bitrate budget: CRF can't promise a file size (CRF 24.5 came
+  // out at 25.6 MB). 24 MB over the running time, less the audio track.
   console.log('\n[assembly] === STEP 5: ENCODING SOCIAL WEB CUT (<25 MB) ===');
+  const socialAudioKbps = 192;
+  const socialVideoKbps = Math.floor((24 * 8 * 1024 * 1024) / totalPlannedDuration / 1000) - socialAudioKbps;
+  const socialVideoArgs = [
+    '-c:v', 'libx264',
+    '-preset', 'slow',
+    '-b:v', `${socialVideoKbps}k`,
+    '-pix_fmt', 'yuv420p',
+    '-passlogfile', path.join(TEMP_DIR, 'social_2pass')
+  ];
+  execFileSync('ffmpeg', ['-y', '-i', MASTER_OUTPUT, ...socialVideoArgs, '-pass', '1', '-an', '-f', 'null', '-'], { stdio: 'inherit' });
   execFileSync('ffmpeg', [
     '-y',
     '-i', MASTER_OUTPUT,
-    '-c:v', 'libx264',
-    '-preset', 'slow',
-    '-crf', '24.5',
-    '-pix_fmt', 'yuv420p',
+    ...socialVideoArgs,
+    '-pass', '2',
     '-c:a', 'aac',
-    '-b:a', '192k',
+    '-b:a', `${socialAudioKbps}k`,
     SOCIAL_OUTPUT
   ], { stdio: 'inherit' });
 
