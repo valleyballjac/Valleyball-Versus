@@ -81,6 +81,9 @@ export function isDarkColor(hex) {
   return brightness < 70;
 }
 
+/** Canonical athletic broadcast display typography */
+const ATHLETIC_FONT = "'Orbitron', 'Impact', 'Arial Black', sans-serif";
+
 function drawTeamText(ctx, text, x, y, color, strokeWidth = 2.5) {
   if (isDarkColor(color)) {
     ctx.save();
@@ -101,20 +104,20 @@ function drawMicroClock(ctx, W, H, text, isMatchOver) {
   ctx.clearRect(0, 0, W, H);
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  const fontSize = text.length > 7 ? 32 : 38;
-  ctx.font = `bold ${fontSize}px ui-monospace, Consolas, monospace`;
+  const fontSize = text.length > 7 ? 34 : 44;
+  ctx.font = `900 ${fontSize}px ${ATHLETIC_FONT}`;
   ctx.fillStyle = isMatchOver ? INK.away : INK.value;
   ctx.fillText(text, W / 2, H / 2 + 1);
 }
 
 /** The palette. Reads dynamic team colors from TUNING so boards match athletes. */
 const INK = {
-  panelIdle: '#090e15',
+  panelIdle: '#0b111e', // Canonical obsidian stadium backdrop
   panelFlash: '#f0b429',
-  screenBorder: 'rgba(90, 140, 190, 0.35)',
-  rule: 'rgba(120, 170, 210, 0.25)',
-  label: '#7d97ad',
-  value: '#f2f8ff',
+  screenBorder: '#1e293b', // Anodized metallic bezel
+  rule: 'rgba(245, 245, 247, 0.20)', // Subtle chalk line divider
+  label: '#94a3b8',
+  value: '#f8fafc',
   get home() {
     return getHomeHex();
   },
@@ -122,13 +125,26 @@ const INK = {
     return getAwayHex();
   },
   get homeTint() {
-    return hexToRgba(this.home, 0.16);
+    return hexToRgba(this.home, 0.22);
   },
   get awayTint() {
-    return hexToRgba(this.away, 0.16);
+    return hexToRgba(this.away, 0.22);
   },
   flashInk: '#1a1205',
 };
+
+/**
+ * Draws a clean architectural Obsidian stadium bezel.
+ */
+function drawObsidianBezel(ctx, W, H) {
+  ctx.fillStyle = INK.panelIdle;
+  ctx.fillRect(0, 0, W, H);
+
+  // Outer dark metallic bezel frame
+  ctx.strokeStyle = INK.screenBorder;
+  ctx.lineWidth = 6;
+  ctx.strokeRect(3, 3, W - 6, H - 6);
+}
 
 /**
  * Builds the four boundary scoreboards and adds them to the scene.
@@ -176,8 +192,8 @@ export function createScoreboards(scene) {
     side: THREE.FrontSide,
   });
 
-  const clockGeometryEnd = new THREE.PlaneGeometry(4.4, 1.1);
-  const clockGeometrySide = new THREE.PlaneGeometry(3.6, 0.9);
+  const clockGeometryEnd = new THREE.PlaneGeometry(5.2, 1.3);
+  const clockGeometrySide = new THREE.PlaneGeometry(5.0, 1.3);
   const clockMeshes = [];
 
   const boards = [
@@ -187,8 +203,8 @@ export function createScoreboards(scene) {
     { key: 'west', side: 'side', x: -cfg.sideX, y: cfg.sideCenterY, z: 0 },
   ].map((spec) => {
     const canvas = document.createElement('canvas');
-    canvas.width = spec.side === 'end' ? (cfg.endCanvasWidth || 1024) : (cfg.sideCanvasWidth || 1280);
-    canvas.height = spec.side === 'end' ? (cfg.endCanvasHeight || 512) : (cfg.sideCanvasHeight || 256);
+    canvas.width = spec.side === 'end' ? (cfg.endCanvasWidth || 1024) : (cfg.sideCanvasWidth || 2048);
+    canvas.height = spec.side === 'end' ? (cfg.endCanvasHeight || 512) : (cfg.sideCanvasHeight || 512);
     const context = canvas.getContext('2d');
 
     const texture = new THREE.CanvasTexture(canvas);
@@ -217,9 +233,9 @@ export function createScoreboards(scene) {
     );
     clockMesh.name = `clock-${spec.key}`;
     // Positioned directly over the designated clock cutout area
-    // End: Y = +1.15m (canvas middle row between header pill and score rule)
-    // Side: Y = +0.70m (canvas upper center column between flanks and score line)
-    clockMesh.position.set(0, isEnd ? 1.15 : 0.70, 0.02);
+    // End: Y = +1.40m (canvas middle row between header pill and score rule)
+    // Side: Y = +1.25m (canvas upper center column between flanks and score line)
+    clockMesh.position.set(0, isEnd ? 1.40 : 1.25, 0.02);
     clockMesh.frustumCulled = true;
     screen.add(clockMesh);
     clockMeshes.push(clockMesh);
@@ -383,13 +399,8 @@ function drawEndBoard(board, probe, view) {
   const W = board.canvas.width;
   const H = board.canvas.height;
 
-  ctx.fillStyle = INK.panelIdle;
-  ctx.fillRect(0, 0, W, H);
-
-  // Recessed architectural border frame with clean 8px inset
-  ctx.strokeStyle = INK.screenBorder;
-  ctx.lineWidth = 5;
-  ctx.strokeRect(8, 8, W - 16, H - 16);
+  // Architectural Obsidian stadium bezel with canonical pink corner accents
+  drawObsidianBezel(ctx, W, H);
 
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
@@ -400,11 +411,11 @@ function drawEndBoard(board, probe, view) {
     const ink = INK.panelFlash;
 
     ctx.fillStyle = ink;
-    ctx.font = `bold ${Math.round(H * 0.18)}px ui-monospace, Consolas, monospace`;
+    ctx.font = `900 ${Math.round(H * 0.18)}px ${ATHLETIC_FONT}`;
     ctx.fillText('★  GOAL!  ★', W / 2, H * 0.22);
 
     ctx.fillStyle = '#ffffff';
-    ctx.font = `bold ${Math.round(H * 0.10)}px ui-monospace, Consolas, monospace`;
+    ctx.font = `800 ${Math.round(H * 0.10)}px ${ATHLETIC_FONT}`;
     ctx.fillText(
       `${scoringTeam} SCORED AT GOAL ${scoredAt === 'N' ? 'NORTH' : 'SOUTH'}`,
       W / 2,
@@ -413,7 +424,7 @@ function drawEndBoard(board, probe, view) {
 
     // Score on bottom
     ctx.fillStyle = ink;
-    ctx.font = `bold ${Math.round(H * 0.24)}px ui-monospace, Consolas, monospace`;
+    ctx.font = `900 ${Math.round(H * 0.26)}px ${ATHLETIC_FONT}`;
     ctx.fillText(`${probe.scoreHome} - ${probe.scoreAway}`, W / 2, H * 0.76);
     return;
   }
@@ -421,8 +432,6 @@ function drawEndBoard(board, probe, view) {
   // ─── STANDING END BOARD ──────────────────────────────────────────────────
 
   // 1. TOP HEADER: Which team is attacking THIS specific goal!
-  // North board: targetGoal == 'N' means Home attacks North; 'S' means Away attacks North.
-  // South board: targetGoal == 'S' means Home attacks South; 'N' means Away attacks South.
   const isNorth = board.key === 'north';
   const homeAttacksThis = isNorth ? (probe.targetGoal === 'N') : (probe.targetGoal === 'S');
   const attackingTeam = homeAttacksThis ? 'HOME' : 'AWAY';
@@ -430,70 +439,94 @@ function drawEndBoard(board, probe, view) {
   const darkTeam = isDarkColor(teamColor);
 
   // Inset pill safely below top frame
-  const pillW = Math.round(W * 0.84);
-  const pillH = Math.round(H * 0.135);
+  const pillW = Math.round(W * 0.88);
+  const pillH = Math.round(H * 0.15);
   const pillX = Math.round((W - pillW) / 2);
-  const pillY = Math.round(H * 0.065);
+  const pillY = Math.round(H * 0.06);
 
   ctx.fillStyle = darkTeam ? 'rgba(255, 255, 255, 0.12)' : (homeAttacksThis ? INK.homeTint : INK.awayTint);
   ctx.beginPath();
   ctx.roundRect(pillX, pillY, pillW, pillH, 8);
   ctx.fill();
   ctx.strokeStyle = darkTeam ? '#e2e8f0' : teamColor;
-  ctx.lineWidth = 2.5;
+  ctx.lineWidth = 3;
   ctx.stroke();
 
-  ctx.font = `bold ${Math.round(H * 0.068)}px ui-monospace, Consolas, monospace`;
-  const thisGoalName = isNorth ? 'NORTH' : 'SOUTH';
-  drawTeamText(ctx, `●  ${attackingTeam} ATTACKING GOAL ${thisGoalName}  ●`, W / 2, pillY + pillH / 2, teamColor, 3);
+  let bannerFontSize = Math.round(H * 0.065);
+  ctx.font = `900 ${bannerFontSize}px ${ATHLETIC_FONT}`;
+  const bannerText = `▼  ${attackingTeam} TARGET GOAL  ▼`;
+  while (ctx.measureText(bannerText).width > pillW - 48 && bannerFontSize > 18) {
+    bannerFontSize -= 2;
+    ctx.font = `900 ${bannerFontSize}px ${ATHLETIC_FONT}`;
+  }
+  drawTeamText(ctx, bannerText, W / 2, pillY + pillH / 2, teamColor, 3);
 
-  // 2. MIDDLE ROW: Match Clock / Practice Status / Full Time
-  // Handled by the decoupled micro-clock mesh overlay (PlaneGeometry child)
+  // 2. MIDDLE ROW: Match Clock handled by decoupled micro-clock mesh overlay
 
   // Thin separator rule
   ctx.strokeStyle = INK.rule;
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 2.5;
   ctx.beginPath();
-  ctx.moveTo(W * 0.10, H * 0.47);
-  ctx.lineTo(W * 0.90, H * 0.47);
+  ctx.moveTo(W * 0.08, H * 0.48);
+  ctx.lineTo(W * 0.92, H * 0.48);
   ctx.stroke();
 
-  // 3. BOTTOM ROW: THE PROMINENT SCORE LINE (as requested)
-  ctx.font = `bold ${Math.round(H * 0.075)}px ui-monospace, Consolas, monospace`;
-  drawTeamText(ctx, 'HOME', W * 0.30, H * 0.57, INK.home, 2.5);
-  drawTeamText(ctx, 'AWAY', W * 0.70, H * 0.57, INK.away, 2.5);
+  // 3. BOTTOM ROW: PROMINENT ATHLETIC SCORE LINE (STACKED BADGES OVER DIGITS)
+  const homeBadgeW = Math.round(W * 0.22);
+  const homeBadgeH = Math.round(H * 0.10);
+  const badgeY = Math.round(H * 0.56 - homeBadgeH / 2);
 
-  // Bold score numbers
-  ctx.font = `bold ${Math.round(H * 0.23)}px ui-monospace, Consolas, monospace`;
+  // Home badge
+  const homeBadgeX = Math.round(W * 0.30 - homeBadgeW / 2);
+  ctx.fillStyle = isDarkColor(INK.home) ? 'rgba(255, 255, 255, 0.15)' : INK.homeTint;
+  ctx.beginPath();
+  ctx.roundRect(homeBadgeX, badgeY, homeBadgeW, homeBadgeH, 8);
+  ctx.fill();
+  ctx.strokeStyle = isDarkColor(INK.home) ? '#e2e8f0' : INK.home;
+  ctx.lineWidth = 2.5;
+  ctx.stroke();
+
+  ctx.font = `900 ${Math.round(H * 0.068)}px ${ATHLETIC_FONT}`;
+  drawTeamText(ctx, 'HOME', W * 0.30, H * 0.56, INK.home, 2.5);
+
+  // Away badge
+  const awayBadgeX = Math.round(W * 0.70 - homeBadgeW / 2);
+  ctx.fillStyle = isDarkColor(INK.away) ? 'rgba(255, 255, 255, 0.15)' : INK.awayTint;
+  ctx.beginPath();
+  ctx.roundRect(awayBadgeX, badgeY, homeBadgeW, homeBadgeH, 8);
+  ctx.fill();
+  ctx.strokeStyle = isDarkColor(INK.away) ? '#e2e8f0' : INK.away;
+  ctx.lineWidth = 2.5;
+  ctx.stroke();
+
+  ctx.font = `900 ${Math.round(H * 0.068)}px ${ATHLETIC_FONT}`;
+  drawTeamText(ctx, 'AWAY', W * 0.70, H * 0.56, INK.away, 2.5);
+
+  // Colossal athletic score digits directly below badges
+  ctx.font = `900 ${Math.round(H * 0.28)}px ${ATHLETIC_FONT}`;
   ctx.fillStyle = INK.value;
-  ctx.fillText(String(probe.scoreHome), W * 0.30, H * 0.78);
-  ctx.fillText(String(probe.scoreAway), W * 0.70, H * 0.78);
+  ctx.fillText(String(probe.scoreHome), W * 0.30, H * 0.81);
+  ctx.fillText(String(probe.scoreAway), W * 0.70, H * 0.81);
 
   ctx.fillStyle = INK.label;
-  ctx.font = `bold ${Math.round(H * 0.15)}px ui-monospace, Consolas, monospace`;
-  ctx.fillText('-', W * 0.50, H * 0.77);
+  ctx.font = `900 ${Math.round(H * 0.18)}px ${ATHLETIC_FONT}`;
+  ctx.fillText('-', W * 0.50, H * 0.80);
 }
 
 /**
- * Draws the East or West centerline ribbon scoreboard (2048 x 256).
+ * Draws the East or West centerline ribbon scoreboard (2048 x 512).
  *
- * Prominently widened (~8.75:1): Left & right flanks show directional visual indicators
- * of which team is attacking toward the North and South goals with generous padding for
- * the full "ATTACKING GOAL NORTH/SOUTH" text. Center column holds the clock on top and
- * the score line on the bottom.
+ * Monumental scale: Left & right flanks show high-contrast directional chevron indicators
+ * of which team is attacking toward the North and South goals. Center column holds the
+ * clock on top and the prominent athletic score line on the bottom.
  */
 function drawSideBoard(board, probe, view) {
   const ctx = board.context;
   const W = board.canvas.width;
   const H = board.canvas.height;
 
-  ctx.fillStyle = INK.panelIdle;
-  ctx.fillRect(0, 0, W, H);
-
-  // Recessed architectural border frame
-  ctx.strokeStyle = INK.screenBorder;
-  ctx.lineWidth = 5;
-  ctx.strokeRect(2.5, 2.5, W - 5, H - 5);
+  // Architectural Obsidian stadium bezel with canonical pink corner accents
+  drawObsidianBezel(ctx, W, H);
 
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
@@ -504,15 +537,15 @@ function drawSideBoard(board, probe, view) {
     const ink = INK.panelFlash;
 
     ctx.fillStyle = ink;
-    ctx.font = `bold ${Math.round(H * 0.28)}px ui-monospace, Consolas, monospace`;
-    ctx.fillText(`★  GOAL SCORED BY ${scoringTeam}  ★`, W / 2, H * 0.32);
+    ctx.font = `900 ${Math.round(H * 0.20)}px ${ATHLETIC_FONT}`;
+    ctx.fillText(`★  GOAL SCORED BY ${scoringTeam}  ★`, W / 2, H * 0.30);
 
     ctx.fillStyle = '#ffffff';
-    ctx.font = `bold ${Math.round(H * 0.32)}px ui-monospace, Consolas, monospace`;
+    ctx.font = `800 ${Math.round(H * 0.12)}px ${ATHLETIC_FONT}`;
     ctx.fillText(
       `SCORED AT GOAL ${scoredAt === 'N' ? 'NORTH' : 'SOUTH'}  |  HOME ${probe.scoreHome} - ${probe.scoreAway} AWAY`,
       W / 2,
-      H * 0.72,
+      H * 0.70,
     );
     return;
   }
@@ -540,77 +573,116 @@ function drawSideBoard(board, probe, view) {
   const darkRight = isDarkColor(rightColor);
 
   // 1. LEFT FLANK (Directional attack indicator toward left goal)
-  const flankW = 692;
-  const flankH = Math.round(H * 0.74);
+  const flankW = 660;
+  const flankH = Math.round(H * 0.78);
   const flankY = Math.round((H - flankH) / 2);
   const leftX = 24;
 
   ctx.fillStyle = darkLeft ? 'rgba(255, 255, 255, 0.12)' : (leftTeam === 'HOME' ? INK.homeTint : INK.awayTint);
   ctx.beginPath();
-  ctx.roundRect(leftX, flankY, flankW, flankH, 8);
+  ctx.roundRect(leftX, flankY, flankW, flankH, 10);
   ctx.fill();
   ctx.strokeStyle = darkLeft ? '#e2e8f0' : leftColor;
-  ctx.lineWidth = 2.5;
+  ctx.lineWidth = 3;
   ctx.stroke();
 
-  ctx.font = `bold ${Math.round(H * 0.21)}px ui-monospace, Consolas, monospace`;
-  drawTeamText(ctx, `◀  ${leftTeam}`, leftX + flankW / 2, flankY + flankH * 0.36, leftColor, 3.5);
-
-  ctx.fillStyle = '#e6f1fc';
-  ctx.font = `bold ${Math.round(H * 0.135)}px ui-monospace, Consolas, monospace`;
-  ctx.fillText(`ATTACKING ${leftGoalLabel}`, leftX + flankW / 2, flankY + flankH * 0.74);
+  const leftText = `◀◀◀  ${leftTeam}`;
+  let leftFontSize = Math.round(H * 0.14);
+  ctx.font = `900 ${leftFontSize}px ${ATHLETIC_FONT}`;
+  while (ctx.measureText(leftText).width > flankW - 80 && leftFontSize > 22) {
+    leftFontSize -= 2;
+    ctx.font = `900 ${leftFontSize}px ${ATHLETIC_FONT}`;
+  }
+  drawTeamText(ctx, leftText, leftX + flankW / 2, flankY + flankH / 2, leftColor, 3.5);
 
   // 2. RIGHT FLANK (Directional attack indicator toward right goal)
   const rightX = W - flankW - 24;
 
   ctx.fillStyle = darkRight ? 'rgba(255, 255, 255, 0.12)' : (rightTeam === 'HOME' ? INK.homeTint : INK.awayTint);
   ctx.beginPath();
-  ctx.roundRect(rightX, flankY, flankW, flankH, 8);
+  ctx.roundRect(rightX, flankY, flankW, flankH, 10);
   ctx.fill();
   ctx.strokeStyle = darkRight ? '#e2e8f0' : rightColor;
-  ctx.lineWidth = 2.5;
+  ctx.lineWidth = 3;
   ctx.stroke();
 
-  ctx.font = `bold ${Math.round(H * 0.21)}px ui-monospace, Consolas, monospace`;
-  drawTeamText(ctx, `${rightTeam}  ▶`, rightX + flankW / 2, flankY + flankH * 0.36, rightColor, 3.5);
+  const rightText = `${rightTeam}  ▶▶▶`;
+  let rightFontSize = Math.round(H * 0.14);
+  ctx.font = `900 ${rightFontSize}px ${ATHLETIC_FONT}`;
+  while (ctx.measureText(rightText).width > flankW - 80 && rightFontSize > 22) {
+    rightFontSize -= 2;
+    ctx.font = `900 ${rightFontSize}px ${ATHLETIC_FONT}`;
+  }
+  drawTeamText(ctx, rightText, rightX + flankW / 2, flankY + flankH / 2, rightColor, 3.5);
 
-  ctx.fillStyle = '#e6f1fc';
-  ctx.font = `bold ${Math.round(H * 0.135)}px ui-monospace, Consolas, monospace`;
-  ctx.fillText(`ATTACKING ${rightGoalLabel}`, rightX + flankW / 2, flankY + flankH * 0.74);
-
-  // 3. CENTER COLUMN: Clock on top, SCORE LINE ON BOTTOM
+  // 3. CENTER COLUMN: Clock on top, ATHLETIC SCORE LINE ON BOTTOM (NO VERTICAL DIVIDERS)
   const centerX = W / 2;
 
-  // Vertical boundary dividers separating flanks from center
+  // Horizontal separator between micro-clock and score line
   ctx.strokeStyle = INK.rule;
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 2.0;
   ctx.beginPath();
-  ctx.moveTo(leftX + flankW + 12, H * 0.12);
-  ctx.lineTo(leftX + flankW + 12, H * 0.88);
-  ctx.moveTo(rightX - 12, H * 0.12);
-  ctx.lineTo(rightX - 12, H * 0.88);
+  ctx.moveTo(leftX + flankW + 48, H * 0.46);
+  ctx.lineTo(rightX - 48, H * 0.46);
   ctx.stroke();
 
-  // Match clock on upper half is handled by the decoupled micro-clock mesh overlay
+  // PROMINENT ATHLETIC SCORE LINE: MATCH FLANK SIDES SPATIALLY
+  // Left column matches leftTeam, Right column matches rightTeam
+  const leftColTeam = leftTeam; // 'HOME' or 'AWAY'
+  const rightColTeam = rightTeam; // 'AWAY' or 'HOME'
+  const leftScore = leftColTeam === 'HOME' ? probe.scoreHome : probe.scoreAway;
+  const rightScore = rightColTeam === 'HOME' ? probe.scoreHome : probe.scoreAway;
+  const leftInk = leftColTeam === 'HOME' ? INK.home : INK.away;
+  const rightInk = rightColTeam === 'HOME' ? INK.home : INK.away;
+  const leftTint = leftColTeam === 'HOME' ? INK.homeTint : INK.awayTint;
+  const rightTint = rightColTeam === 'HOME' ? INK.homeTint : INK.awayTint;
 
-  // SCORE LINE ON THE BOTTOM (as requested)
-  ctx.font = `bold ${Math.round(H * 0.13)}px ui-monospace, Consolas, monospace`;
-  drawTeamText(ctx, 'HOME', centerX - 170, H * 0.70, INK.home, 3);
+  const badgeW = 150;
+  const badgeH = 40;
+  const badgeY = Math.round(H * 0.56 - badgeH / 2);
 
-  ctx.font = `bold ${Math.round(H * 0.32)}px ui-monospace, Consolas, monospace`;
+  // Left stack (matches leftTeam)
+  const leftColX = centerX - 140;
+  const leftBadgeX = Math.round(leftColX - badgeW / 2);
+  ctx.fillStyle = isDarkColor(leftInk) ? 'rgba(255, 255, 255, 0.15)' : leftTint;
+  ctx.beginPath();
+  ctx.roundRect(leftBadgeX, badgeY, badgeW, badgeH, 6);
+  ctx.fill();
+  ctx.strokeStyle = isDarkColor(leftInk) ? '#e2e8f0' : leftInk;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  ctx.font = `900 ${Math.round(H * 0.07)}px ${ATHLETIC_FONT}`;
+  drawTeamText(ctx, leftColTeam, leftColX, H * 0.56, leftInk, 2.5);
+
+  // Left score number below badge
+  ctx.font = `900 ${Math.round(H * 0.28)}px ${ATHLETIC_FONT}`;
   ctx.fillStyle = INK.value;
-  ctx.fillText(String(probe.scoreHome), centerX - 82, H * 0.70);
+  ctx.fillText(String(leftScore), leftColX, H * 0.81);
 
+  // Divider dash
   ctx.fillStyle = INK.label;
-  ctx.font = `bold ${Math.round(H * 0.22)}px ui-monospace, Consolas, monospace`;
-  ctx.fillText('-', centerX, H * 0.69);
+  ctx.font = `900 ${Math.round(H * 0.18)}px ${ATHLETIC_FONT}`;
+  ctx.fillText('-', centerX, H * 0.80);
 
-  ctx.font = `bold ${Math.round(H * 0.32)}px ui-monospace, Consolas, monospace`;
+  // Right stack (matches rightTeam)
+  const rightColX = centerX + 140;
+  const rightBadgeX = Math.round(rightColX - badgeW / 2);
+  ctx.fillStyle = isDarkColor(rightInk) ? 'rgba(255, 255, 255, 0.15)' : rightTint;
+  ctx.beginPath();
+  ctx.roundRect(rightBadgeX, badgeY, badgeW, badgeH, 6);
+  ctx.fill();
+  ctx.strokeStyle = isDarkColor(rightInk) ? '#e2e8f0' : rightInk;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  ctx.font = `900 ${Math.round(H * 0.07)}px ${ATHLETIC_FONT}`;
+  drawTeamText(ctx, rightColTeam, rightColX, H * 0.56, rightInk, 2.5);
+
+  // Right score number below badge
+  ctx.font = `900 ${Math.round(H * 0.28)}px ${ATHLETIC_FONT}`;
   ctx.fillStyle = INK.value;
-  ctx.fillText(String(probe.scoreAway), centerX + 82, H * 0.70);
-
-  ctx.font = `bold ${Math.round(H * 0.13)}px ui-monospace, Consolas, monospace`;
-  drawTeamText(ctx, 'AWAY', centerX + 170, H * 0.70, INK.away, 3);
+  ctx.fillText(String(rightScore), rightColX, H * 0.81);
 }
 
 /**

@@ -44,7 +44,7 @@ export function moveScreen1Row(col, delta) {
   let next = cur + delta;
   if (cur === 0 && delta > 0 && !isAi) next = 2;
   if (cur === 2 && delta < 0 && !isAi) next = 0;
-  next = Math.max(0, Math.min(7, next));
+  next = Math.max(0, Math.min(8, next));
   navCallbacks.playerSetup.playerFocusRow[col] = next;
   navCallbacks.playerSetup.updateFocusUI();
   soundManager.playTone(520, 0.035, 'sine', 0.12);
@@ -233,47 +233,47 @@ export function startMenuGamepadPolling() {
       }
       if (e.code === 'ArrowDown' || e.code === 'KeyS') {
         e.preventDefault();
-        navCallbacks.playerSetup.playerFocusRow[0] = Math.min(7, navCallbacks.playerSetup.playerFocusRow[0] + 1);
+        navCallbacks.playerSetup.playerFocusRow[0] = Math.min(8, navCallbacks.playerSetup.playerFocusRow[0] + 1);
         navCallbacks.playerSetup.updateFocusUI();
         return;
       }
       if (e.code === 'ArrowLeft' || e.code === 'KeyA') {
         e.preventDefault();
-        if (navCallbacks.playerSetup.playerFocusRow[0] === 7) {
+        if (navCallbacks.playerSetup.playerFocusRow[0] === 8) {
           navCallbacks.playerSetup.practiceActionCol = 0;
           navCallbacks.playerSetup.updateFocusUI();
           soundManager.playTone(400, 0.04, 'sine', 0.15);
-        } else if (navCallbacks.playerSetup.playerFocusRow[0] === 6) {
+        } else if (navCallbacks.playerSetup.playerFocusRow[0] === 7) {
           navCallbacks.playerSetup.cycleMatchBall(-1);
-        } else if (navCallbacks.playerSetup.playerFocusRow[0] >= 1 && navCallbacks.playerSetup.playerFocusRow[0] <= 5) {
+        } else if (navCallbacks.playerSetup.playerFocusRow[0] >= 1 && navCallbacks.playerSetup.playerFocusRow[0] <= 6) {
           navCallbacks.playerSetup.cycleOption(0, navCallbacks.playerSetup.playerFocusRow[0], -1);
         }
         return;
       }
       if (e.code === 'ArrowRight' || e.code === 'KeyD') {
         e.preventDefault();
-        if (navCallbacks.playerSetup.playerFocusRow[0] === 7) {
+        if (navCallbacks.playerSetup.playerFocusRow[0] === 8) {
           navCallbacks.playerSetup.practiceActionCol = 1;
           navCallbacks.playerSetup.updateFocusUI();
           soundManager.playTone(400, 0.04, 'sine', 0.15);
-        } else if (navCallbacks.playerSetup.playerFocusRow[0] === 6) {
+        } else if (navCallbacks.playerSetup.playerFocusRow[0] === 7) {
           navCallbacks.playerSetup.cycleMatchBall(1);
-        } else if (navCallbacks.playerSetup.playerFocusRow[0] >= 1 && navCallbacks.playerSetup.playerFocusRow[0] <= 5) {
+        } else if (navCallbacks.playerSetup.playerFocusRow[0] >= 1 && navCallbacks.playerSetup.playerFocusRow[0] <= 6) {
           navCallbacks.playerSetup.cycleOption(0, navCallbacks.playerSetup.playerFocusRow[0], 1);
         }
         return;
       }
       if (e.code === 'Space' || e.code === 'Enter') {
         e.preventDefault();
-        if (navCallbacks.playerSetup.playerFocusRow[0] === 7) {
+        if (navCallbacks.playerSetup.playerFocusRow[0] === 8) {
           if (navCallbacks.playerSetup.practiceActionCol === 0) {
             navCallbacks.playerSetup.btnBack?.click();
           } else {
             navCallbacks.playerSetup.launchMatchNow();
           }
-        } else if (navCallbacks.playerSetup.playerFocusRow[0] === 6) {
+        } else if (navCallbacks.playerSetup.playerFocusRow[0] === 7) {
           navCallbacks.playerSetup.cycleMatchBall(1);
-        } else if (navCallbacks.playerSetup.playerFocusRow[0] >= 1 && navCallbacks.playerSetup.playerFocusRow[0] <= 5) {
+        } else if (navCallbacks.playerSetup.playerFocusRow[0] >= 1 && navCallbacks.playerSetup.playerFocusRow[0] <= 6) {
           navCallbacks.playerSetup.cycleOption(0, navCallbacks.playerSetup.playerFocusRow[0], 1);
         }
         return;
@@ -396,7 +396,7 @@ export function startMenuGamepadPolling() {
       e.preventDefault();
       const col = navCallbacks.playerSetup.focusedColumn;
       const row = navCallbacks.playerSetup.playerFocusRow[col];
-      if (row === 7) {
+      if (row === 8) {
         navCallbacks.playerSetup.screen1ActionCol = 0;
         navCallbacks.playerSetup.updateFocusUI();
         soundManager.playTone(400, 0.04, 'sine', 0.15);
@@ -409,7 +409,7 @@ export function startMenuGamepadPolling() {
       e.preventDefault();
       const col = navCallbacks.playerSetup.focusedColumn;
       const row = navCallbacks.playerSetup.playerFocusRow[col];
-      if (row === 7) {
+      if (row === 8) {
         navCallbacks.playerSetup.screen1ActionCol = 1;
         navCallbacks.playerSetup.updateFocusUI();
         soundManager.playTone(400, 0.04, 'sine', 0.15);
@@ -435,7 +435,7 @@ export function startMenuGamepadPolling() {
     if (e.code === 'KeyA') {
       e.preventDefault();
       navCallbacks.playerSetup.focusedColumn = 0;
-      if (navCallbacks.playerSetup.playerFocusRow[0] === 7) {
+      if (navCallbacks.playerSetup.playerFocusRow[0] === 8) {
         navCallbacks.playerSetup.screen1ActionCol = 0;
         navCallbacks.playerSetup.updateFocusUI();
         soundManager.playTone(400, 0.04, 'sine', 0.15);
@@ -447,7 +447,7 @@ export function startMenuGamepadPolling() {
     if (e.code === 'KeyD') {
       e.preventDefault();
       navCallbacks.playerSetup.focusedColumn = 0;
-      if (navCallbacks.playerSetup.playerFocusRow[0] === 7) {
+      if (navCallbacks.playerSetup.playerFocusRow[0] === 8) {
         navCallbacks.playerSetup.screen1ActionCol = 1;
         navCallbacks.playerSetup.updateFocusUI();
         soundManager.playTone(400, 0.04, 'sine', 0.15);
@@ -458,7 +458,7 @@ export function startMenuGamepadPolling() {
     }
     if (e.code === 'Space') {
       e.preventDefault();
-      if (navCallbacks.playerSetup.playerFocusRow[0] === 7) {
+      if (navCallbacks.playerSetup.playerFocusRow[0] === 8) {
         if (navCallbacks.playerSetup.screen1ActionCol === 0) {
           navCallbacks.playerSetup.btnBack?.click();
         } else {
@@ -487,7 +487,7 @@ export function startMenuGamepadPolling() {
     if (e.code === 'KeyJ') {
       e.preventDefault();
       navCallbacks.playerSetup.focusedColumn = 1;
-      if (navCallbacks.playerSetup.playerFocusRow[1] === 7) {
+      if (navCallbacks.playerSetup.playerFocusRow[1] === 8) {
         navCallbacks.playerSetup.screen1ActionCol = 0;
         navCallbacks.playerSetup.updateFocusUI();
         soundManager.playTone(400, 0.04, 'sine', 0.15);
@@ -499,7 +499,7 @@ export function startMenuGamepadPolling() {
     if (e.code === 'KeyL') {
       e.preventDefault();
       navCallbacks.playerSetup.focusedColumn = 1;
-      if (navCallbacks.playerSetup.playerFocusRow[1] === 7) {
+      if (navCallbacks.playerSetup.playerFocusRow[1] === 8) {
         navCallbacks.playerSetup.screen1ActionCol = 1;
         navCallbacks.playerSetup.updateFocusUI();
         soundManager.playTone(400, 0.04, 'sine', 0.15);
@@ -511,7 +511,7 @@ export function startMenuGamepadPolling() {
     if (e.code === 'Enter') {
       e.preventDefault();
       const targetIdx = navCallbacks.playerSetup.focusedColumn;
-      if (navCallbacks.playerSetup.playerFocusRow[targetIdx] === 7) {
+      if (navCallbacks.playerSetup.playerFocusRow[targetIdx] === 8) {
         if (navCallbacks.playerSetup.screen1ActionCol === 0) {
           navCallbacks.playerSetup.btnBack?.click();
         } else {
@@ -702,29 +702,29 @@ export function startMenuGamepadPolling() {
           navCallbacks.playerSetup.updateFocusUI();
         }
         if (down && !prev.down) {
-          navCallbacks.playerSetup.playerFocusRow[0] = Math.min(7, navCallbacks.playerSetup.playerFocusRow[0] + 1);
+          navCallbacks.playerSetup.playerFocusRow[0] = Math.min(8, navCallbacks.playerSetup.playerFocusRow[0] + 1);
           navCallbacks.playerSetup.updateFocusUI();
         }
 
         if (left && !prev.left) {
-          if (navCallbacks.playerSetup.playerFocusRow[0] === 7) {
+          if (navCallbacks.playerSetup.playerFocusRow[0] === 8) {
             navCallbacks.playerSetup.practiceActionCol = 0;
             navCallbacks.playerSetup.updateFocusUI();
             soundManager.playTone(400, 0.04, 'sine', 0.15);
-          } else if (navCallbacks.playerSetup.playerFocusRow[0] === 6) {
+          } else if (navCallbacks.playerSetup.playerFocusRow[0] === 7) {
             navCallbacks.playerSetup.cycleMatchBall(-1);
-          } else if (navCallbacks.playerSetup.playerFocusRow[0] >= 1 && navCallbacks.playerSetup.playerFocusRow[0] <= 5) {
+          } else if (navCallbacks.playerSetup.playerFocusRow[0] >= 1 && navCallbacks.playerSetup.playerFocusRow[0] <= 6) {
             navCallbacks.playerSetup.cycleOption(0, navCallbacks.playerSetup.playerFocusRow[0], -1);
           }
         }
         if (right && !prev.right) {
-          if (navCallbacks.playerSetup.playerFocusRow[0] === 7) {
+          if (navCallbacks.playerSetup.playerFocusRow[0] === 8) {
             navCallbacks.playerSetup.practiceActionCol = 1;
             navCallbacks.playerSetup.updateFocusUI();
             soundManager.playTone(400, 0.04, 'sine', 0.15);
-          } else if (navCallbacks.playerSetup.playerFocusRow[0] === 6) {
+          } else if (navCallbacks.playerSetup.playerFocusRow[0] === 7) {
             navCallbacks.playerSetup.cycleMatchBall(1);
-          } else if (navCallbacks.playerSetup.playerFocusRow[0] >= 1 && navCallbacks.playerSetup.playerFocusRow[0] <= 5) {
+          } else if (navCallbacks.playerSetup.playerFocusRow[0] >= 1 && navCallbacks.playerSetup.playerFocusRow[0] <= 6) {
             navCallbacks.playerSetup.cycleOption(0, navCallbacks.playerSetup.playerFocusRow[0], 1);
           }
         }
@@ -733,15 +733,15 @@ export function startMenuGamepadPolling() {
         if (btnRB && !prev.rb) navCallbacks.playerSetup.cycleMatchBall(1);
 
         if (btnA && !prev.a) {
-          if (navCallbacks.playerSetup.playerFocusRow[0] === 7) {
+          if (navCallbacks.playerSetup.playerFocusRow[0] === 8) {
             if (navCallbacks.playerSetup.practiceActionCol === 0) {
               navCallbacks.playerSetup.btnBack?.click();
             } else {
               navCallbacks.playerSetup.launchMatchNow();
             }
-          } else if (navCallbacks.playerSetup.playerFocusRow[0] === 6) {
+          } else if (navCallbacks.playerSetup.playerFocusRow[0] === 7) {
             navCallbacks.playerSetup.cycleMatchBall(1);
-          } else if (navCallbacks.playerSetup.playerFocusRow[0] >= 1 && navCallbacks.playerSetup.playerFocusRow[0] <= 5) {
+          } else if (navCallbacks.playerSetup.playerFocusRow[0] >= 1 && navCallbacks.playerSetup.playerFocusRow[0] <= 6) {
             navCallbacks.playerSetup.cycleOption(0, navCallbacks.playerSetup.playerFocusRow[0], 1);
           }
         }
@@ -1007,7 +1007,7 @@ export function startMenuGamepadPolling() {
       if (left && !prev.left) {
         const col = navCallbacks.playerSetup.focusedColumn;
         const row = navCallbacks.playerSetup.playerFocusRow[col];
-        if (row === 7) {
+        if (row === 8) {
           navCallbacks.playerSetup.screen1ActionCol = 0;
           navCallbacks.playerSetup.updateFocusUI();
           soundManager.playTone(400, 0.04, 'sine', 0.15);
@@ -1021,7 +1021,7 @@ export function startMenuGamepadPolling() {
       if (right && !prev.right) {
         const col = navCallbacks.playerSetup.focusedColumn;
         const row = navCallbacks.playerSetup.playerFocusRow[col];
-        if (row === 7) {
+        if (row === 8) {
           navCallbacks.playerSetup.screen1ActionCol = 1;
           navCallbacks.playerSetup.updateFocusUI();
           soundManager.playTone(400, 0.04, 'sine', 0.15);
@@ -1049,7 +1049,7 @@ export function startMenuGamepadPolling() {
       if (btnA && !prev.a) {
         const col = navCallbacks.playerSetup.focusedColumn;
         const row = navCallbacks.playerSetup.playerFocusRow[col];
-        if (row === 7) {
+        if (row === 8) {
           if (navCallbacks.playerSetup.screen1ActionCol === 0) {
             navCallbacks.playerSetup.btnBack?.click();
           } else {
@@ -1116,7 +1116,7 @@ export function startMenuGamepadPolling() {
 
       if (left && !prev.left) {
         const row = navCallbacks.playerSetup.playerFocusRow[playerIdx];
-        if (row === 7) {
+        if (row === 8) {
           navCallbacks.playerSetup.screen1ActionCol = 0;
           navCallbacks.playerSetup.updateFocusUI();
           soundManager.playTone(400, 0.04, 'sine', 0.15);
@@ -1129,7 +1129,7 @@ export function startMenuGamepadPolling() {
       }
       if (right && !prev.right) {
         const row = navCallbacks.playerSetup.playerFocusRow[playerIdx];
-        if (row === 7) {
+        if (row === 8) {
           navCallbacks.playerSetup.screen1ActionCol = 1;
           navCallbacks.playerSetup.updateFocusUI();
           soundManager.playTone(400, 0.04, 'sine', 0.15);
@@ -1143,7 +1143,7 @@ export function startMenuGamepadPolling() {
 
       if (btnA && !prev.a) {
         const row = navCallbacks.playerSetup.playerFocusRow[playerIdx];
-        if (row === 7) {
+        if (row === 8) {
           if (navCallbacks.playerSetup.screen1ActionCol === 0) {
             navCallbacks.playerSetup.btnBack?.click();
           } else {
@@ -1206,4 +1206,4 @@ export function stopSetupGamepadPolling() {
     window._cleanupSetupListeners = null;
   }
 }
-
+

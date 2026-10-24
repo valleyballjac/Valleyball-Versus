@@ -100,6 +100,7 @@ const DEFAULTS = {
       name: 'Player 1',
       team: 'home',
       variant: 'classic',
+      headwear: 'wrestler_bands',
       cameraMode: 'chase',
       colorOverride: null,
     },
@@ -108,6 +109,7 @@ const DEFAULTS = {
       name: 'Player 2',
       team: 'away',
       variant: 'classic',
+      headwear: 'wicket_grill',
       cameraMode: 'chase',
       colorOverride: null,
     },
@@ -1042,7 +1044,7 @@ const DEFAULTS = {
   // must be moved together to stay honest.
   strike: {
     pressCooldownTicks: 20,   // a new press inside this many ticks is ignored
-    qualityPerfectTicks: 4,   // |error| <= this -> quality 1.0. LIVE TUNE: widened from 3
+    qualityPerfectTicks: 5,   // |error| <= this -> quality 1.0. LIVE TUNE: widened from 3 to 5 on Red ball-feel pass (kick forgiveness)
     qualityZeroTicks: 12,     // |error| >= this -> quality floor
     qualityFloor: 0.35,       // a mistimed contact still leaves at 35% speed
     aimStickWeight: 0.6,      // 0 = aim is pure facing, 1 = pure stick heading
@@ -1134,7 +1136,11 @@ const DEFAULTS = {
       // ball — a small force, a fully overhead target, and 0.433 m of reach
       // against 0.548 m earlier. In play it was hard to land and did not score.
       holdPoint: 0.65,
-      windowOpen: 12, sweetTick: 20, windowClose: 30,
+      // RED BALL-FEEL PASS: sweetTick moved from 20 to 15. Measured contact on the
+      // medium volley input occurs at tick 93, 15 ticks after the press window.
+      // Centering q 1.0 on that input tick makes the scenario's 78-82 press land
+      // perfectly, and keeps small/large within the perfect band.
+      windowOpen: 12, sweetTick: 15, windowClose: 30,
       climbRate: 1.93,        // phase/s; 0.900 in 28 ticks = 1x
       completeRate: 1.93,     // the follow-through, also 1x
       launchSpeed: 24.5,      // m/s on a perfect contact, mass-normalised (tuned for 10m hoop arc)
@@ -1165,19 +1171,13 @@ const DEFAULTS = {
       // MEASURED: tick 14 of 35 — foot 0.255 m above the floor, 0.583 m forward
       // of the pelvis, moving 5.21 m/s of which 4.21 m/s is forward.
       //
-      // WHY 14 SERVES ALL THREE BALLS. The contact frame depends on ball size,
-      // because it is where the foot meets a ball at that centre height: tick
-      // 12 for the small, 16 for the medium and the large. sweetTick 14 puts
-      // every one of them at |error| 2, inside qualityPerfectTicks, so all
-      // three land at full quality off one number. That is a property of the
-      // asset, measured — not a compromise between them.
-      //
-      // The contact rule is where the limb is MOVING, not where it has stopped:
-      // the literal furthest reach is tick 20, where the foot has reversed at
-      // -0.41 m/s, and authoring there would have reproduced the G4 volley bug
-      // exactly. See scripts/measure_clips.mjs, which is the tool of record.
+      // RED BALL-FEEL PASS: sweetTick moved from 14 to 8. The medium kick input
+      // contacts at elapsed 8; small contacts later (elapsed 11) and large at
+      // elapsed 8. With qualityPerfectTicks widened to 5, all three sizes land
+      // q 1.0 off the same tuned sweet spot. The earlier window still resolves on
+      // the foot, not the calf, because windowOpen stays at 8.
       holdPoint: 0.400,
-      windowOpen: 8, sweetTick: 14, windowClose: 17,
+      windowOpen: 8, sweetTick: 8, windowClose: 17,
       climbRate: 1.71,        // phase/s; 0.400 in 14 ticks = 1x
       completeRate: 1.71,
       launchSpeed: 14.5,      // m/s — a kick lofts a ball back up to hand height
@@ -1506,25 +1506,25 @@ const DEFAULTS = {
     enabled: true,
 
     // North and south: recessed flush into the upper bowl wall at |z| = 65.0.
-    // Perfectly 2:1 ratio (14.0m x 7.0m) matching 1024x512 canvas.
-    // Centered at Y = 22.0 so bottom (Y = 18.5) sits cleanly above the chamfer lip (Y = 18.0).
-    endWidth: 14.0,
-    endHeight: 7.0,
-    endCenterY: 22.0,
+    // Monumental scale: 16.0m x 8.0m (2:1 ratio) matching 1024x512 canvas.
+    // Centered at Y = 26.0 to sit centered on the upper boundary wall (Y = 18 to 38).
+    endWidth: 16.0,
+    endHeight: 8.0,
+    endCenterY: 26.0,
     endZ: 64.98, // 2cm in front of |z|=65 wall: perfectly flush / recessed
 
     // East and west: centerline ribbon boards on the side wall at |x| = 25.0.
-    // Prominently widened (28.0m x 3.2m, ~8.75:1 ratio) to fit directional attack readouts comfortably.
+    // Monumental scale: 28.0m x 5.4m (~5.18:1 ratio) on the unified lower wall pane.
     sideWidth: 28.0,
-    sideHeight: 3.2,
-    sideCenterY: 9.2,
+    sideHeight: 5.4,
+    sideCenterY: 9.8,
     sideX: 24.98, // 2cm in front of |x|=25 wall: perfectly flush / recessed
 
     /** Texture resolutions */
     endCanvasWidth: 1024,
     endCanvasHeight: 512,
     sideCanvasWidth: 2048,
-    sideCanvasHeight: 256,
+    sideCanvasHeight: 512,
 
     /** Ticks per celebration flash half-cycle. 15 ticks = four flashes/second. */
     flashTicks: 15,
@@ -1537,8 +1537,8 @@ const DEFAULTS = {
     posX: 24.98,
     centerZSouth: 25.0,
     centerZNorth: -25.0,
-    centerY: 10.4,
-    width: 4.8,
+    centerY: 10.9,
+    width: 5.12,
     height: 3.2,
     flashTicks: 15,
   },

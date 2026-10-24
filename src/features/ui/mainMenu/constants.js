@@ -1,3 +1,5 @@
+import { SERIES_1_PLAYTEST_CYCLE } from '../../../config/cosmetics.js';
+
 export const PALETTE_SWATCHES = [
   { name: 'Red', color: '#d90429', hex: 0xd90429 },
   { name: 'Blue', color: '#1d4ed8', hex: 0x1d4ed8 },
@@ -57,6 +59,8 @@ export const PRACTICE_BALL_OPTIONS = [
 ];
 
 export const BALL_OPTIONS = MATCH_BALL_OPTIONS;
+
+export const HEADWEAR_OPTIONS = Object.freeze(SERIES_1_PLAYTEST_CYCLE.map((e) => Object.freeze({ id: e.id, label: e.label })));
 
 export const ASSIST_OPTIONS = [
   { id: 'standard', label: 'STANDARD [DEFAULT]', desc: 'v0.2.2 baseline · 0.45m hit forgiveness' },
