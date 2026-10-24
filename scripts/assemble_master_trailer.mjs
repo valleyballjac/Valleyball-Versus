@@ -300,8 +300,8 @@ async function assembleTrailer() {
     const previewFilter = [
       `[0:v]trim=duration=${dur},setpts=PTS-STARTPTS[vout]`,
       `[1:a]volume=-2.5dB,apad=whole_dur=${dur},atrim=duration=${dur}[music]`,
-      `[0:a]volume=+1.5dB,atrim=duration=${dur}[sfx]`,
-      '[music][sfx]amix=inputs=2:duration=first:dropout_transition=0,alimiter=limit=0.95[aout]'
+      `[0:a]volume=+15dB,atrim=duration=${dur}[sfx]`,
+      '[music][sfx]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.95,loudnorm=I=-14:TP=-1.5:LRA=11[aout]'
     ].join(';');
     execFileSync('ffmpeg', [
       '-y',
@@ -344,12 +344,16 @@ async function assembleTrailer() {
     'apad=whole_dur=94.500,atrim=duration=94.500[music]',
 
     // [0:a] SFX Stem from video clips:
-    // Boost SFX during action phases (+1.5 dB) for visceral kinetic crunch
-    '[0:a]volume=enable=\'between(t,44.20,82.20)\':volume=+1.5dB,' +
+    // Boost SFX during action phases for visceral kinetic crunch. The captured
+    // game SFX sit ~20 dB under the music (-34.6 vs -15 LUFS over the montage),
+    // so +15 dB is what lets strikes and dives actually cut through.
+    '[0:a]volume=enable=\'between(t,44.20,82.20)\':volume=+15dB,' +
     'atrim=duration=94.500[sfx]',
 
-    // Mix Music + SFX with limiter to prevent digital clipping
-    '[music][sfx]amix=inputs=2:duration=first:dropout_transition=0,alimiter=limit=0.95[aout]'
+    // Mix Music + SFX at their own levels (amix's default normalize halves both,
+    // which left the master at -22 LUFS), limit, then bring the mix to the
+    // -14 LUFS streaming target, with peak headroom for the AAC encode.
+    '[music][sfx]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.95,loudnorm=I=-14:TP=-1.5:LRA=11[aout]'
   ].join(';');
 
   console.log('\n[assembly] === STEP 4: ENCODING MASTER BROADCAST DELIVERABLE (1080p60) ===');
