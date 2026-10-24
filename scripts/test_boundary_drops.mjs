@@ -93,14 +93,16 @@ const WALK_ACCEL = 1.5;
 const COURT_X = 24.0;
 const COURT_Z = 58.0;
 
-// Back-boundary high-speed sweep (seals the vertical gap in the back wall at
-// z = +-60 over the y in [6, 30] band that the COL_BackBoundary wall closes).
-// Entities are fired horizontally at strike speed, straight into the wall at
-// surface height, swept across the full back width. Containment = the entity
-// never crosses the wall plane (|z| <= SWEEP_BREACH_Z) or falls into the void.
+// Back-boundary high-speed sweep. The authored back boundary is a 45-degree
+// ramp (z = +-60, y = 13 up to z = +-65, y = 18) backed by vertical glass at
+// z = +-65, so the containment plane is the glass, not the rim. Entities are
+// fired horizontally at strike speed into the boundary at surface height,
+// swept across the full back width. Containment = the entity never crosses the
+// glass plane (|z| <= SWEEP_BREACH_Z) or falls into the void; riding up the
+// ramp (z up to 65) and rebounding back into the court is legitimate.
 const SWEEP_SPEED = 24.0;       // m/s, hard-strike horizontal speed
-const SWEEP_LAUNCH_INSET = 8.0; // spawn distance in from the wall plane (m)
-const SWEEP_BREACH_Z = 60.6;    // |z| past the wall plane = tunnelled through
+const SWEEP_LAUNCH_INSET = 8.0; // spawn distance in from the rim plane (m)
+const SWEEP_BREACH_Z = 65.0;    // |z| past the glass plane = tunnelled through
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
