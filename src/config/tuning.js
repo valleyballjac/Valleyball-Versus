@@ -1633,6 +1633,12 @@ const DEFAULTS = {
       lookAheadZ: 8.0,
       smoothEase: 4.0,
     },
+    // Trailer raw-reel clips (trailerDirector.startRawReel), 1/s: position trails
+    // like a camera operator; aim leads it so fast strikes stay in frame.
+    trailerRawReel: {
+      posEase: 4.0,
+      targetEase: 8.0,
+    },
   },
 
   // ═══ AUDIO & SFX ═══

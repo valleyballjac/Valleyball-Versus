@@ -4,11 +4,6 @@ import { soundManager } from '../audio/soundManager.js';
 import { getBotSlot } from '../input/inputRouter.js';
 import { getCourtFloorY } from '../ai/courtHeightmap.js';
 
-// Raw reel camera easing rates (1/s): position trails like a camera operator,
-// aim leads it so fast strikes stay in frame.
-const RAW_CAM_POS_RATE = 4.0;
-const RAW_CAM_TARGET_RATE = 8.0;
-
 /**
  * VALLEYBALL VERSUS — OFFICIAL TRAILER DIRECTOR (REVISION 5: RESILIENT CAMERAS & NATURAL AI STUNTS)
  *
@@ -1486,8 +1481,9 @@ export class TrailerDirector {
       this._rawCamPos.copy(this._pos);
       this._rawCamTarget.copy(this._target);
     } else {
-      this._rawCamPos.lerp(this._pos, 1 - Math.exp(-RAW_CAM_POS_RATE * delta));
-      this._rawCamTarget.lerp(this._target, 1 - Math.exp(-RAW_CAM_TARGET_RATE * delta));
+      const ease = TUNING.camera.trailerRawReel;
+      this._rawCamPos.lerp(this._pos, 1 - Math.exp(-ease.posEase * delta));
+      this._rawCamTarget.lerp(this._target, 1 - Math.exp(-ease.targetEase * delta));
     }
     this._pos.copy(this._rawCamPos);
     this._target.copy(this._rawCamTarget);
