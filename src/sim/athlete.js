@@ -340,6 +340,9 @@ export function createAthlete({
       motor.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
       motor.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
       motor.interpolated.reset(new THREE.Vector3(pos.x, pos.y, pos.z));
+      if (pos.y <= 1.5) {
+        motor.grounded = true;
+      }
 
       buildMountedRagdoll(yaw);
     },
