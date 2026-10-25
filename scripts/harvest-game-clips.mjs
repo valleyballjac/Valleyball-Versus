@@ -40,7 +40,21 @@ const PALETTES = {
   deepIndigo: { hex: 0x6B11FF, name: 'Deep Indigo' },
 };
 
-// Generate 50 Diverse Game Configurations
+// Series 1 Headwear Catalogue
+const HEADWEAR_PIECES = [
+  { id: 'wrestler_bands', name: 'Football Helmet (Gridiron Horns)' },
+  { id: 'wicket_grill', name: 'Cricket Helmet (Wicketkeeper Grill)' },
+  { id: 'sensor_visor', name: 'Sensor Visor (Cyber Wrap)' },
+  { id: 'couture_wrap', name: 'Couture Wrap (Fashion Scarf)' },
+  { id: 'rigger_band', name: 'Rigger Band (Industrial Band)' },
+  { id: 'ouendan_knot', name: 'Ouendan Knot (Cheer Headband)' },
+  { id: 'terrace_visor', name: 'Terrace Visor (Retro Sunshade)' },
+  { id: 'cursor_cap', name: 'Cursor Cap (Athletic Cap)' },
+  { id: 'manager_cap', name: 'Manager Cap (Flat Peaked)' },
+  { id: 'broadcaster_mic', name: 'Broadcaster Headset' },
+];
+
+// Generate 60 Games: 10 Dedicated Red vs Blue + 50 Diverse Randomized Character Variables
 function generateGameMatrix() {
   const balls = ['medium', 'small', 'large'];
   const builds = ['masculine', 'feminine', 'classic'];
@@ -51,35 +65,78 @@ function generateGameMatrix() {
     [PALETTES.frostWhite, PALETTES.obsidianBlack],
     [PALETTES.royalBlue, PALETTES.solarBlaze],
     [PALETTES.deepIndigo, PALETTES.voltGold],
+    [PALETTES.neonViolet, PALETTES.ionCyan],
+    [PALETTES.crimsonRed, PALETTES.royalBlue],
+    [PALETTES.solarBlaze, PALETTES.emeraldGreen],
+    [PALETTES.obsidianBlack, PALETTES.voltGold],
   ];
 
   const games = [];
-  for (let i = 1; i <= 50; i++) {
+
+  // 1. GAMES 1–10: DEDICATED CLASSIC RED VS BLUE (Masculine Football Helmet vs Masculine Cricket Helmet)
+  for (let i = 1; i <= 10; i++) {
+    const ball = balls[(i - 1) % balls.length];
+    const agg = 0.85 + ((i * 3) % 15) * 0.01;
+    games.push({
+      gameId: i,
+      isRedVsBlue: true,
+      ball,
+      home: {
+        team: 'home',
+        variant: 'masculine',
+        color: PALETTES.crimsonRed.hex,
+        colorName: PALETTES.crimsonRed.name,
+        headwear: 'wrestler_bands',
+        headwearName: 'Football Helmet (Gridiron Horns)',
+      },
+      away: {
+        team: 'away',
+        variant: 'masculine',
+        color: PALETTES.royalBlue.hex,
+        colorName: PALETTES.royalBlue.name,
+        headwear: 'wicket_grill',
+        headwearName: 'Cricket Helmet (Wicketkeeper Grill)',
+      },
+      aggressiveness: agg,
+      durationSec: 7.5,
+    });
+  }
+
+  // 2. GAMES 11–60 (50 GAMES): DIVERSE RANDOMIZED CHARACTER VARIABLES
+  for (let i = 11; i <= 60; i++) {
     const ball = balls[(i - 1) % balls.length];
     const buildHome = builds[(i - 1) % builds.length];
     const buildAway = builds[i % builds.length];
     const pair = palettePairs[(i - 1) % palettePairs.length];
-    const agg = 0.75 + ((i * 7) % 25) * 0.01; // 0.75 to 0.99
+    const hwHome = HEADWEAR_PIECES[(i * 3) % HEADWEAR_PIECES.length];
+    const hwAway = HEADWEAR_PIECES[(i * 7 + 1) % HEADWEAR_PIECES.length];
+    const agg = 0.75 + ((i * 7) % 25) * 0.01;
 
     games.push({
       gameId: i,
+      isRedVsBlue: false,
       ball,
       home: {
         team: 'home',
         variant: buildHome,
         color: pair[0].hex,
         colorName: pair[0].name,
+        headwear: hwHome.id,
+        headwearName: hwHome.name,
       },
       away: {
         team: 'away',
         variant: buildAway,
         color: pair[1].hex,
         colorName: pair[1].name,
+        headwear: hwAway.id,
+        headwearName: hwAway.name,
       },
       aggressiveness: agg,
-      durationSec: 8.0, // 8s per game evaluation window (optimal for social shorts / reels)
+      durationSec: 7.5,
     });
   }
+
   return games;
 }
 
@@ -151,7 +208,7 @@ async function startChunkReceiver() {
 
 async function runHarvest() {
   const limitArg = process.argv.find((_, i, arr) => arr[i - 1] === '--limit');
-  const maxGames = limitArg ? parseInt(limitArg, 10) : 50;
+  const maxGames = limitArg ? parseInt(limitArg, 10) : 60;
   const games = generateGameMatrix().slice(0, maxGames);
 
   console.log('╔══════════════════════════════════════════════════════════════════╗');
@@ -238,7 +295,7 @@ async function runHarvest() {
   for (let idx = 0; idx < games.length; idx++) {
     const g = games[idx];
     const gameNum = String(g.gameId).padStart(2, '0');
-    console.log(`[harvest] --- GAME ${gameNum}/50 | Ball: ${g.ball.toUpperCase()} | ${g.home.variant} (${g.home.colorName}) vs ${g.away.variant} (${g.away.colorName}) ---`);
+    console.log(`[harvest] --- GAME ${gameNum}/${games.length} | Ball: ${g.ball.toUpperCase()} | ${g.home.variant} (${g.home.colorName}) vs ${g.away.variant} (${g.away.colorName}) ---`);
 
     await loadFreshPage();
 
@@ -259,8 +316,8 @@ async function runHarvest() {
 
       // Configure athletes and ball
       const configs = [
-        { id: 'p1', name: 'Home Bot', team: g.home.team, variant: g.home.variant, cameraMode: 'chase', type: 'ai', difficulty: 'hard', aggressiveness: g.aggressiveness, primaryColor: g.home.color },
-        { id: 'p2', name: 'Away Bot', team: g.away.team, variant: g.away.variant, cameraMode: 'chase', type: 'ai', difficulty: 'hard', aggressiveness: g.aggressiveness, primaryColor: g.away.color }
+        { id: 'p1', name: 'Home Bot', team: g.home.team, variant: g.home.variant, cameraMode: 'chase', type: 'ai', difficulty: 'hard', aggressiveness: g.aggressiveness, primaryColor: g.home.color, headwear: g.home.headwear },
+        { id: 'p2', name: 'Away Bot', team: g.away.team, variant: g.away.variant, cameraMode: 'chase', type: 'ai', difficulty: 'hard', aggressiveness: g.aggressiveness, primaryColor: g.away.color, headwear: g.away.headwear }
       ];
 
       if (window.__vb && window.__vb.startMatch) {
@@ -268,11 +325,24 @@ async function runHarvest() {
         if (window.__vb.skipFlyover) window.__vb.skipFlyover();
       }
 
+      // Explicitly equip headwear pieces from Series 1
+      if (window.__vb?.athletes) {
+        if (g.home.headwear && window.__vb.athletes[0]?.setHeadwear) {
+          window.__vb.athletes[0].setHeadwear(g.home.headwear);
+        }
+        if (g.away.headwear && window.__vb.athletes[1]?.setHeadwear) {
+          window.__vb.athletes[1].setHeadwear(g.away.headwear);
+        }
+      }
+
       // Bypass countdown freeze so athletes start playing immediately
       if (window.__vb?.matchState) {
         window.__vb.matchState.isCountingDown = false;
         window.__vb.matchState.countdownTicksRemaining = 0;
       }
+
+      // Allow live match action to develop for 3.5s so players reach the ball and engage in rally
+      await new Promise(r => setTimeout(r, 3500));
 
       // Activate camera in trailerDirector with rotating stunt
       if (window.__vb?.trailerDirector) {
@@ -383,7 +453,9 @@ async function runHarvest() {
       // Encode every recorded game into a broadcast-ready social clip
       if (rawSizeBytes > 300000) {
         const clipNum = String(selectedClips.length + 1).padStart(2, '0');
-        const clipName = `clip_${clipNum}_${matchStats.stunt}_${g.ball}_${matchStats.camera}_${g.home.variant}_vs_${g.away.variant}.mp4`;
+        const clipName = g.isRedVsBlue
+          ? `clip_${clipNum}_red_vs_blue_${matchStats.stunt}_${g.ball}_${matchStats.camera}.mp4`
+          : `clip_${clipNum}_action_${matchStats.stunt}_${g.ball}_${matchStats.camera}_${g.home.variant}_vs_${g.away.variant}.mp4`;
         const clipPath = path.join(OUT_DIR, clipName);
         const musicOffset = (idx * 1.818) % 70.0;
         const musicPath = path.join(ROOT, 'public', 'audio', 'music', 'track_trailer_neon_velocity.mp3');
@@ -457,21 +529,25 @@ async function runHarvest() {
 
   // Write Manifest Document
   console.log(`\n[harvest] Writing Social Clips Manifest (${selectedClips.length} clips generated)...`);
-  let manifestMd = `# Valleyball Versus — 50-Game Action Harvest Manifest\n\n`;
-  manifestMd += `Total Games Executed: **${games.length}** | Social Highlight Clips Extracted: **${selectedClips.length}**\n\n`;
-  manifestMd += `| Clip | Stunt Focus | Ball Type | Camera Perspective | Matchup & Variants | Top Ball Speed | Highlights | File Size |\n`;
+  let manifestMd = `# Valleyball Versus — 60-Game Action Harvest Manifest\n\n`;
+  manifestMd += `Total Games Executed: **${games.length}** (10 Dedicated Red vs Blue + 50 Randomized Variable Games) | Social Highlight Clips Extracted: **${selectedClips.length}**\n\n`;
+  manifestMd += `### Dedicated Red vs Blue Game Captures (Games 01–10)\n`;
+  manifestMd += `Classic Red (Masculine Football Helmet) vs Blue (Masculine Cricket Helmet) authentic action footage across rotating stunts and camera angles.\n\n`;
+  manifestMd += `### Randomized Action Game Captures (Games 11–60)\n`;
+  manifestMd += `Fast-paced gameplay across all 10 Brand Palettes, 3 body builds, ball types, and Series 1 headwear pack.\n\n`;
+  manifestMd += `| Clip | Stunt Focus | Ball Type | Camera Perspective | Matchup & Headwear | Top Ball Speed | Highlights | File Size |\n`;
   manifestMd += `|---|---|---|---|---|---|---|---|\n`;
 
   for (const c of selectedClips) {
     const sizeMb = (c.fileSizeBytes / (1024 * 1024)).toFixed(2);
-    manifestMd += `| \`${c.clipName}\` | **${(c.stats.stunt || 'rally').toUpperCase()}** | **${c.ball.toUpperCase()}** | ${c.camera} | ${c.home.variant} (${c.home.colorName}) vs ${c.away.variant} (${c.away.colorName}) | ${c.stats.maxBallSpeed.toFixed(1)} m/s | Goals: ${c.stats.goalsScored}, Dives: ${c.stats.totalDives}, SweetSpots: ${c.stats.sweetSpots} | ${sizeMb} MB |\n`;
+    manifestMd += `| \`${c.clipName}\` | **${(c.stats.stunt || 'rally').toUpperCase()}** | **${c.ball.toUpperCase()}** | ${c.camera} | ${c.home.variant} (${c.home.colorName} / ${c.home.headwearName || 'Default'}) vs ${c.away.variant} (${c.away.colorName} / ${c.away.headwearName || 'Default'}) | ${c.stats.maxBallSpeed.toFixed(1)} m/s | Goals: ${c.stats.goalsScored}, Dives: ${c.stats.totalDives}, SweetSpots: ${c.stats.sweetSpots} | ${sizeMb} MB |\n`;
   }
 
-  manifestMd += `\n---\n## Complete Game Evaluation Matrix\n\n`;
-  manifestMd += `| Game | Stunt | Ball | Camera | Home Build (Palette) | Away Build (Palette) | Top Speed | Events |\n`;
+  manifestMd += `\n---\n## Complete Game Evaluation Matrix (60 Games)\n\n`;
+  manifestMd += `| Game | Stunt | Ball | Camera | Home Config & Headwear | Away Config & Headwear | Top Speed | Events |\n`;
   manifestMd += `|---|---|---|---|---|---|---|---|\n`;
   for (const m of manifest) {
-    manifestMd += `| ${m.gameId} | **${(m.stunt || 'rally').toUpperCase()}** | ${m.ball} | ${m.stats.camera || 'broadcast'} | ${m.home.variant} (${m.home.colorName}) | ${m.away.variant} (${m.away.colorName}) | ${m.stats.maxBallSpeed.toFixed(1)} m/s | G:${m.stats.goalsScored} D:${m.stats.totalDives} S:${m.stats.sweetSpots} |\n`;
+    manifestMd += `| ${m.gameId} | **${(m.stunt || 'rally').toUpperCase()}** | ${m.ball} | ${m.stats.camera || 'broadcast'} | ${m.home.variant} (${m.home.colorName} / ${m.home.headwearName || 'Default'}) | ${m.away.variant} (${m.away.colorName} / ${m.away.headwearName || 'Default'}) | ${m.stats.maxBallSpeed.toFixed(1)} m/s | G:${m.stats.goalsScored} D:${m.stats.totalDives} S:${m.stats.sweetSpots} |\n`;
   }
 
   fs.writeFileSync(path.join(OUT_DIR, 'clips_manifest.md'), manifestMd, 'utf8');
