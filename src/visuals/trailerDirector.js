@@ -4,6 +4,11 @@ import { soundManager } from '../audio/soundManager.js';
 import { getBotSlot } from '../input/inputRouter.js';
 import { getCourtFloorY } from '../ai/courtHeightmap.js';
 
+// Raw reel camera easing rates (1/s): position trails like a camera operator,
+// aim leads it so fast strikes stay in frame.
+const RAW_CAM_POS_RATE = 4.0;
+const RAW_CAM_TARGET_RATE = 8.0;
+
 /**
  * VALLEYBALL VERSUS — OFFICIAL TRAILER DIRECTOR (REVISION 5: RESILIENT CAMERAS & NATURAL AI STUNTS)
  *
@@ -41,6 +46,11 @@ export class TrailerDirector {
     this._initializedFocus = false;
     this._justCut = true;
     this._ballSmoothPos = new THREE.Vector3(0, 1.0, 0);
+
+    // Raw reel camera, eased toward each frame's framing instead of snapped to it
+    this._rawCamPos = new THREE.Vector3();
+    this._rawCamTarget = new THREE.Vector3();
+    this._rawCamPrimed = false;
 
     // Camera micro-shake on heavy impacts (positional only, NEVER touches FOV)
     this.trauma = 0.0;
@@ -238,6 +248,7 @@ export class TrailerDirector {
     this._goalStaged = false;
     this._stuntTriggered = false;
     this.trauma = 0.0;
+    this._rawCamPrimed = false;
 
     // Suppress all 2D UI, menus, and debug widgets
     if (typeof document !== 'undefined') {
@@ -821,6 +832,7 @@ export class TrailerDirector {
     // 0.00s to 7.20s: Macro portraits of contenders — Red in Football Helmet, Blue in Cricket Helmet
     // 7.20s to 11.50s: Hero ball physics reveal — show ball carving banked wall
     // 11.50s+: Contenders face-off across net and full match action
+    // Raw reel clips (6.8s) skip the tiers, which hide the ball until 7.20s.
     if (this.rawReelMode) {
       // fall through to the raw reel camera below
     } else if (t < 7.20) {
@@ -1371,22 +1383,40 @@ export class TrailerDirector {
     const perpZ = ndx;
 
     switch (this.rawReelMode) {
-      case 'flank_torus_north': {
-        this._setFov(48);
-        const camX = 16.0 - ease * 2.0;
-        const camY = Math.max(7.5, getCourtFloorY(camX, -22.0) + 3.0);
-        const camZ = -22.0 - ease * 4.0;
-        this._pos.set(camX, camY, camZ);
-        this._target.set(0.3 * focusX, 0.4 * focusY + 0.6 * hoopY, 0.4 * focusZ + 0.6 * hoopZ);
-        break;
-      }
+      case 'flank_torus_north':
       case 'flank_torus_south': {
         this._setFov(48);
-        const camX = -16.0 + ease * 2.0;
-        const camY = Math.max(7.5, getCourtFloorY(camX, 22.0) + 3.0);
-        const camZ = 22.0 + ease * 4.0;
-        this._pos.set(camX, camY, camZ);
-        this._target.set(0.3 * focusX, 0.4 * focusY + 0.6 * hoopY, 0.4 * focusZ + 0.6 * (-hoopZ));
+        // Hold the hoop in the composition only while the ball is near it;
+        // otherwise swing to an elevated flank view of the live action, so a
+        // play at the far end is not filmed as an empty hoop.
+        const side = this.rawReelMode === 'flank_torus_north' ? 1.0 : -1.0;
+        const goalZ = side * hoopZ;
+        const hoopDist = Math.hypot(ballPos.x, ballPos.z - goalZ);
+        const near = Math.min(1.0, Math.max(0.0, (30.0 - hoopDist) / 20.0));
+        const w = near * near * (3 - 2 * near);
+
+        const hoopCamX = side * (16.0 - ease * 2.0);
+        const hoopCamZ = -side * (22.0 + ease * 4.0);
+        const hoopCamY = Math.max(7.5, getCourtFloorY(hoopCamX, hoopCamZ) + 3.0);
+        const actCamX = Math.max(-16.0, Math.min(16.0, focusX + side * 7.0));
+        // Behind the play relative to the goal, so both framings face the hoop
+        // and the blend between them never swings the camera around.
+        const actCamZ = focusZ + side * 6.0;
+        const actCamY = Math.max(focusFloorY + 4.5, getCourtFloorY(actCamX, actCamZ) + 3.0);
+        this._pos.set(
+          actCamX + (hoopCamX - actCamX) * w,
+          actCamY + (hoopCamY - actCamY) * w,
+          actCamZ + (hoopCamZ - actCamZ) * w
+        );
+
+        const hoopTgtX = 0.3 * focusX;
+        const hoopTgtY = 0.4 * focusY + 0.6 * hoopY;
+        const hoopTgtZ = 0.4 * focusZ + 0.6 * goalZ;
+        this._target.set(
+          focusX + (hoopTgtX - focusX) * w,
+          focusY + (hoopTgtY - focusY) * w,
+          focusZ + (hoopTgtZ - focusZ) * w
+        );
         break;
       }
       case 'low_turf_tracking': {
@@ -1448,6 +1478,19 @@ export class TrailerDirector {
         break;
       }
     }
+
+    // Ease toward this frame's framing rather than snapping to it, so the
+    // camera rides through bounces and contacts instead of jittering with them.
+    if (!this._rawCamPrimed) {
+      this._rawCamPrimed = true;
+      this._rawCamPos.copy(this._pos);
+      this._rawCamTarget.copy(this._target);
+    } else {
+      this._rawCamPos.lerp(this._pos, 1 - Math.exp(-RAW_CAM_POS_RATE * delta));
+      this._rawCamTarget.lerp(this._target, 1 - Math.exp(-RAW_CAM_TARGET_RATE * delta));
+    }
+    this._pos.copy(this._rawCamPos);
+    this._target.copy(this._rawCamTarget);
 
     this._applyResilientClearance();
   }

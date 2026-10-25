@@ -47,9 +47,30 @@ const RAW_DIR = path.join(OUT_DIR, 'raw_chunks');
 const CLIPS_DIR = path.join(OUT_DIR, 'clips');
 const MASTER_MP4 = path.join(OUT_DIR, 'valleyball_versus_raw_footage_master_1080p60.mp4');
 
+// Headless capture tops out around 40-45 fps on this machine. A clip recorded
+// below MIN_CLIP_FPS means something competed for the GPU, so it is
+// re-recorded, up to MAX_CLIP_ATTEMPTS times.
+const MIN_CLIP_FPS = 30;
+const MAX_CLIP_ATTEMPTS = 3;
+
 fs.mkdirSync(OUT_DIR, { recursive: true });
 fs.mkdirSync(RAW_DIR, { recursive: true });
 fs.mkdirSync(CLIPS_DIR, { recursive: true });
+
+// Recorded frame rate of a MediaRecorder WebM (VFR): packets over their PTS span.
+function measureClipFps(file) {
+  try {
+    const out = execFileSync('ffprobe', [
+      '-v', 'quiet', '-select_streams', 'v:0',
+      '-show_entries', 'packet=pts_time', '-of', 'csv=p=0', file,
+    ], { encoding: 'utf8' });
+    const ts = out.split(/\r?\n/).filter(Boolean).map(Number).filter(Number.isFinite).sort((a, b) => a - b);
+    if (ts.length < 2) return 0;
+    return ts.length / (ts[ts.length - 1] - ts[0]);
+  } catch (_) {
+    return 0;
+  }
+}
 
 // Official Brand Palette Hex Codes
 const PALETTES = {
@@ -82,6 +103,12 @@ const STUNT_TYPES = [
   { type: 'rally', label: 'KINETIC SPRINT RALLY', desc: 'High-speed sprint duel with rapid volley exchanges' },
 ];
 
+// Series 1 headwear ids (src/config/cosmetics.js)
+const HEADWEAR = [
+  'wrestler_bands', 'wicket_grill', 'sensor_visor', 'couture_wrap', 'rigger_band',
+  'ouendan_knot', 'terrace_visor', 'cursor_cap', 'manager_cap', 'broadcaster_mic',
+];
+
 function generate50GameMatrix() {
   const balls = ['medium', 'small', 'large'];
   const builds = ['masculine', 'feminine', 'classic'];
@@ -103,20 +130,39 @@ function generate50GameMatrix() {
     const camInfo = CAMERA_MODES[(i - 1) % CAMERA_MODES.length];
     const stuntInfo = STUNT_TYPES[(i - 1) % STUNT_TYPES.length];
 
+    // Every 5th game is the trailer's bookend look: Red in the Football Helmet
+    // vs Blue in the Cricket Helmet. The rest rotate palettes and headwear.
+    const isRedVsBlue = i % 5 === 0;
+    const rotation = i - 1 - Math.floor(i / 5); // counts only the rotating games
+
     games.push({
       gameId: i,
       ball,
-      home: {
+      home: isRedVsBlue ? {
+        team: 'home',
+        variant: 'masculine',
+        color: PALETTES.crimsonRed.hex,
+        colorName: PALETTES.crimsonRed.name,
+        headwear: 'wrestler_bands',
+      } : {
         team: 'home',
         variant: buildHome,
         color: pair[0].hex,
         colorName: pair[0].name,
+        headwear: HEADWEAR[rotation % HEADWEAR.length],
       },
-      away: {
+      away: isRedVsBlue ? {
+        team: 'away',
+        variant: 'masculine',
+        color: PALETTES.royalBlue.hex,
+        colorName: PALETTES.royalBlue.name,
+        headwear: 'wicket_grill',
+      } : {
         team: 'away',
         variant: buildAway,
         color: pair[1].hex,
         colorName: pair[1].name,
+        headwear: HEADWEAR[(rotation + 5) % HEADWEAR.length],
       },
       cameraMode: camInfo.mode,
       cameraLabel: camInfo.label,
@@ -201,7 +247,16 @@ async function startChunkReceiver() {
 async function runHarvest() {
   const limitArg = process.argv.find((_, i, arr) => arr[i - 1] === '--limit');
   const maxGames = limitArg ? parseInt(limitArg, 10) : 50;
-  const games = generate50GameMatrix().slice(0, maxGames);
+  // --only 1-38 or --only 2,6,10: re-record just those games and patch them
+  // into the existing manifest and master compilation.
+  const onlyArg = process.argv.find((_, i, arr) => arr[i - 1] === '--only');
+  const onlyIds = onlyArg ? new Set(onlyArg.split(',').flatMap(part => {
+    const [a, b] = part.split('-').map(n => parseInt(n, 10));
+    return Number.isInteger(b) ? Array.from({ length: b - a + 1 }, (_, k) => a + k) : [a];
+  })) : null;
+  const minFpsArg = process.argv.find((_, i, arr) => arr[i - 1] === '--min-fps');
+  const minClipFps = minFpsArg ? parseFloat(minFpsArg) : MIN_CLIP_FPS;
+  const games = generate50GameMatrix().slice(0, maxGames).filter(g => !onlyIds || onlyIds.has(g.gameId));
 
   console.log('╔══════════════════════════════════════════════════════════════════╗');
   console.log(`║     VALLEYBALL VERSUS — GEMINI ARGON RAW FOOTAGE HARVEST         ║`);
@@ -282,6 +337,8 @@ async function runHarvest() {
   }
 
   const processedClips = [];
+  const attemptsByGame = {};
+  const bestByGame = {};
 
   console.log(`[reel] Beginning recording of ${games.length} matches...\n`);
 
@@ -293,14 +350,17 @@ async function runHarvest() {
     await loadFreshPage();
 
     const rawFilename = `game_${gameNum}_raw.webm`;
-    receiver.prepareStream(rawFilename);
+    const attempt = (attemptsByGame[g.gameId] || 0) + 1;
+    attemptsByGame[g.gameId] = attempt;
+    const attemptFilename = `game_${gameNum}_raw_attempt${attempt}.webm`;
+    receiver.prepareStream(attemptFilename);
 
     // Setup and trigger match in-browser
     const matchStats = await page.evaluate(async ({ g, chunkPort }) => {
       // Configure athletes and ball
       const configs = [
-        { id: 'p1', name: 'Home Bot', team: g.home.team, variant: g.home.variant, cameraMode: 'chase', type: 'ai', difficulty: 'hard', aggressiveness: g.aggressiveness, primaryColor: g.home.color },
-        { id: 'p2', name: 'Away Bot', team: g.away.team, variant: g.away.variant, cameraMode: 'chase', type: 'ai', difficulty: 'hard', aggressiveness: g.aggressiveness, primaryColor: g.away.color }
+        { id: 'p1', name: 'Home Bot', team: g.home.team, variant: g.home.variant, cameraMode: 'chase', type: 'ai', difficulty: 'hard', aggressiveness: g.aggressiveness, primaryColor: g.home.color, headwear: g.home.headwear },
+        { id: 'p2', name: 'Away Bot', team: g.away.team, variant: g.away.variant, cameraMode: 'chase', type: 'ai', difficulty: 'hard', aggressiveness: g.aggressiveness, primaryColor: g.away.color, headwear: g.away.headwear }
       ];
 
       // Show the v11 stadium scoreboards and hustle boards
@@ -352,20 +412,24 @@ async function runHarvest() {
       if (audioTrack) tracks.push(audioTrack);
       const stream = new MediaStream(tracks);
 
+      // H.264 recorded ~43 fps against VP9's ~37 fps in a side-by-side
+      // headless test on this machine; neither reaches 60.
+      const mimeType = ['video/webm;codecs=h264,opus', 'video/webm;codecs=vp9,opus', 'video/webm']
+        .find(m => MediaRecorder.isTypeSupported(m));
       const recorder = new MediaRecorder(stream, {
-        mimeType: MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
-          ? 'video/webm;codecs=vp9,opus'
-          : 'video/webm',
+        mimeType,
         videoBitsPerSecond: 28000000
       });
 
-      recorder.ondataavailable = async (e) => {
+      // Upload chunks strictly one after another: concurrent POSTs interleave
+      // their bytes on the server and corrupt the WebM mid-file.
+      let uploadChain = Promise.resolve();
+      recorder.ondataavailable = (e) => {
         if (e.data && e.data.size > 0) {
-          try {
-            await fetch(`http://127.0.0.1:${chunkPort}/chunk`, { method: 'POST', body: e.data });
-          } catch (_) {}
+          uploadChain = uploadChain.then(() => fetch(`http://127.0.0.1:${chunkPort}/chunk`, { method: 'POST', body: e.data }).catch(() => {}));
         }
       };
+      const recorderStopped = new Promise(r => { recorder.onstop = r; });
 
       // Health check: real render rate, GPU, and window/context events while
       // recording, so a degraded clip is detected instead of silently kept.
@@ -418,7 +482,10 @@ async function runHarvest() {
 
       recorder.stop();
       if (window.__vb?.trailerDirector) window.__vb.trailerDirector.stop();
-      await new Promise(r => setTimeout(r, 500));
+      // The final chunk is delivered before onstop; wait for it to be uploaded
+      // so /done never closes the file under an in-flight chunk.
+      await recorderStopped;
+      await uploadChain;
       stream.getTracks().forEach(t => t.stop());
       await fetch(`http://127.0.0.1:${chunkPort}/done`, { method: 'POST' });
 
@@ -440,14 +507,39 @@ async function runHarvest() {
     await receiver.waitForDone();
 
     const rawFilePath = path.join(RAW_DIR, rawFilename);
-    const rawExists = fs.existsSync(rawFilePath);
-    const rawSizeBytes = rawExists ? fs.statSync(rawFilePath).size : 0;
+    const attemptPath = path.join(RAW_DIR, attemptFilename);
+    const rawExists = fs.existsSync(attemptPath);
+    const rawSizeBytes = rawExists ? fs.statSync(attemptPath).size : 0;
 
     console.log(`    ↳ Recorded: Top Speed: ${matchStats.maxBallSpeed.toFixed(1)} m/s | Dives: ${matchStats.totalDives} | Goals: ${matchStats.goalsScored} (${(rawSizeBytes / (1024*1024)).toFixed(1)} MB)`);
     console.log(`    ↳ Health: ${matchStats.rafFps.toFixed(1)} fps | GPU: ${matchStats.gpu} | hidden events: ${matchStats.hiddenEvents} | visibility: ${matchStats.visibility} | context lost: ${matchStats.contextLost}`);
 
+    const attemptFps = measureClipFps(attemptPath);
+    console.log(`    ↳ Recorded clip: ${attemptFps.toFixed(1)} fps (attempt ${attempt}/${MAX_CLIP_ATTEMPTS})`);
+
+    // Keep the best attempt so far: a retry can come out worse than the take it replaces.
+    const best = bestByGame[g.gameId];
+    if (!best || attemptFps > best.fps) {
+      if (best) fs.rmSync(best.path, { force: true });
+      bestByGame[g.gameId] = { fps: attemptFps, path: attemptPath, stats: matchStats };
+    } else {
+      fs.rmSync(attemptPath, { force: true });
+    }
+    if (attemptFps < minClipFps && attempt < MAX_CLIP_ATTEMPTS) {
+      console.warn(`    ↳ Below ${minClipFps} fps, re-recording match ${gameNum}`);
+      idx--; // the loop's idx++ brings us back to this game
+      continue;
+    }
+
+    const kept = bestByGame[g.gameId];
+    fs.rmSync(rawFilePath, { force: true });
+    fs.renameSync(kept.path, rawFilePath);
+    const clipFps = kept.fps;
+    const keptStats = kept.stats;
+    console.log(`    ↳ Kept: ${clipFps.toFixed(1)} fps`);
+
     // Transcode and Burn In Machine-Readable Slate with FFmpeg
-    const clipId = String(idx + 1).padStart(2, '0');
+    const clipId = gameNum;
     const clipFilename = `clip_${clipId}_${g.ball}_${g.cameraMode}_${g.stuntType}.mp4`;
     const clipPath = path.join(CLIPS_DIR, clipFilename);
 
@@ -482,7 +574,7 @@ async function runHarvest() {
 
       const clipStat = fs.statSync(clipPath);
       processedClips.push({
-        clipId: idx + 1,
+        clipId: g.gameId,
         clipFilename,
         clipPath,
         gameId: g.gameId,
@@ -495,7 +587,8 @@ async function runHarvest() {
         stuntType: g.stuntType,
         stuntLabel: g.stuntLabel,
         stuntDesc: g.stuntDesc,
-        stats: matchStats,
+        stats: keptStats,
+        recordedFps: clipFps,
         durationSec: 5.8,
         fileSizeBytes: clipStat.size,
       });
@@ -508,6 +601,16 @@ async function runHarvest() {
   await browser.close();
   await viteServer.close();
   receiver.server.close();
+
+  // A partial run (--only) patches its games into the existing manifest, so the
+  // master compilation and manifests below always cover the full set.
+  const manifestJsonPath = path.join(OUT_DIR, 'clips_manifest.json');
+  if (onlyIds && fs.existsSync(manifestJsonPath)) {
+    const redone = new Set(processedClips.map(c => c.gameId));
+    const previous = JSON.parse(fs.readFileSync(manifestJsonPath, 'utf8'));
+    processedClips.push(...previous.filter(c => !redone.has(c.gameId)));
+    processedClips.sort((a, b) => a.gameId - b.gameId);
+  }
 
   // 3. Assemble Single Master MP4 File via Concat Demuxer
   console.log(`\n[reel] === ASSEMBLING SINGLE MASTER COMPILATION FILE (${processedClips.length} CLIPS) ===`);
@@ -546,7 +649,7 @@ async function runHarvest() {
   }
 
   // 5. Write Machine-Readable Manifests (JSON and Markdown)
-  fs.writeFileSync(path.join(OUT_DIR, 'clips_manifest.json'), JSON.stringify(processedClips, null, 2), 'utf8');
+  fs.writeFileSync(manifestJsonPath, JSON.stringify(processedClips, null, 2), 'utf8');
 
   let manifestMd = `# Valleyball Versus — Raw Action Footage Master Compilation\n\n`;
   manifestMd += `Total Matches: **${processedClips.length}** | Total Reel Duration: **${(accumulatedTime / 60).toFixed(2)} minutes** (${accumulatedTime.toFixed(1)}s)\n`;
