@@ -3771,6 +3771,25 @@ async function boot() {
     configurable: true,
   });
 
+  window.__vb.stepDeterministicFrame = (dt = loop.fixedDt) => {
+    const frameListeners = loop._frameListeners;
+    for (let i = 0; i < frameListeners.length; i++) frameListeners[i]();
+
+    const registry = loop.interpolated;
+    for (let i = 0; i < registry.length; i++) registry[i].savePrevious();
+
+    const steppedTick = loop.tick;
+    loop._fixedUpdate(dt, steppedTick);
+    loop.tick++;
+
+    loop.alpha = 1.0;
+    loop.frameTimeMs = dt * 1000;
+    loop._render(1.0);
+    loop._notify(steppedTick);
+
+    return steppedTick;
+  };
+
   window.__vb.setTeamConfig = (teamId, options) => {
     if (!TUNING.teams || !TUNING.teams[teamId]) return;
     Object.assign(TUNING.teams[teamId], options);

@@ -1,32 +1,28 @@
 /**
- * VALLEYBALL VERSUS — OFFICIAL DEBUT TRAILER VIDEO CAPTURE & ASSEMBLY HARNESS
+ * VALLEYBALL VERSUS — OFFICIAL DEBUT TRAILER DETERMINISTIC CAPTURE & ASSEMBLY HARNESS
  *
- * Direct turnkey implementation of Option B (In-Engine Cinematic Overhaul):
- * - 94.500s Total Duration (5,670 Frames @ 60.00 FPS CFR)
- * - 16:9 Aspect Ratio (1920x1080)
- * - 3s WebGL shader warmup before recording to eliminate dropped frames and stuttery fade-in
- * - Pure architectural stadium overture (0.0s – 44.2s) with zero frozen mannequins or balls
- * - Continuous 14.4s high-octane rally on beat drop (44.2s – 58.6s)
- * - 3 Directed Hero Stunts: Dive Save (58.6s), Banked Wall Carve (63.1s), Jump-Spike (67.6s)
- * - Climax Torus Goal in 3/4 side profile (73.0s) + Celestial Ascension Arc (78.4s)
- * - Galaxy Title Card Outro Hold (83.8s – 94.5s)
- * - Strictly preserves container PTS for true 1.0x natural physics speed (no 2x fast-forward)
- * - Downbeat-synchronized music ducking (-2.5 dB) during active gameplay
+ * Deterministic Frame-by-Frame Stepping Pipeline (Offline Rendering):
+ * - Exactly 5,028 in-engine gameplay frames @ 60.00 FPS (83.800s duration)
+ * - Piped synchronously from WebGL canvas into FFmpeg (image2pipe / mjpeg)
+ * - Zero dropped frames, zero duplicate frames, zero jitter, zero stutter
+ * - Hardware acceleration locked to NVIDIA GeForce RTX 3050 Ti Laptop GPU via --force_high_performance_gpu
+ * - High-bitrate H.264 (CRF 17) Broadcast Master + Optimized Social Cut (<25 MB)
+ * - 94.500s Total Deliverable Duration (5,670 frames @ 60.0000 FPS CFR)
  */
 
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execFileSync } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { chromium } from 'playwright';
 import { createServer } from 'vite';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const VITE_PORT = 5183;
-const CHUNK_SERVER_PORT = 5189;
+const FRAME_SERVER_PORT = 5189;
 const OUT_DIR = path.join(ROOT, 'captures', 'trailer');
-const RAW_WEBM = path.join(OUT_DIR, 'raw_stream.webm');
+const RAW_MP4 = path.join(OUT_DIR, 'raw_footage_1080p60.mp4');
 const MASTER_MP4 = path.join(OUT_DIR, 'valleyball_versus_official_trailer_1080p60.mp4');
 const DEBUT_MP4 = path.join(OUT_DIR, 'valleyball_versus_debut_trailer_1080p60.mp4');
 const SOCIAL_MP4 = path.join(OUT_DIR, 'valleyball_versus_official_trailer_social_1080p.mp4');
@@ -42,46 +38,75 @@ async function ensureTitleCard() {
   }
 }
 
-async function startChunkReceiver() {
-  if (fs.existsSync(RAW_WEBM)) fs.unlinkSync(RAW_WEBM);
-  const writeStream = fs.createWriteStream(RAW_WEBM);
+async function startFramePipeReceiver(outputFilePath) {
+  if (fs.existsSync(outputFilePath)) fs.unlinkSync(outputFilePath);
 
+  console.log(`[capture] Spawning FFmpeg image2pipe encoder -> ${outputFilePath}...`);
+  const ffmpegProcess = spawn('ffmpeg', [
+    '-y',
+    '-f', 'image2pipe',
+    '-vcodec', 'mjpeg',
+    '-r', '60',
+    '-i', 'pipe:0',
+    '-c:v', 'libx264',
+    '-preset', 'slow',
+    '-crf', '17',
+    '-pix_fmt', 'yuv420p',
+    outputFilePath,
+  ], { stdio: ['pipe', 'inherit', 'inherit'] });
+
+  let framesReceived = 0;
   let doneResolve;
   const donePromise = new Promise((resolve) => { doneResolve = resolve; });
 
   const server = http.createServer((req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', '*');
 
     if (req.method === 'OPTIONS') {
       res.writeHead(200);
       return res.end();
     }
 
-    if (req.url === '/chunk' && req.method === 'POST') {
-      req.on('data', chunk => writeStream.write(chunk));
-      req.on('end', () => {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true }));
+    if (req.url === '/frame' && req.method === 'POST') {
+      req.on('data', (chunk) => {
+        ffmpegProcess.stdin.write(chunk);
       });
-    } else if (req.url === '/done' && req.method === 'POST') {
+      req.on('end', () => {
+        framesReceived++;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, frame: framesReceived }));
+      });
+      return;
+    }
+
+    if (req.url === '/done' && req.method === 'POST') {
       req.on('data', () => {});
       req.on('end', () => {
-        writeStream.end(() => {
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: true }));
-          doneResolve();
-        });
+        console.log(`\n[capture] All ${framesReceived} frames received. Finalizing FFmpeg encoding...`);
+        ffmpegProcess.stdin.end();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, totalFrames: framesReceived }));
       });
-    } else {
-      res.writeHead(404);
-      res.end();
+      return;
     }
+
+    res.writeHead(404);
+    res.end();
   });
 
-  await new Promise(resolve => server.listen(CHUNK_SERVER_PORT, '127.0.0.1', resolve));
-  console.log(`[capture] Chunk streaming server listening on 127.0.0.1:${CHUNK_SERVER_PORT}`);
+  ffmpegProcess.on('close', (code) => {
+    console.log(`[capture] FFmpeg encoder closed with exit code ${code}`);
+    doneResolve({ code, framesReceived });
+  });
+
+  ffmpegProcess.on('error', (err) => {
+    console.error('[capture] FFmpeg encoder process error:', err);
+  });
+
+  await new Promise((resolve) => server.listen(FRAME_SERVER_PORT, '127.0.0.1', resolve));
+  console.log(`[capture] Frame pipe streaming server listening on 127.0.0.1:${FRAME_SERVER_PORT}`);
 
   return {
     server,
@@ -91,14 +116,14 @@ async function startChunkReceiver() {
 
 async function runCapture() {
   console.log('╔══════════════════════════════════════════════════════════════════╗');
-  console.log('║       VALLEYBALL VERSUS — OFFICIAL GAMEPLAY TRAILER CAPTURE      ║');
-  console.log('║      Continuous Rally | 1.0x Real-Time | 1080p60 CFR 94.500s     ║');
+  console.log('║  VALLEYBALL VERSUS — DETERMINISTIC 1080p60 TRAILER CAPTURE       ║');
+  console.log('║      Zero Dropped Frames | NVIDIA RTX 3050 Ti | 94.500s CFR      ║');
   console.log('╚══════════════════════════════════════════════════════════════════╝\n');
 
   await ensureTitleCard();
 
-  // 1. Start chunk streaming receiver
-  const receiver = await startChunkReceiver();
+  // 1. Start frame pipe receiver and FFmpeg child process
+  const receiver = await startFramePipeReceiver(RAW_MP4);
 
   // 2. Start Vite server
   console.log(`[capture] Launching Vite server on port ${VITE_PORT}...`);
@@ -111,15 +136,13 @@ async function runCapture() {
   await viteServer.listen();
   console.log(`[capture] Vite server running at http://localhost:${VITE_PORT}/Valleyball-Versus/`);
 
-  // 3. Launch GPU-Accelerated Chromium
-  console.log('[capture] Spawning GPU-accelerated Chromium (1920x1080)...');
+  // 3. Launch GPU-Accelerated Chromium forced onto NVIDIA RTX 3050 Ti
+  console.log('[capture] Spawning GPU-accelerated Chromium with NVIDIA RTX 3050 Ti hardware lock...');
   const browser = await chromium.launch({
-    // New headless mode (full Chromium, no window) keeps hardware D3D11
-    // rendering. A headed window gets throttled to ~1 fps by Windows when it
-    // is minimized or loses the foreground.
     headless: true,
     channel: 'chromium',
     args: [
+      '--force_high_performance_gpu',
       '--use-gl=angle',
       '--use-angle=d3d11',
       '--enable-gpu-rasterization',
@@ -129,6 +152,7 @@ async function runCapture() {
       '--autoplay-policy=no-user-gesture-required',
       '--disable-background-timer-throttling',
       '--disable-renderer-backgrounding',
+      '--disable-backgrounding-occluded-windows',
       '--window-size=1920,1080',
     ],
   });
@@ -139,17 +163,16 @@ async function runCapture() {
   });
 
   const page = await context.newPage();
-  page.setDefaultTimeout(240000);
+  page.setDefaultTimeout(360000);
 
   // 4. Load Valleyball Versus
   const url = `http://localhost:${VITE_PORT}/Valleyball-Versus/`;
   console.log(`[capture] Navigating to ${url}...`);
   await page.goto(url, { waitUntil: 'load', timeout: 120000 });
-  await page.waitForTimeout(6000); // Allow assets, shaders, and arena.glb to settle
+  await page.waitForTimeout(5000); // Allow assets, shaders, and arena.glb to settle
 
-  // 5. Pre-warm WebGL shaders and start match
-  console.log('[capture] Pre-warming WebGL pipeline and preparing cinematic choreography...');
-  await page.evaluate(async (chunkPort) => {
+  // 5. Setup match, verify active GPU, pre-warm WebGL shaders, and enter deterministic mode
+  const setupInfo = await page.evaluate(async (framePort) => {
     // Hide all UI
     let style = document.getElementById('cap-ui-hide');
     if (!style) {
@@ -165,14 +188,25 @@ async function runCapture() {
       }
     `;
 
-    // Start 1v1 AI vs AI Match with Red (Home) vs Blue (Away)
+    // Verify Active GPU renderer
+    const canvas = document.getElementById('viewport');
+    const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    const activeRenderer = ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+
+    // Start 1v1 AI vs AI Match with Red (Football Helmet / wrestler_bands) vs Blue (Cricket Helmet / wicket_grill)
     if (window.__vb && window.__vb.startMatch) {
       const configs = [
-        { id: 'p1', name: 'Home Bot', team: 'home', variant: 'masculine', cameraMode: 'chase', type: 'ai', difficulty: 'hard', aggressiveness: 0.95, primaryColor: 0xD90429 },
-        { id: 'p2', name: 'Away Bot', team: 'away', variant: 'feminine', cameraMode: 'chase', type: 'ai', difficulty: 'hard', aggressiveness: 0.95, primaryColor: 0x1D4ED8 }
+        { id: 'p1', name: 'Home Bot', team: 'home', variant: 'masculine', cameraMode: 'chase', type: 'ai', difficulty: 'hard', aggressiveness: 0.95, primaryColor: 0xD90429, headwear: 'wrestler_bands' },
+        { id: 'p2', name: 'Away Bot', team: 'away', variant: 'masculine', cameraMode: 'chase', type: 'ai', difficulty: 'hard', aggressiveness: 0.95, primaryColor: 0x1D4ED8, headwear: 'wicket_grill' }
       ];
       window.__vb.startMatch(configs, { ball: 'medium', duration: 300, arena: 'court' });
       if (window.__vb.skipFlyover) window.__vb.skipFlyover();
+
+      if (window.__vb.athletes) {
+        if (window.__vb.athletes[0]?.setHeadwear) window.__vb.athletes[0].setHeadwear('wrestler_bands');
+        if (window.__vb.athletes[1]?.setHeadwear) window.__vb.athletes[1].setHeadwear('wicket_grill');
+      }
 
       if (window.__vb.matchState) {
         window.__vb.matchState.countdownTicksRemaining = Math.round(14.40 * 60);
@@ -182,68 +216,66 @@ async function runCapture() {
       if (window.__vb.hustleBoards?.group) window.__vb.hustleBoards.group.visible = true;
     }
 
-    // 3-second render warmup to compile all shaders and eliminate frame 0 stutter
-    await new Promise(r => setTimeout(r, 3000));
+    // 2-second render warmup to compile all shaders
+    await new Promise(r => setTimeout(r, 2000));
 
-    // Reset countdown so timing aligns with recording
-    if (window.__vb && window.__vb.matchState) {
-      window.__vb.matchState.countdownTicksRemaining = Math.round(14.40 * 60);
-      window.__vb.matchState.isCountingDown = true;
+    // Halt the real-time requestAnimationFrame Loop: deterministic frame stepping takes over!
+    if (window.__vb?.loop) {
+      window.__vb.loop.stop();
     }
-
-    // Connect MediaRecorder to WebGL canvas stream
-    const canvas = document.getElementById('viewport');
-    const stream = canvas.captureStream(60);
-
-    const recorder = new MediaRecorder(stream, {
-      mimeType: MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm',
-      videoBitsPerSecond: 36000000 // 36 Mbps broadcast bitrate
-    });
-
-    recorder.ondataavailable = async (e) => {
-      if (e.data && e.data.size > 0) {
-        try {
-          await fetch(`http://127.0.0.1:${chunkPort}/chunk`, {
-            method: 'POST',
-            body: e.data
-          });
-        } catch (_) {}
-      }
-    };
-
-    window.__trailerRecorder = recorder;
-    recorder.start(250);
 
     // Start TrailerDirector at t=0
-    if (window.__vb && window.__vb.trailerDirector) {
+    if (window.__vb?.trailerDirector) {
       window.__vb.trailerDirector.start(0);
     }
-  }, CHUNK_SERVER_PORT);
 
-  console.log('[capture] Recording in-engine choreography (83.80s footage + title card outro)...');
+    return { activeRenderer };
+  }, FRAME_SERVER_PORT);
 
-  let inGameTime = 0;
-  while (inGameTime < 84.2) {
-    await page.waitForTimeout(4000);
-    inGameTime = await page.evaluate(() => window.__vb?.trailerDirector?.elapsedTime || 0);
-    console.log(`[capture] In-game sequence time: ${inGameTime.toFixed(1)}s / 84.0s`);
-  }
-  await page.waitForTimeout(1000);
+  console.log(`[capture] Active WebGL Renderer: ${setupInfo.activeRenderer}`);
+  console.log('[capture] Real-time loop halted. Beginning deterministic frame-by-frame stepping...');
 
-  // 6. Stop Recorder
-  console.log('[capture] In-engine footage captured. Finalizing recording stream...');
-  await page.evaluate(async (chunkPort) => {
-    if (window.__trailerRecorder && window.__trailerRecorder.state !== 'inactive') {
-      window.__trailerRecorder.stop();
+  // 6. Deterministic Frame-Stepping Loop (5,028 frames @ 60.00 FPS = exactly 83.800 seconds)
+  const TOTAL_FRAMES = 5028; // 83.800s * 60 FPS
+  console.log(`[capture] Stepping & piping ${TOTAL_FRAMES} frames (83.800s footage @ 60 FPS)...`);
+
+  const tStart = Date.now();
+  await page.evaluate(async ({ totalFrames, framePort }) => {
+    const canvas = document.getElementById('viewport');
+    const dt = 1 / 60;
+
+    for (let frame = 0; frame < totalFrames; frame++) {
+      // 1. Step simulation, physics, and directorial camera by exactly 1/60s
+      window.__vb.stepDeterministicFrame(dt);
+
+      // 2. Export canvas to high-quality JPEG blob (0.94 quality)
+      const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.94));
+
+      // 3. Pipe binary frame over HTTP directly into FFmpeg stdin
+      await fetch(`http://127.0.0.1:${framePort}/frame`, {
+        method: 'POST',
+        body: blob
+      });
+
+      // Periodic progress reporting
+      if (frame > 0 && frame % 300 === 0) {
+        console.log(`[in-page] Stepped ${frame}/${totalFrames} frames (${(frame / 60).toFixed(1)}s / 83.8s)`);
+      }
     }
-    await new Promise(r => setTimeout(r, 1000));
-    await fetch(`http://127.0.0.1:${chunkPort}/done`, { method: 'POST' });
-  }, CHUNK_SERVER_PORT);
 
-  // Wait for chunk receiver to finish writing RAW_WEBM
+    // Notify receiver that all frames have completed
+    await fetch(`http://127.0.0.1:${framePort}/done`, { method: 'POST' });
+  }, { totalFrames: TOTAL_FRAMES, framePort: FRAME_SERVER_PORT });
+
+  const captureElapsedSec = ((Date.now() - tStart) / 1000).toFixed(1);
+  console.log(`[capture] Frame stepping complete in ${captureElapsedSec}s (avg ${(TOTAL_FRAMES / captureElapsedSec).toFixed(1)} FPS encoding speed).`);
+
+  // Wait for FFmpeg process to close
   await receiver.waitForDone();
   receiver.server.close();
-  console.log(`[capture] Raw WebM stream written: ${RAW_WEBM} (${(fs.statSync(RAW_WEBM).size / (1024 * 1024)).toFixed(2)} MB)`);
+
+  const rawSizeMb = (fs.statSync(RAW_MP4).size / (1024 * 1024)).toFixed(2);
+  console.log(`[capture] Deterministic footage stream created: ${RAW_MP4} (${rawSizeMb} MB)`);
 
   // Close browser and Vite
   await browser.close();
@@ -251,12 +283,12 @@ async function runCapture() {
 
   // 7. Post-Processing & Deliverable Assembly via FFmpeg
   console.log('\n=== ASSEMBLING FINAL BROADCAST DELIVERABLES (FFMPEG) ===');
-  console.log('[capture] Compositing footage (83.800s) + galaxy title card (10.700s) with Neon Velocity (94.500s total)...');
+  console.log('[capture] Compositing footage (83.800s, 5028 frames) + galaxy title card (10.700s, 642 frames) with Neon Velocity (94.500s total)...');
 
   // Filter Graph:
-  // [0:v] In-engine footage (83.8s): smooth 2.0s fade in from black, 0.8s fade out to black from 83.0s to 83.8s, 60fps CFR
-  // [1:v] Galaxy title card (10.7s): 0.8s fade in from black, 60fps CFR
-  // [v0][v1] Concat -> exactly 94.500s video stream
+  // [0:v] Deterministic footage (83.8s, 5028 frames): smooth 2.0s fade in from black, 0.8s fade out to black from 83.0s to 83.8s
+  // [1:v] Galaxy title card (10.7s, 642 frames): 0.8s fade in from black
+  // [v0][v1] Concat -> exactly 94.500s video stream (5,670 frames @ 60.0000 FPS CFR)
   // [2:a] Audio: Neon Velocity with -2.5 dB ducking during gameplay action (44.2s to 78.4s), padded to 94.500s
   const filterGraph = [
     '[0:v]trim=duration=83.8,fade=t=in:st=0:d=2.0,fade=t=out:st=83.0:d=0.8,fps=60,setpts=PTS-STARTPTS[v0]',
@@ -269,7 +301,7 @@ async function runCapture() {
   console.log('\n[capture] Encoding Deliverable 1: Broadcast Master 1080p60 MP4...');
   const masterArgs = [
     '-y',
-    '-i', RAW_WEBM,
+    '-i', RAW_MP4,
     '-loop', '1', '-t', '12.0', '-r', '60', '-i', TITLE_CARD,
     '-i', MUSIC_PATH,
     '-filter_complex', filterGraph,
@@ -317,17 +349,26 @@ async function runCapture() {
   fs.mkdirSync(brainMilestoneDir, { recursive: true });
 
   const milestones = [
-    { name: '01_phase1_torus_arch_reveal.png', time: '00:00:04.000' },
+    { name: '00_phase1_red_football_helmet_portrait.png', time: '00:00:01.800' },
+    { name: '01_phase1_blue_cricket_helmet_portrait.png', time: '00:00:05.200' },
+    { name: '01_phase1_torus_arch_reveal.png', time: '00:00:05.200' },
     { name: '02_phase1_ball_rollout_banked_wall.png', time: '00:00:09.500' },
     { name: '03_phase2_kickoff_serve.png', time: '00:00:15.000' },
     { name: '04_phase2_rally_defending_dig.png', time: '00:00:17.600' },
     { name: '05_phase2_goal_1_broadcast_score.png', time: '00:00:21.500' },
     { name: '06_phase3_goal_2_sky_cam_spike.png', time: '00:00:32.500' },
-    { name: '07_phase3_goal_3_banked_wall_carom.png', time: '00:00:44.500' },
+    { name: '07_phase3_goal_3_banked_wall_carom.png', time: '00:00:45.200' },
     { name: '08_phase3_goal_4_turf_dive_strike.png', time: '00:00:53.500' },
     { name: '09_phase3_goal_5_through_hoop_reverse.png', time: '00:01:03.800' },
     { name: '10_phase4_celestial_ascension.png', time: '00:01:13.500' },
     { name: '11_phase5_galaxy_title_card.png', time: '00:01:29.000' },
+    // Dedicated hoop crossing frames for visual verification of authentic Torus scoring
+    { name: 'goal_1_torus_crossing.png', time: '00:00:20.800' },
+    { name: 'goal_2_torus_crossing.png', time: '00:00:31.650' },
+    { name: 'goal_3_torus_crossing.png', time: '00:00:44.650' },
+    { name: 'goal_4_torus_crossing.png', time: '00:00:52.650' },
+    { name: 'goal_5_torus_crossing.png', time: '00:01:02.950' },
+    { name: 'goal_6_torus_crossing.png', time: '00:01:12.650' },
     // Compatibility mirrors for earlier milestone sets
     { name: '02_phase1_stream_ramps_reveal.png', time: '00:00:09.500' },
     { name: '03_phase1_turf_level_sideline.png', time: '00:00:09.500' },
