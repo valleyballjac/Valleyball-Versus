@@ -34,6 +34,12 @@ export class TrailerDirector {
     // Vectors for zero-allocation tick calculation
     this._pos = new THREE.Vector3();
     this._target = new THREE.Vector3();
+    this._smoothPos = new THREE.Vector3();
+    this._smoothTarget = new THREE.Vector3();
+    this._smoothFocusX = 0;
+    this._smoothFocusZ = 0;
+    this._initializedFocus = false;
+    this._justCut = true;
     this._ballSmoothPos = new THREE.Vector3(0, 1.0, 0);
 
     // Camera micro-shake on heavy impacts (positional only, NEVER touches FOV)
@@ -46,16 +52,17 @@ export class TrailerDirector {
     this._goalStaged = false;
     this._kickoffTriggered = false;
 
-    // 8 Brand Dictionary palette pairings — default is classic Red (Home) vs Blue (Away)
+    // Brand Dictionary palette pairings with Series 1 Headwear
+    // Default (idx 0) is classic Red (Football Helmet / wrestler_bands) vs Blue (Cricket Helmet / wicket_grill)
     this._palettes = [
-      { name: 'ClassicRedBlue', homeColor: 0xD90429, awayColor: 0x1D4ED8, homeVariant: 'masculine', awayVariant: 'feminine' },
-      { name: 'VoltGold', homeColor: 0xFFD000, awayColor: 0x8B5CF6, homeVariant: 'masculine', awayVariant: 'feminine' },
-      { name: 'IonCyan', homeColor: 0x00E5FF, awayColor: 0xD90429, homeVariant: 'feminine', awayVariant: 'classic' },
-      { name: 'Emerald', homeColor: 0x10E56A, awayColor: 0xFF6B00, homeVariant: 'classic', awayVariant: 'masculine' },
-      { name: 'Obsidian', homeColor: 0x0A0A0C, awayColor: 0xFFFFFF, homeVariant: 'masculine', awayVariant: 'feminine' },
-      { name: 'RoyalBlue', homeColor: 0x1D4ED8, awayColor: 0xFF6B00, homeVariant: 'feminine', awayVariant: 'classic' },
-      { name: 'DeepIndigo', homeColor: 0x6B11FF, awayColor: 0xFFD000, homeVariant: 'masculine', awayVariant: 'feminine' },
-      { name: 'SolarBlaze', homeColor: 0xFF6B00, awayColor: 0x00E5FF, homeVariant: 'classic', awayVariant: 'masculine' },
+      { name: 'ClassicRedBlue', homeColor: 0xD90429, awayColor: 0x1D4ED8, homeVariant: 'masculine', awayVariant: 'masculine', homeHeadwear: 'wrestler_bands', awayHeadwear: 'wicket_grill' },
+      { name: 'VoltGold', homeColor: 0xFFD000, awayColor: 0x8B5CF6, homeVariant: 'masculine', awayVariant: 'feminine', homeHeadwear: 'sensor_visor', awayHeadwear: 'couture_wrap' },
+      { name: 'IonCyan', homeColor: 0x00E5FF, awayColor: 0xD90429, homeVariant: 'feminine', awayVariant: 'classic', homeHeadwear: 'rigger_band', awayHeadwear: 'ouendan_knot' },
+      { name: 'Emerald', homeColor: 0x10E56A, awayColor: 0xFF6B00, homeVariant: 'classic', awayVariant: 'masculine', homeHeadwear: 'terrace_visor', awayHeadwear: 'cursor_cap' },
+      { name: 'Obsidian', homeColor: 0x0A0A0C, awayColor: 0xFFFFFF, homeVariant: 'masculine', awayVariant: 'feminine', homeHeadwear: 'manager_cap', awayHeadwear: 'broadcaster_mic' },
+      { name: 'RoyalBlue', homeColor: 0x1D4ED8, awayColor: 0xFF6B00, homeVariant: 'feminine', awayVariant: 'classic', homeHeadwear: 'wicket_grill', awayHeadwear: 'wrestler_bands' },
+      { name: 'DeepIndigo', homeColor: 0x6B11FF, awayColor: 0xFFD000, homeVariant: 'masculine', awayVariant: 'feminine', homeHeadwear: 'couture_wrap', awayHeadwear: 'sensor_visor' },
+      { name: 'SolarBlaze', homeColor: 0xFF6B00, awayColor: 0x00E5FF, homeVariant: 'classic', awayVariant: 'masculine', homeHeadwear: 'cursor_cap', awayHeadwear: 'rigger_band' },
     ];
 
     // Stored audio gains for pure music video mode
@@ -107,6 +114,7 @@ export class TrailerDirector {
     this._introBounceTriggered = false;
     this._kickoffPrepped = false;
     this._contendersPositioned = false;
+    this._introAthletesPositioned = false;
     this._rally1Serve = false;
     this._rally1Dig = false;
     this._rally1Set = false;
@@ -123,6 +131,12 @@ export class TrailerDirector {
     this._goal6Staged = false;
     this._goal6Scored = false;
     this.trauma = 0.0;
+    this._smoothPos.set(0, 0, 0);
+    this._smoothTarget.set(0, 0, 0);
+    this._smoothFocusX = 0;
+    this._smoothFocusZ = 0;
+    this._initializedFocus = false;
+    this._justCut = true;
 
     // Suppress all 2D UI, menus, and debug widgets for pure cinematic presentation
     if (typeof document !== 'undefined') {
@@ -349,7 +363,37 @@ export class TrailerDirector {
     const slot1 = getBotSlot(1);
     const mass = primaryBall?.body?.mass() || 2.2;
 
-    // 0.00s to 7.20s: Ball held stationary out of play and athletes are hidden
+    // 0.00s to 11.50s: Athletes positioned at starting marks, Red in Football Helmet, Blue in Cricket Helmet
+    if (t < 11.50 && athletes.length >= 2) {
+      if (!this._introAthletesPositioned) {
+        this._introAthletesPositioned = true;
+        athletes[0]?.teleportTo?.({ x: 0.0, y: 0.9, z: 6.0 }, Math.PI);
+        athletes[1]?.teleportTo?.({ x: 0.0, y: 0.9, z: -8.0 }, 0);
+        this._applyPalette(0, athletes);
+      }
+      if (athletes[0]?.motor?.body) athletes[0].motor.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      if (athletes[1]?.motor?.body) athletes[1].motor.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    }
+
+    // Zero out movement inputs before 14.40s so contenders hold a proud, composed ready stance
+    if (t < 14.40) {
+      if (slot0) {
+        slot0.moveX = 0;
+        slot0.moveZ = 0;
+        slot0.sprintHeld = false;
+        slot0.slideHeld = false;
+        slot0.jumpQueued = false;
+      }
+      if (slot1) {
+        slot1.moveX = 0;
+        slot1.moveZ = 0;
+        slot1.sprintHeld = false;
+        slot1.slideHeld = false;
+        slot1.jumpQueued = false;
+      }
+    }
+
+    // 0.00s to 7.20s: Ball held stationary out of play during macro contender reveals
     if (t < 7.20 && primaryBall?.body && !this._introBallSpawned) {
       primaryBall.body.setTranslation({ x: 0.0, y: 15.0, z: 0.0 }, true);
       primaryBall.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
@@ -392,16 +436,18 @@ export class TrailerDirector {
     }
 
     // ═════════════════════════════════════════════════════════════════════════
-    // RALLY 1 & GOAL 1: KICKOFF TO NORTH TORUS SPIKE (14.40s – 24.00s | 21.0s)
+    // RALLY 1 & GOAL 1: KICKOFF TO NORTH TORUS SPIKE (14.40s – 24.00s | 20.8s)
     // Verbs: Kickoff Serve -> Power Slide Dig -> Cleat Cut -> Jump Spike Goal
     // ═════════════════════════════════════════════════════════════════════════
 
     // Hit 1: Kickoff Serve (14.40s) — Home Bot (Red) strikes across net
     if (t >= 14.40 && t < 14.55 && !this._rally1Serve && primaryBall?.body) {
       this._rally1Serve = true;
+      if (matchState) matchState.targetGoal = 'N';
       athletes[0]?.teleportTo?.({ x: 0.0, y: 0.9, z: 6.0 }, 0);
+      athletes[1]?.teleportTo?.({ x: 0.0, y: 0.9, z: -10.0 }, Math.PI);
       primaryBall.body.setTranslation({ x: 0.0, y: 1.6, z: 5.2 }, true);
-      primaryBall.body.setLinvel({ x: 0.0, y: 6.2, z: -16.0 }, true);
+      primaryBall.body.setLinvel({ x: 0.0, y: 6.5, z: -15.0 }, true);
       if (slot0) {
         slot0.hasAim = true;
         slot0.aimYaw = 0;
@@ -410,24 +456,21 @@ export class TrailerDirector {
       this.addImpulse(0.85);
     }
 
-    // Hit 2: Power Slide Dig (17.20s) — Away Bot (Blue) slides across turf and pops ball up
+    // Away Bot (Blue) power slide dig at 17.20s: pops ball toward East flank
     if (t >= 17.15 && t < 17.35 && !this._rally1Dig && primaryBall?.body) {
       this._rally1Dig = true;
-      // Position Away Bot right at the landing point to execute an authentic power slide dig
-      athletes[1]?.teleportTo?.({ x: 0.0, y: 0.9, z: -10.5 }, Math.PI);
-      primaryBall.body.setTranslation({ x: 0.0, y: 1.2, z: -10.0 }, true);
-      primaryBall.body.setLinvel({ x: 0.2, y: 8.5, z: 12.5 }, true);
+      primaryBall.body.setLinvel({ x: 3.5, y: 8.5, z: -7.0 }, true);
       if (slot1) {
         slot1.sprintHeld = true;
         slot1.slideHeld = true;
         slot1.volleyQueued = true;
-        slot1.aimYaw = Math.PI;
+        slot1.aimYaw = -Math.PI * 0.25;
         slot1.hasAim = true;
       }
       this.addImpulse(0.75);
     }
 
-    // Hit 3: Home Bot Cleat Cut & Apex Jump-Spike into North Torus (20.00s -> 21.00s)
+    // Home Bot (Red) cleat cut and aerial jump-spike into North Torus (20.00s -> 20.30s)
     if (t >= 19.60 && t < 19.80 && slot0) {
       slot0.cutQueued = true;
       slot0.sprintHeld = true;
@@ -435,20 +478,24 @@ export class TrailerDirector {
     if (t >= 19.85 && t < 20.05 && slot0) {
       slot0.jumpQueued = true;
     }
-    if (t >= 20.20 && t < 20.40 && !this._goal1Staged && primaryBall?.body) {
+    if (t >= 20.25 && t < 20.45 && !this._goal1Staged && primaryBall?.body) {
       this._goal1Staged = true;
-      // Position Home Bot in mid-air right at the ball apex for a clean racquet strike
-      athletes[0]?.teleportTo?.({ x: 0.5, y: 2.8, z: 2.2 }, 0);
-      primaryBall.body.setTranslation({ x: 0.5, y: 3.2, z: 1.6 }, true);
-      primaryBall.body.setLinvel({ x: -1.5, y: 9.2, z: -54.0 }, true);
+      if (athletes[0]?.motor?.body) {
+        athletes[0].motor.body.setTranslation({ x: 5.0, y: 4.8, z: -25.0 }, true);
+        athletes[0].motor.body.setLinvel({ x: 0, y: 1.5, z: 0 }, true);
+        if (athletes[0].motor.interpolated) athletes[0].motor.interpolated.reset(new THREE.Vector3(5.0, 4.8, -25.0));
+      }
+      primaryBall.body.setTranslation({ x: 5.0, y: 5.2, z: -25.0 }, true);
+      // Clean launch through North Torus aperture (crosses X=0 at Y=10.26, Z=-40.00, clearance > 4.4m)
+      primaryBall.body.setLinvel({ x: -9.09, y: 12.94, z: -27.27 }, true);
       if (slot0) {
         slot0.hasAim = true;
-        slot0.aimYaw = 0;
+        slot0.aimYaw = Math.atan2(-9.09, -27.27);
         slot0.spikeQueued = true;
       }
       this.addImpulse(1.0);
     }
-    if (t >= 21.00 && !this._goal1Scored) {
+    if (t >= 20.80 && !this._goal1Scored) {
       this._goal1Scored = true;
       this.addImpulse(1.0);
       try {
@@ -459,22 +506,21 @@ export class TrailerDirector {
           matchState.celebrationTicks = 180;
           matchState.lastScoredFor = 'home';
           matchState.lastGoalId = 'N';
-          matchState.events.push({ tick, goal: 'N', scoredFor: 'home', scoreHome: 1, scoreAway: 0 });
         }
       } catch (_) {}
     }
 
     // ═════════════════════════════════════════════════════════════════════════
-    // RALLY 2 & GOAL 2: BANKED WALL COUNTER INTO SOUTH TORUS (24.00s – 35.00s | 32.0s)
+    // RALLY 2 & GOAL 2: BANKED WALL COUNTER INTO SOUTH TORUS (24.00s – 35.00s | 31.7s)
     // Verbs: Flank Serve -> Parabolic Wall Carve -> Cleat Cut -> Jump Spike Goal
     // ═════════════════════════════════════════════════════════════════════════
 
     if (t >= 24.00 && t < 24.15 && primaryBall?.body && athletes.length >= 2) {
-      // Away Bot serves from North-East flank across the steep banked turf
-      athletes[1]?.teleportTo?.({ x: 6.0, y: 0.9, z: -6.0 }, Math.PI);
+      if (matchState) matchState.targetGoal = 'S';
+      athletes[1]?.teleportTo?.({ x: -6.0, y: 1.0, z: -8.0 }, Math.PI);
       athletes[0]?.teleportTo?.({ x: 8.0, y: 1.2, z: 12.0 }, 0);
-      primaryBall.body.setTranslation({ x: 6.0, y: 1.6, z: -5.2 }, true);
-      primaryBall.body.setLinvel({ x: 5.5, y: 6.8, z: 16.5 }, true);
+      primaryBall.body.setTranslation({ x: -6.0, y: 1.6, z: -7.2 }, true);
+      primaryBall.body.setLinvel({ x: 6.0, y: 7.0, z: 18.0 }, true);
       if (slot1) {
         slot1.hasAim = true;
         slot1.aimYaw = Math.PI * 0.25;
@@ -483,9 +529,7 @@ export class TrailerDirector {
     }
     // Home Bot power slide along the banked turf wall
     if (t >= 27.60 && t < 27.85 && primaryBall?.body) {
-      athletes[0]?.teleportTo?.({ x: 12.5, y: 3.2, z: 8.0 }, 0);
-      primaryBall.body.setTranslation({ x: 12.5, y: 3.5, z: 7.2 }, true);
-      primaryBall.body.setLinvel({ x: -6.5, y: 7.8, z: -11.0 }, true);
+      primaryBall.body.setLinvel({ x: -13.0, y: 8.5, z: 12.0 }, true);
       if (slot0) {
         slot0.slideHeld = true;
         slot0.volleyQueued = true;
@@ -499,19 +543,24 @@ export class TrailerDirector {
       slot1.cutQueued = true;
       slot1.jumpQueued = true;
     }
-    if (t >= 31.00 && t < 31.25 && !this._goal2Staged && primaryBall?.body) {
+    if (t >= 31.15 && t < 31.35 && !this._goal2Staged && primaryBall?.body) {
       this._goal2Staged = true;
-      athletes[1]?.teleportTo?.({ x: 1.0, y: 2.6, z: -3.2 }, Math.PI);
-      primaryBall.body.setTranslation({ x: 1.0, y: 3.0, z: -2.6 }, true);
-      primaryBall.body.setLinvel({ x: -2.0, y: 9.5, z: 52.0 }, true);
+      if (athletes[1]?.motor?.body) {
+        athletes[1].motor.body.setTranslation({ x: -7.2, y: 6.8, z: 31.0 }, true);
+        athletes[1].motor.body.setLinvel({ x: 0, y: 1.5, z: 0 }, true);
+        if (athletes[1].motor.interpolated) athletes[1].motor.interpolated.reset(new THREE.Vector3(-7.2, 6.8, 31.0));
+      }
+      primaryBall.body.setTranslation({ x: -7.2, y: 7.5, z: 31.0 }, true);
+      // Clean launch through South Torus aperture (crosses X=0 at Y=10.36, Z=+40.00, clearance > 4.3m)
+      primaryBall.body.setLinvel({ x: 14.4, y: 9.0, z: 18.0 }, true);
       if (slot1) {
         slot1.spikeQueued = true;
         slot1.hasAim = true;
-        slot1.aimYaw = Math.PI;
+        slot1.aimYaw = Math.atan2(14.4, 18.0);
       }
       this.addImpulse(1.0);
     }
-    if (t >= 32.00 && !this._goal2Scored) {
+    if (t >= 31.75 && !this._goal2Scored) {
       this._goal2Scored = true;
       this.addImpulse(1.0);
       try {
@@ -522,7 +571,6 @@ export class TrailerDirector {
           matchState.celebrationTicks = 180;
           matchState.lastScoredFor = 'away';
           matchState.lastGoalId = 'S';
-          matchState.events.push({ tick, goal: 'S', scoredFor: 'away', scoreHome: 1, scoreAway: 1 });
         }
       } catch (_) {}
     }
@@ -533,6 +581,7 @@ export class TrailerDirector {
     // ═════════════════════════════════════════════════════════════════════════
 
     if (t >= 35.00 && t < 35.15 && primaryBall?.body && athletes.length >= 2) {
+      if (matchState) matchState.targetGoal = 'N';
       athletes[0]?.teleportTo?.({ x: 0.0, y: 0.9, z: 4.5 }, 0);
       athletes[1]?.teleportTo?.({ x: 0.0, y: 0.9, z: -5.0 }, Math.PI);
       primaryBall.body.setTranslation({ x: 0.0, y: 1.6, z: 3.8 }, true);
@@ -545,8 +594,6 @@ export class TrailerDirector {
     }
     // Volley exchange at 39.0s
     if (t >= 39.00 && t < 39.20 && primaryBall?.body) {
-      athletes[1]?.teleportTo?.({ x: 0.0, y: 0.9, z: -6.0 }, Math.PI);
-      primaryBall.body.setTranslation({ x: 0.0, y: 1.4, z: -5.4 }, true);
       primaryBall.body.setLinvel({ x: 0.5, y: 6.5, z: 10.0 }, true);
       if (slot1) {
         slot1.volleyQueued = true;
@@ -556,30 +603,33 @@ export class TrailerDirector {
     }
     // High set above net leading directly into the beat drop
     if (t >= 42.20 && t < 42.40 && primaryBall?.body) {
-      athletes[1]?.teleportTo?.({ x: 0.0, y: 0.9, z: -2.5 }, Math.PI);
-      primaryBall.body.setTranslation({ x: 0.0, y: 1.4, z: -2.0 }, true);
-      primaryBall.body.setLinvel({ x: 0.5, y: 8.5, z: 2.2 }, true);
+      primaryBall.body.setLinvel({ x: 6.0, y: 9.5, z: -14.0 }, true);
       if (slot1) slot1.volleyQueued = true;
     }
-    // Leaping into the air at 43.4s
-    if (t >= 43.40 && t < 43.60 && slot0) {
+    // Leaping into the air at 43.6s
+    if (t >= 43.60 && t < 43.80 && slot0) {
       slot0.jumpQueued = true;
       slot0.sprintHeld = true;
     }
-    // AT EXACTLY 44.20s: BEAT DROP DETONATION!
-    if (t >= 44.05 && t < 44.25 && !this._goal3Staged && primaryBall?.body) {
+    // AT EXACTLY 44.15s: BEAT DROP DETONATION!
+    if (t >= 44.15 && t < 44.30 && !this._goal3Staged && primaryBall?.body) {
       this._goal3Staged = true;
-      athletes[0]?.teleportTo?.({ x: 0.5, y: 3.8, z: 1.2 }, 0);
-      primaryBall.body.setTranslation({ x: 0.5, y: 4.2, z: 0.6 }, true);
-      primaryBall.body.setLinvel({ x: -1.8, y: 8.8, z: -56.0 }, true);
+      if (athletes[0]?.motor?.body) {
+        athletes[0].motor.body.setTranslation({ x: 6.5, y: 7.2, z: -32.0 }, true);
+        athletes[0].motor.body.setLinvel({ x: 0, y: 2.0, z: 0 }, true);
+        if (athletes[0].motor.interpolated) athletes[0].motor.interpolated.reset(new THREE.Vector3(6.5, 7.2, -32.0));
+      }
+      primaryBall.body.setTranslation({ x: 6.5, y: 7.8, z: -32.0 }, true);
+      // Clean launch through North Torus aperture (crosses X=0 at Y=10.38, Z=-40.00, clearance > 4.3m)
+      primaryBall.body.setLinvel({ x: -13.0, y: 8.4, z: -16.0 }, true);
       if (slot0) {
         slot0.hasAim = true;
-        slot0.aimYaw = 0;
+        slot0.aimYaw = Math.atan2(-13.0, -16.0);
         slot0.spikeQueued = true;
       }
       this.addImpulse(1.4);
     }
-    if (t >= 44.95 && !this._goal3Scored) {
+    if (t >= 44.70 && !this._goal3Scored) {
       this._goal3Scored = true;
       this.addImpulse(1.2);
       try {
@@ -590,28 +640,25 @@ export class TrailerDirector {
           matchState.celebrationTicks = 180;
           matchState.lastScoredFor = 'home';
           matchState.lastGoalId = 'N';
-          matchState.events.push({ tick, goal: 'N', scoredFor: 'home', scoreHome: 2, scoreAway: 1 });
         }
       } catch (_) {}
     }
 
     // ═════════════════════════════════════════════════════════════════════════
-    // RALLY 4 & GOAL 4: ULTRA-LOW TURF PROFILE DIVE STRIKE (46.00s – 57.00s | 53.0s)
+    // RALLY 4 & GOAL 4: ULTRA-LOW TURF PROFILE DIVE STRIKE (46.00s – 57.00s | 52.7s)
     // Verbs: Sideline Serve -> High Cleat Cut -> Stretch Dive Save -> South Torus Goal
     // ═════════════════════════════════════════════════════════════════════════
 
     if (t >= 46.00 && t < 46.15 && primaryBall?.body && athletes.length >= 2) {
-      athletes[1]?.teleportTo?.({ x: 5.0, y: 0.8, z: -10.0 }, Math.PI);
-      athletes[0]?.teleportTo?.({ x: 4.0, y: 0.8, z: 10.0 }, 0);
-      primaryBall.body.setTranslation({ x: 5.0, y: 1.6, z: -9.2 }, true);
-      primaryBall.body.setLinvel({ x: -0.5, y: 5.8, z: 16.0 }, true);
+      if (matchState) matchState.targetGoal = 'S';
+      athletes[1]?.teleportTo?.({ x: 4.5, y: 0.9, z: -10.0 }, Math.PI);
+      athletes[0]?.teleportTo?.({ x: 4.5, y: 0.9, z: 10.0 }, 0);
+      primaryBall.body.setTranslation({ x: 4.5, y: 1.6, z: -9.2 }, true);
+      primaryBall.body.setLinvel({ x: 0.5, y: 6.0, z: 18.0 }, true);
       if (slot1) slot1.spikeQueued = true;
     }
     // Stretch Dive Save at turf level
     if (t >= 51.40 && t < 51.65 && primaryBall?.body) {
-      athletes[1]?.teleportTo?.({ x: 5.0, y: 0.8, z: -12.5 }, Math.PI);
-      primaryBall.body.setTranslation({ x: 5.0, y: 1.0, z: -11.8 }, true);
-      primaryBall.body.setLinvel({ x: -2.0, y: 8.8, z: 42.0 }, true);
       if (slot1) {
         slot1.diveQueued = true;
         slot1.hasAim = true;
@@ -619,19 +666,23 @@ export class TrailerDirector {
       }
       this.addImpulse(0.85);
     }
-    if (t >= 52.10 && t < 52.35 && !this._goal4Staged && primaryBall?.body) {
+    if (t >= 52.15 && t < 52.35 && !this._goal4Staged && primaryBall?.body) {
       this._goal4Staged = true;
-      athletes[1]?.teleportTo?.({ x: 3.5, y: 1.2, z: -8.0 }, Math.PI);
-      primaryBall.body.setTranslation({ x: 3.5, y: 2.2, z: -7.2 }, true);
-      primaryBall.body.setLinvel({ x: -3.5, y: 9.8, z: 58.0 }, true);
+      if (athletes[1]?.motor?.body) {
+        athletes[1].motor.body.setTranslation({ x: 6.0, y: 6.8, z: 31.0 }, true);
+        if (athletes[1].motor.interpolated) athletes[1].motor.interpolated.reset(new THREE.Vector3(6.0, 6.8, 31.0));
+      }
+      primaryBall.body.setTranslation({ x: 6.0, y: 7.5, z: 31.0 }, true);
+      // Clean launch through South Torus aperture (crosses X=0 at Y=10.37, Z=+40.00, clearance > 4.3m)
+      primaryBall.body.setLinvel({ x: -12.0, y: 9.0, z: 18.0 }, true);
       if (slot1) {
         slot1.spikeQueued = true;
         slot1.hasAim = true;
-        slot1.aimYaw = Math.PI;
+        slot1.aimYaw = Math.atan2(-12.0, 18.0);
       }
       this.addImpulse(1.0);
     }
-    if (t >= 53.00 && !this._goal4Scored) {
+    if (t >= 52.75 && !this._goal4Scored) {
       this._goal4Scored = true;
       this.addImpulse(1.0);
       try {
@@ -642,17 +693,17 @@ export class TrailerDirector {
           matchState.celebrationTicks = 180;
           matchState.lastScoredFor = 'away';
           matchState.lastGoalId = 'S';
-          matchState.events.push({ tick, goal: 'S', scoredFor: 'away', scoreHome: 2, scoreAway: 2 });
         }
       } catch (_) {}
     }
 
     // ═════════════════════════════════════════════════════════════════════════
-    // RALLY 5 & GOAL 5: BANKED WALL FLANK CARVE INTO NORTH TORUS (57.00s – 67.00s | 63.5s)
+    // RALLY 5 & GOAL 5: BANKED WALL FLANK CARVE INTO NORTH TORUS (57.00s – 67.00s | 63.0s)
     // Verbs: Parabolic Wall Launch -> High Speed Carve -> Power Slide -> North Torus Goal
     // ═════════════════════════════════════════════════════════════════════════
 
     if (t >= 57.00 && t < 57.15 && primaryBall?.body && athletes.length >= 2) {
+      if (matchState) matchState.targetGoal = 'N';
       athletes[0]?.teleportTo?.({ x: 12.0, y: 3.2, z: 5.0 }, 0);
       athletes[1]?.teleportTo?.({ x: 6.0, y: 0.9, z: -10.0 }, Math.PI);
       primaryBall.body.setTranslation({ x: 12.0, y: 3.8, z: 4.2 }, true);
@@ -663,19 +714,23 @@ export class TrailerDirector {
       slot0.cutQueued = true;
       slot0.sprintHeld = true;
     }
-    if (t >= 62.40 && t < 62.65 && !this._goal5Staged && primaryBall?.body) {
+    if (t >= 62.45 && t < 62.65 && !this._goal5Staged && primaryBall?.body) {
       this._goal5Staged = true;
-      athletes[0]?.teleportTo?.({ x: 10.5, y: 3.2, z: 3.8 }, 0);
-      primaryBall.body.setTranslation({ x: 10.5, y: 3.8, z: 3.0 }, true);
-      primaryBall.body.setLinvel({ x: -6.5, y: 9.2, z: -55.0 }, true);
+      if (athletes[0]?.motor?.body) {
+        athletes[0].motor.body.setTranslation({ x: -7.5, y: 6.5, z: -30.0 }, true);
+        if (athletes[0].motor.interpolated) athletes[0].motor.interpolated.reset(new THREE.Vector3(-7.5, 6.5, -30.0));
+      }
+      primaryBall.body.setTranslation({ x: -7.5, y: 7.5, z: -30.0 }, true);
+      // Clean launch through North Torus aperture (crosses X=0 at Y=10.35, Z=-40.00, clearance > 4.3m)
+      primaryBall.body.setLinvel({ x: 15.0, y: 9.0, z: -20.0 }, true);
       if (slot0) {
         slot0.hasAim = true;
-        slot0.aimYaw = -Math.PI * 0.15;
+        slot0.aimYaw = Math.atan2(15.0, -20.0);
         slot0.spikeQueued = true;
       }
       this.addImpulse(1.0);
     }
-    if (t >= 63.30 && !this._goal5Scored) {
+    if (t >= 63.05 && !this._goal5Scored) {
       this._goal5Scored = true;
       this.addImpulse(1.0);
       try {
@@ -686,41 +741,51 @@ export class TrailerDirector {
           matchState.celebrationTicks = 180;
           matchState.lastScoredFor = 'home';
           matchState.lastGoalId = 'N';
-          matchState.events.push({ tick, goal: 'N', scoredFor: 'home', scoreHome: 3, scoreAway: 2 });
         }
       } catch (_) {}
     }
 
     // ═════════════════════════════════════════════════════════════════════════
-    // RALLY 6 & GOAL 6: CLIMAX THROUGH-HOOP REVERSE SPIKE (67.00s – 78.40s | 73.0s)
+    // RALLY 6 & GOAL 6: CLIMAX THROUGH-HOOP REVERSE SPIKE (67.00s – 78.40s | 72.7s)
     // Verbs: Net Aerial Clash -> Climax Spike Through Torus Ring -> Ascension
     // ═════════════════════════════════════════════════════════════════════════
 
     if (t >= 67.00 && t < 67.15 && primaryBall?.body && athletes.length >= 2) {
+      if (matchState) matchState.targetGoal = 'N';
       athletes[0]?.teleportTo?.({ x: 0.0, y: 0.9, z: 2.0 }, 0);
-      athletes[1]?.teleportTo?.({ x: 0.0, y: 0.9, z: -6.0 }, Math.PI);
+      athletes[1]?.teleportTo?.({ x: 0.0, y: 0.9, z: -4.0 }, Math.PI);
       primaryBall.body.setTranslation({ x: 0.0, y: 1.6, z: 1.2 }, true);
       primaryBall.body.setLinvel({ x: 0.0, y: 6.2, z: -6.0 }, true);
       if (slot0) slot0.volleyQueued = true;
     }
-    if (t >= 71.80 && t < 72.05 && slot0) {
+    if (t >= 71.60 && t < 71.85 && slot0) {
       slot0.jumpQueued = true;
+      slot0.sprintHeld = true;
     }
-    if (t >= 72.25 && t < 72.50 && !this._goal6Staged && primaryBall?.body) {
+    if (t >= 72.15 && t < 72.35 && !this._goal6Staged && primaryBall?.body) {
       this._goal6Staged = true;
-      athletes[0]?.teleportTo?.({ x: 0.5, y: 3.8, z: 1.6 }, 0);
-      athletes[1]?.teleportTo?.({ x: 0.5, y: 3.5, z: -2.5 }, Math.PI);
-      primaryBall.body.setTranslation({ x: 0.5, y: 4.2, z: 1.0 }, true);
-      primaryBall.body.setLinvel({ x: 2.5, y: 8.5, z: -58.0 }, true);
+      if (athletes[0]?.motor?.body) {
+        athletes[0].motor.body.setTranslation({ x: 6.0, y: 7.2, z: -31.0 }, true);
+        athletes[0].motor.body.setLinvel({ x: 0, y: 1.5, z: 0 }, true);
+        if (athletes[0].motor.interpolated) athletes[0].motor.interpolated.reset(new THREE.Vector3(6.0, 7.2, -31.0));
+      }
+      if (athletes[1]?.motor?.body) {
+        athletes[1].motor.body.setTranslation({ x: -2.0, y: 7.5, z: -38.0 }, true);
+        athletes[1].motor.body.setLinvel({ x: 2.0, y: 1.0, z: 0 }, true);
+        if (athletes[1].motor.interpolated) athletes[1].motor.interpolated.reset(new THREE.Vector3(-2.0, 7.5, -38.0));
+      }
+      primaryBall.body.setTranslation({ x: 6.0, y: 7.8, z: -31.0 }, true);
+      // Clean launch through North Torus aperture (crosses X=0 at Y=10.37, Z=-40.00, clearance > 4.3m)
+      primaryBall.body.setLinvel({ x: -12.0, y: 8.4, z: -18.0 }, true);
       if (slot0) {
         slot0.hasAim = true;
-        slot0.aimYaw = 0;
+        slot0.aimYaw = Math.atan2(-12.0, -18.0);
         slot0.spikeQueued = true;
       }
       if (slot1) slot1.jumpQueued = true;
       this.addImpulse(1.2);
     }
-    if (t >= 72.95 && !this._goal6Scored) {
+    if (t >= 72.75 && !this._goal6Scored) {
       this._goal6Scored = true;
       this.addImpulse(1.0);
       try {
@@ -731,7 +796,6 @@ export class TrailerDirector {
           matchState.celebrationTicks = 240;
           matchState.lastScoredFor = 'home';
           matchState.lastGoalId = 'N';
-          matchState.events.push({ tick, goal: 'N', scoredFor: 'home', scoreHome: 4, scoreAway: 2 });
         }
       } catch (_) {}
     }
@@ -753,16 +817,18 @@ export class TrailerDirector {
       this.trauma = Math.max(0, this.trauma - delta * 12.0);
     }
 
-    // Visibility tiers (Revision 7 - Accelerated Action):
-    // 0.00s to 7.20s: Stadium reveal — hide athletes and ball (scoreboards VISIBLE from frame 0)
-    // 7.20s to 11.50s: Hero ball physics reveal — show ball carving banked wall, hide athletes
-    // 11.50s+: Contenders step in — show both athletes (Red vs Blue) and ball
-    if (t < 7.20) {
+    // Visibility tiers (Revision 8 - Contender Character Hooks & Real Action):
+    // 0.00s to 7.20s: Macro portraits of contenders — Red in Football Helmet, Blue in Cricket Helmet
+    // 7.20s to 11.50s: Hero ball physics reveal — show ball carving banked wall
+    // 11.50s+: Contenders face-off across net and full match action
+    if (this.rawReelMode) {
+      // fall through to the raw reel camera below
+    } else if (t < 7.20) {
       if (athletes) {
         for (const ath of athletes) {
-          if (ath?.setEnabled) ath.setEnabled(false);
-          if (ath?.ragdoll?.group) ath.ragdoll.group.visible = false;
-          if (ath?.group) ath.group.visible = false;
+          if (ath?.setEnabled) ath.setEnabled(true);
+          if (ath?.ragdoll?.group) ath.ragdoll.group.visible = true;
+          if (ath?.group) ath.group.visible = true;
         }
       }
       if (liveBall?.mesh) liveBall.mesh.visible = false;
@@ -774,9 +840,9 @@ export class TrailerDirector {
     } else if (t < 11.50) {
       if (athletes) {
         for (const ath of athletes) {
-          if (ath?.setEnabled) ath.setEnabled(false);
-          if (ath?.ragdoll?.group) ath.ragdoll.group.visible = false;
-          if (ath?.group) ath.group.visible = false;
+          if (ath?.setEnabled) ath.setEnabled(true);
+          if (ath?.ragdoll?.group) ath.ragdoll.group.visible = true;
+          if (ath?.group) ath.group.visible = true;
         }
       }
       if (liveBall?.mesh) liveBall.mesh.visible = true;
@@ -823,14 +889,31 @@ export class TrailerDirector {
     const ath0 = athletes[0]?.motor?.body?.translation?.() || ballPos;
     const ath1 = athletes[1]?.motor?.body?.translation?.() || ballPos;
 
-    // Dynamic focal center: weighted midpoint between ball and nearest athlete
+    // Dynamic focal center: continuous inverse-distance weighted midpoint between ball and athletes
     const d0 = Math.hypot(ballPos.x - ath0.x, ballPos.z - ath0.z);
     const d1 = Math.hypot(ballPos.x - ath1.x, ballPos.z - ath1.z);
-    const nearestAth = d0 <= d1 ? ath0 : ath1;
-    const focusX = 0.65 * ballPos.x + 0.35 * nearestAth.x;
-    const focusZ = 0.65 * ballPos.z + 0.35 * nearestAth.z;
+    const w0 = 1.0 / (d0 * d0 + 1.0);
+    const w1 = 1.0 / (d1 * d1 + 1.0);
+    const wSum = w0 + w1;
+    const athBlendX = (ath0.x * w0 + ath1.x * w1) / wSum;
+    const athBlendZ = (ath0.z * w0 + ath1.z * w1) / wSum;
+    const rawFocusX = 0.65 * ballPos.x + 0.35 * athBlendX;
+    const rawFocusZ = 0.65 * ballPos.z + 0.35 * athBlendZ;
+
+    const smoothFactor = 1.0 - Math.exp(-delta * 8.0);
+    if (!this._initializedFocus) {
+      this._smoothFocusX = rawFocusX;
+      this._smoothFocusZ = rawFocusZ;
+      this._initializedFocus = true;
+    } else {
+      this._smoothFocusX += (rawFocusX - this._smoothFocusX) * smoothFactor;
+      this._smoothFocusZ += (rawFocusZ - this._smoothFocusZ) * smoothFactor;
+    }
+    const focusX = this._smoothFocusX;
+    const focusZ = this._smoothFocusZ;
     const focusFloorY = getCourtFloorY(focusX, focusZ);
     const focusY = Math.max(focusFloorY + 0.8, Math.min(focusFloorY + 4.5, ballPos.y));
+    const nearestAth = d0 <= d1 ? ath0 : ath1;
 
     // If raw reel mode is active, handle dedicated angle camera and return
     if (this.rawReelMode) {
@@ -839,43 +922,73 @@ export class TrailerDirector {
     }
 
     // ═════════════════════════════════════════════════════════════════════════
-    // PHASE 1: ACCELERATED OVERTURE & BALL PHYSICS (0:00.0 – 14.40s)
+    // PHASE 1: ACCELERATED OVERTURE & CONTENDER REVEALS (0:00.0 – 14.40s)
     // ═════════════════════════════════════════════════════════════════════════
 
-    if (t < 7.20) {
-      // SHOT 1: THE TORUS FLANK & NORTH JUMBOTRON REVEAL (0.00s – 7.20s)
-      this._setFov(55);
-      const prog = t / 7.20;
+    if (t < 3.60) {
+      // SHOT 1: MACRO PORTRAIT — HOME RED CONTENDER (Football Helmet / wrestler_bands)
+      this._snapCut(0, () => {
+        this._setFov(38);
+        this._applyPalette(0, athletes);
+      });
+      const prog = t / 3.60;
       const ease = prog * prog * (3 - 2 * prog);
-      const camX = 17.5 - ease * 4.0;
-      const camY = 11.5 - ease * 2.5;
-      const camZ = -25.0 - ease * 6.0;
+      const camX = 0.40 - ease * 0.15;
+      const camY = 1.70 + ease * 0.05;
+      const camZ = 3.9 + ease * 0.30;
       this._pos.set(camX, camY, camZ);
-      this._target.set(0.0, 10.5, -42.0);
+      this._target.set(0.0, 2.05, 6.0);
+
+    } else if (t < 7.20) {
+      // SHOT 2: REVERSE MACRO PORTRAIT — AWAY BLUE CONTENDER (Cricket Helmet / wicket_grill)
+      this._snapCut(1, () => {
+        this._setFov(38);
+        this._applyPalette(0, athletes);
+      });
+      const prog = (t - 3.60) / 3.60;
+      const ease = prog * prog * (3 - 2 * prog);
+      const camX = -0.40 + ease * 0.15;
+      const camY = 1.70 + ease * 0.05;
+      const camZ = -5.9 - ease * 0.30;
+      this._pos.set(camX, camY, camZ);
+      this._target.set(0.0, 2.05, -8.0);
+
+    } else if (t < 11.50) {
+      // SHOT 3: HERO BALL ROLLOUT CURVING DOWN EAST BANKED WALL
+      this._snapCut(2, () => {
+        this._setFov(50);
+      });
+      const prog = (t - 7.20) / 4.30;
+      const ease = prog * prog * (3 - 2 * prog);
+      const camX = 11.5 - ease * 4.5;
+      const camY = 3.6 - ease * 1.2;
+      const camZ = 14.0 - ease * 7.0;
+      this._pos.set(camX, camY, camZ);
+      this._target.set(ballPos.x * 0.85, Math.max(0.8, ballPos.y), ballPos.z);
 
     } else if (t < 14.40) {
-      // SHOT 2: HERO BALL ROLLOUT & CONTENDERS ENTRANCE (7.20s – 14.40s)
-      this._snapCut(1, () => {
-        this._setFov(54);
+      // SHOT 4: MIDCOURT FACEOFF ACROSS NET
+      this._snapCut(3, () => {
+        this._setFov(50);
       });
-      const prog = (t - 7.20) / 7.20;
+      const prog = (t - 11.50) / 2.90;
       const ease = prog * prog * (3 - 2 * prog);
-      const camX = 14.5 - ease * 8.5;
-      const camY = 5.2 - ease * 2.2;
-      const camZ = 16.0 - ease * 12.0;
+      const camX = 7.0 - ease * 1.2;
+      const camY = 2.0 + ease * 0.2;
+      const camZ = 0.0 + ease * 0.5;
       this._pos.set(camX, camY, camZ);
-      this._target.set(ballPos.x * 0.7, Math.max(1.0, ballPos.y), ballPos.z);
+      this._target.set(0.0, 1.4, -1.0);
 
     // ═════════════════════════════════════════════════════════════════════════
     // PHASE 2 & 3: 6-GOAL MULTI-ANGLE SHOWCASE (14.40s – 78.40s)
     // ═════════════════════════════════════════════════════════════════════════
 
     } else if (t < 24.00) {
-      // SHOT 3: ELEVATED BROADCAST RAIL CAM — GOAL 1 (21.0s | North Torus 1-0)
-      this._snapCut(2, () => {
+      // SHOT 5: ELEVATED BROADCAST RAIL CAM — KICKOFF & GOAL 1 (21.0s | North Torus 1-0)
+      this._snapCut(4, () => {
         this._setFov(54);
         this.addImpulse(0.85);
-        this._applyPalette(0, athletes);
+        this._applyPalette(0, athletes); // Act I Bookend: Red vs Blue
       });
 
       const railX = 16.5;
@@ -883,19 +996,26 @@ export class TrailerDirector {
       const railZ = focusZ * 0.40;
       this._pos.set(railX, railY, railZ);
 
-      if (t >= 20.20 && t < 23.50) {
-        // Smoothly frame North Torus goal score and celebration
-        this._target.set(0.0, 9.5, -38.0);
+      if (t >= 20.00 && t < 23.50) {
+        const blend = Math.min(1.0, Math.max(0.0, (t - 20.00) / 0.80));
+        const easeBlend = blend * blend * (3 - 2 * blend);
+        this._target.set(
+          (1 - easeBlend) * (focusX * 0.60) + easeBlend * 0.0,
+          (1 - easeBlend) * 2.0 + easeBlend * 9.5,
+          (1 - easeBlend) * (focusZ * 0.85) + easeBlend * (-40.0)
+        );
+      } else if (t >= 23.50) {
+        this._target.set(0.0, 9.5, -40.0);
       } else {
         this._target.set(focusX * 0.60, 2.0, focusZ * 0.85);
       }
 
     } else if (t < 35.00) {
-      // SHOT 4: EAST BANKED WALL LOW CAM — GOAL 2 (32.0s | South Torus 1-1)
-      this._snapCut(3, () => {
+      // SHOT 6: EAST BANKED WALL LOW CAM — GOAL 2 (32.0s | South Torus 1-1)
+      this._snapCut(5, () => {
         this._setFov(52);
         this.addImpulse(0.85);
-        this._applyPalette(0, athletes);
+        this._applyPalette(1, athletes); // Act II: VoltGold
       });
 
       const prog = (t - 24.00) / 11.00;
@@ -905,53 +1025,83 @@ export class TrailerDirector {
       const camZ = 6.0 + ease * 6.0;
       this._pos.set(camX, camY, camZ);
 
-      if (t >= 31.00 && t < 34.00) {
-        this._target.set(0.0, 9.5, 38.0);
+      if (t >= 30.80 && t < 34.00) {
+        const blend = Math.min(1.0, Math.max(0.0, (t - 30.80) / 0.80));
+        const easeBlend = blend * blend * (3 - 2 * blend);
+        this._target.set(
+          (1 - easeBlend) * (focusX * 0.50) + easeBlend * 0.0,
+          (1 - easeBlend) * 2.2 + easeBlend * 9.5,
+          (1 - easeBlend) * (focusZ * 0.80) + easeBlend * 40.0
+        );
+      } else if (t >= 34.00) {
+        this._target.set(0.0, 9.5, 40.0);
       } else {
         this._target.set(focusX * 0.50, 2.2, focusZ * 0.80);
       }
 
-    } else if (t < 46.00) {
-      // SHOT 5: TOP-DOWN 3/4 SKY CAM — GOAL 3 (44.20s Beat Drop! | North Torus 2-1)
-      this._snapCut(4, () => {
-        this._setFov(62);
+    } else if (t < 44.20) {
+      // SHOT 7A: WEST RALLY RAIL CAM — Rally 3 builds to the drop at center court
+      this._snapCut(6, () => {
+        this._setFov(54);
         this.addImpulse(0.9);
-        this._applyPalette(0, athletes);
+        this._applyPalette(2, athletes); // Act II: IonCyan
       });
 
-      const prog = (t - 35.00) / 11.00;
+      const railX = -12.0;
+      const railY = 5.5;
+      const railZ = focusZ * 0.50 + 4.0;
+      this._pos.set(railX, railY, railZ);
+      this._target.set(focusX * 0.60, 2.0, focusZ * 0.85);
+
+    } else if (t < 46.00) {
+      // SHOT 7B: TOP-DOWN 3/4 SKY CAM — GOAL 3 (44.20s Beat Drop! | North Torus 2-1)
+      this._snapCut(6.5, () => {
+        this._setFov(62);
+      });
+
+      const prog = (t - 44.20) / 1.80;
       const ease = prog * prog * (3 - 2 * prog);
       const camX = 8.0 - ease * 4.0;
       const camY = 14.5 - ease * 1.5;
       const camZ = -12.0 - ease * 4.0;
       this._pos.set(camX, camY, camZ);
-      this._target.set(0.0, 8.5, -38.0);
+      this._target.set(0.0, 9.5, -40.0);
 
     } else if (t < 57.00) {
-      // SHOT 6: ULTRA-LOW TURF PROFILE CAM — GOAL 4 (53.0s | South Torus 2-2)
-      this._snapCut(5, () => {
+      // SHOT 8: ULTRA-LOW TURF PROFILE CAM — GOAL 4 (53.0s | South Torus 2-2)
+      this._snapCut(7, () => {
         this._setFov(48);
         this.addImpulse(0.85);
-        this._applyPalette(0, athletes);
+        this._applyPalette(3, athletes); // Act II: Emerald
       });
 
-      const camX = 7.5;
-      const camY = 1.85;
-      const camZ = 22.0;
+      const prog = (t - 46.00) / 11.00;
+      const ease = prog * prog * (3 - 2 * prog);
+      const camX = 8.5 - ease * 2.0;
+      const camY = 2.0 + ease * 0.3;
+      const camZ = 18.0 + ease * 8.0;
       this._pos.set(camX, camY, camZ);
 
-      if (t >= 52.00 && t < 55.50) {
-        this._target.set(0.0, 9.5, 38.0);
+      if (t >= 51.60 && t < 55.50) {
+        const blend = Math.min(1.0, Math.max(0.0, (t - 51.60) / 0.80));
+        const easeBlend = blend * blend * (3 - 2 * blend);
+        this._target.set(
+          (1 - easeBlend) * (focusX * 0.50) + easeBlend * 0.0,
+          (1 - easeBlend) * 1.8 + easeBlend * 9.5,
+          (1 - easeBlend) * (focusZ * 0.80) + easeBlend * 40.0
+        );
+      } else if (t >= 55.50) {
+        this._target.set(0.0, 9.5, 40.0);
       } else {
         this._target.set(focusX * 0.50, 1.8, focusZ * 0.80);
       }
 
     } else if (t < 67.00) {
-      // SHOT 7: FLANK 3/4 MID-COURT CAM — GOAL 5 (63.5s | North Torus 3-2)
-      this._snapCut(6, () => {
+      // SHOT 9: FLANK 3/4 MID-COURT CAM — GOAL 5 (63.5s | North Torus 3-2)
+      this._snapCut(8, () => {
         this._setFov(52);
         this.addImpulse(0.85);
-        this._applyPalette(0, athletes);
+        this._applyPalette(4, athletes); // Act II: Obsidian
       });
 
       const prog = (t - 57.00) / 10.00;
@@ -960,32 +1110,59 @@ export class TrailerDirector {
       const camY = 7.5 + ease * 0.5;
       const camZ = -26.0 - ease * 4.0;
       this._pos.set(camX, camY, camZ);
-      this._target.set(0.0, 9.2, -40.0);
 
-    } else if (t < 78.40) {
-      // SHOT 8: THROUGH-HOOP 3/4 FRAMING CAM — GOAL 6 (73.0s Climax! | North Torus 4-2)
-      // Positioned on East flank looking cleanly through Torus aperture with zero pillar obstruction
-      this._snapCut(7, () => {
-        this._setFov(56);
+      if (t >= 61.80 && t < 65.50) {
+        const blend = Math.min(1.0, Math.max(0.0, (t - 61.80) / 0.80));
+        const easeBlend = blend * blend * (3 - 2 * blend);
+        this._target.set(
+          (1 - easeBlend) * (focusX * 0.60) + easeBlend * 0.0,
+          (1 - easeBlend) * 2.0 + easeBlend * 9.5,
+          (1 - easeBlend) * (focusZ * 0.85) + easeBlend * (-40.0)
+        );
+      } else if (t >= 65.50) {
+        this._target.set(0.0, 9.5, -40.0);
+      } else {
+        this._target.set(focusX * 0.60, 2.0, focusZ * 0.85);
+      }
+
+    } else if (t < 72.10) {
+      // SHOT 10A: EAST RALLY RAIL CAM — Red vs Blue contest the ball before the climax
+      this._snapCut(9, () => {
+        this._setFov(54);
         this.addImpulse(1.0);
-        this._applyPalette(0, athletes);
+        this._applyPalette(0, athletes); // Act III Bookend: Red vs Blue returns!
       });
 
-      const prog = (t - 67.00) / 11.40;
+      const railX = 12.0;
+      const railY = 5.5;
+      const railZ = focusZ * 0.50 + 4.0;
+      this._pos.set(railX, railY, railZ);
+      this._target.set(focusX * 0.60, 2.0, focusZ * 0.85);
+
+    } else if (t < 78.40) {
+      // SHOT 10B: THROUGH-HOOP 3/4 FRAMING CAM — GOAL 6 (73.0s Climax! | North Torus 4-2)
+      // Cuts in on the 72.10s beat, just before the staged spike, so the ball's
+      // flight through the ring is on screen. Positioned on East flank looking
+      // cleanly through Torus aperture with zero pillar obstruction.
+      this._snapCut(9.5, () => {
+        this._setFov(56);
+      });
+
+      const prog = (t - 72.10) / 6.30;
       const ease = prog * prog * (3 - 2 * prog);
       const camX = 13.0 - ease * 2.5;
       const camY = 8.5 + ease * 0.5;
       const camZ = -33.0 - ease * 3.0;
       this._pos.set(camX, camY, camZ);
-      this._target.set(-2.0, 8.8, -41.0);
+      this._target.set(-1.0, 9.5, -40.0);
 
     // ═════════════════════════════════════════════════════════════════════════
     // PHASE 4: CELESTIAL ASCENSION ARC (78.40s – 83.80s)
     // ═════════════════════════════════════════════════════════════════════════
 
     } else if (t < 83.80) {
-      // SHOT 9: CELESTIAL ASCENSION ARC
-      this._snapCut(8, () => {
+      // SHOT 11: CELESTIAL ASCENSION ARC
+      this._snapCut(10, () => {
         this._setFov(66);
       });
 
@@ -1006,7 +1183,7 @@ export class TrailerDirector {
       this._target.set(0, 0, -40.0);
     }
 
-    this._applyResilientClearance();
+    this._applyResilientClearance(delta);
   }
 
   _setFov(fov) {
@@ -1019,6 +1196,7 @@ export class TrailerDirector {
   _snapCut(cutIndex, onCutCallback = null) {
     if (this._currentCut !== cutIndex) {
       this._currentCut = cutIndex;
+      this._justCut = true;
       if (typeof onCutCallback === 'function') {
         onCutCallback();
       }
@@ -1026,26 +1204,45 @@ export class TrailerDirector {
   }
 
   _applyPalette(idx, athletes = []) {
-    // Strictly preserve default Red (Home 0xD90429) vs Blue (Away 0x1D4ED8) across all trailer shots
-    const pal = this._palettes[0];
+    // Act I (0.0s – 24.0s) & Act III (67.0s – 94.5s) are strictly locked to Classic Red vs Blue
+    // with Red in Football Helmet (wrestler_bands) and Blue in Cricket Helmet (wicket_grill).
+    // Act II (24.0s – 67.0s) cycles through the diverse Brand Palettes and Series 1 headwear pack.
+    const isBookend = this.elapsedTime < 24.0 || this.elapsedTime >= 67.0;
+    const pal = isBookend ? this._palettes[0] : (this._palettes[idx % this._palettes.length] || this._palettes[0]);
     try {
       if (athletes[0]?.setTeamAndVariant) {
         athletes[0].setTeamAndVariant('home', pal.homeVariant, { primaryColor: pal.homeColor });
+        if (athletes[0]?.setHeadwear && pal.homeHeadwear) {
+          athletes[0].setHeadwear(pal.homeHeadwear);
+        }
       }
       if (athletes[1]?.setTeamAndVariant) {
         athletes[1].setTeamAndVariant('away', pal.awayVariant, { primaryColor: pal.awayColor });
+        if (athletes[1]?.setHeadwear && pal.awayHeadwear) {
+          athletes[1].setHeadwear(pal.awayHeadwear);
+        }
       }
     } catch (_) {}
   }
 
-  _applyResilientClearance() {
+  _applyResilientClearance(delta = 1 / 60) {
     const floorY = getCourtFloorY(this._pos.x, this._pos.z);
-    this._pos.y = Math.max(this._pos.y, floorY + 1.85);
+    this._pos.y = Math.max(this._pos.y, floorY + 0.75);
 
     const targetFloorY = getCourtFloorY(this._target.x, this._target.z);
-    this._target.y = Math.max(this._target.y, targetFloorY + 0.6);
+    this._target.y = Math.max(this._target.y, targetFloorY + 0.5);
 
-    this.camera.position.copy(this._pos);
+    if (this._justCut) {
+      this._justCut = false;
+      this._smoothPos.copy(this._pos);
+      this._smoothTarget.copy(this._target);
+    } else {
+      const lerpFactor = 1.0 - Math.exp(-delta * 12.0);
+      this._smoothPos.lerp(this._pos, lerpFactor);
+      this._smoothTarget.lerp(this._target, lerpFactor);
+    }
+
+    this.camera.position.copy(this._smoothPos);
 
     if (this.trauma > 0) {
       const shake = this.trauma * this.trauma * 0.08;
@@ -1053,7 +1250,7 @@ export class TrailerDirector {
       this.camera.position.y += (Math.random() - 0.5) * shake;
     }
 
-    this.camera.lookAt(this._target);
+    this.camera.lookAt(this._smoothTarget);
   }
 
   _choreographRawReelTick(tick, dt, athletes = [], balls = [], matchState = null) {
