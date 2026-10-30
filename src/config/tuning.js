@@ -1655,6 +1655,31 @@ const DEFAULTS = {
     /** 'easy' | 'medium' | 'hard'. Read by botController.js at runtime. */
     difficulty: 'medium',
 
+    // ═══ BOT FACING ═══ (shared by every difficulty)
+    //
+    // The body turns toward slot.aimYaw. Bots used to hold the shot or clearance
+    // aim for the whole run, so a bot sprinting to the ball spent about 30% of
+    // its fast running facing backwards. Now a running bot faces where it is
+    // going and squares up to the shot only inside the lock radii below.
+    // Measured with hard vs hard: 95% of running ticks face travel, with no
+    // change in strike quality, dives or goals against the old facing.
+    facing: {
+      // steerToward: the travel heading blends the actual velocity into the
+      // path direction once the bot is moving, so the locomotion blend-space
+      // stays in its forward run sector instead of side-skidding.
+      velocityBlendMinSpeed: 0.85,  // m/s — below this, face the path only
+      velocityBlendWeight: 0.62,    // share of velocity in the travel heading
+      velocityBlendMinDot: -0.15,   // skip the blend when velocity opposes the path
+      // An explicit aim wins over the travel heading when ANY of these holds.
+      aimLockDistance: 2.8,         // m to the steering target
+      aimLockMaxSpeed: 2.4,         // m/s — slow enough to face anywhere
+      aimLockMinCos: 0.42,          // aim within ~65 deg of travel
+      // botController: where a bot starts squaring up to its aim.
+      strikeAimRadius: 2.2,         // m to the ball (or spike apex) — attack and position
+      clearanceAimRadius: 2.4,      // m to the ball — defensive clearance
+      blockFaceRadius: 1.6,         // m to the block station — face the ball once there
+    },
+
     // Per-difficulty parameter sets. All timing in ticks (60 Hz).
     easy: {
       reactionDelayTicks: 12,       // ~200 ms perception lag

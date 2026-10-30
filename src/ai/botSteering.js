@@ -28,18 +28,6 @@ export function steerToward(inputSlot, currentPos, targetPos, options = {}) {
     const minDrive = options.minDrive ?? 0.0;
     const currentVel = options.currentVel;
 
-    // Apply facing / aim alignment if specified
-    if (options.aimYaw !== undefined) {
-        inputSlot.aimYaw = options.aimYaw;
-        inputSlot.cameraYaw = options.aimYaw;
-        inputSlot.hasAim = true;
-    } else if (options.facePos) {
-        const yaw = computeAimYaw(currentPos, options.facePos);
-        inputSlot.aimYaw = yaw;
-        inputSlot.cameraYaw = yaw;
-        inputSlot.hasAim = true;
-    }
-
     // Compute direction vector in XZ plane, ignore Y
     _scratchToTarget.set(targetPos.x - currentPos.x, 0, targetPos.z - currentPos.z);
     const distance = _scratchToTarget.length();
@@ -49,6 +37,16 @@ export function steerToward(inputSlot, currentPos, targetPos, options = {}) {
         inputSlot.moveX = 0;
         inputSlot.moveZ = 0;
         inputSlot.sprintHeld = false;
+        if (options.aimYaw !== undefined) {
+            inputSlot.aimYaw = options.aimYaw;
+            inputSlot.cameraYaw = options.aimYaw;
+            inputSlot.hasAim = true;
+        } else if (options.facePos) {
+            const yaw = computeAimYaw(currentPos, options.facePos);
+            inputSlot.aimYaw = yaw;
+            inputSlot.cameraYaw = yaw;
+            inputSlot.hasAim = true;
+        }
         return;
     }
 
@@ -58,6 +56,49 @@ export function steerToward(inputSlot, currentPos, targetPos, options = {}) {
 
     // Normalized direction toward target
     scratchDir.copy(_scratchToTarget).divideScalar(distance);
+    const dirX = scratchDir.x;
+    const dirZ = scratchDir.z;
+
+    // ═══ NATURAL FORWARD-FACING LOCOMOTION YAW ═══
+    // Blend actual horizontal velocity with desired path tangent when running so the
+    // 2D locomotion blend-space stays in the forward run/sprint sector instead of
+    // backpedaling or side-skidding from counter-steering damping forces.
+    const facing = TUNING.ai.facing;
+    let travelYaw = Math.atan2(dirX, dirZ);
+    let hSpeed = 0;
+    if (currentVel) {
+        hSpeed = Math.hypot(currentVel.x, currentVel.z);
+        if (hSpeed > facing.velocityBlendMinSpeed) {
+            const vnx = currentVel.x / hSpeed;
+            const vnz = currentVel.z / hSpeed;
+            const velDotDir = vnx * dirX + vnz * dirZ;
+            if (velDotDir > facing.velocityBlendMinDot) {
+                const w = facing.velocityBlendWeight;
+                const bx = vnx * w + dirX * (1 - w);
+                const bz = vnz * w + dirZ * (1 - w);
+                if (bx * bx + bz * bz > 1e-4) {
+                    travelYaw = Math.atan2(bx, bz);
+                }
+            }
+        }
+    }
+
+    let wantedYaw = travelYaw;
+    if (options.aimYaw !== undefined || options.facePos) {
+        const explicitYaw = options.aimYaw !== undefined
+            ? options.aimYaw
+            : computeAimYaw(currentPos, options.facePos);
+        const alignCos = Math.sin(explicitYaw) * Math.sin(travelYaw) + Math.cos(explicitYaw) * Math.cos(travelYaw);
+        // Lock to explicit aimYaw when within strike preparation range, moving at
+        // controlled speed, or when explicit aim is close to the travel heading.
+        // Never sprint long-distance across the court facing backward against travel!
+        if (distance <= facing.aimLockDistance || hSpeed <= facing.aimLockMaxSpeed || alignCos >= facing.aimLockMinCos) {
+            wantedYaw = explicitYaw;
+        }
+    }
+    inputSlot.aimYaw = wantedYaw;
+    inputSlot.cameraYaw = wantedYaw;
+    inputSlot.hasAim = true;
 
     let speedScale = maxSpeed * (options.decelFactor ?? 1.0);
     if (arrive && distance < arriveRadius) {
@@ -203,7 +244,6 @@ export function steerGoalAlignedApproach(inputSlot, selfPos, selfVel, ballPos, a
             arrive: false,
             maxSpeed: options.maxSpeed ?? 1.0,
             minDrive: 0.85,
-            aimYaw,
             currentVel: selfVel,
         });
         return;
@@ -223,7 +263,6 @@ export function steerGoalAlignedApproach(inputSlot, selfPos, selfVel, ballPos, a
             arrive: false,
             maxSpeed: options.maxSpeed ?? 1.0,
             minDrive: 0.80,
-            aimYaw,
             currentVel: selfVel,
         });
         return;
@@ -264,7 +303,6 @@ export function steerGoalAlignedApproach(inputSlot, selfPos, selfVel, ballPos, a
             arrive: false,
             maxSpeed: options.maxSpeed ?? 1.0,
             minDrive: 0.85,
-            aimYaw,
             currentVel: selfVel,
         });
     }

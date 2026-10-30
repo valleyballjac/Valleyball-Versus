@@ -188,6 +188,7 @@ export function createBotController({
 
     // Tactical state
     lastStrikeTick: -Infinity,
+    lastStrikeAimYaw: NaN,    // aim held through the open swing window
     strikeCooldownTicks: 30,  // min ticks between strike attempts
     lastDiveTick: -Infinity,  // min cooldown between dive attempts
     lastJumpTick: -Infinity,
@@ -523,7 +524,6 @@ function executeChase(bot, perception, params, slot, tick) {
       maxSpeed: profile.maxApproachSpeed,
       currentVel: selfVel,
     });
-    slot.hasAim = false;
     if (tick - bot.lastCutTick >= bot.cutCooldownTicks &&
         shouldExecuteCut(selfVel, slot.moveWorld, { minSpeed: 2.8, isDownhill: perception.terrain?.isDownhillFacing })) {
       slot.cutQueued = true;
@@ -576,7 +576,6 @@ function executeChase(bot, perception, params, slot, tick) {
       minDrive: 0.65,
       currentVel: selfVel,
     });
-    slot.hasAim = false;
   }
 
   // Check cut execution when redirecting sharply toward intercept
@@ -609,7 +608,6 @@ function executePosition(bot, perception, params, slot, tick) {
       maxSpeed: profile.maxApproachSpeed,
       currentVel: selfVel,
     });
-    slot.hasAim = false;
     if (tick - bot.lastCutTick >= bot.cutCooldownTicks &&
         shouldExecuteCut(selfVel, slot.moveWorld, { minSpeed: 2.8, isDownhill: perception.terrain?.isDownhillFacing })) {
       slot.cutQueued = true;
@@ -640,9 +638,11 @@ function executePosition(bot, perception, params, slot, tick) {
       decelFactor: profile.decelFactor,
       runwayOffset: posOffset + 0.8,
     });
-    slot.aimYaw = computeClearanceAimYaw(ballPos, attackGoalPos, defendGoalPos);
-    slot.hasAim = true;
-    slot.cameraYaw = slot.aimYaw;
+    if (distToBall < TUNING.ai.facing.strikeAimRadius) {
+      slot.aimYaw = computeClearanceAimYaw(ballPos, attackGoalPos, defendGoalPos);
+      slot.hasAim = true;
+      slot.cameraYaw = slot.aimYaw;
+    }
   } else {
     steerToward(slot, selfPos, _interceptTarget, {
       sprint: shouldSprint,
@@ -652,7 +652,6 @@ function executePosition(bot, perception, params, slot, tick) {
       minDrive: 0.60,
       currentVel: selfVel,
     });
-    slot.hasAim = false;
   }
 
   // Check cut execution when decelerating or turning into position pocket
@@ -683,8 +682,8 @@ function executeStreamDribble(bot, perception, params, slot, tick) {
     steerGoalSideArc(slot, selfPos, ballPos, defendGoalPos, {
       sprint: true,
       maxSpeed: profile.maxApproachSpeed,
+      currentVel: perception.self.velocity,
     });
-    slot.hasAim = false;
     return;
   }
 
@@ -721,14 +720,16 @@ function executeStreamDribble(bot, perception, params, slot, tick) {
     maxSpeed: profile.maxApproachSpeed * (isBallRunningAway ? 1.0 : 0.95),
     decelFactor: profile.decelFactor,
     minDrive: isCloseToBall ? 0.85 : 0.65,
-    facePos: attackHead,
+    facePos: isCloseToBall ? attackHead : undefined,
     currentVel: perception.self.velocity,
   });
 
-  // Face toward the attacking stream head so athlete naturally pushes upcourt
-  slot.aimYaw = computeAimYaw(selfPos, attackHead);
-  slot.hasAim = true;
-  slot.cameraYaw = slot.aimYaw;
+  if (distToBall <= TUNING.ai.facing.strikeAimRadius) {
+    // Face toward the attacking stream head when in dribble contact range
+    slot.aimYaw = computeAimYaw(selfPos, attackHead);
+    slot.hasAim = true;
+    slot.cameraYaw = slot.aimYaw;
+  }
 }
 
 /**
@@ -756,7 +757,6 @@ function executeMultiStageAttack(bot, perception, freshPerception, params, slot,
       maxSpeed: profile.maxApproachSpeed,
       currentVel: freshPerception.self.velocity,
     });
-    slot.hasAim = false;
     return;
   }
 
@@ -826,6 +826,7 @@ function executeMultiStageAttack(bot, perception, freshPerception, params, slot,
           slot.cameraYaw = slot.aimYaw;
           slot.hasAim = true;
           bot.lastStrikeTick = tick;
+          bot.lastStrikeAimYaw = slot.aimYaw;
           bot.lastStrikeKind = wantedKind;
           bot.pendingSpikeTick = -Infinity;
           bot.stats.strikeAttempts++;
@@ -870,12 +871,15 @@ function executeMultiStageAttack(bot, perception, freshPerception, params, slot,
         arriveRadius: 0.3,
         maxSpeed: profile.maxApproachSpeed,
         minDrive: 0.8,
-        aimYaw,
+        aimYaw: distToBall <= TUNING.ai.facing.strikeAimRadius ? aimYaw : undefined,
+        currentVel: freshPerception.self.velocity,
       });
 
-      slot.aimYaw = aimYaw;
-      slot.cameraYaw = aimYaw;
-      slot.hasAim = true;
+      if (distToBall <= TUNING.ai.facing.strikeAimRadius) {
+        slot.aimYaw = aimYaw;
+        slot.cameraYaw = aimYaw;
+        slot.hasAim = true;
+      }
 
       // When ball is in physical reach, pop it up!
       const ballRelY = ballPos.y - selfPos.y;
@@ -893,6 +897,7 @@ function executeMultiStageAttack(bot, perception, freshPerception, params, slot,
         slot.cameraYaw = popAimYaw;
         slot.hasAim = true;
         bot.lastStrikeTick = tick;
+        bot.lastStrikeAimYaw = popAimYaw;
         bot.lastPopTick = tick;
         bot.lastStrikeKind = 'kick';
         bot.stats.strikeAttempts++;
@@ -932,12 +937,15 @@ function executeMultiStageAttack(bot, perception, freshPerception, params, slot,
         arriveRadius: 0.3,
         maxSpeed: 1.0,
         minDrive: 0.8,
-        aimYaw,
+        aimYaw: distToApex <= TUNING.ai.facing.strikeAimRadius ? aimYaw : undefined,
+        currentVel: freshPerception.self.velocity,
       });
 
-      slot.aimYaw = aimYaw;
-      slot.cameraYaw = aimYaw;
-      slot.hasAim = true;
+      if (distToApex <= TUNING.ai.facing.strikeAimRadius) {
+        slot.aimYaw = aimYaw;
+        slot.cameraYaw = aimYaw;
+        slot.hasAim = true;
+      }
 
       const courtFloorY = getCourtFloorY(ballPos.x, ballPos.z);
       const ballHeightAboveFloor = ballPos.y - (courtFloorY + (perception.ball?.radius ?? 0.4));
@@ -970,6 +978,7 @@ function executeMultiStageAttack(bot, perception, freshPerception, params, slot,
           slot.cameraYaw = spikeAimYaw;
           slot.hasAim = true;
           bot.lastStrikeTick = tick;
+          bot.lastStrikeAimYaw = spikeAimYaw;
           bot.lastStrikeKind = 'spike';
           bot.stats.strikeAttempts++;
           bot.pendingSpikeTick = -Infinity;
@@ -1069,12 +1078,14 @@ function executeDefend(bot, perception, params, slot, tick) {
       maxSpeed: profile.maxApproachSpeed,
       decelFactor: profile.decelFactor,
       minDrive: 0.75,
-      facePos: attackGoalPos,
+      facePos: distToBall <= TUNING.ai.facing.clearanceAimRadius ? attackGoalPos : undefined,
       currentVel: selfVel,
     });
-    slot.aimYaw = computeClearanceAimYaw(selfPos, attackGoalPos, defendPos);
-    slot.hasAim = true;
-    slot.cameraYaw = slot.aimYaw;
+    if (distToBall <= TUNING.ai.facing.clearanceAimRadius) {
+      slot.aimYaw = computeClearanceAimYaw(selfPos, attackGoalPos, defendPos);
+      slot.hasAim = true;
+      slot.cameraYaw = slot.aimYaw;
+    }
   } else {
     // HOLD DEFENSIVE BLOCKING POSITION:
     // Stand strictly between the ball/opponent and defending goal aperture to guard the net!
@@ -1099,12 +1110,9 @@ function executeDefend(bot, perception, params, slot, tick) {
       arriveRadius: 0.8,
       maxSpeed: profile.maxApproachSpeed,
       minDrive: 0.5,
-      facePos: ballPos, // Face the ball while blocking!
+      facePos: distToTarget <= TUNING.ai.facing.blockFaceRadius ? ballPos : undefined, // Face the ball once stationed at the rim; face run path while retreating!
       currentVel: selfVel,
     });
-    slot.aimYaw = computeClearanceAimYaw(selfPos, attackGoalPos, defendPos);
-    slot.hasAim = true;
-    slot.cameraYaw = slot.aimYaw;
 
     // Anchor at the rim with Cut: when sliding down the mound slope or stopping at the rim
     if (tick - bot.lastCutTick >= bot.cutCooldownTicks) {
@@ -1135,8 +1143,17 @@ function executeRecover(bot, perception, params, slot, tick) {
 function evaluatePredictiveStrikes(bot, freshPerception, params, slot, tick) {
   if (freshPerception.self.isRecovering) return;
 
+  // Hold locked strike aim yaw while an active strike swing window is still open
+  // so the athlete's torso and striking limbs stay squared to the shot through contact.
+  const activeWindowClose = TUNING.strike[bot.lastStrikeKind]?.windowClose ?? 30;
+  if (tick - bot.lastStrikeTick <= activeWindowClose && Number.isFinite(bot.lastStrikeAimYaw)) {
+    slot.aimYaw = bot.lastStrikeAimYaw;
+    slot.cameraYaw = bot.lastStrikeAimYaw;
+    slot.hasAim = true;
+  }
+
   // ═══ ZERO-TOLERANCE OWN-GOAL GUARD ═══
-  // If facing within 80 degrees of defending goal, or if athlete is on the wrong side of the ball,
+  // If facing within 70 degrees of defending goal, or if athlete is on the wrong side of the ball,
   // ALL strikes, volleys, kicks, and dives are strictly forbidden!
   if (freshPerception.goalSide.facingDefendGoal) return;
   if (!freshPerception.goalSide.isGoalSide) return;
@@ -1239,6 +1256,7 @@ function evaluatePredictiveStrikes(bot, freshPerception, params, slot, tick) {
         slot.aimYaw = aimYaw;
         slot.cameraYaw = aimYaw;
         slot.hasAim = true;
+        bot.lastStrikeAimYaw = aimYaw;
         bot.pendingSpikeTick = -Infinity;
         return;
       }
@@ -1282,6 +1300,7 @@ function evaluatePredictiveStrikes(bot, freshPerception, params, slot, tick) {
       slot.aimYaw = aimYaw;
       slot.cameraYaw = aimYaw;
       slot.hasAim = true;
+      bot.lastStrikeAimYaw = aimYaw;
       return;
     }
   }
@@ -1319,6 +1338,7 @@ function evaluatePredictiveStrikes(bot, freshPerception, params, slot, tick) {
       slot.aimYaw = aimYaw;
       slot.cameraYaw = aimYaw;
       slot.hasAim = true;
+      bot.lastStrikeAimYaw = aimYaw;
       return;
     }
   }
@@ -1338,6 +1358,7 @@ function evaluatePredictiveStrikes(bot, freshPerception, params, slot, tick) {
     slot.aimYaw = aimYaw;
     slot.cameraYaw = aimYaw;
     slot.hasAim = true;
+    bot.lastStrikeAimYaw = aimYaw;
     return;
   }
 
@@ -1373,6 +1394,7 @@ function evaluatePredictiveStrikes(bot, freshPerception, params, slot, tick) {
           slot.aimYaw = aimYaw;
           slot.cameraYaw = aimYaw;
           slot.hasAim = true;
+          bot.lastStrikeAimYaw = aimYaw;
           return;
         }
       }
@@ -1423,6 +1445,7 @@ function evaluatePredictiveStrikes(bot, freshPerception, params, slot, tick) {
       slot.aimYaw = aimYaw;
       slot.cameraYaw = aimYaw;
       slot.hasAim = true;
+      bot.lastStrikeAimYaw = aimYaw;
       return;
     }
   }
