@@ -23,7 +23,7 @@ This document provides mandatory operational context, architectural invariants, 
 1. **Simulation First**: Valleyball Versus is strictly a physical simulation. It does not compromise its physics to chase arcade shortcuts. Pure Sim (`assistRadius: 0.0`, `aimMagnetism: 0.0`) is the default out-of-the-box experience.
 2. **No Out-of-Bounds**: The court is enclosed by continuous perimeter glass. The ball is **always live**. There are no throw-ins or sideline stops.
 3. **No Referee Whistles**: Play flows continuously. Player collisions are resolved physically through Rapier rigid-body impulses.
-4. **Positioning Over Aim Assist**: Physical strike exit angles depend on where the athlete makes physical contact with the ball. The **Cut mechanic** (`KeyV` / `LB`) provides the plant-and-redirect agility to position behind the ball.
+4. **Positioning Over Aim Assist**: Physical strike exit angles depend on where the athlete makes physical contact with the ball. The **Cut mechanic** (`KeyV` / `RB`) provides the plant-and-redirect agility to position behind the ball.
 5. **Defense Must Never Lock Movement**: Any future defensive mechanic (such as blocks or braces) **must never lock the athlete into a frozen pose or restrict locomotion**. Athletes must remain agile and mobile at all times.
 
 ---

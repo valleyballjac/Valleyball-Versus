@@ -1013,7 +1013,7 @@ const DEFAULTS = {
     // 1/s. How fast an action's pose takes its share of the blend.
     poseEase: 10.0,
 
-    // STAGE 3: The "Cut" Mechanic (L1 / Left Shoulder)
+    // STAGE 3: The "Cut" Mechanic (R1 / Right Shoulder)
     cut: {
       // Cooldown in ticks: 80 ticks = 1.33s (balanced agility without spam)
       cooldownTicks: 80,

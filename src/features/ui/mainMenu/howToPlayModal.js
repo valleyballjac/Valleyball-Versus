@@ -207,9 +207,9 @@ export function buildHowToPlayModal(rootEl) {
       <rect x="25" y="32" width="115" height="24" rx="4" fill="rgba(56,189,248,0.15)" stroke="#38bdf8" stroke-width="1"/>
       <text x="82" y="48" fill="#ffffff" font-size="10" font-weight="800" text-anchor="middle">LT · SPRINT</text>
 
-      <polyline points="230,90 140,80" fill="none" stroke="#3b82f6" stroke-width="1.5" stroke-dasharray="3,3"/>
-      <rect x="25" y="68" width="115" height="24" rx="4" fill="rgba(59,130,246,0.15)" stroke="#3b82f6" stroke-width="1"/>
-      <text x="82" y="84" fill="#93c5fd" font-size="10" font-weight="800" text-anchor="middle">LB · CUT / PLANT</text>
+      <polyline points="230,90 140,80" fill="none" stroke="#93c5fd" stroke-width="1.5" stroke-dasharray="3,3"/>
+      <rect x="25" y="68" width="115" height="24" rx="4" fill="rgba(147,197,253,0.15)" stroke="#93c5fd" stroke-width="1"/>
+      <text x="82" y="84" fill="#dbeafe" font-size="10" font-weight="800" text-anchor="middle">LB · BRACE</text>
 
       <polyline points="348,125 310,35" fill="none" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="3,3"/>
       <rect x="220" y="22" width="150" height="24" rx="4" fill="rgba(245,158,11,0.15)" stroke="#f59e0b" stroke-width="1"/>
@@ -224,9 +224,13 @@ export function buildHowToPlayModal(rootEl) {
       <text x="77" y="229" fill="#fde68a" font-size="10" font-weight="800" text-anchor="middle">D-PAD · CYCLE CAM</text>
 
       <!-- CALLOUT POINTERS & LABELS (RIGHT) -->
-      <polyline points="540,70 620,45" fill="none" stroke="#38bdf8" stroke-width="1.5" stroke-dasharray="3,3"/>
-      <rect x="620" y="32" width="115" height="24" rx="4" fill="rgba(56,189,248,0.15)" stroke="#38bdf8" stroke-width="1"/>
-      <text x="677" y="48" fill="#ffffff" font-size="10" font-weight="800" text-anchor="middle">RT · SLIDE</text>
+      <polyline points="540,70 620,30" fill="none" stroke="#38bdf8" stroke-width="1.5" stroke-dasharray="3,3"/>
+      <rect x="620" y="18" width="115" height="24" rx="4" fill="rgba(56,189,248,0.15)" stroke="#38bdf8" stroke-width="1"/>
+      <text x="677" y="34" fill="#ffffff" font-size="10" font-weight="800" text-anchor="middle">RT · SLIDE</text>
+
+      <polyline points="530,90 620,62" fill="none" stroke="#3b82f6" stroke-width="1.5" stroke-dasharray="3,3"/>
+      <rect x="620" y="50" width="115" height="24" rx="4" fill="rgba(59,130,246,0.15)" stroke="#3b82f6" stroke-width="1"/>
+      <text x="677" y="66" fill="#93c5fd" font-size="10" font-weight="800" text-anchor="middle">RB · CUT / PLANT</text>
 
       <polyline points="412,125 450,35" fill="none" stroke="#f43f5e" stroke-width="1.5" stroke-dasharray="3,3"/>
       <rect x="390" y="22" width="140" height="24" rx="4" fill="rgba(244,63,94,0.15)" stroke="#f43f5e" stroke-width="1"/>
@@ -362,8 +366,8 @@ export function buildHowToPlayModal(rootEl) {
     { action: 'Aim Strikes / Look', pad: 'Right Stick', key: 'Mouse Movement · Arrow Keys', color: '#38bdf8' },
     { action: 'Sprint Boost', pad: 'Left Trigger (LT)', key: 'Shift · (P2: Slash /)', color: '#38bdf8' },
     { action: 'Slide Tackle (Hold)', pad: 'Right Trigger (RT)', key: 'C · (P2: O)', color: '#38bdf8' },
-    { action: 'Directional Cut / Plant', pad: 'Left Bumper (LB / L1)', key: 'V / F · (P2: N)', color: '#3b82f6' },
-    { action: 'Agile Brace (Hold)', pad: 'Right Bumper (RB / R1)', key: 'G · (P2: H)', color: '#93c5fd' },
+    { action: 'Directional Cut / Plant', pad: 'Right Bumper (RB / R1)', key: 'V / F · (P2: N)', color: '#3b82f6' },
+    { action: 'Agile Brace (Hold)', pad: 'Left Bumper (LB / L1)', key: 'G · (P2: H)', color: '#93c5fd' },
     { action: 'Jump (Hold for Height)', pad: 'A / Cross', key: 'Space · (P2: Enter)', color: '#10b981' },
     { action: 'Ground Dive', pad: 'X / Square', key: 'Q · (P2: U)', color: '#a855f7' },
     { action: 'Volley / Kick Strike', pad: 'B / Circle', key: 'Left-Click · E · (P2: P)', color: '#38bdf8' },

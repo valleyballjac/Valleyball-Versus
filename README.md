@@ -42,7 +42,8 @@ Valleyball Versus supports full dual-gamepad input (Xbox, PlayStation, standard 
 | **Jump** | <kbd>Space</kbd> | <kbd>Enter</kbd> | <kbd>A</kbd> / <kbd>✕</kbd> |
 | **Sprint** | <kbd>Shift</kbd> (Hold) | <kbd>/</kbd> | Left Trigger (<kbd>LT</kbd> / <kbd>L2</kbd>) |
 | **Slide** | <kbd>C</kbd> | <kbd>O</kbd> | Right Trigger (<kbd>RT</kbd> / <kbd>R2</kbd>) |
-| **Cut / Plant** | <kbd>V</kbd> / <kbd>F</kbd> | <kbd>N</kbd> / <kbd>H</kbd> | Left Bumper (<kbd>LB</kbd> / <kbd>L1</kbd>) |
+| **Cut / Plant** | <kbd>V</kbd> / <kbd>F</kbd> | <kbd>N</kbd> | Right Bumper (<kbd>RB</kbd> / <kbd>R1</kbd>) |
+| **Brace** | <kbd>G</kbd> (Hold) | <kbd>H</kbd> | Left Bumper (<kbd>LB</kbd> / <kbd>L1</kbd>) |
 | **Dive** | <kbd>Q</kbd> | <kbd>U</kbd> | <kbd>X</kbd> / <kbd>□</kbd> |
 | **Volley / Kick** | <kbd>E</kbd> / Left Click | <kbd>P</kbd> | <kbd>B</kbd> / <kbd>○</kbd> |
 | **Power Spike** | <kbd>R</kbd> / Right Click | <kbd>[</kbd> | <kbd>Y</kbd> / <kbd>△</kbd> |

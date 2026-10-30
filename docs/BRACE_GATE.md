@@ -2,7 +2,7 @@
 
 Branch: `wt/t_417afc44` (based on local `main`; this checkout has no local `rebuild/core`). No branch was pushed or merged.
 
-Design: Hold G (P1), H (P2), or RB/R1 (gamepad) to blend 40% of the authored two-hand volley pose into the existing locomotion/air/strike blend. The other 60% remains available to ordinary locomotion while otherwise healthy. The physical ragdoll arms, not a bespoke ball impulse or proximity resolver, deflect a ball. The motor receives the same input and drive scale as before. Releasing the button eases the pose back out. Balance loss fades the brace out with `tracker.weight`.
+Design: Hold G (P1), H (P2), or LB/L1 (gamepad) to blend 40% of the authored two-hand volley pose into the existing locomotion/air/strike blend. The other 60% remains available to ordinary locomotion while otherwise healthy. The physical ragdoll arms, not a bespoke ball impulse or proximity resolver, deflect a ball. The motor receives the same input and drive scale as before. Releasing the button eases the pose back out. Balance loss fades the brace out with `tracker.weight`.
 
 The architecture document's September roadmap describes a bowl anchor, but the current AGENTS.md retires that bowl and names Valley Court the canonical determinism arena. Follow AGENTS.md on this current tree; the old handoff is historical, not a command to change arenas. This is a local seed tune, not a designer-approved feel setting.
 

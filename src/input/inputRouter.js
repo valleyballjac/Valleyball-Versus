@@ -59,10 +59,10 @@ const GAMEPAD_BUTTONS = {
   volley: 1,      // B / Circle (East)
   dive: 2,        // X / Square (West)
   spike: 3,       // Y / Triangle (North)
-  cut: 4,         // LB / L1 (Left Shoulder)
+  cut: 5,         // RB / R1 (Right Shoulder)
   sprint: 6,      // LT / Left Trigger
   slide: 7,       // RT / Right Trigger
-  brace: 5,       // RB / R1 (Right Shoulder)
+  brace: 4,       // LB / L1 (Left Shoulder)
   ballReset: 8,   // Select / Back / View
   pauseMenu: 9,   // Start / Options
 };
