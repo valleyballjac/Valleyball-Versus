@@ -34,7 +34,7 @@ It is intentionally engineered with high physical discipline, a demanding skill 
 ### Positioning Over Assisted Aiming
 * The primary barrier to shot placement in Valleyball is **athlete positioning**, not button timing.
 * The exit trajectory of a strike is governed by where the athlete's striking limb makes contact relative to the ball's center of mass and incoming momentum.
-* **The Cut Mechanic (`KeyV` / `LB`)**: Allows the athlete to plant cleats into the turf, instantly shed lateral momentum, and redirect toward the ball to set up optimal physical striking angles.
+* **The Cut Mechanic (`KeyV` / `RB`)**: Allows the athlete to plant cleats into the turf, instantly shed lateral momentum, and redirect toward the ball to set up optimal physical striking angles.
 
 ### Defense Must Never Lock Player Movement
 * **The Lesson of the Failed Block IK**: An earlier attempt to procedural-IK limbs toward incoming balls broke athlete locomotion and caused severe ragdoll panics.

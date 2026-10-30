@@ -439,7 +439,7 @@ export function steerIdle(inputSlot) {
 }
 
 /**
- * Evaluates whether the bot should execute a Cut maneuver (KeyV / LB) to plant-and-redirect.
+ * Evaluates whether the bot should execute a Cut maneuver (KeyV / RB) to plant-and-redirect.
  *
  * Checks:
  * 1. Current horizontal speed is high (> 3.0 m/s).

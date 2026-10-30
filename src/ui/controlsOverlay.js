@@ -11,8 +11,8 @@ const keys = [
   ['WASD', 'Mouse', 'Shift', 'C', 'Space', 'Q', 'V / F', 'E / Click', 'R / Right click', 'G', 'B'],
   ['IJKL', 'Arrows', 'Right Shift / Slash', 'O', 'Enter', 'U', 'N', 'P', '[ / Y', 'H', 'M'],
 ];
-const padLabels = ['LS', 'RS', 'LT', 'RT', 'A', 'X', 'LB', 'B', 'Y', 'RB', 'Back'];
-const padIndices = ['Axis 0/1', 'Axis 2/3', 'Btn 6', 'Btn 7', 'Btn 0', 'Btn 2', 'Btn 4', 'Btn 1', 'Btn 3', 'Btn 5', 'Btn 8'];
+const padLabels = ['LS', 'RS', 'LT', 'RT', 'A', 'X', 'RB', 'B', 'Y', 'LB', 'Back'];
+const padIndices = ['Axis 0/1', 'Axis 2/3', 'Btn 6', 'Btn 7', 'Btn 0', 'Btn 2', 'Btn 5', 'Btn 1', 'Btn 3', 'Btn 4', 'Btn 8'];
 const slots = [null, null];
 let root = null;
 let enabled = TUNING.controlsHud.userEnabled;
