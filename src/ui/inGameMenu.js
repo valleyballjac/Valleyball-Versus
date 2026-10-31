@@ -23,6 +23,7 @@ let callbacks = {
   onMainMenu: null,
   onRenderSettingsChange: null,
   onCameraChange: null,
+  getCameraRows: null,
 };
 
 let hustleBoardSection = null;
@@ -75,10 +76,11 @@ export function initInGameMenu({
   onMainMenu,
   onRenderSettingsChange,
   onCameraChange,
+  getCameraRows,
   initialRenderSettings = {},
 }) {
   if (menuOverlayEl) return;
-  callbacks = { onResume, onOpen, onRematch, onPracticeMode, onFinishPractice, onMainMenu, onRenderSettingsChange, onCameraChange };
+  callbacks = { onResume, onOpen, onRematch, onPracticeMode, onFinishPractice, onMainMenu, onRenderSettingsChange, onCameraChange, getCameraRows };
   Object.assign(currentRenderSettings, initialRenderSettings);
 
   menuOverlayEl = document.createElement('div');
@@ -545,37 +547,22 @@ export function initInGameMenu({
   const camGrid = document.createElement('div');
   camGrid.style.cssText = 'display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;';
 
-  function createCamSelector(playerIndex, titleText) {
+  // Titles and options are filled per open by refreshCameraRows().
+  function createCamSelector(playerIndex) {
     const box = document.createElement('div');
     box.style.cssText = 'background: rgba(255, 255, 255, 0.04); padding: 10px 14px; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.1);';
     const t = document.createElement('div');
-    t.textContent = titleText;
     t.style.cssText = 'font-size: 11px; font-weight: 700; color: #94a3b8; margin-bottom: 6px;';
     const sel = document.createElement('select');
     sel.style.cssText = 'width: 100%; padding: 6px 8px; font-family: inherit; font-size: 12px; background: #0f172a; color: #f8fafc; border: 1px solid rgba(120, 170, 210, 0.3); border-radius: 4px; cursor: pointer;';
-    const camLabels = {
-      chase: '3RD PERSON CHASE',
-      thirdPerson: '3RD PERSON (BALL TRACK)',
-      firstPerson: '1ST PERSON (EYE-LEVEL)',
-      tactical: 'TACTICAL OVERHEAD',
-      broadcast: 'BROADCAST CAM [FULLSCREEN]',
-    };
-    ['chase', 'thirdPerson', 'firstPerson', 'tactical', 'broadcast'].forEach((m) => {
-      const opt = document.createElement('option');
-      opt.value = m;
-      opt.textContent = camLabels[m] || (m.toUpperCase() + ' CAM');
-      sel.appendChild(opt);
-    });
-    sel.onchange = () => {
-      if (callbacks.onCameraChange) callbacks.onCameraChange(playerIndex, sel.value);
-    };
+    sel.onchange = () => applyCameraChoice(playerIndex, sel.value);
     box.appendChild(t);
     box.appendChild(sel);
-    return { box, select: sel };
+    return { box, select: sel, title: t };
   }
 
-  const p1CamSel = createCamSelector(0, 'PLAYER 1 (HOME) [Tab]');
-  const p2CamSel = createCamSelector(1, 'PLAYER 2 (AWAY) [ ] ]');
+  const p1CamSel = createCamSelector(0);
+  const p2CamSel = createCamSelector(1);
   p1CamSelObj = p1CamSel;
   p2CamSelObj = p2CamSel;
   p1CamBox = p1CamSel.box;
@@ -655,11 +642,46 @@ export function initInGameMenu({
   menuOverlayEl.appendChild(container);
   document.body.appendChild(menuOverlayEl);
 
-  // Expose camera selector update function
-  menuOverlayEl._updateCamSelects = (cam1Mode, cam2Mode) => {
-    if (cam1Mode && p1CamSel?.select) p1CamSel.select.value = cam1Mode;
-    if (cam2Mode && p2CamSel?.select) p2CamSel.select.value = cam2Mode;
-  };
+}
+
+const CAMERA_MODES = ['chase', 'thirdPerson', 'firstPerson', 'tactical', 'broadcast'];
+const CAMERA_LABELS = {
+  chase: '3RD PERSON CHASE',
+  thirdPerson: '3RD PERSON (BALL TRACK)',
+  firstPerson: '1ST PERSON (EYE-LEVEL)',
+  tactical: 'TACTICAL OVERHEAD',
+  broadcast: 'BROADCAST CAM [FULLSCREEN]',
+};
+
+/**
+ * Shows a camera row only for each human player, titled with their colour, side and
+ * camera keys, and offers only modes that player can actually get: in splitscreen,
+ * Broadcast exists only as the shared view both players are already on.
+ */
+function refreshCameraRows() {
+  const rows = callbacks.getCameraRows ? callbacks.getCameraRows() : [];
+  [p1CamSelObj, p2CamSelObj].forEach((obj, i) => {
+    if (!obj) return;
+    const row = rows[i];
+    obj.box.style.display = row && row.visible ? 'block' : 'none';
+    if (!row || !row.visible) return;
+    obj.title.textContent = row.hint ? `${row.label} · ${row.hint}` : row.label;
+    obj.select.innerHTML = '';
+    for (const m of CAMERA_MODES) {
+      if (m === 'broadcast' && !row.allowBroadcast) continue;
+      const opt = document.createElement('option');
+      opt.value = m;
+      opt.textContent = CAMERA_LABELS[m];
+      obj.select.appendChild(opt);
+    }
+    obj.select.value = row.mode;
+  });
+}
+
+function applyCameraChoice(playerIdx, mode) {
+  if (callbacks.onCameraChange) callbacks.onCameraChange(playerIdx, mode);
+  // Leaving a shared Broadcast view also moves the other player, so redraw both rows.
+  refreshCameraRows();
 }
 
 // ---------------------------------------------------------------------------
@@ -718,12 +740,9 @@ function toggleVibration() {
 }
 
 function cycleCam(playerIdx, sel, dir = 1) {
-  if (!sel) return;
-  const modes = ['chase', 'thirdPerson', 'firstPerson', 'tactical', 'broadcast'];
-  const curIdx = modes.indexOf(sel.value);
-  const nextIdx = (curIdx + dir + modes.length) % modes.length;
-  sel.value = modes[nextIdx];
-  if (callbacks.onCameraChange) callbacks.onCameraChange(playerIdx, sel.value);
+  if (!sel || sel.options.length === 0) return;
+  sel.selectedIndex = (sel.selectedIndex + dir + sel.options.length) % sel.options.length;
+  applyCameraChoice(playerIdx, sel.value);
 }
 
 function getActiveInGameRows() {
@@ -794,7 +813,7 @@ function getActiveInGameRows() {
       onAction: () => toggleVibration(),
     });
   }
-  if (p1CamBox) {
+  if (p1CamBox && p1CamBox.style.display !== 'none') {
     rows.push({
       el: p1CamBox,
       onLeft: () => cycleCam(0, p1CamSelObj?.select, -1),
@@ -802,7 +821,7 @@ function getActiveInGameRows() {
       onAction: () => cycleCam(0, p1CamSelObj?.select, 1),
     });
   }
-  if (!isPractice && p2CamBox) {
+  if (p2CamBox && p2CamBox.style.display !== 'none') {
     rows.push({
       el: p2CamBox,
       onLeft: () => cycleCam(1, p2CamSelObj?.select, -1),
@@ -1063,14 +1082,12 @@ function stopInGameMenuPolling() {
   }
 }
 
-export function showInGameMenu(cam1Mode, cam2Mode) {
+export function showInGameMenu() {
   if (!menuOverlayEl) return;
   isOpen = true;
   if (callbacks.onOpen) callbacks.onOpen();
   menuOverlayEl.style.display = 'flex';
-  if (menuOverlayEl._updateCamSelects) {
-    menuOverlayEl._updateCamSelects(cam1Mode, cam2Mode);
-  }
+  refreshCameraRows();
   if (menuOverlayEl._updateAudioUI) {
     menuOverlayEl._updateAudioUI();
   }
@@ -1129,11 +1146,9 @@ export function showInGameMenu(cam1Mode, cam2Mode) {
       `;
     }
     if (finishPracticeBtn) finishPracticeBtn.style.display = 'block';
-    if (p2CamBox) p2CamBox.style.display = 'none';
   } else {
     if (hustleBoardSection) hustleBoardSection.style.display = 'none';
     if (finishPracticeBtn) finishPracticeBtn.style.display = 'none';
-    if (p2CamBox) p2CamBox.style.display = 'block';
   }
 
   if (window.__vb?.matchState) {
@@ -1164,9 +1179,9 @@ export function hideInGameMenu() {
   });
 }
 
-export function toggleInGameMenu(cam1Mode, cam2Mode) {
+export function toggleInGameMenu() {
   if (isOpen) hideInGameMenu();
-  else showInGameMenu(cam1Mode, cam2Mode);
+  else showInGameMenu();
   return isOpen;
 }
 

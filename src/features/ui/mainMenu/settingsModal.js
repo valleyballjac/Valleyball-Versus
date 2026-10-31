@@ -230,6 +230,13 @@ export function buildMainMenuSettingsModal(rootEl, playerConfigs = [], callbacks
     if (playerConfigs[0]) playerConfigs[0].cameraMode = val;
     TUNING.camera.mode = val;
     if (window.__vb?.setPlayerConfig) window.__vb.setPlayerConfig(0, { cameraMode: val });
+    // Same value as the lobby's P1 "Preferred Camera"; keep that dropdown showing it.
+    const lobbySelect = document.getElementById('select-camera-p1');
+    if (lobbySelect) lobbySelect.value = val;
+  };
+  // The lobby can change P1's camera too, so re-read it whenever Settings opens.
+  mainMenuSettingsModalEl._syncCamera = () => {
+    camSelect.value = playerConfigs[0]?.cameraMode || 'chase';
   };
   camRow.appendChild(camLabel);
   camRow.appendChild(camSelect);
@@ -544,6 +551,7 @@ export function buildMainMenuSettingsModal(rootEl, playerConfigs = [], callbacks
 export function showMainMenuSettingsModal() {
   if (mainMenuSettingsModalEl) {
     mainMenuSettingsModalEl.style.display = 'flex';
+    mainMenuSettingsModalEl._syncCamera?.();
     if (mainMenuSettingsModalEl._updateFocusUI) {
       mainMenuSettingsModalEl._updateFocusUI();
     }

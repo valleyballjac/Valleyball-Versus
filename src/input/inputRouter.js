@@ -881,6 +881,15 @@ function sampleHumanSlot(i, pad, camData, mode) {
   }
 }
 
+/** The controls that cycle a slot's camera, as routed last sample, for on-screen hints. */
+export function getCameraCycleHint(slotIdx) {
+  const parts = [];
+  if (slotPads[slotIdx]) parts.push('D-PAD');
+  if (keysetSlot[0] === slotIdx) parts.push('TAB');
+  if (keysetSlot[1] === slotIdx) parts.push('] KEY');
+  return parts.join(' / ');
+}
+
 /** Slot whose camera takes mouse look and clicks (the WASD keyset's), or -1 when a bot holds it. */
 export function getMouseSlot() {
   const s = keysetSlot[0];
