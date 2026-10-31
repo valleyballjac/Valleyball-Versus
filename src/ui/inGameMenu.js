@@ -9,6 +9,7 @@ import { getColorName } from './mainMenu.js';
 import { TUNING } from '../config/tuning.js';
 import { soundManager } from '../audio/soundManager.js';
 import { setVibrationEnabled, isVibrationEnabled } from '../input/inputRouter.js';
+import { createMenuPadTracker, MENU_PAD } from '../input/menuPads.js';
 
 let menuOverlayEl = null;
 let isOpen = false;
@@ -56,7 +57,7 @@ let mainMenuBtnEl = null;
 let inGameFocusIndex = 0;
 let inGameNavRows = [];
 let inGamePollHandle = null;
-let inGamePrevPad = { up: false, down: false, left: false, right: false, a: false, b: false, start: false, back: false };
+const inGamePads = createMenuPadTracker();
 
 let currentRenderSettings = {
   pixelRatioPreset: 'native',
@@ -942,9 +943,6 @@ function updateInGameFocusUI() {
 function startInGameMenuPolling() {
   stopInGameMenuPolling();
 
-  const menuOpenedAt = Date.now();
-  let closeAllowed = false;
-
   const onKeyDown = (e) => {
     if (!isOpen) return;
     if (e.code === 'ArrowUp' || e.code === 'KeyW') {
@@ -985,28 +983,9 @@ function startInGameMenuPolling() {
   };
   window.addEventListener('keydown', onKeyDown);
 
-  // Seed initial button states from connected gamepads so opening button holds don't trigger edge closes
-  const initialPads = (typeof navigator.getGamepads === 'function') ? (navigator.getGamepads() || []) : [];
-  let initB = false, initBack = false, initStart = false;
-  for (let i = 0; i < initialPads.length; i++) {
-    const pad = initialPads[i];
-    if (pad && pad.connected) {
-      if (pad.buttons[1]?.pressed) initB = true;
-      if (pad.buttons[8]?.pressed) initBack = true;
-      if (pad.buttons[9]?.pressed) initStart = true;
-    }
-  }
-
-  inGamePrevPad = {
-    up: false,
-    down: false,
-    left: false,
-    right: false,
-    a: false,
-    b: initB || true,
-    start: initStart || true,
-    back: initBack || true,
-  };
+  // Per-pad edges, seeded from what is held now: the Start press that opened the
+  // menu must be released before Start can close it.
+  inGamePads.reset();
 
   inGamePollHandle = setInterval(() => {
     if (!isOpen || !menuOverlayEl || menuOverlayEl.style.display !== 'flex') {
@@ -1021,30 +1000,15 @@ function startInGameMenuPolling() {
       if (raw[i] && raw[i].connected) pads.push(raw[i]);
     }
 
+    inGamePads.update(pads);
     inGameNavRows = getActiveInGameRows();
     if (inGameNavRows.length === 0) return;
 
     for (const pad of pads) {
       if (!pad) continue;
-      const up = (pad.buttons[12]?.pressed || (pad.axes[1] && pad.axes[1] < -0.5)) || false;
-      const down = (pad.buttons[13]?.pressed || (pad.axes[1] && pad.axes[1] > 0.5)) || false;
-      const left = (pad.buttons[14]?.pressed || (pad.axes[0] && pad.axes[0] < -0.5)) || false;
-      const right = (pad.buttons[15]?.pressed || (pad.axes[0] && pad.axes[0] > 0.5)) || false;
-      const btnA = pad.buttons[0]?.pressed || false;
-      const btnB = pad.buttons[1]?.pressed || false;
-      const btnBack = pad.buttons[8]?.pressed || false;
-      const btnStart = pad.buttons[9]?.pressed || false;
+      const e = inGamePads.pressed(pad);
 
-      const p = inGamePrevPad;
-
-      // Close buttons must be released and cooldown window passed before accepting dismiss
-      if (!closeAllowed) {
-        if (!btnB && !btnBack && !btnStart && (Date.now() - menuOpenedAt > 200)) {
-          closeAllowed = true;
-        }
-      }
-
-      if (up && !p.up) {
+      if (e & MENU_PAD.up) {
         if (inGameNavRows[inGameFocusIndex]?.onUp) {
           inGameNavRows[inGameFocusIndex].onUp();
         } else {
@@ -1052,7 +1016,7 @@ function startInGameMenuPolling() {
           updateInGameFocusUI();
         }
       }
-      if (down && !p.down) {
+      if (e & MENU_PAD.down) {
         if (inGameNavRows[inGameFocusIndex]?.onDown) {
           inGameNavRows[inGameFocusIndex].onDown();
         } else {
@@ -1060,30 +1024,22 @@ function startInGameMenuPolling() {
           updateInGameFocusUI();
         }
       }
-      if (left && !p.left) {
+      if (e & MENU_PAD.left) {
         inGameNavRows[inGameFocusIndex]?.onLeft?.();
       }
-      if (right && !p.right) {
+      if (e & MENU_PAD.right) {
         inGameNavRows[inGameFocusIndex]?.onRight?.();
       }
-      if (btnA && !p.a) {
+      if (e & MENU_PAD.a) {
         inGameNavRows[inGameFocusIndex]?.onAction?.();
+        // The action may have closed the menu (Resume, Main Menu, Finish Practice).
+        if (!isOpen) return;
       }
-      if (closeAllowed && ((btnB && !p.b) || (btnBack && !p.back) || (btnStart && !p.start))) {
+      if (e & (MENU_PAD.b | MENU_PAD.back | MENU_PAD.start)) {
         hideInGameMenu();
         if (callbacks.onResume) callbacks.onResume();
-        p.b = btnB; p.back = btnBack; p.start = btnStart;
         return;
       }
-
-      p.up = up;
-      p.down = down;
-      p.left = left;
-      p.right = right;
-      p.a = btnA;
-      p.b = btnB;
-      p.back = btnBack;
-      p.start = btnStart;
     }
   }, 50);
 

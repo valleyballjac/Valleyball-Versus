@@ -1,6 +1,7 @@
 import { soundManager } from '../../../audio/soundManager.js';
 import { state } from './state.js';
 import { setExplicitDeviceMappings } from '../../../input/inputRouter.js';
+import { MENU_PAD } from '../../../input/menuPads.js';
 import { showToast } from './toast.js';
 
 let containerEl = null;
@@ -17,8 +18,6 @@ const assignmentState = {
   team2: [null, null], // [P2, P4]
   bench: [],
 };
-
-const padPrevState = {};
 
 function getCleanGamepadName(pad) {
   if (!pad) return 'Gamepad';
@@ -620,25 +619,19 @@ export function setBothAI() {
 
 /**
  * Gamepad Polling Loop for Controller Assignment screen
+ * @param {Gamepad[]} pads connected pads
+ * @param {ReturnType<typeof import('../../../input/menuPads.js').createMenuPadTracker>} menuPads
+ *   the main menu's tracker, already updated for this poll
  */
-export function pollAssignmentGamepads(pads) {
+export function pollAssignmentGamepads(pads, menuPads) {
   if (!containerEl || containerEl.style.display !== 'flex') return;
 
-  pads.forEach((pad) => {
-    if (!pad) return;
+  for (const pad of pads) {
+    if (!pad) continue;
+    // Proceeding below hides this screen; the rest of this poll belongs to the next one.
+    if (containerEl.style.display !== 'flex') return;
     const pIdx = pad.index;
-    if (!padPrevState[pIdx]) {
-      padPrevState[pIdx] = { left: false, right: false, a: false, b: false, start: false, y: false, x: false };
-    }
-    const prev = padPrevState[pIdx];
-
-    const left = (pad.buttons[14]?.pressed || (pad.axes[0] && pad.axes[0] < -0.5)) || false;
-    const right = (pad.buttons[15]?.pressed || (pad.axes[0] && pad.axes[0] > 0.5)) || false;
-    const btnA = pad.buttons[0]?.pressed || false;
-    const btnB = pad.buttons[1]?.pressed || false;
-    const btnX = pad.buttons[2]?.pressed || false;
-    const btnY = pad.buttons[3]?.pressed || false;
-    const btnStart = pad.buttons[9]?.pressed || false;
+    const e = menuPads.pressed(pad);
 
     // Find device object corresponding to this pad
     let currentDevice = null;
@@ -661,7 +654,7 @@ export function pollAssignmentGamepads(pads) {
 
     if (currentDevice) {
       // Tilt Left
-      if (left && !prev.left) {
+      if (e & MENU_PAD.left) {
         if (currentLoc === 'team2') {
           unassignDevice(currentDevice);
           triggerHaptic(pad);
@@ -672,7 +665,7 @@ export function pollAssignmentGamepads(pads) {
       }
 
       // Tilt Right
-      if (right && !prev.right) {
+      if (e & MENU_PAD.right) {
         if (currentLoc === 'team1') {
           unassignDevice(currentDevice);
           triggerHaptic(pad);
@@ -683,7 +676,7 @@ export function pollAssignmentGamepads(pads) {
       }
 
       // Button B (Drop to bench or back to title)
-      if (btnB && !prev.b) {
+      if (e & MENU_PAD.b) {
         if (currentLoc !== 'bench') {
           unassignDevice(currentDevice);
           triggerHaptic(pad);
@@ -695,31 +688,23 @@ export function pollAssignmentGamepads(pads) {
     }
 
     // Set Both AI with X
-    if (btnX && !prev.x) {
+    if (e & MENU_PAD.x) {
       setBothAI();
       triggerHaptic(pad);
     }
 
     // Toggle 1v1 / 2v2 Mode with Y
-    if (btnY && !prev.y) {
+    if (e & MENU_PAD.y) {
       toggleMode();
       triggerHaptic(pad);
     }
 
     // Start / Confirm with Start or A
-    if ((btnStart && !prev.start) || (btnA && !prev.a)) {
+    if ((e & MENU_PAD.start) || (e & MENU_PAD.a)) {
       proceedToSetup();
       triggerHaptic(pad);
     }
-
-    prev.left = left;
-    prev.right = right;
-    prev.a = btnA;
-    prev.b = btnB;
-    prev.x = btnX;
-    prev.y = btnY;
-    prev.start = btnStart;
-  });
+  }
 }
 
 function triggerHaptic(pad) {

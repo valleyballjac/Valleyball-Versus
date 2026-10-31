@@ -96,9 +96,4 @@ export const state = {
   titleButtons: [],
   titleFocusIndex: 0,
   gamepadPollHandle: null,
-  titlePrevPads: [{ up: false, down: false, a: false, b: false, start: false, back: false }],
-  prevPads: [
-    { up: false, down: false, left: false, right: false, a: false, b: false, x: false, y: false, start: false, lb: false, rb: false },
-    { up: false, down: false, left: false, right: false, a: false, b: false, x: false, y: false, start: false, lb: false, rb: false },
-  ],
 };

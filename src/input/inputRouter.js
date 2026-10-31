@@ -8,10 +8,11 @@ import { isInGameMenuOpen } from '../ui/inGameMenu.js';
  *
  * Routes keyboard and gamepads to athlete slots (1 to 4 athletes).
  * Supports:
- * - 2+ Gamepads: P1 = Gamepad 0, P2 = Gamepad 1 (with P1 keyboard fallback)
- * - 1 Gamepad: P1 = Keyboard WASD, P2 = Gamepad 0
- * - 0 Gamepads: P1 = Keyboard WASD, P2 = Secondary Keyboard (IJKL)
- * - Practice Mode: P1 gets both Gamepad 0 and Keyboard WASD seamlessly
+ * - Assignment-screen mappings: each pad and each keyboard keyset (WASD + mouse,
+ *   IJKL) drives exactly the slot it was assigned to. An unassigned keyset keeps
+ *   its default slot (WASD -> P1, IJKL -> P2).
+ * - No mappings: gamepads go to human slots in connection order; WASD -> P1, IJKL -> P2
+ * - Practice Mode: P1 gets both Gamepad 0 and Keyboard WASD seamlessly (mappings ignored)
  *
  * LAW 6 — Input is sampled once per rendered frame from loop.onFrame, and read only
  * inside fixedUpdate.
@@ -53,6 +54,17 @@ const P2_KEYS = {
   spike: ['BracketLeft', 'KeyY'],
   ballReset: ['KeyM'],
 };
+
+// Keyset 0 (kb1) also carries the mouse and Tab; keyset 1 (kb2) carries ']' and '\'.
+// Each keyset drives the slot it was assigned to, so a keyboard on P2 is P2's.
+const KEYSETS = [P1_KEYS, P2_KEYS];
+const KEYBOARD_NAMES = { kb1: 'Keyboard 1 (WASD)', kb2: 'Secondary Keyboard (IJKL)' };
+
+// Device routing, resolved once per sample by resolveDeviceRouting().
+const keysetSlot = [0, 1];
+const slotKeyset = [0, 1];
+const slotPads = [null, null];
+let arrowLookSlot = -1;
 
 const GAMEPAD_BUTTONS = {
   jump: 0,        // A / Cross
@@ -105,14 +117,21 @@ export function createInputSlot() {
 
 // Presentation-only snapshots. Never consumed by gameplay action readers.
 export const CONTROL_BITS = Object.freeze({ move: 1, look: 2, sprint: 4, slide: 8, jump: 16, dive: 32, cut: 64, volley: 128, spike: 256, reset: 512, brace: 1024 });
-const uiSlots = [0, 1].map(() => ({ human: false, available: true, device: 'keyboard', standard: true, held: 0, pulse: 0, padIndex: -1, previousPadHeld: 0, initialized: false }));
+const uiSlots = [0, 1].map((i) => ({ human: false, available: true, device: 'keyboard', keyset: i, standard: true, held: 0, pulse: 0, padIndex: -1, previousPadHeld: 0, initialized: false }));
 const UI_ACTIONS = CONTROL_BITS.move | CONTROL_BITS.look | CONTROL_BITS.sprint | CONTROL_BITS.slide | CONTROL_BITS.jump | CONTROL_BITS.dive | CONTROL_BITS.cut | CONTROL_BITS.volley | CONTROL_BITS.spike | CONTROL_BITS.brace;
 const uiKeyboardEdges = [0, 0];
 const uiMouseHeld = [0, 0];
 export function getControlsSnapshot() { return uiSlots; }
 
-function keyAction(code, player) {
-  const k = player === 0 ? P1_KEYS : P2_KEYS;
+function anyHeld(codes) {
+  for (let i = 0; i < codes.length; i++) {
+    if (heldKeys.has(codes[i])) return true;
+  }
+  return false;
+}
+
+function keyAction(code, keyset) {
+  const k = KEYSETS[keyset];
   if (code === k.moveUp || code === k.moveDown || code === k.moveLeft || code === k.moveRight) return CONTROL_BITS.move;
   if (k.sprint.includes(code)) return CONTROL_BITS.sprint;
   if (k.slide.includes(code)) return CONTROL_BITS.slide;
@@ -126,22 +145,24 @@ function keyAction(code, player) {
   return 0;
 }
 
-function keyboardHeld(player, mode, pad) {
-  const k = player === 0 ? P1_KEYS : P2_KEYS;
+function keyboardHeld(slotIdx, mode, pad) {
   let mask = 0;
-  if (heldKeys.has(k.moveUp) || heldKeys.has(k.moveDown) || heldKeys.has(k.moveLeft) || heldKeys.has(k.moveRight)) mask |= CONTROL_BITS.move;
-  if (!pad && (player === 1 || mode === 'practice') && (heldKeys.has('ArrowLeft') || heldKeys.has('ArrowRight') || heldKeys.has('ArrowUp') || heldKeys.has('ArrowDown'))) mask |= CONTROL_BITS.look;
-  if (heldKeys.has(k.sprint[0]) || (k.sprint[1] && heldKeys.has(k.sprint[1]))) mask |= CONTROL_BITS.sprint;
-  if (heldKeys.has(k.slide[0])) mask |= CONTROL_BITS.slide;
-  if (heldKeys.has(k.jump)) mask |= CONTROL_BITS.jump;
-  if (heldKeys.has(k.dive[0])) mask |= CONTROL_BITS.dive;
-  if (heldKeys.has(k.cut[0]) || heldKeys.has(k.cut[1])) mask |= CONTROL_BITS.cut;
-  if (heldKeys.has(k.brace[0])) mask |= CONTROL_BITS.brace;
-  if (heldKeys.has(k.volley[0])) mask |= CONTROL_BITS.volley;
-  if (heldKeys.has(k.spike[0]) || (k.spike[1] && heldKeys.has(k.spike[1]))) mask |= CONTROL_BITS.spike;
-  if (mode === 'practice' && heldKeys.has(k.ballReset[0])) mask |= CONTROL_BITS.reset;
-  if (player === 0) mask |= uiMouseHeld[0];
-  return mask;
+  for (let ks = 0; ks < KEYSETS.length; ks++) {
+    if (keysetSlot[ks] !== slotIdx) continue;
+    const k = KEYSETS[ks];
+    if (heldKeys.has(k.moveUp) || heldKeys.has(k.moveDown) || heldKeys.has(k.moveLeft) || heldKeys.has(k.moveRight)) mask |= CONTROL_BITS.move;
+    if (anyHeld(k.sprint)) mask |= CONTROL_BITS.sprint;
+    if (anyHeld(k.slide)) mask |= CONTROL_BITS.slide;
+    if (heldKeys.has(k.jump)) mask |= CONTROL_BITS.jump;
+    if (anyHeld(k.dive)) mask |= CONTROL_BITS.dive;
+    if (anyHeld(k.cut)) mask |= CONTROL_BITS.cut;
+    if (anyHeld(k.brace)) mask |= CONTROL_BITS.brace;
+    if (anyHeld(k.volley)) mask |= CONTROL_BITS.volley;
+    if (anyHeld(k.spike)) mask |= CONTROL_BITS.spike;
+    if (mode === 'practice' && anyHeld(k.ballReset)) mask |= CONTROL_BITS.reset;
+  }
+  if (!pad && arrowLookSlot === slotIdx && (heldKeys.has('ArrowLeft') || heldKeys.has('ArrowRight') || heldKeys.has('ArrowUp') || heldKeys.has('ArrowDown'))) mask |= CONTROL_BITS.look;
+  return mask | uiMouseHeld[slotIdx];
 }
 
 function updateUiSlot(index, pad, athleteCount, botSlots, mode) {
@@ -154,6 +175,7 @@ function updateUiSlot(index, pad, athleteCount, botSlots, mode) {
   const mapping = explicitDeviceMappings && explicitDeviceMappings[index];
   // Both human slots retain keyboard control when a mapped pad is absent.
   ui.available = true;
+  ui.keyset = slotKeyset[index];
   const keyboard = keyboardHeld(index, mode, pad);
   let padMask = 0;
   if (pad) {
@@ -269,52 +291,48 @@ function onKeyDown(event) {
   const newlyHeld = !heldKeys.has(event.code) && !event.repeat;
   heldKeys.add(event.code);
   if (newlyHeld) {
-    if (!currentBotSlots.includes(0)) uiKeyboardEdges[0] |= keyAction(event.code, 0);
-    if (!currentBotSlots.includes(1)) uiKeyboardEdges[1] |= keyAction(event.code, 1);
+    for (let ks = 0; ks < KEYSETS.length; ks++) {
+      const s = keysetSlot[ks];
+      if (!currentBotSlots.includes(s)) uiKeyboardEdges[s] |= keyAction(event.code, ks);
+    }
   }
 
+  // Edge keys go to whichever slot each keyset is assigned to (never a bot's).
   if (!event.repeat) {
-    // P1 edge keys (only if P1 is not a bot)
-    if (!currentBotSlots.includes(0)) {
-      if (event.code === P1_KEYS.jump) slots[0].jumpQueued = true;
-      if (P1_KEYS.dive.includes(event.code)) slots[0].diveQueued = true;
-      if (P1_KEYS.cut.includes(event.code)) slots[0].cutQueued = true;
-      if (P1_KEYS.volley.includes(event.code)) slots[0].volleyQueued = true;
-      if (P1_KEYS.spike.includes(event.code)) slots[0].spikeQueued = true;
-      if (P1_KEYS.ballReset.includes(event.code)) slots[0].ballResetQueued = true;
-    }
-
-    // P2 edge keys (only if P2 is not a bot)
-    if (!currentBotSlots.includes(1)) {
-      if (event.code === P2_KEYS.jump) slots[1].jumpQueued = true;
-      if (P2_KEYS.dive.includes(event.code)) slots[1].diveQueued = true;
-      if (P2_KEYS.cut.includes(event.code)) slots[1].cutQueued = true;
-      if (P2_KEYS.volley.includes(event.code)) slots[1].volleyQueued = true;
-      if (P2_KEYS.spike.includes(event.code)) slots[1].spikeQueued = true;
-      if (P2_KEYS.ballReset.includes(event.code)) slots[1].ballResetQueued = true;
+    for (let ks = 0; ks < KEYSETS.length; ks++) {
+      const s = keysetSlot[ks];
+      if (currentBotSlots.includes(s)) continue;
+      const k = KEYSETS[ks];
+      const slot = slots[s];
+      if (event.code === k.jump) slot.jumpQueued = true;
+      if (k.dive.includes(event.code)) slot.diveQueued = true;
+      if (k.cut.includes(event.code)) slot.cutQueued = true;
+      if (k.volley.includes(event.code)) slot.volleyQueued = true;
+      if (k.spike.includes(event.code)) slot.spikeQueued = true;
+      if (k.ballReset.includes(event.code)) slot.ballResetQueued = true;
     }
   }
 
-  // Tab cycles P1 player camera (Shift+Tab cycles arena camera)
+  // Tab cycles the WASD player's camera (Shift+Tab cycles arena camera)
   if (event.code === 'Tab') {
     event.preventDefault();
     if (!event.repeat) {
       if (event.shiftKey) {
-        cameraCycleArenaQueued[0] = 1;
+        cameraCycleArenaQueued[keysetSlot[0]] = 1;
       } else {
-        cameraCyclePlayerQueued[0] = 1;
+        cameraCyclePlayerQueued[keysetSlot[0]] = 1;
       }
     }
   }
-  // ']' cycles P2 player camera
+  // ']' cycles the IJKL player's camera
   if (event.code === 'BracketRight') {
     event.preventDefault();
-    if (!event.repeat) cameraCyclePlayerQueued[1] = 1;
+    if (!event.repeat) cameraCyclePlayerQueued[keysetSlot[1]] = 1;
   }
-  // '\' cycles P2 arena camera
+  // '\' cycles the IJKL player's arena camera
   if (event.code === 'Backslash') {
     event.preventDefault();
-    if (!event.repeat) cameraCycleArenaQueued[1] = 1;
+    if (!event.repeat) cameraCycleArenaQueued[keysetSlot[1]] = 1;
   }
 
   if (event.code === 'Escape') {
@@ -427,28 +445,32 @@ export function initInputRouter(surface) {
     }
   });
 
-  // Mouse buttons for Player 1 strike actions
+  // Mouse buttons strike for the WASD player
   window.addEventListener('mousedown', (event) => {
     if (isTextEntry(event.target)) return;
     const isGameplay = window.__vb?.getGameState ? (window.__vb.getGameState() === 'match' || window.__vb.getGameState() === 'practice') : true;
     if (!isGameplay || isInGameMenuOpen()) return;
+    const s = getMouseSlot();
+    if (s < 0) return;
 
     if (event.button === 0) {
       // Left click = Kick / Volley
-      slots[0].volleyQueued = true;
-      uiMouseHeld[0] |= CONTROL_BITS.volley;
-      uiKeyboardEdges[0] |= CONTROL_BITS.volley;
+      slots[s].volleyQueued = true;
+      uiMouseHeld[s] |= CONTROL_BITS.volley;
+      uiKeyboardEdges[s] |= CONTROL_BITS.volley;
     } else if (event.button === 2) {
       // Right click = Spike
-      slots[0].spikeQueued = true;
-      uiMouseHeld[0] |= CONTROL_BITS.spike;
-      uiKeyboardEdges[0] |= CONTROL_BITS.spike;
+      slots[s].spikeQueued = true;
+      uiMouseHeld[s] |= CONTROL_BITS.spike;
+      uiKeyboardEdges[s] |= CONTROL_BITS.spike;
     }
   });
 
   window.addEventListener('mouseup', (event) => {
-    if (event.button === 0) uiMouseHeld[0] &= ~CONTROL_BITS.volley;
-    if (event.button === 2) uiMouseHeld[0] &= ~CONTROL_BITS.spike;
+    for (let s = 0; s < uiMouseHeld.length; s++) {
+      if (event.button === 0) uiMouseHeld[s] &= ~CONTROL_BITS.volley;
+      if (event.button === 2) uiMouseHeld[s] &= ~CONTROL_BITS.spike;
+    }
   });
 
   // Disable context menu so right click performs spike without browser menu
@@ -512,10 +534,16 @@ export function assignDefaultDeviceForSlot(slotIndex) {
       id: freePad.id,
     };
   } else {
+    // Two slots on one keyset would leave one of them with no keys at all.
+    const takenKeyIds = Object.entries(explicitDeviceMappings)
+      .filter(([s, d]) => Number(s) !== slotIndex && d && d.type === 'keyboard')
+      .map(([, d]) => d.keyId || 'kb1');
+    let keyId = slotIndex === 0 ? 'kb1' : 'kb2';
+    if (takenKeyIds.includes(keyId)) keyId = keyId === 'kb1' ? 'kb2' : 'kb1';
     explicitDeviceMappings[slotIndex] = {
       type: 'keyboard',
-      keyId: slotIndex === 0 ? 'kb1' : 'kb2',
-      name: slotIndex === 0 ? 'Keyboard 1 (WASD)' : 'Secondary Keyboard (IJKL)',
+      keyId,
+      name: KEYBOARD_NAMES[keyId],
     };
   }
 }
@@ -530,7 +558,9 @@ export function clearDeviceMappingForSlot(slotIndex) {
  * Returns human-readable routing assignments for UI display.
  */
 export function getControllerAssignments(athleteCount = 2, mode = 'match') {
-  if (explicitDeviceMappings) {
+  // Practice ignores match assignments (see resolveDeviceRouting).
+  const usesMappings = explicitDeviceMappings && mode !== 'practice' && athleteCount !== 1;
+  if (usesMappings) {
     const formatDev = (m) => {
       if (!m) return 'AI Bot';
       if (m.type === 'gamepad') return `${m.name || `Gamepad ${m.padIndex + 1}`}`;
@@ -627,6 +657,10 @@ export function sampleAllInputs(cameras, athleteCount = 2, mode = 'match', botSl
     for (let i = 0; i < uiSlots.length; i++) {
       uiSlots[i].held = uiSlots[i].pulse = 0;
     }
+    // The menu owns the pads: treat every button as held, so whatever closes it
+    // (A on Resume, B, Start) must be released before it acts in play.
+    latchPadPrev(0);
+    latchPadPrev(1);
     return;
   }
 
@@ -645,242 +679,187 @@ export function sampleAllInputs(cameras, athleteCount = 2, mode = 'match', botSl
   const cam2Data = getCamVectors(p2Cam, 1);
 
   const pads = getConnectedGamepads();
+  resolveDeviceRouting(pads, athleteCount, mode, botSlots);
 
-  // Determine gamepad routing
-  let p1Pad = null;
-  let p2Pad = null;
+  for (let i = 0; i < 2; i++) {
+    if (i >= athleteCount || botSlots.includes(i)) continue;
+    sampleHumanSlot(i, slotPads[i], i === 0 ? cam1Data : cam2Data, mode);
+  }
+  updateUiSlot(0, slotPads[0], mode === 'practice' ? 1 : athleteCount, botSlots, mode);
+  updateUiSlot(1, slotPads[1], mode === 'practice' ? 1 : athleteCount, botSlots, mode);
+}
 
-  if (explicitDeviceMappings) {
-    const m0 = explicitDeviceMappings[0];
-    const m1 = explicitDeviceMappings[1];
-    if (m0 && m0.type === 'gamepad' && typeof m0.padIndex === 'number') {
-      p1Pad = pads.find((p) => p && p.index === m0.padIndex) || null;
+function latchPadPrev(slotIdx) {
+  const prev = getPadPrev(slotIdx);
+  for (const key in prev) prev[key] = true;
+}
+
+function findPad(pads, padIndex) {
+  for (let i = 0; i < pads.length; i++) {
+    if (pads[i] && pads[i].index === padIndex) return pads[i];
+  }
+  return null;
+}
+
+/**
+ * Decides which pad and which keyboard keysets feed each slot this sample.
+ * Assignment-screen mappings win in matches; practice ignores them, so a pad
+ * left over from a match never locks the solo athlete out.
+ */
+function resolveDeviceRouting(pads, athleteCount, mode, botSlots) {
+  keysetSlot[0] = 0;
+  keysetSlot[1] = 1;
+  slotKeyset[0] = 0;
+  slotKeyset[1] = 1;
+  slotPads[0] = null;
+  slotPads[1] = null;
+
+  if (mode === 'practice' || athleteCount === 1) {
+    if (!botSlots.includes(0)) slotPads[0] = pads[0] || null;
+  } else if (explicitDeviceMappings) {
+    for (let s = 0; s < 2; s++) {
+      const m = explicitDeviceMappings[s];
+      if (!m) continue;
+      if (m.type === 'gamepad' && typeof m.padIndex === 'number') {
+        slotPads[s] = findPad(pads, m.padIndex);
+      } else if (m.type === 'keyboard') {
+        const ks = m.keyId === 'kb2' ? 1 : 0;
+        keysetSlot[ks] = s;
+        slotKeyset[s] = ks;
+      }
     }
-    if (m1 && m1.type === 'gamepad' && typeof m1.padIndex === 'number') {
-      p2Pad = pads.find((p) => p && p.index === m1.padIndex) || null;
-    }
-  } else if (mode === 'practice' || athleteCount === 1) {
-    p1Pad = !botSlots.includes(0) ? pads[0] || null : null;
   } else {
     // Route gamepads to humans in order
     let padIdx = 0;
-    if (!botSlots.includes(0) && padIdx < pads.length) {
-      p1Pad = pads[padIdx++];
-    }
-    if (!botSlots.includes(1) && padIdx < pads.length) {
-      p2Pad = pads[padIdx++];
-    }
+    if (!botSlots.includes(0) && padIdx < pads.length) slotPads[0] = pads[padIdx++];
+    if (!botSlots.includes(1) && padIdx < pads.length) slotPads[1] = pads[padIdx++];
   }
 
-  // --- SLOT 0 (P1) ---
-  if (!botSlots.includes(0)) {
-    const slot = slots[0];
-    let x = (heldKeys.has(P1_KEYS.moveRight) ? 1 : 0) - (heldKeys.has(P1_KEYS.moveLeft) ? 1 : 0);
-    let z = (heldKeys.has(P1_KEYS.moveUp) ? 1 : 0) - (heldKeys.has(P1_KEYS.moveDown) ? 1 : 0);
-    let sprintHeld = P1_KEYS.sprint.some((k) => heldKeys.has(k));
-    let slideHeld = P1_KEYS.slide.some((k) => heldKeys.has(k));
-    let braceHeld = P1_KEYS.brace.some((k) => heldKeys.has(k));
-    let lookX = 0;
-    let lookY = 0;
+  // Arrow-key look goes to a pad-less IJKL player; otherwise to a pad-less WASD player.
+  const ijkl = keysetSlot[1];
+  const wasd = keysetSlot[0];
+  arrowLookSlot = -1;
+  if (mode !== 'practice' && athleteCount > 1 && !botSlots.includes(ijkl) && !slotPads[ijkl]) arrowLookSlot = ijkl;
+  else if (!botSlots.includes(wasd) && !slotPads[wasd]) arrowLookSlot = wasd;
+}
 
-    if (p1Pad) {
-      const stick = applyDeadzone(p1Pad.axes[0] || 0, p1Pad.axes[1] || 0, TUNING.motor.stickDeadzone);
-      if (stick.x !== 0 || stick.y !== 0) {
-        x = stick.x;
-        z = -stick.y;
-      }
+function sampleHumanSlot(i, pad, camData, mode) {
+  const slot = slots[i];
+  let x = 0;
+  let z = 0;
+  let sprintHeld = false;
+  let slideHeld = false;
+  let braceHeld = false;
+  let lookX = 0;
+  let lookY = 0;
 
-      const look = applyDeadzone(p1Pad.axes[2] || 0, p1Pad.axes[3] || 0, TUNING.motor.stickDeadzone);
-      lookX = look.x;
-      lookY = look.y;
-
-      if (padDown(p1Pad, GAMEPAD_BUTTONS.sprint)) sprintHeld = true;
-      if (padDown(p1Pad, GAMEPAD_BUTTONS.slide)) slideHeld = true;
-      if (padDown(p1Pad, GAMEPAD_BUTTONS.brace)) braceHeld = true;
-
-      const prev = getPadPrev(0);
-      const jumpDown = padDown(p1Pad, GAMEPAD_BUTTONS.jump);
-      if (jumpDown && !prev.jump) slot.jumpQueued = true;
-      prev.jump = jumpDown;
-
-      const diveDown = padDown(p1Pad, GAMEPAD_BUTTONS.dive);
-      if (diveDown && !prev.dive) slot.diveQueued = true;
-      prev.dive = diveDown;
-
-      const cutDown = padDown(p1Pad, GAMEPAD_BUTTONS.cut);
-      if (cutDown && !prev.cut) slot.cutQueued = true;
-      prev.cut = cutDown;
-
-      const volleyDown = padDown(p1Pad, GAMEPAD_BUTTONS.volley);
-      if (volleyDown && !prev.volley) slot.volleyQueued = true;
-      prev.volley = volleyDown;
-
-      const spikeDown = padDown(p1Pad, GAMEPAD_BUTTONS.spike);
-      if (spikeDown && !prev.spike) slot.spikeQueued = true;
-      prev.spike = spikeDown;
-
-      const pauseDown = padDown(p1Pad, GAMEPAD_BUTTONS.pauseMenu);
-      if (pauseDown && !prev.pauseMenu) {
-        if (!isInGameMenuOpen()) {
-          menuToggleQueued = true;
-        }
-      }
-      prev.pauseMenu = pauseDown;
-
-      const ballResetDown = padDown(p1Pad, GAMEPAD_BUTTONS.ballReset);
-      if (ballResetDown && !prev.ballReset) {
-        if (mode === 'practice') {
-          slot.ballResetQueued = true;
-        }
-      }
-      prev.ballReset = ballResetDown;
-
-      const dLeft = padDown(p1Pad, 14);
-      const dRight = padDown(p1Pad, 15);
-      const dUp = padDown(p1Pad, 12);
-      const dDown = padDown(p1Pad, 13);
-      if (dLeft && !prev.dpadLeft) cameraCyclePlayerQueued[0] = -1;
-      if (dRight && !prev.dpadRight) cameraCyclePlayerQueued[0] = 1;
-      if (dUp && !prev.dpadUp) cameraCycleArenaQueued[0] = -1;
-      if (dDown && !prev.dpadDown) cameraCycleArenaQueued[0] = 1;
-      prev.dpadLeft = dLeft;
-      prev.dpadRight = dRight;
-      prev.dpadUp = dUp;
-      prev.dpadDown = dDown;
-    } else if (mode === 'practice' || athleteCount === 1 || p2Pad || botSlots.includes(1)) {
-      // Secondary keyboard camera control: Arrow keys
-      lookX = (heldKeys.has('ArrowRight') ? 1 : 0) - (heldKeys.has('ArrowLeft') ? 1 : 0);
-      lookY = (heldKeys.has('ArrowUp') ? 1 : 0) - (heldKeys.has('ArrowDown') ? 1 : 0);
-    }
-
-    const mag = Math.hypot(x, z);
-    if (mag > 1) { x /= mag; z /= mag; }
-
-    slot.moveX = x;
-    slot.moveZ = z;
-    slot.sprintHeld = sprintHeld;
-    slot.slideHeld = slideHeld;
-    slot.braceHeld = braceHeld;
-    slot.lookX = lookX;
-    slot.lookY = lookY;
-    slot.hasAim = false;
-    slot.aimYaw = 0;
-    slot.cameraYaw = cam1Data.yaw;
-
-    if (cam1Data.valid) {
-      slot.moveWorld.set(0, 0, 0)
-        .addScaledVector(cam1Data.right, x)
-        .addScaledVector(cam1Data.forward, z);
-    } else {
-      slot.moveWorld.set(0, 0, 0);
-    }
+  for (let ks = 0; ks < KEYSETS.length; ks++) {
+    if (keysetSlot[ks] !== i) continue;
+    const k = KEYSETS[ks];
+    x += (heldKeys.has(k.moveRight) ? 1 : 0) - (heldKeys.has(k.moveLeft) ? 1 : 0);
+    z += (heldKeys.has(k.moveUp) ? 1 : 0) - (heldKeys.has(k.moveDown) ? 1 : 0);
+    if (anyHeld(k.sprint)) sprintHeld = true;
+    if (anyHeld(k.slide)) slideHeld = true;
+    if (anyHeld(k.brace)) braceHeld = true;
   }
 
-  // --- SLOT 1 (P2) ---
-  if (athleteCount > 1 && !botSlots.includes(1)) {
-    const slot = slots[1];
-    let x = (heldKeys.has(P2_KEYS.moveRight) ? 1 : 0) - (heldKeys.has(P2_KEYS.moveLeft) ? 1 : 0);
-    let z = (heldKeys.has(P2_KEYS.moveUp) ? 1 : 0) - (heldKeys.has(P2_KEYS.moveDown) ? 1 : 0);
-    let sprintHeld = P2_KEYS.sprint.some((k) => heldKeys.has(k));
-    let slideHeld = P2_KEYS.slide.some((k) => heldKeys.has(k));
-    let braceHeld = P2_KEYS.brace.some((k) => heldKeys.has(k));
-    let lookX = 0;
-    let lookY = 0;
-
-    if (p2Pad) {
-      const stick = applyDeadzone(p2Pad.axes[0] || 0, p2Pad.axes[1] || 0, TUNING.motor.stickDeadzone);
-      if (stick.x !== 0 || stick.y !== 0) {
-        x = stick.x;
-        z = -stick.y;
-      }
-
-      const look = applyDeadzone(p2Pad.axes[2] || 0, p2Pad.axes[3] || 0, TUNING.motor.stickDeadzone);
-      lookX = look.x;
-      lookY = look.y;
-
-      if (padDown(p2Pad, GAMEPAD_BUTTONS.sprint)) sprintHeld = true;
-      if (padDown(p2Pad, GAMEPAD_BUTTONS.slide)) slideHeld = true;
-      if (padDown(p2Pad, GAMEPAD_BUTTONS.brace)) braceHeld = true;
-
-      const prev = getPadPrev(1);
-      const jumpDown = padDown(p2Pad, GAMEPAD_BUTTONS.jump);
-      if (jumpDown && !prev.jump) slot.jumpQueued = true;
-      prev.jump = jumpDown;
-
-      const diveDown = padDown(p2Pad, GAMEPAD_BUTTONS.dive);
-      if (diveDown && !prev.dive) slot.diveQueued = true;
-      prev.dive = diveDown;
-
-      const cutDown = padDown(p2Pad, GAMEPAD_BUTTONS.cut);
-      if (cutDown && !prev.cut) slot.cutQueued = true;
-      prev.cut = cutDown;
-
-      const volleyDown = padDown(p2Pad, GAMEPAD_BUTTONS.volley);
-      if (volleyDown && !prev.volley) slot.volleyQueued = true;
-      prev.volley = volleyDown;
-
-      const spikeDown = padDown(p2Pad, GAMEPAD_BUTTONS.spike);
-      if (spikeDown && !prev.spike) slot.spikeQueued = true;
-      prev.spike = spikeDown;
-
-      const pauseDown = padDown(p2Pad, GAMEPAD_BUTTONS.pauseMenu);
-      if (pauseDown && !prev.pauseMenu) {
-        if (!isInGameMenuOpen()) {
-          menuToggleQueued = true;
-        }
-      }
-      prev.pauseMenu = pauseDown;
-
-      const ballResetDown = padDown(p2Pad, GAMEPAD_BUTTONS.ballReset);
-      if (ballResetDown && !prev.ballReset) {
-        if (mode === 'practice') {
-          slot.ballResetQueued = true;
-        }
-      }
-      prev.ballReset = ballResetDown;
-
-      const dLeft = padDown(p2Pad, 14);
-      const dRight = padDown(p2Pad, 15);
-      const dUp = padDown(p2Pad, 12);
-      const dDown = padDown(p2Pad, 13);
-      if (dLeft && !prev.dpadLeft) cameraCyclePlayerQueued[1] = -1;
-      if (dRight && !prev.dpadRight) cameraCyclePlayerQueued[1] = 1;
-      if (dUp && !prev.dpadUp) cameraCycleArenaQueued[1] = -1;
-      if (dDown && !prev.dpadDown) cameraCycleArenaQueued[1] = 1;
-      prev.dpadLeft = dLeft;
-      prev.dpadRight = dRight;
-      prev.dpadUp = dUp;
-      prev.dpadDown = dDown;
-    } else {
-      // Secondary keyboard camera control: Arrow keys
-      lookX = (heldKeys.has('ArrowRight') ? 1 : 0) - (heldKeys.has('ArrowLeft') ? 1 : 0);
-      lookY = (heldKeys.has('ArrowUp') ? 1 : 0) - (heldKeys.has('ArrowDown') ? 1 : 0);
+  if (pad) {
+    const stick = applyDeadzone(pad.axes[0] || 0, pad.axes[1] || 0, TUNING.motor.stickDeadzone);
+    if (stick.x !== 0 || stick.y !== 0) {
+      x = stick.x;
+      z = -stick.y;
     }
 
-    const mag = Math.hypot(x, z);
-    if (mag > 1) { x /= mag; z /= mag; }
+    const look = applyDeadzone(pad.axes[2] || 0, pad.axes[3] || 0, TUNING.motor.stickDeadzone);
+    lookX = look.x;
+    lookY = look.y;
 
-    slot.moveX = x;
-    slot.moveZ = z;
-    slot.sprintHeld = sprintHeld;
-    slot.slideHeld = slideHeld;
-    slot.braceHeld = braceHeld;
-    slot.lookX = lookX;
-    slot.lookY = lookY;
-    slot.hasAim = false;
-    slot.aimYaw = 0;
-    slot.cameraYaw = cam2Data.yaw;
+    if (padDown(pad, GAMEPAD_BUTTONS.sprint)) sprintHeld = true;
+    if (padDown(pad, GAMEPAD_BUTTONS.slide)) slideHeld = true;
+    if (padDown(pad, GAMEPAD_BUTTONS.brace)) braceHeld = true;
 
-    if (cam2Data.valid) {
-      slot.moveWorld.set(0, 0, 0)
-        .addScaledVector(cam2Data.right, x)
-        .addScaledVector(cam2Data.forward, z);
-    } else {
-      slot.moveWorld.set(0, 0, 0);
+    const prev = getPadPrev(i);
+    const jumpDown = padDown(pad, GAMEPAD_BUTTONS.jump);
+    if (jumpDown && !prev.jump) slot.jumpQueued = true;
+    prev.jump = jumpDown;
+
+    const diveDown = padDown(pad, GAMEPAD_BUTTONS.dive);
+    if (diveDown && !prev.dive) slot.diveQueued = true;
+    prev.dive = diveDown;
+
+    const cutDown = padDown(pad, GAMEPAD_BUTTONS.cut);
+    if (cutDown && !prev.cut) slot.cutQueued = true;
+    prev.cut = cutDown;
+
+    const volleyDown = padDown(pad, GAMEPAD_BUTTONS.volley);
+    if (volleyDown && !prev.volley) slot.volleyQueued = true;
+    prev.volley = volleyDown;
+
+    const spikeDown = padDown(pad, GAMEPAD_BUTTONS.spike);
+    if (spikeDown && !prev.spike) slot.spikeQueued = true;
+    prev.spike = spikeDown;
+
+    const pauseDown = padDown(pad, GAMEPAD_BUTTONS.pauseMenu);
+    if (pauseDown && !prev.pauseMenu) {
+      if (!isInGameMenuOpen()) {
+        menuToggleQueued = true;
+      }
     }
+    prev.pauseMenu = pauseDown;
+
+    const ballResetDown = padDown(pad, GAMEPAD_BUTTONS.ballReset);
+    if (ballResetDown && !prev.ballReset) {
+      if (mode === 'practice') {
+        slot.ballResetQueued = true;
+      }
+    }
+    prev.ballReset = ballResetDown;
+
+    const dLeft = padDown(pad, 14);
+    const dRight = padDown(pad, 15);
+    const dUp = padDown(pad, 12);
+    const dDown = padDown(pad, 13);
+    if (dLeft && !prev.dpadLeft) cameraCyclePlayerQueued[i] = -1;
+    if (dRight && !prev.dpadRight) cameraCyclePlayerQueued[i] = 1;
+    if (dUp && !prev.dpadUp) cameraCycleArenaQueued[i] = -1;
+    if (dDown && !prev.dpadDown) cameraCycleArenaQueued[i] = 1;
+    prev.dpadLeft = dLeft;
+    prev.dpadRight = dRight;
+    prev.dpadUp = dUp;
+    prev.dpadDown = dDown;
+  } else if (arrowLookSlot === i) {
+    // Secondary keyboard camera control: Arrow keys
+    lookX = (heldKeys.has('ArrowRight') ? 1 : 0) - (heldKeys.has('ArrowLeft') ? 1 : 0);
+    lookY = (heldKeys.has('ArrowUp') ? 1 : 0) - (heldKeys.has('ArrowDown') ? 1 : 0);
   }
-  updateUiSlot(0, p1Pad, mode === 'practice' ? 1 : athleteCount, botSlots, mode);
-  updateUiSlot(1, p2Pad, mode === 'practice' ? 1 : athleteCount, botSlots, mode);
+
+  const mag = Math.hypot(x, z);
+  if (mag > 1) { x /= mag; z /= mag; }
+
+  slot.moveX = x;
+  slot.moveZ = z;
+  slot.sprintHeld = sprintHeld;
+  slot.slideHeld = slideHeld;
+  slot.braceHeld = braceHeld;
+  slot.lookX = lookX;
+  slot.lookY = lookY;
+  slot.hasAim = false;
+  slot.aimYaw = 0;
+  slot.cameraYaw = camData.yaw;
+
+  if (camData.valid) {
+    slot.moveWorld.set(0, 0, 0)
+      .addScaledVector(camData.right, x)
+      .addScaledVector(camData.forward, z);
+  } else {
+    slot.moveWorld.set(0, 0, 0);
+  }
+}
+
+/** Slot whose camera takes mouse look and clicks (the WASD keyset's), or -1 when a bot holds it. */
+export function getMouseSlot() {
+  const s = keysetSlot[0];
+  return currentBotSlots.includes(s) ? -1 : s;
 }
 
 export function getInputSlot(index) {

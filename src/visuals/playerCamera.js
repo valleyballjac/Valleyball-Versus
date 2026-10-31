@@ -337,7 +337,7 @@ export class PlayerCamera {
    * @param {object} athlete The Athlete entity this camera follows
    * @param {object|null} activeBall Current match ball
    * @param {object} inputSlot Input slot containing { lookX, lookY }
-   * @param {{ dx: number, dy: number }} mouseDeltas Mouse deltas (only applied to P1)
+   * @param {{ dx: number, dy: number }} mouseDeltas Mouse deltas (zero unless this player owns the mouse)
    * @param {object} world Rapier physics world
    * @param {number} frameDelta Delta seconds
    * @param {object[]} allAthletes All athletes (needed for sports camera)
@@ -364,7 +364,7 @@ export class PlayerCamera {
       const fp = tuning.firstPerson || { eyeHeight: 1.15, forwardOffset: 0.14, minPitch: -1.25, maxPitch: 1.25 };
       const lookX = inputSlot ? inputSlot.lookX : 0;
       const lookY = inputSlot ? inputSlot.lookY : 0;
-      const mouse = (this.playerIndex === 0) ? mouseDeltas : { dx: 0, dy: 0 };
+      const mouse = mouseDeltas;
 
       this.azimuth -= lookX * tuning.orbitSpeed * frameDelta;
       this.azimuth -= mouse.dx / tuning.mousePixelsPerRadian;
@@ -424,7 +424,7 @@ export class PlayerCamera {
       const tv = tuning.broadcast;
       const playerZ = focusTarget.z;
       const lookY = inputSlot ? inputSlot.lookY : 0;
-      const mouse = this.playerIndex === 0 ? mouseDeltas : { dx: 0, dy: 0 };
+      const mouse = mouseDeltas;
       this.manualPitchOffset += (lookY * tuning.orbitSpeed * frameDelta + mouse.dy / tuning.mousePixelsPerRadian) * 6.0;
       this.manualPitchOffset *= Math.exp(-4.0 * frameDelta);
 
@@ -471,7 +471,7 @@ export class PlayerCamera {
       const p = focusTarget;
       const lookX = inputSlot ? inputSlot.lookX : 0;
       const lookY = inputSlot ? inputSlot.lookY : 0;
-      const mouse = (this.playerIndex === 0) ? mouseDeltas : { dx: 0, dy: 0 };
+      const mouse = mouseDeltas;
       this.manualAzimuthOffset -= (lookX * tuning.orbitSpeed * frameDelta + mouse.dx / tuning.mousePixelsPerRadian) * 4.0;
       this.manualPitchOffset += (lookY * tuning.orbitSpeed * frameDelta + mouse.dy / tuning.mousePixelsPerRadian) * 4.0;
       this.manualAzimuthOffset *= Math.exp(-4.0 * frameDelta);
@@ -572,7 +572,7 @@ export class PlayerCamera {
       // Right stick manual override (nudge & snap-back)
       const lookX = inputSlot ? inputSlot.lookX : 0;
       const lookY = inputSlot ? inputSlot.lookY : 0;
-      const mouse = (this.playerIndex === 0) ? mouseDeltas : { dx: 0, dy: 0 };
+      const mouse = mouseDeltas;
       const hasManualInput =
         Math.hypot(lookX, lookY) > 0.08 ||
         Math.abs(mouse.dx) > 1 ||
@@ -651,7 +651,7 @@ export class PlayerCamera {
       const chaseTuning = tuning.chase || { radius: 4.8, targetHeight: 1.1 };
       const lookX = inputSlot ? inputSlot.lookX : 0;
       const lookY = inputSlot ? inputSlot.lookY : 0;
-      const mouse = (this.playerIndex === 0) ? mouseDeltas : { dx: 0, dy: 0 };
+      const mouse = mouseDeltas;
 
       this.azimuth -= lookX * tuning.orbitSpeed * frameDelta;
       this.azimuth -= mouse.dx / tuning.mousePixelsPerRadian;
@@ -679,7 +679,7 @@ export class PlayerCamera {
       const tpTuning = tuning.thirdPerson || { radius: 8.0, targetHeight: 1.2 };
       const lookX = inputSlot ? inputSlot.lookX : 0;
       const lookY = inputSlot ? inputSlot.lookY : 0;
-      const mouse = (this.playerIndex === 0) ? mouseDeltas : { dx: 0, dy: 0 };
+      const mouse = mouseDeltas;
 
       this.azimuth -= lookX * tuning.orbitSpeed * frameDelta;
       this.azimuth -= mouse.dx / tuning.mousePixelsPerRadian;

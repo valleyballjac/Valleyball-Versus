@@ -57,9 +57,11 @@ import {
   consumeCameraCycleArena,
   consumeMenuToggle,
   getMouseDeltas,
+  getMouseSlot,
   exitGamePointerLock,
   triggerHaptic,
 } from './input/inputRouter.js';
+import { createMenuPadTracker, MENU_PAD } from './input/menuPads.js';
 import { updateSportsCamera } from './visuals/sportsCamera.js';
 import { createBotController, updateBot } from './ai/botController.js';
 import { PlayerCamera } from './visuals/playerCamera.js';
@@ -582,6 +584,7 @@ const spectatorCamera = new THREE.PerspectiveCamera(
 );
 
 const cinematicCamera = new CinematicCamera();
+const flyoverPads = createMenuPadTracker();
 let gameState = 'menu'; // 'menu' | 'flyover' | 'match' | 'practice'
 let victoryCameraActive = false;
 
@@ -2317,6 +2320,8 @@ function fixedUpdate(dt, tick) {
   assertInvariants(tick);
 }
 
+const NO_MOUSE_DELTAS = Object.freeze({ dx: 0, dy: 0 });
+
 /**
  * Updates all player cameras for the current frame.
  */
@@ -2349,13 +2354,16 @@ function updateCameras() {
   const p1Goal = { x: 0, y: hoopCenterY, z: targetGoalZ_P1 };
   const p2Goal = { x: 0, y: hoopCenterY, z: targetGoalZ_P2 };
 
+  // Mouse look follows the WASD keyset, which may be assigned to either player
+  const mouseSlot = getMouseSlot();
+
   // Update P1 camera
   if (athletes[0]) {
     playerCameras[0].update({
       athlete: athletes[0],
       activeBall,
       inputSlot: getInputSlot(0),
-      mouseDeltas: getMouseDeltas(),
+      mouseDeltas: mouseSlot === 0 ? getMouseDeltas() : NO_MOUSE_DELTAS,
       world,
       frameDelta,
       allAthletes: athletes,
@@ -2369,7 +2377,7 @@ function updateCameras() {
       athlete: athletes[1],
       activeBall,
       inputSlot: getInputSlot(1),
-      mouseDeltas: { dx: 0, dy: 0 },
+      mouseDeltas: mouseSlot === 1 ? getMouseDeltas() : NO_MOUSE_DELTAS,
       world,
       frameDelta,
       allAthletes: athletes,
@@ -2441,10 +2449,11 @@ function render(alpha) {
 
   if (gameState === 'flyover') {
     cinematicCamera.update(frameDelta);
-    // Check if connected gamepad pressed button 0 (A / Cross) to skip flyover
+    // A fresh A / Cross press skips the flyover; an A still held from starting the match does not
     const pads = (navigator.getGamepads ? navigator.getGamepads() : []) || [];
+    flyoverPads.update(pads);
     for (const pad of pads) {
-      if (pad && pad.buttons && pad.buttons[0]?.pressed) {
+      if (pad && (flyoverPads.pressed(pad) & MENU_PAD.a)) {
         skipFlyover();
         break;
       }
@@ -3159,21 +3168,15 @@ function handleStartMatch(configs, matchRulesOrBall = {}) {
       }
     }
 
-    // Fullscreen for single human vs AI, or AI vs AI
-    if (activeBotSlots.length > 0) {
-      if (!hasHuman) {
-        TUNING.camera.splitscreen = false;
-      } else if (configs[1]?.type === 'ai') {
-        TUNING.camera.splitscreen = false;
-      } else if (configs[0]?.type === 'ai') {
-        TUNING.camera.splitscreen = false;
-      }
-    }
+    // Decided fresh every match: fullscreen for human vs AI or AI vs AI, splitscreen
+    // for two humans. Never inherit a previous match's value.
+    TUNING.camera.splitscreen = hasHuman && activeBotSlots.length === 0;
   }
 
   // Start 10s flyover cutscene
   gameState = 'flyover';
   cinematicCamera.startFlyover(10.0);
+  flyoverPads.reset();
   const p1Color = configs?.[0]?.primaryColor ?? 0xd90429;
   const p2Color = configs?.[1]?.primaryColor ?? 0x1d4ed8;
   const p1TeamName = getColorName(p1Color).toUpperCase();
