@@ -224,9 +224,13 @@ export function buildHowToPlayModal(rootEl) {
       <text x="77" y="229" fill="#fde68a" font-size="10" font-weight="800" text-anchor="middle">D-PAD · CYCLE CAM</text>
 
       <!-- CALLOUT POINTERS & LABELS (RIGHT) -->
-      <polyline points="540,70 620,45" fill="none" stroke="#38bdf8" stroke-width="1.5" stroke-dasharray="3,3"/>
-      <rect x="620" y="32" width="115" height="24" rx="4" fill="rgba(56,189,248,0.15)" stroke="#38bdf8" stroke-width="1"/>
-      <text x="677" y="48" fill="#ffffff" font-size="10" font-weight="800" text-anchor="middle">RT · SLIDE</text>
+      <polyline points="540,70 620,30" fill="none" stroke="#38bdf8" stroke-width="1.5" stroke-dasharray="3,3"/>
+      <rect x="620" y="18" width="115" height="24" rx="4" fill="rgba(56,189,248,0.15)" stroke="#38bdf8" stroke-width="1"/>
+      <text x="677" y="34" fill="#ffffff" font-size="10" font-weight="800" text-anchor="middle">RT · SLIDE</text>
+
+      <polyline points="530,90 620,62" fill="none" stroke="#93c5fd" stroke-width="1.5" stroke-dasharray="3,3"/>
+      <rect x="620" y="50" width="115" height="24" rx="4" fill="rgba(147,197,253,0.15)" stroke="#93c5fd" stroke-width="1"/>
+      <text x="677" y="66" fill="#dbeafe" font-size="10" font-weight="800" text-anchor="middle">RB · BRACE</text>
 
       <polyline points="412,125 450,35" fill="none" stroke="#f43f5e" stroke-width="1.5" stroke-dasharray="3,3"/>
       <rect x="390" y="22" width="140" height="24" rx="4" fill="rgba(244,63,94,0.15)" stroke="#f43f5e" stroke-width="1"/>
@@ -299,7 +303,7 @@ export function buildHowToPlayModal(rootEl) {
         </div>
       </div>
 
-      <!-- Row 3: Movement (A, S, D) + Practice Reset (B) -->
+      <!-- Row 3: Movement (A, S, D) + Brace (G) + Practice Reset (B) -->
       <div style="display: flex; gap: 10px; justify-content: center;">
         <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 72px; height: 58px; background: #0f172a; border: 2px solid #10b981; border-radius: 8px; box-shadow: 0 0 16px rgba(16,185,129,0.45);">
           <span style="color: #ffffff; font-weight: 900; font-size: 17px;">A</span>
@@ -312,6 +316,10 @@ export function buildHowToPlayModal(rootEl) {
         <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 72px; height: 58px; background: #0f172a; border: 2px solid #10b981; border-radius: 8px; box-shadow: 0 0 16px rgba(16,185,129,0.45);">
           <span style="color: #ffffff; font-weight: 900; font-size: 17px;">D</span>
           <span style="color: #34d399; font-weight: 800; font-size: 9px;">MOVE RIGHT</span>
+        </div>
+        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 72px; height: 58px; background: #0f172a; border: 1px solid #93c5fd; border-radius: 8px; box-shadow: 0 0 12px rgba(147,197,253,0.35);">
+          <span style="color: #ffffff; font-weight: 900; font-size: 17px;">G</span>
+          <span style="color: #bfdbfe; font-weight: 800; font-size: 9px;">BRACE</span>
         </div>
         <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 72px; height: 58px; background: #0f172a; border: 1px solid #f59e0b; border-radius: 8px; box-shadow: 0 0 12px rgba(245,158,11,0.35);">
           <span style="color: #ffffff; font-weight: 900; font-size: 17px;">B</span>
@@ -335,7 +343,7 @@ export function buildHowToPlayModal(rootEl) {
         </div>
         <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 200px; height: 50px; background: #0f172a; border: 2px solid #10b981; border-radius: 8px; box-shadow: 0 0 16px rgba(16,185,129,0.45);">
           <span style="color: #ffffff; font-weight: 900; font-size: 14px;">SPACEBAR</span>
-          <span style="color: #34d399; font-weight: 800; font-size: 9px;">JUMP (HOLD FOR HEIGHT)</span>
+          <span style="color: #34d399; font-weight: 800; font-size: 9px;">JUMP</span>
         </div>
       </div>
 
@@ -364,11 +372,11 @@ export function buildHowToPlayModal(rootEl) {
     { action: 'Slide Tackle (Hold)', pad: 'Right Trigger (RT)', key: 'C · (P2: O)', color: '#38bdf8' },
     { action: 'Directional Cut / Plant', pad: 'Left Bumper (LB / L1)', key: 'V / F · (P2: N)', color: '#3b82f6' },
     { action: 'Agile Brace (Hold)', pad: 'Right Bumper (RB / R1)', key: 'G · (P2: H)', color: '#93c5fd' },
-    { action: 'Jump (Hold for Height)', pad: 'A / Cross', key: 'Space · (P2: Enter)', color: '#10b981' },
+    { action: 'Jump', pad: 'A / Cross', key: 'Space · (P2: Enter)', color: '#10b981' },
     { action: 'Ground Dive', pad: 'X / Square', key: 'Q · (P2: U)', color: '#a855f7' },
     { action: 'Volley / Kick Strike', pad: 'B / Circle', key: 'Left-Click · E · (P2: P)', color: '#38bdf8' },
     { action: 'Spike Strike', pad: 'Y / Triangle', key: 'Right-Click · R · (P2: Bracket [)', color: '#f43f5e' },
-    { action: 'Reset Ball (Practice)', pad: 'Select / Back / View', key: 'B · (P2: N)', color: '#f59e0b' },
+    { action: 'Reset Ball (Practice)', pad: 'Select / Back / View', key: 'B · (P2: M)', color: '#f59e0b' },
     { action: 'Cycle Camera Angle', pad: 'D-Pad', key: 'Tab (Shift+Tab: Arena) · (P2: ] / \\)', color: '#fbbf24' },
     { action: 'Pause Menu / Settings', pad: 'Start / Options', key: 'Escape', color: '#ef4444' },
   ];
@@ -436,8 +444,8 @@ export function buildHowToPlayModal(rootEl) {
         </div>
         <div style="font-size: 11.5px; color: #cbd5e1; line-height: 1.6;">
           <p style="margin: 0 0 8px 0;"><strong style="color: #ffffff;">1v1 Sunken Basin:</strong> Two athletes face off across an open arena bordered by high concrete and glass perimeter walls.</p>
-          <p style="margin: 0 0 8px 0;"><strong style="color: #ffffff;">The Goal Hoops:</strong> Steel goal hoops sit high on the North and South boundary walls. Driving the ball through the ring awards 1 point.</p>
-          <p style="margin: 0;"><strong style="color: #ffffff;">Active Rebounds:</strong> Side ramps and glass backboards are 100% physically live. Rebound bank shots keep rallies moving!</p>
+          <p style="margin: 0 0 8px 0;"><strong style="color: #ffffff;">The Goal Hoops:</strong> Two giant steel hoops stand toward the North and South ends, half-buried in the turf. Each is open on both sides: put the ball through the ring from either side for 1 point. Rolling it through counts too.</p>
+          <p style="margin: 0;"><strong style="color: #ffffff;">Active Rebounds:</strong> Side walls, corner ramps and the glass above them are fully physical, and the ball stays live after a goal. Bank shots and rebound goals keep rallies moving!</p>
         </div>
       </div>
 
@@ -448,8 +456,8 @@ export function buildHowToPlayModal(rootEl) {
         </div>
         <div style="font-size: 11.5px; color: #cbd5e1; line-height: 1.6;">
           <p style="margin: 0 0 8px 0;"><strong style="color: #ffffff;">5-Minute Regulation:</strong> Standard matches run for 5:00 of live play clock action.</p>
-          <p style="margin: 0 0 8px 0;"><strong style="color: #ffffff;">Alternating Targets:</strong> Scoring a goal immediately flips attack ends. You defend the goal just scored on!</p>
-          <p style="margin: 0;"><strong style="color: #ffffff;">Golden Goal Overtime:</strong> If scores are level at 0:00, sudden death initiates: next goal wins the match!</p>
+          <p style="margin: 0 0 8px 0;"><strong style="color: #ffffff;">Alternating Targets:</strong> Scoring a goal immediately flips attack ends, so you now defend the goal you just scored on. The ball isn't reset: play carries straight on!</p>
+          <p style="margin: 0;"><strong style="color: #ffffff;">Golden Goal Overtime</strong> <span style="font-size: 9px; font-weight: 800; letter-spacing: 0.08em; color: #fbbf24; border: 1px solid rgba(251, 191, 36, 0.5); border-radius: 4px; padding: 1px 5px;">COMING SOON</span> For now the match ends at 0:00 whatever the score, so a level match is a draw.</p>
         </div>
       </div>
     </div>
@@ -461,12 +469,12 @@ export function buildHowToPlayModal(rootEl) {
       </div>
       <div style="font-size: 11.5px; color: #cbd5e1; line-height: 1.6; display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
         <div>
-          <p style="margin: 0 0 6px 0;"><strong style="color: #ffffff;">Slide Tackles:</strong> Sliding at sprint speeds (> 7 m/s) into an opponent sweeps their legs, causing an instant ragdoll knockdown!</p>
-          <p style="margin: 0;"><strong style="color: #ffffff;">Physical Bumps:</strong> Colliding with an opposing athlete generates physical momentum impulse and authentic sneaker squeak audio.</p>
+          <p style="margin: 0 0 6px 0;"><strong style="color: #ffffff;">Slide Tackles:</strong> Sliding at speed (> 5.5 m/s) into an opponent sweeps their legs, causing an instant ragdoll knockdown!</p>
+          <p style="margin: 0;"><strong style="color: #ffffff;">Physical Bumps:</strong> Running into an opposing athlete shoves you both apart, harder the faster you're closing.</p>
         </div>
         <div>
-          <p style="margin: 0 0 6px 0;"><strong style="color: #ffffff;">Strike Staggers:</strong> Connecting with a kick, volley, or spike while an opponent is in reach applies physical strike impulse.</p>
-          <p style="margin: 0;"><strong style="color: #ffffff;">Heavy Ball Hits:</strong> High-speed projectile balls (> 14 m/s) will knock athletes off their feet if hit in the chest or head!</p>
+          <p style="margin: 0 0 6px 0;"><strong style="color: #ffffff;">Slide Clashes:</strong> If both athletes slide into each other, you both go down.</p>
+          <p style="margin: 0;"><strong style="color: #ffffff;">Heavy Ball Hits:</strong> A fast or heavy ball that hits an athlete in the head or torso will knock them off their feet!</p>
         </div>
       </div>
     </div>
@@ -484,7 +492,7 @@ export function buildHowToPlayModal(rootEl) {
     <div style="background: rgba(15, 23, 42, 0.75); border-left: 4px solid #10b981; border-radius: 8px; padding: 12px 16px;">
       <div style="font-size: 12.5px; font-weight: 800; color: #34d399; margin-bottom: 3px;">1. HOW TO SCORE YOUR FIRST GOAL: VOLLEY THEN SPIKE</div>
       <div style="font-size: 11px; color: #cbd5e1; line-height: 1.55;">
-        Don't just chase or run into the ball! Position yourself as the ball approaches. Press <strong style="color: #38bdf8;">Volley (Left-Click / E / B)</strong> to pop the ball upward in a high arc toward the opponent's side. Then, as it reaches its peak, jump and unleash a <strong style="color: #f43f5e;">Spike (Right-Click / R / Y)</strong> to blast it downward into the hoop or off the backboard into the goal!
+        Don't just chase or run into the ball! Position yourself as the ball approaches. Press <strong style="color: #38bdf8;">Volley (Left-Click / E / B)</strong> to pop the ball up in a high arc in the direction you're aiming. Then, as it reaches its peak, jump and unleash a <strong style="color: #f43f5e;">Spike (Right-Click / R / Y)</strong> to drive it down through the hoop!
       </div>
     </div>
 
@@ -492,7 +500,7 @@ export function buildHowToPlayModal(rootEl) {
     <div style="background: rgba(15, 23, 42, 0.75); border-left: 4px solid #38bdf8; border-radius: 8px; padding: 12px 16px;">
       <div style="font-size: 12.5px; font-weight: 800; color: #38bdf8; margin-bottom: 3px;">2. JUMP TIMING & SWEET-SPOT CONTACT</div>
       <div style="font-size: 11px; color: #cbd5e1; line-height: 1.55;">
-        Strikes hit significantly harder when connected near the center of the strike window! Hold <strong style="color: #ffffff;">Spacebar / A</strong> to jump higher. An aerial spike angled down over the center court net has immense velocity and is nearly impossible for a grounded keeper to stop.
+        Strikes hit hardest when they connect at the sweet spot of the swing. A badly mistimed one leaves at about a third of the speed! Your jump is always the same height, so time your <strong style="color: #ffffff;">Spacebar / A</strong> press to meet the ball in the air. A spike from the air comes in steep and is hard for a grounded defender to reach.
       </div>
     </div>
 
@@ -500,15 +508,15 @@ export function buildHowToPlayModal(rootEl) {
     <div style="background: rgba(15, 23, 42, 0.75); border-left: 4px solid #f59e0b; border-radius: 8px; padding: 12px 16px;">
       <div style="font-size: 12.5px; font-weight: 800; color: #fbbf24; margin-bottom: 3px;">3. BANK SHOTS OFF THE SIDE WALLS</div>
       <div style="font-size: 11px; color: #cbd5e1; line-height: 1.55;">
-        If your opponent is camping directly in front of the goal hoop, aim at the 45-degree corner ramps or high side walls. The ball will rebound at high velocity across the goal mouth, bypassing the defender entirely.
+        Every hoop is open on both sides. If your opponent is guarding one side, go around to the other, or bank the ball off the side walls and corner ramps so it comes back across the goal mouth from an angle they aren't covering.
       </div>
     </div>
 
     <!-- Tip 4 -->
     <div style="background: rgba(15, 23, 42, 0.75); border-left: 4px solid #a855f7; border-radius: 8px; padding: 12px 16px;">
-      <div style="font-size: 12.5px; font-weight: 800; color: #c084fc; margin-bottom: 3px;">4. CLUTCH DIVING SAVES & RECOVERY</div>
+      <div style="font-size: 12.5px; font-weight: 800; color: #c084fc; margin-bottom: 3px;">4. BRACE BLOCKS, DIVING SAVES & RECOVERY</div>
       <div style="font-size: 11px; color: #cbd5e1; line-height: 1.55;">
-        If a spiked ball is dropping fast toward the floor, press <strong style="color: #ffffff;">Q / X</strong> to perform a ground dive! An outstretched dive pops the ball back up into play for a second chance. If you get knocked down, your athlete automatically recovers and stands back up with active physics.
+        Hold <strong style="color: #ffffff;">Brace (G / RB)</strong> and any ball that hits you is blocked back out the way you're facing, without slowing you down. If a shot is getting past you, press <strong style="color: #ffffff;">Q / X</strong> to dive into its path. Dive while bracing and you lunge low, straight at a ball in front of you, but a braced dive that misses leaves you slower to get up. If you get knocked down, your athlete recovers and stands back up on their own.
       </div>
     </div>
 
@@ -516,9 +524,9 @@ export function buildHowToPlayModal(rootEl) {
     <div style="background: rgba(15, 23, 42, 0.75); border-left: 4px solid #ef4444; border-radius: 8px; padding: 12px 16px;">
       <div style="font-size: 12.5px; font-weight: 800; color: #f87171; margin-bottom: 3px;">5. BALL SIZES & DIFFICULTY</div>
       <div style="font-size: 11px; color: #cbd5e1; line-height: 1.55;">
-        • <strong style="color: #ffffff;">Small Ball (0.4m):</strong> Fast, twitchy, heavy physics momentum, hardest difficulty.<br>
-        • <strong style="color: #ffffff;">Medium Ball (1.0m):</strong> Standard regulation match ball, balanced flight and bounces.<br>
-        • <strong style="color: #ffffff;">Big Ball (1.5m):</strong> Enormous rebound area, easiest difficulty, great for high rallies!
+        • <strong style="color: #ffffff;">Small Ball (0.4m):</strong> The lightest (0.84 kg) and the smallest target. Twitchy and hardest to hit.<br>
+        • <strong style="color: #ffffff;">Medium Ball (1.0m):</strong> Standard regulation match ball (2.2 kg), balanced flight and bounces.<br>
+        • <strong style="color: #ffffff;">Large Ball (1.5m):</strong> The heaviest (3.9 kg), with an enormous rebound area. Easiest to hit, and it knocks athletes down at lower speeds.
       </div>
     </div>
   `;
