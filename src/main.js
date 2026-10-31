@@ -58,6 +58,7 @@ import {
   consumeMenuToggle,
   getMouseDeltas,
   getMouseSlot,
+  getCameraCycleHint,
   exitGamePointerLock,
   triggerHaptic,
 } from './input/inputRouter.js';
@@ -373,7 +374,7 @@ function installRespawnHotkey() {
       if (gameState === 'menu') {
         showTitleScreen();
       } else {
-        toggleInGameMenu(playerCameras[0]?.mode, playerCameras[1]?.mode);
+        toggleInGameMenu();
       }
     }
   });
@@ -663,14 +664,15 @@ function applyViewportSize() {
                       (p1CamMode === 'sports' && p2CamMode === 'sports');
   const isSplitscreen = (gameState === 'match') && !!TUNING.camera.splitscreen && athletes.length >= 2 && !isSharedCam;
 
-  // Broadcast and Sports cameras are full-screen only: if in individual splitscreen, revert them to chase
+  // Broadcast and Sports cameras are full-screen only: if in individual splitscreen, revert them to chase.
+  // setMode (not a bare assignment) so the camera notice tells the player what they actually got.
   if (isSplitscreen) {
     if (playerCameras[0] && (playerCameras[0].mode === 'sports' || playerCameras[0].mode === 'broadcast')) {
-      playerCameras[0].mode = 'chase';
+      playerCameras[0].setMode('chase');
       if (TUNING.players[0]) TUNING.players[0].cameraMode = 'chase';
     }
     if (playerCameras[1] && (playerCameras[1].mode === 'sports' || playerCameras[1].mode === 'broadcast')) {
-      playerCameras[1].mode = 'chase';
+      playerCameras[1].setMode('chase');
       if (TUNING.players[1]) TUNING.players[1].cameraMode = 'chase';
     }
   }
@@ -2475,7 +2477,7 @@ function render(alpha) {
   }
 
   if (consumeMenuToggle() && gameState !== 'menu' && gameState !== 'flyover' && !isInGameMenuOpen()) {
-    toggleInGameMenu(playerCameras[0]?.mode, playerCameras[1]?.mode);
+    toggleInGameMenu();
   }
 
   const match = matchState ? matchProbe(matchState) : null;
@@ -3677,7 +3679,26 @@ async function boot() {
         if (playerIdx === 0) {
           TUNING.camera.mode = mode;
         }
+        // Re-run the splitscreen camera rules now, e.g. leaving a shared Broadcast view.
+        applyViewportSize();
       }
+    },
+    getCameraRows: () => {
+      const isSplit = gameState === 'match' && !!TUNING.camera.splitscreen && athletes.length >= 2;
+      return [0, 1].map((i) => {
+        const present = gameState === 'practice' ? i === 0 : i < athletes.length;
+        const cfg = TUNING.players[i] || {};
+        const side = gameState === 'practice' ? '' : ` (${cfg.team === 'away' ? 'AWAY' : 'HOME'})`;
+        return {
+          // AI players have no camera anyone sees
+          visible: present && !activeBotSlots.includes(i),
+          label: `PLAYER ${i + 1} · ${getColorName(cfg.primaryColor).toUpperCase()}${side}`,
+          hint: getCameraCycleHint(i),
+          mode: playerCameras[i].mode,
+          // Broadcast is fullscreen: in splitscreen it exists only as the shared view
+          allowBroadcast: !isSplit || playerCameras[i].mode === 'broadcast',
+        };
+      });
     },
     initialRenderSettings: {
       pixelRatioPreset: TUNING.render?.pixelRatioPreset || '1.25',
