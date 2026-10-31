@@ -283,6 +283,8 @@ export function createGui({
   impact.add(TUNING.impact, 'dragOnset', 0.01, 1, 0.01);
   impact.add(TUNING.impact, 'mountRecoverBelow', 0, 0.5, 0.01);
   impact.add(TUNING.impact, 'mountSnapEpsilon', 0.01, 2, 0.01);
+  impact.add(TUNING.impact, 'ballKnockdownSpeed', 5, 30, 0.5).name('ball knockdown speed (m/s)');
+  impact.add(TUNING.impact, 'ballKnockdownMomentum', 5, 80, 1).name('ball knockdown momentum');
 
   const tracking = gui.addFolder('tracking');
   // LAW L4 — the weight is simulation state with exactly two writers (the
@@ -326,6 +328,8 @@ export function createGui({
   action.add(TUNING.action, 'diveImpulseUp', 0, 8, 0.1).name('dive upward (N.s)');
   action.add(TUNING.action, 'diveCooldownTicks', 30, 300, 1).name('dive cooldown (ticks)');
   action.add(TUNING.action, 'slideResistance', 0.1, 3.0, 0.05).name('slide resistance');
+  action.add(TUNING.action, 'slideTackleMinSpeed', 2.0, 9.0, 0.1).name('slide tackle min speed (m/s)');
+  action.add(TUNING.action, 'slideTackleCooldownTicks', 0, 120, 1).name('slide tackle cooldown (ticks)');
   action.add(TUNING.action, 'knockdownSpeed', 0.5, 5.0, 0.1).name('knockdown speed');
   action.add(TUNING.action, 'crashMuscleTone', 0.0, 1.0, 0.05).name('crash muscle tone');
   if (TUNING.action.cut) {

@@ -1493,7 +1493,7 @@ function drainImpacts(tick, dt) {
           const mass = typeof hitBall.body.mass === 'function' ? hitBall.body.mass() : 2.2;
           const momentum = speed * mass;
           const isTorsoOrHead = limbKey === 'chest' || limbKey === 'head' || limbKey === 'spine' || limbKey === 'pelvis';
-          if (isTorsoOrHead && (speed > 14.0 || momentum > 32.0)) {
+          if (isTorsoOrHead && (speed > TUNING.impact.ballKnockdownSpeed || momentum > TUNING.impact.ballKnockdownMomentum)) {
             queueKnockdown(athleteHit.tracker, 0.18);
             soundManager.playAthleteAction('land', athleteHit.motor.body.translation());
             for (const pc of playerCameras) {
@@ -1594,7 +1594,7 @@ function handleAthleteCollision(a1, a2, hit1, hit2, totalForce, tick) {
   // 1. SLIDE TACKLE: Slider sweeps victim's lower limbs along the turf; victim trips and collapses
   if (isA1Sliding && !isA2Sliding) {
     const speed1 = horizontalSpeed(a1.motor);
-    if (speed1 > 5.5 && (tick - (a1._lastTackleTick || 0)) > 15) {
+    if (speed1 > TUNING.action.slideTackleMinSpeed && (tick - (a1._lastTackleTick || 0)) > TUNING.action.slideTackleCooldownTicks) {
       a1._lastTackleTick = tick;
       // Complete limp collapse on the turf
       queueKnockdown(a2.tracker, 0.0);
@@ -1637,7 +1637,7 @@ function handleAthleteCollision(a1, a2, hit1, hit2, totalForce, tick) {
     }
   } else if (isA2Sliding && !isA1Sliding) {
     const speed2 = horizontalSpeed(a2.motor);
-    if (speed2 > 5.5 && (tick - (a2._lastTackleTick || 0)) > 15) {
+    if (speed2 > TUNING.action.slideTackleMinSpeed && (tick - (a2._lastTackleTick || 0)) > TUNING.action.slideTackleCooldownTicks) {
       a2._lastTackleTick = tick;
       // Complete limp collapse on the turf
       queueKnockdown(a1.tracker, 0.0);
@@ -1680,7 +1680,7 @@ function handleAthleteCollision(a1, a2, hit1, hit2, totalForce, tick) {
     }
   } else if (isA1Sliding && isA2Sliding) {
     // Both sliding: head-on clash on the turf
-    if ((tick - (a1._lastTackleTick || 0)) > 15) {
+    if ((tick - (a1._lastTackleTick || 0)) > TUNING.action.slideTackleCooldownTicks) {
       a1._lastTackleTick = tick;
       a2._lastTackleTick = tick;
       queueKnockdown(a1.tracker, 0.0);
