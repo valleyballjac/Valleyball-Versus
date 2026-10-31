@@ -50,7 +50,8 @@ export function initControlsOverlay() {
     const device = document.createElement('span');
     title.appendChild(device);
     panel.appendChild(title);
-    const keyboard = makeLayout(keys[i], panel);
+    // Either keyset can be assigned to either player, so each panel carries both.
+    const keyboards = [makeLayout(keys[0], panel), makeLayout(keys[1], panel)];
     const gamepad = makeLayout(padLabels, panel);
     const fallback = makeLayout(padIndices, panel);
     const status = document.createElement('div');
@@ -58,7 +59,7 @@ export function initControlsOverlay() {
     status.textContent = 'Controller disconnected';
     panel.appendChild(status);
     root.appendChild(panel);
-    slots[i] = { panel, device, keyboard, gamepad, fallback, status, layout: null, pulseUntil: new Float64Array(actions.length) };
+    slots[i] = { panel, device, keyboards, gamepad, fallback, status, layout: null, pulseUntil: new Float64Array(actions.length) };
   }
 }
 
@@ -102,11 +103,12 @@ export function updateControlsOverlay(snapshot, state, menuOpen, endOpen, matchO
     const slot = slots[i];
     if (slot.panel.hidden === data.human) slot.panel.hidden = !data.human;
     if (!data.human) continue;
-    const layout = !data.available ? null : data.device === 'keyboard' ? slot.keyboard : data.standard ? slot.gamepad : slot.fallback;
+    const layout = !data.available ? null : data.device === 'keyboard' ? slot.keyboards[data.keyset] : data.standard ? slot.gamepad : slot.fallback;
     if (slot.layout !== layout) {
       clearSlot(slot);
       slot.layout = layout;
-      slot.keyboard.layout.hidden = layout !== slot.keyboard;
+      slot.keyboards[0].layout.hidden = layout !== slot.keyboards[0];
+      slot.keyboards[1].layout.hidden = layout !== slot.keyboards[1];
       slot.gamepad.layout.hidden = layout !== slot.gamepad;
       slot.fallback.layout.hidden = layout !== slot.fallback;
       slot.status.hidden = !!layout;
@@ -123,9 +125,9 @@ export function updateControlsOverlay(snapshot, state, menuOpen, endOpen, matchO
         else layout.mask &= ~bit;
       }
     }
-    // Only practice exposes ball reset. Hide P1 keyboard look outside practice where arrows may be assigned to P2.
+    // Only practice exposes ball reset. Hide WASD keyboard look outside practice where arrows may be assigned to the IJKL player.
     const practice = state === 'practice';
     if (layout.nodes[actions.length - 1].hidden !== !practice) layout.nodes[actions.length - 1].hidden = !practice;
-    if (layout === slot.keyboard && i === 0 && layout.nodes[1].hidden !== !practice) layout.nodes[1].hidden = !practice;
+    if (layout === slot.keyboards[0] && layout.nodes[1].hidden !== !practice) layout.nodes[1].hidden = !practice;
   }
 }

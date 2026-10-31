@@ -1,6 +1,7 @@
 import { soundManager } from '../../../audio/soundManager.js';
 import { state } from './state.js';
 import { getControllerAssignments } from '../../../input/inputRouter.js';
+import { createMenuPadTracker, MENU_PAD } from '../../../input/menuPads.js';
 import { hideMainMenuSettingsModal, getMainMenuSettingsModalEl } from './settingsModal.js';
 import { hideHowToPlayModal, getControlsModalEl } from './howToPlayModal.js';
 import { updateTitleFocusUI } from './titleScreen.js';
@@ -16,6 +17,10 @@ let navCallbacks = {
   setTitleFocusIndex: null,
   playerSetup: null,
 };
+
+// One tracker for every main-menu screen: it is shared across title -> assignment ->
+// lobby, so a button held through a screen change stays "already down" on the next one.
+const menuPads = createMenuPadTracker();
 
 export function setMenuNavigationContext(ctx = {}) {
   Object.assign(navCallbacks, ctx);
@@ -49,8 +54,6 @@ export function moveScreen1Row(col, delta) {
   navCallbacks.playerSetup.updateFocusUI();
   soundManager.playTone(520, 0.035, 'sine', 0.12);
 }
-
-state.titlePrevPads = [{ up: false, down: false, a: false, b: false, start: false, back: false }];
 
 export function startMenuGamepadPolling() {
   stopSetupGamepadPolling();
@@ -526,11 +529,8 @@ export function startMenuGamepadPolling() {
   };
   window.addEventListener('keydown', onMenuKeyDown);
 
-  const prevPads = [
-    { up: false, down: false, left: false, right: false, a: false, b: false, lb: false, rb: false, start: false, back: false },
-    { up: false, down: false, left: false, right: false, a: false, b: false, lb: false, rb: false, start: false, back: false },
-  ];
-  state.titlePrevPads = [{ up: false, down: false, a: false, b: false, start: false, back: false }];
+  // Seeds from what is held right now, so a press that opened this screen never fires here.
+  menuPads.reset();
 
   state.gamepadPollHandle = setInterval(() => {
     if (!state.rootEl || state.rootEl.style.display === 'none') return;
@@ -544,35 +544,25 @@ export function startMenuGamepadPolling() {
     for (let i = 0; i < raw.length; i++) {
       if (raw[i] && raw[i].connected) pads.push(raw[i]);
     }
+    menuPads.update(pads);
 
     // 0. Settings Modal Active (Main Menu)
     const settingsModalEl = getMainMenuSettingsModalEl();
     if (settingsModalEl && settingsModalEl.style.display === 'flex') {
       for (const pad of pads) {
         if (!pad) continue;
-        const up = (pad.buttons[12]?.pressed || (pad.axes[1] && pad.axes[1] < -0.5)) || false;
-        const down = (pad.buttons[13]?.pressed || (pad.axes[1] && pad.axes[1] > 0.5)) || false;
-        const left = (pad.buttons[14]?.pressed || (pad.axes[0] && pad.axes[0] < -0.5)) || false;
-        const right = (pad.buttons[15]?.pressed || (pad.axes[0] && pad.axes[0] > 0.5)) || false;
-        const btnA = pad.buttons[0]?.pressed || false;
-        const btnB = pad.buttons[1]?.pressed || false;
-        const btnBack = pad.buttons[8]?.pressed || false;
-        const p = state.titlePrevPads[0];
+        const e = menuPads.pressed(pad);
 
-        if (up && !p.up) settingsModalEl._moveFocus?.(-1);
-        if (down && !p.down) settingsModalEl._moveFocus?.(1);
-        if (left && !p.left) settingsModalEl._handleLeft?.();
-        if (right && !p.right) settingsModalEl._handleRight?.();
-        if (btnA && !p.a) settingsModalEl._handleAction?.();
+        if (e & MENU_PAD.up) settingsModalEl._moveFocus?.(-1);
+        if (e & MENU_PAD.down) settingsModalEl._moveFocus?.(1);
+        if (e & MENU_PAD.left) settingsModalEl._handleLeft?.();
+        if (e & MENU_PAD.right) settingsModalEl._handleRight?.();
+        if (e & MENU_PAD.a) settingsModalEl._handleAction?.();
 
-        if ((btnB && !p.b) || (btnBack && !p.back)) {
+        if ((e & MENU_PAD.b) || (e & MENU_PAD.back)) {
           hideMainMenuSettingsModal();
-          p.b = btnB; p.back = btnBack;
           return;
         }
-
-        p.up = up; p.down = down; p.left = left; p.right = right;
-        p.a = btnA; p.b = btnB; p.back = btnBack;
       }
       return;
     }
@@ -583,53 +573,37 @@ export function startMenuGamepadPolling() {
       const curTab = howToModalEl._getCurrentTab ? howToModalEl._getCurrentTab() : 'controls';
       for (const pad of pads) {
         if (!pad) continue;
-        const btnB = pad.buttons[1]?.pressed || false;
-        const btnX = pad.buttons[2]?.pressed || false;
-        const btnA = pad.buttons[0]?.pressed || false;
-        const btnStart = pad.buttons[9]?.pressed || false;
-        const btnBack = pad.buttons[8]?.pressed || false;
-        const btnLB = pad.buttons[4]?.pressed || false;
-        const btnRB = pad.buttons[5]?.pressed || false;
-        const up = (pad.buttons[12]?.pressed || (pad.axes[1] && pad.axes[1] < -0.4)) || false;
-        const down = (pad.buttons[13]?.pressed || (pad.axes[1] && pad.axes[1] > 0.4)) || false;
-        const left = (pad.buttons[14]?.pressed || (pad.axes[0] && pad.axes[0] < -0.5)) || false;
-        const right = (pad.buttons[15]?.pressed || (pad.axes[0] && pad.axes[0] > 0.5)) || false;
-        const p = state.titlePrevPads[0];
+        const e = menuPads.pressed(pad);
 
-        if ((btnLB && !p.lb)) {
+        if ((e & MENU_PAD.lb)) {
           howToModalEl._cycleTab?.(-1);
-        } else if ((btnRB && !p.rb)) {
+        } else if ((e & MENU_PAD.rb)) {
           howToModalEl._cycleTab?.(1);
         }
 
         if (curTab === 'controls') {
-          if ((left && !p.left) || (right && !p.right) || (btnX && !p.x) || (btnA && !p.a)) {
+          if ((e & MENU_PAD.left) || (e & MENU_PAD.right) || (e & MENU_PAD.x) || (e & MENU_PAD.a)) {
             howToModalEl._cycleDevice?.();
           }
         } else {
-          if (left && !p.left) howToModalEl._cycleTab?.(-1);
-          else if (right && !p.right) howToModalEl._cycleTab?.(1);
+          if (e & MENU_PAD.left) howToModalEl._cycleTab?.(-1);
+          else if (e & MENU_PAD.right) howToModalEl._cycleTab?.(1);
         }
 
-        if (up) howToModalEl._scrollContent?.(-14);
-        if (down) howToModalEl._scrollContent?.(14);
+        if (menuPads.held(pad) & MENU_PAD.up) howToModalEl._scrollContent?.(-14);
+        if (menuPads.held(pad) & MENU_PAD.down) howToModalEl._scrollContent?.(14);
 
-        p.lb = btnLB; p.rb = btnRB; p.left = left; p.right = right;
-        p.up = up; p.down = down; p.x = btnX; p.a = btnA;
-
-        if ((btnB && !p.b) || (btnStart && !p.start) || (btnBack && !p.back)) {
+        if ((e & MENU_PAD.b) || (e & MENU_PAD.start) || (e & MENU_PAD.back)) {
           hideHowToPlayModal();
-          p.b = btnB; p.start = btnStart; p.back = btnBack;
           return;
         }
-        p.b = btnB; p.start = btnStart; p.back = btnBack;
       }
       return;
     }
 
     // 1.5 Controller Assignment Active
     if (state.controllerAssignmentEl && state.controllerAssignmentEl.style.display === 'flex') {
-      pollAssignmentGamepads(pads);
+      pollAssignmentGamepads(pads, menuPads);
       return;
     }
 
@@ -637,34 +611,25 @@ export function startMenuGamepadPolling() {
     if (state.titleScreenEl && state.titleScreenEl.style.display === 'flex') {
       for (const pad of pads) {
         if (!pad) continue;
-        const up = (pad.buttons[12]?.pressed || (pad.axes[1] && pad.axes[1] < -0.5)) || false;
-        const down = (pad.buttons[13]?.pressed || (pad.axes[1] && pad.axes[1] > 0.5)) || false;
-        const btnA = pad.buttons[0]?.pressed || false;
-        const btnStart = pad.buttons[9]?.pressed || false;
-        const p = state.titlePrevPads[0];
+        const e = menuPads.pressed(pad);
 
-        if (up && !p.up) {
+        if (e & MENU_PAD.up) {
           state.titleFocusIndex = (state.titleFocusIndex - 1 + state.titleButtons.length) % state.titleButtons.length;
           updateTitleFocusUI();
           soundManager.playTone(520, 0.035, 'sine', 0.12);
           triggerMenuHaptics(pad, 25, 0.15, 0.05);
         }
-        if (down && !p.down) {
+        if (e & MENU_PAD.down) {
           state.titleFocusIndex = (state.titleFocusIndex + 1) % state.titleButtons.length;
           updateTitleFocusUI();
           soundManager.playTone(520, 0.035, 'sine', 0.12);
           triggerMenuHaptics(pad, 25, 0.15, 0.05);
         }
-        if ((btnA && !p.a) || (btnStart && !p.start)) {
+        if ((e & MENU_PAD.a) || (e & MENU_PAD.start)) {
           soundManager.playTone(660, 0.05, 'sine', 0.18);
           triggerMenuHaptics(pad, 35, 0.25, 0.1);
           navCallbacks.getTitleButtons?.()[navCallbacks.getTitleFocusIndex?.()]?.click();
         }
-
-        p.up = up;
-        p.down = down;
-        p.a = btnA;
-        p.start = btnStart;
       }
       return;
     }
@@ -684,29 +649,18 @@ export function startMenuGamepadPolling() {
     if (navCallbacks.playerSetup.currentSetupMode === 'practice') {
       const pad = pads[0] || null;
       if (pad) {
-        const prev = prevPads[0];
-        const up = (pad.buttons[12]?.pressed || (pad.axes[1] && pad.axes[1] < -0.5)) || false;
-        const down = (pad.buttons[13]?.pressed || (pad.axes[1] && pad.axes[1] > 0.5)) || false;
-        const left = (pad.buttons[14]?.pressed || (pad.axes[0] && pad.axes[0] < -0.5)) || false;
-        const right = (pad.buttons[15]?.pressed || (pad.axes[0] && pad.axes[0] > 0.5)) || false;
+        const e = menuPads.pressed(pad);
 
-        const btnA = pad.buttons[0]?.pressed || false;
-        const btnB = pad.buttons[1]?.pressed || false;
-        const btnLB = pad.buttons[4]?.pressed || false;
-        const btnRB = pad.buttons[5]?.pressed || false;
-        const btnBack = pad.buttons[8]?.pressed || false;
-        const btnStart = pad.buttons[9]?.pressed || false;
-
-        if (up && !prev.up) {
+        if (e & MENU_PAD.up) {
           navCallbacks.playerSetup.playerFocusRow[0] = Math.max(1, navCallbacks.playerSetup.playerFocusRow[0] - 1);
           navCallbacks.playerSetup.updateFocusUI();
         }
-        if (down && !prev.down) {
+        if (e & MENU_PAD.down) {
           navCallbacks.playerSetup.playerFocusRow[0] = Math.min(8, navCallbacks.playerSetup.playerFocusRow[0] + 1);
           navCallbacks.playerSetup.updateFocusUI();
         }
 
-        if (left && !prev.left) {
+        if (e & MENU_PAD.left) {
           if (navCallbacks.playerSetup.playerFocusRow[0] === 8) {
             navCallbacks.playerSetup.practiceActionCol = 0;
             navCallbacks.playerSetup.updateFocusUI();
@@ -717,7 +671,7 @@ export function startMenuGamepadPolling() {
             navCallbacks.playerSetup.cycleOption(0, navCallbacks.playerSetup.playerFocusRow[0], -1);
           }
         }
-        if (right && !prev.right) {
+        if (e & MENU_PAD.right) {
           if (navCallbacks.playerSetup.playerFocusRow[0] === 8) {
             navCallbacks.playerSetup.practiceActionCol = 1;
             navCallbacks.playerSetup.updateFocusUI();
@@ -729,10 +683,10 @@ export function startMenuGamepadPolling() {
           }
         }
 
-        if (btnLB && !prev.lb) navCallbacks.playerSetup.cycleMatchBall(-1);
-        if (btnRB && !prev.rb) navCallbacks.playerSetup.cycleMatchBall(1);
+        if (e & MENU_PAD.lb) navCallbacks.playerSetup.cycleMatchBall(-1);
+        if (e & MENU_PAD.rb) navCallbacks.playerSetup.cycleMatchBall(1);
 
-        if (btnA && !prev.a) {
+        if (e & MENU_PAD.a) {
           if (navCallbacks.playerSetup.playerFocusRow[0] === 8) {
             if (navCallbacks.playerSetup.practiceActionCol === 0) {
               navCallbacks.playerSetup.btnBack?.click();
@@ -746,18 +700,14 @@ export function startMenuGamepadPolling() {
           }
         }
 
-        if ((btnB && !prev.b) || (btnBack && !prev.back)) {
+        if ((e & MENU_PAD.b) || (e & MENU_PAD.back)) {
           navCallbacks.showTitleScreen?.();
           return;
         }
 
-        if (btnStart && !prev.start) {
+        if (e & MENU_PAD.start) {
           navCallbacks.playerSetup.launchMatchNow();
         }
-
-        prev.up = up; prev.down = down; prev.left = left; prev.right = right;
-        prev.a = btnA; prev.b = btnB; prev.lb = btnLB; prev.rb = btnRB;
-        prev.back = btnBack; prev.start = btnStart;
       }
       return;
     }
@@ -767,30 +717,18 @@ export function startMenuGamepadPolling() {
       if (isSingleController) {
         const pad = pads[0];
         if (!pad) return;
-        const prev = prevPads[0];
+        const e = menuPads.pressed(pad);
 
-        const up = (pad.buttons[12]?.pressed || (pad.axes[1] && pad.axes[1] < -0.5)) || false;
-        const down = (pad.buttons[13]?.pressed || (pad.axes[1] && pad.axes[1] > 0.5)) || false;
-        const left = (pad.buttons[14]?.pressed || (pad.axes[0] && pad.axes[0] < -0.5)) || false;
-        const right = (pad.buttons[15]?.pressed || (pad.axes[0] && pad.axes[0] > 0.5)) || false;
-
-        const btnA = pad.buttons[0]?.pressed || false;
-        const btnB = pad.buttons[1]?.pressed || false;
-        const btnLB = pad.buttons[4]?.pressed || false;
-        const btnRB = pad.buttons[5]?.pressed || false;
-        const btnBack = pad.buttons[8]?.pressed || false;
-        const btnStart = pad.buttons[9]?.pressed || false;
-
-        if (up && !prev.up) {
+        if (e & MENU_PAD.up) {
           navCallbacks.playerSetup.matchRulesFocusRow = Math.max(0, navCallbacks.playerSetup.matchRulesFocusRow - 1);
           navCallbacks.playerSetup.updateFocusUI();
         }
-        if (down && !prev.down) {
+        if (e & MENU_PAD.down) {
           navCallbacks.playerSetup.matchRulesFocusRow = Math.min(3, navCallbacks.playerSetup.matchRulesFocusRow + 1);
           navCallbacks.playerSetup.updateFocusUI();
         }
 
-        if (left && !prev.left) {
+        if (e & MENU_PAD.left) {
           if (navCallbacks.playerSetup.matchRulesFocusRow === 0) navCallbacks.playerSetup.cycleMatchBall(-1);
           else if (navCallbacks.playerSetup.matchRulesFocusRow === 1) navCallbacks.playerSetup.cycleMatchDuration(-1);
           else if (navCallbacks.playerSetup.matchRulesFocusRow === 2) navCallbacks.playerSetup.cycleArena(-1);
@@ -800,7 +738,7 @@ export function startMenuGamepadPolling() {
             soundManager.playTone(400, 0.04, 'sine', 0.15);
           }
         }
-        if (right && !prev.right) {
+        if (e & MENU_PAD.right) {
           if (navCallbacks.playerSetup.matchRulesFocusRow === 0) navCallbacks.playerSetup.cycleMatchBall(1);
           else if (navCallbacks.playerSetup.matchRulesFocusRow === 1) navCallbacks.playerSetup.cycleMatchDuration(1);
           else if (navCallbacks.playerSetup.matchRulesFocusRow === 2) navCallbacks.playerSetup.cycleArena(1);
@@ -811,7 +749,7 @@ export function startMenuGamepadPolling() {
           }
         }
 
-        if (btnLB && !prev.lb) {
+        if (e & MENU_PAD.lb) {
           if (navCallbacks.playerSetup.matchRulesFocusRow === 0) navCallbacks.playerSetup.cycleMatchBall(-1);
           else if (navCallbacks.playerSetup.matchRulesFocusRow === 1) navCallbacks.playerSetup.cycleMatchDuration(-1);
           else if (navCallbacks.playerSetup.matchRulesFocusRow === 2) navCallbacks.playerSetup.cycleArena(-1);
@@ -820,7 +758,7 @@ export function startMenuGamepadPolling() {
             navCallbacks.playerSetup.updateFocusUI();
           }
         }
-        if (btnRB && !prev.rb) {
+        if (e & MENU_PAD.rb) {
           if (navCallbacks.playerSetup.matchRulesFocusRow === 0) navCallbacks.playerSetup.cycleMatchBall(1);
           else if (navCallbacks.playerSetup.matchRulesFocusRow === 1) navCallbacks.playerSetup.cycleMatchDuration(1);
           else if (navCallbacks.playerSetup.matchRulesFocusRow === 2) navCallbacks.playerSetup.cycleArena(1);
@@ -830,7 +768,7 @@ export function startMenuGamepadPolling() {
           }
         }
 
-        if (btnA && !prev.a) {
+        if (e & MENU_PAD.a) {
           if (navCallbacks.playerSetup.matchCountdownActive) {
             navCallbacks.playerSetup.launchMatchNow();
           } else if (navCallbacks.playerSetup.matchRulesFocusRow === 0) {
@@ -849,7 +787,7 @@ export function startMenuGamepadPolling() {
           }
         }
 
-        if ((btnB && !prev.b) || (btnBack && !prev.back)) {
+        if ((e & MENU_PAD.b) || (e & MENU_PAD.back)) {
           if (navCallbacks.playerSetup.matchCountdownActive) {
             navCallbacks.playerSetup.cancelMatchCountdown();
             navCallbacks.playerSetup.playerReadyState[0] = false;
@@ -863,7 +801,7 @@ export function startMenuGamepadPolling() {
           }
         }
 
-        if (btnStart && !prev.start) {
+        if (e & MENU_PAD.start) {
           if (navCallbacks.playerSetup.matchCountdownActive) {
             navCallbacks.playerSetup.launchMatchNow();
           } else if (!navCallbacks.playerSetup.btnStartMatch?.disabled) {
@@ -873,9 +811,6 @@ export function startMenuGamepadPolling() {
           }
         }
 
-        prev.up = up; prev.down = down; prev.left = left; prev.right = right;
-        prev.a = btnA; prev.b = btnB; prev.lb = btnLB; prev.rb = btnRB;
-        prev.back = btnBack; prev.start = btnStart;
         return;
       }
 
@@ -883,54 +818,42 @@ export function startMenuGamepadPolling() {
       [0, 1].forEach((playerIdx) => {
         const pad = pads[playerIdx];
         if (!pad) return;
-        const prev = prevPads[playerIdx];
+        const e = menuPads.pressed(pad);
 
-        const up = (pad.buttons[12]?.pressed || (pad.axes[1] && pad.axes[1] < -0.5)) || false;
-        const down = (pad.buttons[13]?.pressed || (pad.axes[1] && pad.axes[1] > 0.5)) || false;
-        const left = (pad.buttons[14]?.pressed || (pad.axes[0] && pad.axes[0] < -0.5)) || false;
-        const right = (pad.buttons[15]?.pressed || (pad.axes[0] && pad.axes[0] > 0.5)) || false;
-
-        const btnA = pad.buttons[0]?.pressed || false;
-        const btnB = pad.buttons[1]?.pressed || false;
-        const btnLB = pad.buttons[4]?.pressed || false;
-        const btnRB = pad.buttons[5]?.pressed || false;
-        const btnBack = pad.buttons[8]?.pressed || false;
-        const btnStart = pad.buttons[9]?.pressed || false;
-
-        if (up && !prev.up) {
+        if (e & MENU_PAD.up) {
           navCallbacks.playerSetup.matchRulesFocusRow = Math.max(0, navCallbacks.playerSetup.matchRulesFocusRow - 1);
           navCallbacks.playerSetup.updateFocusUI();
         }
-        if (down && !prev.down) {
+        if (e & MENU_PAD.down) {
           navCallbacks.playerSetup.matchRulesFocusRow = Math.min(4, navCallbacks.playerSetup.matchRulesFocusRow + 1);
           navCallbacks.playerSetup.updateFocusUI();
         }
 
-        if (left && !prev.left) {
+        if (e & MENU_PAD.left) {
           if (navCallbacks.playerSetup.matchRulesFocusRow === 0) navCallbacks.playerSetup.cycleMatchBall(-1);
           else if (navCallbacks.playerSetup.matchRulesFocusRow === 1) navCallbacks.playerSetup.cycleMatchDuration(-1);
           else if (navCallbacks.playerSetup.matchRulesFocusRow === 2) navCallbacks.playerSetup.cycleArena(-1);
           else if (navCallbacks.playerSetup.matchRulesFocusRow === 3) { navCallbacks.playerSetup.focusedColumn = 0; navCallbacks.playerSetup.updateFocusUI(); }
         }
-        if (right && !prev.right) {
+        if (e & MENU_PAD.right) {
           if (navCallbacks.playerSetup.matchRulesFocusRow === 0) navCallbacks.playerSetup.cycleMatchBall(1);
           else if (navCallbacks.playerSetup.matchRulesFocusRow === 1) navCallbacks.playerSetup.cycleMatchDuration(1);
           else if (navCallbacks.playerSetup.matchRulesFocusRow === 2) navCallbacks.playerSetup.cycleArena(1);
           else if (navCallbacks.playerSetup.matchRulesFocusRow === 3) { navCallbacks.playerSetup.focusedColumn = 1; navCallbacks.playerSetup.updateFocusUI(); }
         }
 
-        if (btnLB && !prev.lb) {
+        if (e & MENU_PAD.lb) {
           if (navCallbacks.playerSetup.matchRulesFocusRow === 0) navCallbacks.playerSetup.cycleMatchBall(-1);
           else if (navCallbacks.playerSetup.matchRulesFocusRow === 1) navCallbacks.playerSetup.cycleMatchDuration(-1);
           else if (navCallbacks.playerSetup.matchRulesFocusRow === 2) navCallbacks.playerSetup.cycleArena(-1);
         }
-        if (btnRB && !prev.rb) {
+        if (e & MENU_PAD.rb) {
           if (navCallbacks.playerSetup.matchRulesFocusRow === 0) navCallbacks.playerSetup.cycleMatchBall(1);
           else if (navCallbacks.playerSetup.matchRulesFocusRow === 1) navCallbacks.playerSetup.cycleMatchDuration(1);
           else if (navCallbacks.playerSetup.matchRulesFocusRow === 2) navCallbacks.playerSetup.cycleArena(1);
         }
 
-        if (btnA && !prev.a) {
+        if (e & MENU_PAD.a) {
           if (navCallbacks.playerSetup.matchCountdownActive) {
             navCallbacks.playerSetup.launchMatchNow();
           } else if (navCallbacks.playerSetup.matchRulesFocusRow === 0) {
@@ -946,7 +869,7 @@ export function startMenuGamepadPolling() {
           }
         }
 
-        if ((btnB && !prev.b) || (btnBack && !prev.back)) {
+        if ((e & MENU_PAD.b) || (e & MENU_PAD.back)) {
           if (navCallbacks.playerSetup.matchCountdownActive) {
             navCallbacks.playerSetup.cancelMatchCountdown();
             navCallbacks.playerSetup.playerReadyState[0] = false;
@@ -960,7 +883,7 @@ export function startMenuGamepadPolling() {
           }
         }
 
-        if (btnStart && !prev.start) {
+        if (e & MENU_PAD.start) {
           if (navCallbacks.playerSetup.matchCountdownActive) {
             navCallbacks.playerSetup.launchMatchNow();
           } else if (!navCallbacks.playerSetup.btnStartMatch?.disabled) {
@@ -969,10 +892,6 @@ export function startMenuGamepadPolling() {
             navCallbacks.playerSetup.togglePlayerReady(playerIdx);
           }
         }
-
-        prev.up = up; prev.down = down; prev.left = left; prev.right = right;
-        prev.a = btnA; prev.b = btnB; prev.lb = btnLB; prev.rb = btnRB;
-        prev.back = btnBack; prev.start = btnStart;
       });
       return;
     }
@@ -981,30 +900,18 @@ export function startMenuGamepadPolling() {
     if (isSingleController) {
       const pad = pads[0];
       if (!pad) return;
-      const prev = prevPads[0];
+      const e = menuPads.pressed(pad);
 
-      const up = (pad.buttons[12]?.pressed || (pad.axes[1] && pad.axes[1] < -0.5)) || false;
-      const down = (pad.buttons[13]?.pressed || (pad.axes[1] && pad.axes[1] > 0.5)) || false;
-      const left = (pad.buttons[14]?.pressed || (pad.axes[0] && pad.axes[0] < -0.5)) || false;
-      const right = (pad.buttons[15]?.pressed || (pad.axes[0] && pad.axes[0] > 0.5)) || false;
-
-      const btnA = pad.buttons[0]?.pressed || false;
-      const btnB = pad.buttons[1]?.pressed || false;
-      const btnLB = pad.buttons[4]?.pressed || false;
-      const btnRB = pad.buttons[5]?.pressed || false;
-      const btnBack = pad.buttons[8]?.pressed || false;
-      const btnStart = pad.buttons[9]?.pressed || false;
-
-      if (up && !prev.up) {
+      if (e & MENU_PAD.up) {
         moveScreen1Row(navCallbacks.playerSetup.focusedColumn, -1);
         triggerMenuHaptics(pad, 25, 0.15, 0.05);
       }
-      if (down && !prev.down) {
+      if (e & MENU_PAD.down) {
         moveScreen1Row(navCallbacks.playerSetup.focusedColumn, 1);
         triggerMenuHaptics(pad, 25, 0.15, 0.05);
       }
 
-      if (left && !prev.left) {
+      if (e & MENU_PAD.left) {
         const col = navCallbacks.playerSetup.focusedColumn;
         const row = navCallbacks.playerSetup.playerFocusRow[col];
         if (row === 8) {
@@ -1018,7 +925,7 @@ export function startMenuGamepadPolling() {
           triggerMenuHaptics(pad, 35, 0.25, 0.1);
         }
       }
-      if (right && !prev.right) {
+      if (e & MENU_PAD.right) {
         const col = navCallbacks.playerSetup.focusedColumn;
         const row = navCallbacks.playerSetup.playerFocusRow[col];
         if (row === 8) {
@@ -1033,20 +940,20 @@ export function startMenuGamepadPolling() {
         }
       }
 
-      if (btnLB && !prev.lb) {
+      if (e & MENU_PAD.lb) {
         navCallbacks.playerSetup.focusedColumn = 1 - navCallbacks.playerSetup.focusedColumn;
         soundManager.playTone(440, 0.06, 'sine', 0.2);
         triggerMenuHaptics(pad, 40, 0.3, 0.15);
         navCallbacks.playerSetup.updateFocusUI();
       }
-      if (btnRB && !prev.rb) {
+      if (e & MENU_PAD.rb) {
         navCallbacks.playerSetup.focusedColumn = 1 - navCallbacks.playerSetup.focusedColumn;
         soundManager.playTone(440, 0.06, 'sine', 0.2);
         triggerMenuHaptics(pad, 40, 0.3, 0.15);
         navCallbacks.playerSetup.updateFocusUI();
       }
 
-      if (btnA && !prev.a) {
+      if (e & MENU_PAD.a) {
         const col = navCallbacks.playerSetup.focusedColumn;
         const row = navCallbacks.playerSetup.playerFocusRow[col];
         if (row === 8) {
@@ -1063,7 +970,7 @@ export function startMenuGamepadPolling() {
         }
       }
 
-      if ((btnB && !prev.b) || (btnBack && !prev.back)) {
+      if ((e & MENU_PAD.b) || (e & MENU_PAD.back)) {
         if (navCallbacks.playerSetup.btnBack) {
           navCallbacks.playerSetup.btnBack.click();
         } else {
@@ -1074,16 +981,13 @@ export function startMenuGamepadPolling() {
         return;
       }
 
-      if (btnStart && !prev.start) {
+      if (e & MENU_PAD.start) {
         navCallbacks.playerSetup.setupPage = 2;
         window._updateSetupPage();
         soundManager.playTone(660, 0.05, 'sine', 0.2);
         triggerMenuHaptics(pad, 35, 0.25, 0.1);
       }
 
-      prev.up = up; prev.down = down; prev.left = left; prev.right = right;
-      prev.a = btnA; prev.b = btnB; prev.lb = btnLB; prev.rb = btnRB;
-      prev.back = btnBack; prev.start = btnStart;
       return;
     }
 
@@ -1091,30 +995,18 @@ export function startMenuGamepadPolling() {
     [0, 1].forEach((playerIdx) => {
       const pad = pads[playerIdx];
       if (!pad) return;
-      const prev = prevPads[playerIdx];
+      const e = menuPads.pressed(pad);
 
-      const up = (pad.buttons[12]?.pressed || (pad.axes[1] && pad.axes[1] < -0.5)) || false;
-      const down = (pad.buttons[13]?.pressed || (pad.axes[1] && pad.axes[1] > 0.5)) || false;
-      const left = (pad.buttons[14]?.pressed || (pad.axes[0] && pad.axes[0] < -0.5)) || false;
-      const right = (pad.buttons[15]?.pressed || (pad.axes[0] && pad.axes[0] > 0.5)) || false;
-
-      const btnA = pad.buttons[0]?.pressed || false;
-      const btnB = pad.buttons[1]?.pressed || false;
-      const btnLB = pad.buttons[4]?.pressed || false;
-      const btnRB = pad.buttons[5]?.pressed || false;
-      const btnBack = pad.buttons[8]?.pressed || false;
-      const btnStart = pad.buttons[9]?.pressed || false;
-
-      if (up && !prev.up) {
+      if (e & MENU_PAD.up) {
         moveScreen1Row(playerIdx, -1);
         triggerMenuHaptics(pad, 25, 0.15, 0.05);
       }
-      if (down && !prev.down) {
+      if (e & MENU_PAD.down) {
         moveScreen1Row(playerIdx, 1);
         triggerMenuHaptics(pad, 25, 0.15, 0.05);
       }
 
-      if (left && !prev.left) {
+      if (e & MENU_PAD.left) {
         const row = navCallbacks.playerSetup.playerFocusRow[playerIdx];
         if (row === 8) {
           navCallbacks.playerSetup.screen1ActionCol = 0;
@@ -1127,7 +1019,7 @@ export function startMenuGamepadPolling() {
           triggerMenuHaptics(pad, 35, 0.25, 0.1);
         }
       }
-      if (right && !prev.right) {
+      if (e & MENU_PAD.right) {
         const row = navCallbacks.playerSetup.playerFocusRow[playerIdx];
         if (row === 8) {
           navCallbacks.playerSetup.screen1ActionCol = 1;
@@ -1141,7 +1033,7 @@ export function startMenuGamepadPolling() {
         }
       }
 
-      if (btnA && !prev.a) {
+      if (e & MENU_PAD.a) {
         const row = navCallbacks.playerSetup.playerFocusRow[playerIdx];
         if (row === 8) {
           if (navCallbacks.playerSetup.screen1ActionCol === 0) {
@@ -1157,7 +1049,7 @@ export function startMenuGamepadPolling() {
         }
       }
 
-      if ((btnB && !prev.b) || (btnBack && !prev.back)) {
+      if ((e & MENU_PAD.b) || (e & MENU_PAD.back)) {
         if (navCallbacks.playerSetup.btnBack) {
           navCallbacks.playerSetup.btnBack.click();
         } else {
@@ -1168,26 +1060,12 @@ export function startMenuGamepadPolling() {
         return;
       }
 
-      if (btnStart && !prev.start) {
+      if (e & MENU_PAD.start) {
         navCallbacks.playerSetup.setupPage = 2;
         window._updateSetupPage();
         soundManager.playTone(660, 0.05, 'sine', 0.2);
         triggerMenuHaptics(pad, 35, 0.25, 0.1);
       }
-
-      if ((btnB && !prev.b) || (btnBack && !prev.back)) {
-        navCallbacks.showTitleScreen?.();
-        return;
-      }
-
-      if (btnStart && !prev.start) {
-        navCallbacks.playerSetup.setupPage = 2;
-        window._updateSetupPage();
-      }
-
-      prev.up = up; prev.down = down; prev.left = left; prev.right = right;
-      prev.a = btnA; prev.b = btnB; prev.lb = btnLB; prev.rb = btnRB;
-      prev.back = btnBack; prev.start = btnStart;
     });
   }, 50);
 
