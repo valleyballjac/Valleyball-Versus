@@ -110,7 +110,8 @@ export function buildControllerAssignmentScreen(rootEl, callbacks = {}) {
   const subtitle = document.createElement('div');
   subtitle.id = 'assignment-subtitle';
   subtitle.style.cssText = 'font-size: 13px; font-weight: 700; color: #94a3b8; letter-spacing: 0.04em; text-align: center;';
-  subtitle.innerHTML = 'Tilt stick or press <b>D-Pad Left / Right</b> to claim your side &middot; Press <b>[B]</b> to unassign';
+  subtitle.innerHTML = 'Controller: <b>A</b> join &middot; <b>◀ ▶</b> switch side &middot; <b>B</b> drop out &middot; <b>Start</b> continue'
+    + '<br>Keyboard: <b>A / D</b> or <b>← →</b> switch side &middot; <b>B</b> drop out &middot; <b>Enter</b> join / continue';
 
   header.appendChild(titleRow);
   header.appendChild(subtitle);
@@ -341,6 +342,122 @@ export function toggleMode() {
   soundManager.playTone(440, 0.08, 'sine', 0.16);
 }
 
+function makePadDevice(pad) {
+  return {
+    type: 'gamepad',
+    padIndex: pad.index,
+    name: getCleanGamepadName(pad),
+    id: pad.id,
+  };
+}
+
+function allDevices() {
+  return [...assignmentState.team1, ...assignmentState.team2, ...assignmentState.bench].filter(Boolean);
+}
+
+function findPadDevice(padIndex) {
+  return allDevices().find((d) => d.type === 'gamepad' && d.padIndex === padIndex) || null;
+}
+
+function findKeyboardDevice() {
+  return allDevices().find((d) => d.type === 'keyboard') || null;
+}
+
+function locateDevice(device) {
+  if (assignmentState.team1.includes(device)) return 'team1';
+  if (assignmentState.team2.includes(device)) return 'team2';
+  return 'bench';
+}
+
+function activeSlotCount() {
+  return currentMode === '2v2' ? 2 : 1;
+}
+
+function hasOpenSlot(teamKey) {
+  return assignmentState[teamKey].slice(0, activeSlotCount()).some((d) => !d);
+}
+
+function anySeated() {
+  return assignmentState.team1.some(Boolean) || assignmentState.team2.some(Boolean);
+}
+
+function playDenied() {
+  soundManager.playTone(220, 0.1, 'sawtooth', 0.15);
+}
+
+/**
+ * One tilt / arrow step: from the bench a device claims that side; from the far
+ * side it drops back to the bench. Never bumps a seated player off a full side.
+ */
+function stepDevice(device, dir) {
+  const loc = locateDevice(device);
+  const fromBench = dir < 0 ? 'team1' : 'team2';
+  const farSide = dir < 0 ? 'team2' : 'team1';
+  if (loc === farSide) {
+    unassignDevice(device);
+    return true;
+  }
+  if (loc === 'bench') {
+    if (!hasOpenSlot(fromBench)) {
+      playDenied();
+      return false;
+    }
+    assignDeviceToTeam(device, fromBench);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * A / Start / Enter. A benched device joins the first open side while someone is
+ * already seated (the usual "press A to join") and is refused when both sides are
+ * taken. Seated devices, or anyone when nobody is seated (Set Both AI), continue.
+ */
+function joinOrProceed(device) {
+  if (device && locateDevice(device) === 'bench' && anySeated()) {
+    const team = hasOpenSlot('team1') ? 'team1' : hasOpenSlot('team2') ? 'team2' : null;
+    if (team) assignDeviceToTeam(device, team);
+    else playDenied();
+    return;
+  }
+  proceedToSetup();
+}
+
+/** Keeps the screen in step with controllers plugged in or pulled out while it is open. */
+function syncConnectedPads(pads) {
+  let changed = false;
+  for (const pad of pads) {
+    if (pad && !findPadDevice(pad.index)) {
+      assignmentState.bench.push(makePadDevice(pad));
+      changed = true;
+    }
+  }
+  for (const device of allDevices()) {
+    if (device.type === 'gamepad' && !pads.some((p) => p && p.index === device.padIndex)) {
+      // An unplugged pad's seat goes back to AI.
+      unassignDeviceSilently(device);
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+/**
+ * Keyboard on this screen makes the same moves a pad does, applied to the keyboard
+ * device itself (not whichever card happens to be first on screen).
+ * @param {'left' | 'right' | 'drop' | 'confirm'} action
+ */
+export function handleAssignmentKey(action) {
+  const kb = findKeyboardDevice();
+  if (action === 'left' || action === 'right') {
+    if (kb) stepDevice(kb, action === 'left' ? -1 : 1);
+  } else if (action === 'drop') {
+    if (kb && locateDevice(kb) !== 'bench') unassignDevice(kb);
+  } else if (action === 'confirm') {
+    joinOrProceed(kb);
+  }
+}
+
 function initDefaultAssignments() {
   const pads = [];
   if (typeof navigator.getGamepads === 'function') {
@@ -355,15 +472,7 @@ function initDefaultAssignments() {
   assignmentState.bench = [];
 
   // Create device representation
-  const devices = [];
-  pads.forEach((pad) => {
-    devices.push({
-      type: 'gamepad',
-      padIndex: pad.index,
-      name: getCleanGamepadName(pad),
-      id: pad.id,
-    });
-  });
+  const devices = pads.map(makePadDevice);
 
   // Always make Keyboard 1 (WASD) available
   devices.push({
@@ -419,7 +528,7 @@ export function renderAssignmentUI() {
     if (currentMode === '2v2') {
       team1Container.appendChild(createSlotCard('SLOT 2 &middot; TEAMMATE', assignmentState.team1[1], 'home', 2));
     } else {
-      team1Container.appendChild(createInactiveSlotCard('2v2 ONLY &middot; INACTIVE IN 1v1'));
+      team1Container.appendChild(createInactiveSlotCard('2v2 ONLY · INACTIVE IN 1v1'));
     }
   }
 
@@ -431,7 +540,7 @@ export function renderAssignmentUI() {
     if (currentMode === '2v2') {
       team2Container.appendChild(createSlotCard('SLOT 2 &middot; TEAMMATE', assignmentState.team2[1], 'away', 3));
     } else {
-      team2Container.appendChild(createInactiveSlotCard('2v2 ONLY &middot; INACTIVE IN 1v1'));
+      team2Container.appendChild(createInactiveSlotCard('2v2 ONLY · INACTIVE IN 1v1'));
     }
   }
 
@@ -543,19 +652,19 @@ function createBenchDeviceCard(device) {
       <span style="font-size:12px;font-weight:800;color:#ffffff;">${device.name}</span>
     </div>
     <div style="display:flex;gap:6px;">
-      <button id="btn-claim-team1" class="contextual-btn-badge" style="cursor:pointer;border-color:#00e5ff;color:#00e5ff;">
+      <button data-claim="team1" class="contextual-btn-badge" style="cursor:pointer;border-color:#00e5ff;color:#00e5ff;">
         ◀ TEAM 1
       </button>
-      <button id="btn-claim-team2" class="contextual-btn-badge" style="cursor:pointer;border-color:#ff2e55;color:#ff2e55;">
+      <button data-claim="team2" class="contextual-btn-badge" style="cursor:pointer;border-color:#ff2e55;color:#ff2e55;">
         TEAM 2 ▶
       </button>
     </div>
   `;
 
-  card.querySelector('#btn-claim-team1')?.addEventListener('click', () => {
+  card.querySelector('[data-claim="team1"]')?.addEventListener('click', () => {
     assignDeviceToTeam(device, 'team1');
   });
-  card.querySelector('#btn-claim-team2')?.addEventListener('click', () => {
+  card.querySelector('[data-claim="team2"]')?.addEventListener('click', () => {
     assignDeviceToTeam(device, 'team2');
   });
 
@@ -625,65 +734,33 @@ export function setBothAI() {
  */
 export function pollAssignmentGamepads(pads, menuPads) {
   if (!containerEl || containerEl.style.display !== 'flex') return;
+  if (syncConnectedPads(pads)) renderAssignmentUI();
 
   for (const pad of pads) {
     if (!pad) continue;
-    // Proceeding below hides this screen; the rest of this poll belongs to the next one.
+    // Continuing or backing out hides this screen; the rest of this poll belongs to the next one.
     if (containerEl.style.display !== 'flex') return;
-    const pIdx = pad.index;
     const e = menuPads.pressed(pad);
+    if (!e) continue;
+    const device = findPadDevice(pad.index);
+    if (!device) continue;
 
-    // Find device object corresponding to this pad
-    let currentDevice = null;
-    let currentLoc = 'bench'; // 'team1', 'team2', 'bench'
+    // Tilt / D-pad: claim a side from the bench, or drop back from the far side
+    if ((e & MENU_PAD.left) && stepDevice(device, -1)) triggerHaptic(pad);
+    if ((e & MENU_PAD.right) && stepDevice(device, 1)) triggerHaptic(pad);
 
-    [0, 1].forEach((i) => {
-      if (assignmentState.team1[i]?.padIndex === pIdx) {
-        currentDevice = assignmentState.team1[i];
-        currentLoc = 'team1';
-      }
-      if (assignmentState.team2[i]?.padIndex === pIdx) {
-        currentDevice = assignmentState.team2[i];
-        currentLoc = 'team2';
-      }
-    });
-
-    if (!currentDevice) {
-      currentDevice = assignmentState.bench.find((d) => d.padIndex === pIdx);
-    }
-
-    if (currentDevice) {
-      // Tilt Left
-      if (e & MENU_PAD.left) {
-        if (currentLoc === 'team2') {
-          unassignDevice(currentDevice);
-          triggerHaptic(pad);
-        } else if (currentLoc === 'bench') {
-          assignDeviceToTeam(currentDevice, 'team1');
-          triggerHaptic(pad);
-        }
-      }
-
-      // Tilt Right
-      if (e & MENU_PAD.right) {
-        if (currentLoc === 'team1') {
-          unassignDevice(currentDevice);
-          triggerHaptic(pad);
-        } else if (currentLoc === 'bench') {
-          assignDeviceToTeam(currentDevice, 'team2');
-          triggerHaptic(pad);
-        }
-      }
-
-      // Button B (Drop to bench or back to title)
-      if (e & MENU_PAD.b) {
-        if (currentLoc !== 'bench') {
-          unassignDevice(currentDevice);
-          triggerHaptic(pad);
-        } else {
-          hideControllerAssignment();
-          if (onBackCallback) onBackCallback();
-        }
+    // B drops a seated pad to the bench. From the bench it only backs out to the
+    // title when nobody is seated, so a benched player can't kick seated ones out.
+    if (e & MENU_PAD.b) {
+      if (locateDevice(device) !== 'bench') {
+        unassignDevice(device);
+        triggerHaptic(pad);
+      } else if (!anySeated()) {
+        hideControllerAssignment();
+        if (onBackCallback) onBackCallback();
+        return;
+      } else {
+        playDenied();
       }
     }
 
@@ -699,9 +776,9 @@ export function pollAssignmentGamepads(pads, menuPads) {
       triggerHaptic(pad);
     }
 
-    // Start / Confirm with Start or A
-    if ((e & MENU_PAD.start) || (e & MENU_PAD.a)) {
-      proceedToSetup();
+    // A / Start: join from the bench, or continue to setup
+    if (e & (MENU_PAD.a | MENU_PAD.start)) {
+      joinOrProceed(device);
       triggerHaptic(pad);
     }
   }
