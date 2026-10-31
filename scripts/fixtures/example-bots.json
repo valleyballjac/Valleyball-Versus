@@ -1,0 +1,24 @@
+{
+  "id": "example-bots",
+  "seed": 20261030,
+  "durationSeconds": 300,
+  "ball": "medium",
+  "home": {
+    "name": "Volt",
+    "controller": "bot",
+    "difficulty": "hard",
+    "aggressiveness": 0.7,
+    "variant": "masculine",
+    "color": "#FFD000",
+    "headwear": "wrestler_bands"
+  },
+  "away": {
+    "name": "Indigo",
+    "controller": "bot",
+    "difficulty": "hard",
+    "aggressiveness": 0.5,
+    "variant": "feminine",
+    "color": "#6B11FF",
+    "headwear": "couture_wrap"
+  }
+}
