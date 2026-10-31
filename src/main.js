@@ -43,6 +43,9 @@ import { createAthlete } from './sim/athlete.js';
 import { athleteManager } from './features/athletes/athleteManager.js';
 import { matchManager } from './features/match/matchManager.js';
 import {
+  readFixtureFromSearch, fixtureMatchSetup, createFixtureRandom, fixtureBotSeed, resultSide, buildMatchResult,
+} from './features/match/matchFixture.js';
+import {
   initInputRouter,
   sampleAllInputs,
   getControlsSnapshot,
@@ -61,6 +64,8 @@ import {
   getCameraCycleHint,
   exitGamePointerLock,
   triggerHaptic,
+  setExplicitDeviceMappings,
+  assignDefaultDeviceForSlot,
 } from './input/inputRouter.js';
 import { createMenuPadTracker, MENU_PAD } from './input/menuPads.js';
 import { updateSportsCamera } from './visuals/sportsCamera.js';
@@ -948,6 +953,18 @@ const athleteMatchStats = [
   { totalTouches: 0, sweetSpotHits: 0, spikes: 0, dives: 0, divingHits: 0, defensiveBlocks: 0, ownCircleTouches: 0, oppCircleTouches: 0 },
   { totalTouches: 0, sweetSpotHits: 0, spikes: 0, dives: 0, divingHits: 0, defensiveBlocks: 0, ownCircleTouches: 0, oppCircleTouches: 0 },
 ];
+/**
+ * THE FIXTURE MATCH (?fixture=, see features/match/matchFixture.js). Set by
+ * startFixtureMatch, cleared once its result is reported, so a rematch or a
+ * later lobby match is never filed under it. While it is set, every setup
+ * choice draws from fixtureRandom, ball drops take the deterministic path, and
+ * the flyover ends on fixtureFlyoverEndTick instead of the camera's timer.
+ */
+let activeFixture = null;
+let fixtureRandom = null;
+let fixtureFlyoverEndTick = -1;
+/** The configs the current match started with, for its result. */
+let lastMatchConfigs = null;
 let motor = null;
 
 /** The invisible clip-playing rig, and the PD tracker that chases it. */
@@ -1925,6 +1942,12 @@ function assertInvariants(tick) {
 function fixedUpdate(dt, tick) {
   if (athletes.length === 0) return;
 
+  // 0 — A fixture's flyover ends on a tick, so its countdown starts on the same
+  // tick every run, however the frames happened to fall.
+  if (gameState === 'flyover' && fixtureFlyoverEndTick >= 0 && tick >= fixtureFlyoverEndTick) {
+    skipFlyover();
+  }
+
   // 1 — RESPAWN REQUESTS
   if (respawnRequested) {
     respawnRequested = false;
@@ -1935,9 +1958,12 @@ function fixedUpdate(dt, tick) {
   }
 
   // 2 — BALL WATCHDOG & SERVE (B / Start or fall out of bounds)
-  const serveQueued = consumeAthleteBallReset(0);
+  // The serve is a practice tool. The pads only queue it in practice; the
+  // keyboard queues it in any mode, so it is gated here too, or P1 could
+  // re-serve the ball mid-match.
+  const serveQueued = consumeAthleteBallReset(0) && gameState === 'practice';
   const armedBallSpawn = armedCaptureTick !== null && tick === TUNING.ball.captureSpawnTick;
-  const isDeterministic = armedCaptureTick !== null;
+  const isDeterministic = armedCaptureTick !== null || activeFixture !== null;
 
   for (let i = 0; i < balls.length; i += 1) {
     const b = balls[i];
@@ -2184,7 +2210,7 @@ function fixedUpdate(dt, tick) {
         b.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
         if (gameState === 'match' && isCountingDown) {
           if (!b._preMatchSpawnPos) {
-            b._preMatchSpawnPos = matchState?.preMatchSpawnPos || getCourtBallDropSpawn(i, balls.length, tick, false);
+            b._preMatchSpawnPos = matchState?.preMatchSpawnPos || getCourtBallDropSpawn(i, balls.length, tick, activeFixture !== null);
             if (matchState && !matchState.preMatchSpawnPos) {
               matchState.preMatchSpawnPos = b._preMatchSpawnPos;
             }
@@ -2258,6 +2284,8 @@ function fixedUpdate(dt, tick) {
             { ...p2Strike, ...athleteMatchStats[1] },
           );
         }, 1200);
+
+        reportMatchResult(tick, [{ ...p1Strike, ...athleteMatchStats[0] }, { ...p2Strike, ...athleteMatchStats[1] }]);
       }
     }
   }
@@ -2460,7 +2488,8 @@ function render(alpha) {
         break;
       }
     }
-    if (cinematicCamera.isComplete) {
+    // A fixture's flyover ends on its tick in fixedUpdate, not on this timer.
+    if (cinematicCamera.isComplete && fixtureFlyoverEndTick < 0) {
       skipFlyover();
     }
   } else if (gameState === 'menu' || isVictoryActive) {
@@ -2990,6 +3019,7 @@ function handleRematch() {
 function skipFlyover() {
   if (gameState !== 'flyover') return;
   gameState = 'match';
+  fixtureFlyoverEndTick = -1;
   hideFlyoverOverlay();
 
   matchManager.skipFlyover();
@@ -3004,6 +3034,64 @@ function skipFlyover() {
   playerCameras[1].resetSmoothing();
   applyViewportSize();
   console.log('[flyover] skipped -> kickoff ritual started');
+}
+
+/**
+ * Starts the match a ?fixture= names, straight past the menus. A human side
+ * with a named device gets it mapped; an 'auto' side keeps the router's
+ * default routing. The fixture's assist rule goes on BOTH athletes after
+ * setup, so neither side can carry a different one.
+ */
+function startFixtureMatch(fixture) {
+  activeFixture = fixture;
+  fixtureRandom = createFixtureRandom(fixture.seed);
+  window.__vb.fixture = fixture;
+
+  const { configs, rules, devices } = fixtureMatchSetup(fixture, fixtureRandom);
+  if (devices) {
+    setExplicitDeviceMappings(devices.mappings);
+    for (const slot of devices.autoSlots) assignDefaultDeviceForSlot(slot);
+  }
+  handleStartMatch(configs, { ...rules, fixture });
+  for (const a of athletes) a.setAssistPreset?.(fixture.assist);
+
+  console.log(
+    `[fixture] ${fixture.id} (seed ${fixture.seed}): ${fixture.home.name} [${fixture.home.controller}] vs ` +
+      `${fixture.away.name} [${fixture.away.controller}], ${rules.ball} ball, ${fixture.durationSeconds}s, ${fixture.assist}`,
+  );
+  if (!fixture.flyover) skipFlyover();
+}
+
+/**
+ * Files the one result a finished match reports: on window.__vb.lastMatchResult,
+ * as a `vb:matchover` window event, and in the console. Lobby matches report
+ * too (fixtureId null), so a tournament played from the lobby still leaves a
+ * record. Clears the fixture, so a rematch is never filed under it.
+ * @param {number} tick the tick the match ended on
+ * @param {object[]} slotStats strike and match stats, by athlete slot
+ */
+function reportMatchResult(tick, slotStats) {
+  const sides = { home: null, away: null };
+  for (let i = 0; i < 2; i++) {
+    const config = lastMatchConfigs?.[i];
+    const team = config?.team || (i === 0 ? 'home' : 'away');
+    const fixtureSide = activeFixture ? (i === 0 ? activeFixture.home : activeFixture.away) : null;
+    sides[team] = resultSide(config, slotStats[i], fixtureSide?.device ?? null);
+  }
+  const result = buildMatchResult({
+    fixture: activeFixture,
+    matchState,
+    sides,
+    ball: balls[0]?.id ?? currentMatchBallType,
+    durationSeconds: TUNING.match.durationSeconds,
+    endedTick: tick,
+  });
+  activeFixture = null;
+  fixtureRandom = null;
+
+  window.__vb.lastMatchResult = result;
+  console.log(`[match] result ${JSON.stringify(result)}`);
+  window.dispatchEvent(new CustomEvent('vb:matchover', { detail: result }));
 }
 
 function handleStartMatch(configs, matchRulesOrBall = {}) {
@@ -3035,6 +3123,13 @@ function handleStartMatch(configs, matchRulesOrBall = {}) {
   }
 
   hideMainMenu();
+  lastMatchConfigs = configs;
+  // Only startFixtureMatch passes its fixture. Any other start (the lobby, a
+  // fixture abandoned to the menu and replayed) is not that fixture's match.
+  if (!matchRulesOrBall?.fixture) {
+    activeFixture = null;
+    fixtureRandom = null;
+  }
 
   for (const s of athleteMatchStats) {
     s.totalTouches = 0;
@@ -3086,11 +3181,11 @@ function handleStartMatch(configs, matchRulesOrBall = {}) {
   if (TUNING.teams) {
     if (TUNING.teams.home) {
       TUNING.teams.home.primaryColor = homeColor;
-      TUNING.teams.home.name = `${getColorName(homeColor)} (Home)`;
+      TUNING.teams.home.name = configs?.[homeIdx]?.displayName || `${getColorName(homeColor)} (Home)`;
     }
     if (TUNING.teams.away) {
       TUNING.teams.away.primaryColor = awayColor;
-      TUNING.teams.away.name = `${getColorName(awayColor)} (Away)`;
+      TUNING.teams.away.name = configs?.[awayIdx]?.displayName || `${getColorName(awayColor)} (Away)`;
     }
   }
   if (scoreboards) {
@@ -3120,8 +3215,9 @@ function handleStartMatch(configs, matchRulesOrBall = {}) {
 
   // Position athletes at stream heads matching chosen team (Home -> South, Away -> North)
   if (athletes.length >= 2) {
-    const southHead = Math.random() < 0.5 ? TUNING.match.streamHeads.sw : TUNING.match.streamHeads.se;
-    const northHead = Math.random() < 0.5 ? TUNING.match.streamHeads.nw : TUNING.match.streamHeads.ne;
+    const random = fixtureRandom || Math.random;
+    const southHead = random() < 0.5 ? TUNING.match.streamHeads.sw : TUNING.match.streamHeads.se;
+    const northHead = random() < 0.5 ? TUNING.match.streamHeads.nw : TUNING.match.streamHeads.ne;
 
     const p1IsHome = configs && configs[0]?.team === 'home';
     const p1Head = p1IsHome ? southHead : northHead;
@@ -3142,7 +3238,7 @@ function handleStartMatch(configs, matchRulesOrBall = {}) {
 
   // Fresh match ball at 10m
   if (balls.length > 0) {
-    const dropPos = getCourtBallDropSpawn(0, 1, loop.tick, false);
+    const dropPos = getCourtBallDropSpawn(0, 1, loop.tick, activeFixture !== null);
     resetBall(balls[0], loop.tick, dropPos);
     balls[0]._preMatchSpawnPos = { x: dropPos.x, y: dropPos.y, z: dropPos.z };
     if (matchState) matchState.preMatchSpawnPos = balls[0]._preMatchSpawnPos;
@@ -3160,7 +3256,7 @@ function handleStartMatch(configs, matchRulesOrBall = {}) {
           difficulty: pConfig.difficulty || 'medium',
           slotIndex: i,
           aggressiveness: pConfig.aggressiveness ?? 0.60,
-          seed: loop.tick + 42 + i,
+          seed: activeFixture ? fixtureBotSeed(activeFixture, i) : loop.tick + 42 + i,
         });
         botControllers.push(bot);
         activeBotSlots.push(i);
@@ -3175,14 +3271,17 @@ function handleStartMatch(configs, matchRulesOrBall = {}) {
     TUNING.camera.splitscreen = hasHuman && activeBotSlots.length === 0;
   }
 
-  // Start 10s flyover cutscene
+  // Start the flyover cutscene
   gameState = 'flyover';
-  cinematicCamera.startFlyover(10.0);
+  cinematicCamera.startFlyover(TUNING.match.flyoverSeconds);
+  fixtureFlyoverEndTick = activeFixture
+    ? loop.tick + Math.round(TUNING.match.flyoverSeconds * TUNING.loop.fixedHz)
+    : -1;
   flyoverPads.reset();
   const p1Color = configs?.[0]?.primaryColor ?? 0xd90429;
   const p2Color = configs?.[1]?.primaryColor ?? 0x1d4ed8;
-  const p1TeamName = getColorName(p1Color).toUpperCase();
-  const p2TeamName = getColorName(p2Color).toUpperCase();
+  const p1TeamName = (configs?.[0]?.displayName || getColorName(p1Color)).toUpperCase();
+  const p2TeamName = (configs?.[1]?.displayName || getColorName(p2Color)).toUpperCase();
   const p1Hex = '#' + p1Color.toString(16).padStart(6, '0');
   const p2Hex = '#' + p2Color.toString(16).padStart(6, '0');
   showFlyoverOverlay(p1TeamName, p2TeamName, p1Hex, p2Hex);
@@ -3953,6 +4052,22 @@ async function boot() {
   });
 
   initMobileNotice();
+
+  // A ?fixture= match skips the menus entirely. A malformed one stops the boot
+  // loudly: a broadcast or a tournament must never quietly fall back to the
+  // title screen or to defaults.
+  const fixtureRead = readFixtureFromSearch(window.location.search);
+  if (fixtureRead.errors.length > 0) {
+    window.__vb.fixtureError = fixtureRead.errors;
+    throw new Error(`invalid fixture: ${fixtureRead.errors.join('; ')}`);
+  }
+  if (fixtureRead.fixture) {
+    startFixtureMatch(fixtureRead.fixture);
+    applyViewportSize();
+    hideLoadingScreen();
+    loop.start();
+    return;
+  }
 
   const pendingMatch = (typeof window !== 'undefined') ? sessionStorage.getItem('pendingMatchSetup') : null;
   if (pendingMatch) {

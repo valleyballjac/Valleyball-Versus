@@ -1499,6 +1499,30 @@ const DEFAULTS = {
     // HOW LONG THE SCOREBOARDS FLASH AFTER A GOAL, in TICKS. 150 is 2.5
     // seconds of fixed steps, matching the arena horn celebration.
     celebrationTicks: 150,
+
+    // The pre-match aerial flyover. A fixture match ends it on the tick this
+    // many seconds after the start, never on the camera's wall-clock timer.
+    flyoverSeconds: 10.0,
+  },
+
+  // ═══ FIXTURES ═══ — one match fully specified from the URL (?fixture=).
+  // Defaults for anything a fixture leaves out. See src/features/match/matchFixture.js.
+  fixture: {
+    durationSeconds: 300,
+    minDurationSeconds: 30,
+    maxDurationSeconds: 3600,
+    ball: 'medium',
+    // One strike-assist rule for both sides. Pure Sim is the sport's default.
+    assist: 'pureSim',
+    flyover: true,
+    botDifficulty: 'hard',
+    botAggressiveness: 0.60,
+    variant: 'classic',
+    camera: 'chase',
+    homeColor: 0xd90429,
+    awayColor: 0x1d4ed8,
+    nameMaxLength: 24,
+    idMaxLength: 64,
   },
 
   /**

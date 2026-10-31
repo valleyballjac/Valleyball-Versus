@@ -1,0 +1,18 @@
+{
+  "id": "example-human-vs-bot",
+  "seed": 7,
+  "durationSeconds": 300,
+  "ball": "random",
+  "home": {
+    "name": "Player One",
+    "controller": "human",
+    "device": "auto",
+    "color": "red"
+  },
+  "away": {
+    "name": "House Bot",
+    "controller": "bot",
+    "difficulty": "medium",
+    "color": "blue"
+  }
+}
