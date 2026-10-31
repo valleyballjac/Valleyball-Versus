@@ -485,12 +485,13 @@ export function initInputRouter(surface) {
   window.addEventListener('gamepadconnected', (e) => {
     const pad = e.gamepad;
     const name = pad?.id ? pad.id.split('(')[0].trim() : `Gamepad ${pad?.index ?? 0}`;
-    showToast(`🎮 Controller Connected: ${name} (Slot P${(pad?.index ?? 0) + 1})`, 'info', 4000);
+    // Pad N is the browser's pad number, as on the assignment cards — not a player slot.
+    showToast(`🎮 Controller Connected: ${name} (Pad ${(pad?.index ?? 0) + 1})`, 'info', 4000);
   });
 
   window.addEventListener('gamepaddisconnected', (e) => {
     const pad = e.gamepad;
-    showToast(`⚠️ Controller Disconnected: Slot P${(pad?.index ?? 0) + 1}`, 'warning', 4000);
+    showToast(`⚠️ Controller Disconnected: Pad ${(pad?.index ?? 0) + 1}`, 'warning', 4000);
   });
 }
 

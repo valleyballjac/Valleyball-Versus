@@ -6,7 +6,7 @@ import { hideMainMenuSettingsModal, getMainMenuSettingsModalEl } from './setting
 import { hideHowToPlayModal, getControlsModalEl } from './howToPlayModal.js';
 import { updateTitleFocusUI } from './titleScreen.js';
 
-import { pollAssignmentGamepads } from './controllerAssignment.js';
+import { pollAssignmentGamepads, handleAssignmentKey } from './controllerAssignment.js';
 
 let navCallbacks = {
   showTitleScreen: null,
@@ -287,28 +287,27 @@ export function startMenuGamepadPolling() {
         btnBothAI?.click();
         return;
       }
+      // The keys below move the keyboard's own card. Key auto-repeat must not: a
+      // held Enter from the title would otherwise join or continue on its own.
+      if (e.repeat) return;
       if (e.code === 'KeyB') {
         e.preventDefault();
-        const unassignBtn = state.controllerAssignmentEl?.querySelector('.contextual-btn-badge[title="Drop to bench"]');
-        unassignBtn?.click();
+        handleAssignmentKey('drop');
         return;
       }
       if (e.code === 'Enter' || e.code === 'Space') {
         e.preventDefault();
-        const btnProceed = document.getElementById('assignment-btn-proceed');
-        btnProceed?.click();
+        handleAssignmentKey('confirm');
         return;
       }
       if (e.code === 'ArrowLeft' || e.code === 'KeyA') {
         e.preventDefault();
-        const btnClaim1 = document.getElementById('btn-claim-team1');
-        btnClaim1?.click();
+        handleAssignmentKey('left');
         return;
       }
       if (e.code === 'ArrowRight' || e.code === 'KeyD') {
         e.preventDefault();
-        const btnClaim2 = document.getElementById('btn-claim-team2');
-        btnClaim2?.click();
+        handleAssignmentKey('right');
         return;
       }
       return;
