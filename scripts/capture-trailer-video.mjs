@@ -457,11 +457,14 @@ async function runCapture() {
   // Composite in RGB, encode once to BT.709 limited range at the end. The raw
   // frames are full-range BT.601 (JPEG), and mixing that with limited-range
   // caption overlays lifted their blacks; untagged full-range output crushes
-  // on players that assume broadcast range for HD.
+  // on players that assume broadcast range for HD. zimg (zscale) does both
+  // conversions: on a trailer frame swscale's BT.709 path drifted 2-3 levels
+  // darker, while zimg's full round trip held to 0.01.
+  const toRgb = 'zscale=matrixin=470bg:rangein=full:range=full,format=gbrp';
   const skipBaseFade = process.argv.includes('--from-faded-master');
   const baseV0Filter = skipBaseFade
-    ? '[0:v]trim=duration=83.8,format=gbrp,fps=60,setpts=PTS-STARTPTS[vbase0]'
-    : '[0:v]trim=duration=83.8,format=gbrp,fade=t=in:st=0:d=2.0,fade=t=out:st=83.0:d=0.8,fps=60,setpts=PTS-STARTPTS[vbase0]';
+    ? `[0:v]trim=duration=83.8,${toRgb},fps=60,setpts=PTS-STARTPTS[vbase0]`
+    : `[0:v]trim=duration=83.8,${toRgb},fade=t=in:st=0:d=2.0,fade=t=out:st=83.0:d=0.8,fps=60,setpts=PTS-STARTPTS[vbase0]`;
 
   ALL_TRAILER_OVERLAYS.forEach((cap, idx) => {
     const inputIdx = 3 + idx;
@@ -486,9 +489,12 @@ async function runCapture() {
     ...captionFilterSteps,
     '[1:v]format=gbrp,trim=duration=10.7,fade=t=in:st=0:d=0.8,fps=60,setpts=PTS-STARTPTS[v1]',
     '[v0][v1]concat=n=2:v=1:a=0,trim=duration=94.5,fps=60,setpts=PTS-STARTPTS,' +
-      'scale=out_color_matrix=bt709:out_range=tv,format=yuv420p[vout]'
+      'zscale=matrix=709:range=limited,format=yuv420p[vout]'
   ].join(';');
-  const bt709Tags = ['-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-color_range', 'tv'];
+  // Matrix and range are what a player needs to decode the pixels. Primaries
+  // and transfer stay unspecified (players assume BT.709 for HD): -color_trc
+  // and -color_primaries lose to the frames' own unspecified properties anyway.
+  const bt709Tags = ['-colorspace', 'bt709', '-color_range', 'tv'];
 
   // Game-SFX stem from the events exported by the capture that made RAW_MP4
   if (fs.existsSync(SFX_EVENTS_JSON) && !process.argv.includes('--no-sfx')) {
