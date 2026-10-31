@@ -14,10 +14,11 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawn, execFileSync } from 'node:child_process';
+import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { chromium } from 'playwright';
 import { createServer } from 'vite';
 import { ALL_TRAILER_OVERLAYS, generateTrailerCaptions } from './generate_trailer_captions.mjs';
+import { buildSfxStem } from './trailer-sfx.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const VITE_PORT = 5183;
@@ -30,6 +31,52 @@ const DEBUT_MP4 = path.join(OUT_DIR, 'valleyball_versus_debut_trailer_1080p60.mp
 const SOCIAL_MP4 = path.join(OUT_DIR, 'valleyball_versus_official_trailer_social_1080p.mp4');
 const MUSIC_PATH = path.join(ROOT, 'public', 'audio', 'music', 'track_trailer_neon_velocity.mp3');
 const TITLE_CARD = path.join(OUT_DIR, 'title_card_galaxy.png');
+
+// Trailer render quality. 'high' lights the arena with all four floodlight towers
+// (the game ships 'balanced': one shadow-casting tower), and 4096 shadow maps keep
+// each athlete's four shadows crisp where 1024 blurs them into smudges.
+const TRAILER_SHADOW_QUALITY = 'high';
+const TRAILER_SHADOW_MAP_SIZE = 4096;
+// Frames pass through a JPEG and an intermediate encode before the master
+// encode, so keep both near-lossless.
+const FRAME_JPEG_QUALITY = 1.0;
+const RAW_CRF = 12;
+
+// Audio master: music plus, when present, the synced game-SFX stem, normalised
+// in two passes to the -14 LUFS streaming target with peak headroom for AAC.
+const SFX_EVENTS_JSON = path.join(OUT_DIR, 'sfx_events.json');
+const SFX_STEM = path.join(OUT_DIR, 'sfx_stem.wav');
+const SFX_GAIN_DB = 0;
+const AUDIO_MASTER_WAV = path.join(OUT_DIR, 'trailer_audio_master.wav');
+const LOUDNESS = 'I=-14:TP=-1.5:LRA=11';
+
+function masterAudio() {
+  const hasSfx = fs.existsSync(SFX_STEM);
+  const premaster = path.join(OUT_DIR, 'trailer_audio_premaster.wav');
+  const mix = hasSfx
+    ? '[0:a]apad=whole_dur=94.5,atrim=duration=94.5[music];' +
+      `[1:a]apad=whole_dur=94.5,atrim=duration=94.5,volume=${SFX_GAIN_DB}dB[sfx];` +
+      '[music][sfx]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.95[mix]'
+    : '[0:a]apad=whole_dur=94.5,atrim=duration=94.5[mix]';
+  execFileSync('ffmpeg', [
+    '-y', '-i', MUSIC_PATH, ...(hasSfx ? ['-i', SFX_STEM] : []),
+    '-filter_complex', mix, '-map', '[mix]', '-ar', '48000', '-c:a', 'pcm_s24le', premaster,
+  ], { stdio: 'pipe' });
+
+  // Pass 1 measures; pass 2 applies one linear gain to land exactly on target.
+  // loudnorm prints its measurement JSON on stderr
+  const measured = spawnSync('ffmpeg', [
+    '-hide_banner', '-i', premaster, '-af', `loudnorm=${LOUDNESS}:print_format=json`, '-f', 'null', '-',
+  ], { encoding: 'utf8' }).stderr;
+  const m = JSON.parse(measured.slice(measured.lastIndexOf('{')));
+  execFileSync('ffmpeg', [
+    '-y', '-i', premaster,
+    '-af', `loudnorm=${LOUDNESS}:measured_I=${m.input_i}:measured_TP=${m.input_tp}:measured_LRA=${m.input_lra}:measured_thresh=${m.input_thresh}:offset=${m.target_offset}:linear=true`,
+    '-ar', '48000', '-c:a', 'pcm_s24le', AUDIO_MASTER_WAV,
+  ], { stdio: 'pipe' });
+  console.log(`[capture] Audio master (${hasSfx ? 'music + game SFX' : 'music only'}): ${m.input_i} LUFS -> -14 LUFS target`);
+  return AUDIO_MASTER_WAV;
+}
 
 fs.mkdirSync(OUT_DIR, { recursive: true });
 
@@ -56,7 +103,7 @@ async function startFramePipeReceiver(outputFilePath) {
     '-i', 'pipe:0',
     '-c:v', 'libx264',
     '-preset', 'slow',
-    '-crf', '17',
+    '-crf', String(RAW_CRF),
     '-pix_fmt', 'yuv420p',
     outputFilePath,
   ], { stdio: ['pipe', 'inherit', 'inherit'] });
@@ -129,9 +176,12 @@ async function runCapture() {
   await ensureTitleCardAndCaptions();
 
   const compositeOnly = process.argv.includes('--composite-only') && fs.existsSync(RAW_MP4);
+  // --harvest-only stops after the harvest, so it must not start the frame
+  // receiver: that deletes RAW_MP4 to make room for the new capture.
+  const harvestOnly = process.argv.includes('--harvest-only');
   if (!compositeOnly) {
     // 1. Start frame pipe receiver and FFmpeg child process
-    const receiver = await startFramePipeReceiver(RAW_MP4);
+    const receiver = harvestOnly ? null : await startFramePipeReceiver(RAW_MP4);
 
     // 2. Start Vite server
     console.log(`[capture] Launching Vite server on port ${VITE_PORT}...`);
@@ -180,7 +230,7 @@ async function runCapture() {
     await page.waitForTimeout(5000); // Allow assets, shaders, and arena.glb to settle
 
     // 5. Setup match, verify active GPU, pre-warm WebGL shaders, and enter deterministic mode
-    const setupInfo = await page.evaluate(async (framePort) => {
+    const setupInfo = await page.evaluate(async ({ shadowQuality, shadowMapSize }) => {
       // Hide all UI
       let style = document.getElementById('cap-ui-hide');
       if (!style) {
@@ -224,6 +274,22 @@ async function runCapture() {
         if (window.__vb.hustleBoards?.group) window.__vb.hustleBoards.group.visible = true;
       }
 
+      // Stadium lighting at trailer quality, set before the warmup so the
+      // shadow-casting shader variants compile there rather than on frame 0.
+      window.__vb.applyRenderSettings({ shadowQuality });
+      const lighting = [];
+      window.__vb.scene.traverse((obj) => {
+        if (!obj.isDirectionalLight) return;
+        if (obj.castShadow) {
+          obj.shadow.mapSize.set(shadowMapSize, shadowMapSize);
+          if (obj.shadow.map) {
+            obj.shadow.map.dispose();
+            obj.shadow.map = null;
+          }
+        }
+        lighting.push(obj.castShadow ? obj.shadow.mapSize.x : 0);
+      });
+
       // 2-second render warmup to compile all shaders
       await new Promise(r => setTimeout(r, 2000));
 
@@ -243,10 +309,48 @@ async function runCapture() {
         window.__vb.trailerDirector.start(0);
       }
 
-      return { activeRenderer, harvestReport };
-    }, FRAME_SERVER_PORT);
+      // Game-SFX events shown on each trailer frame, for the offline SFX stem:
+      // playback replays recorded poses, so the game's sound dispatch never runs.
+      // Read-only walk of the schedule; it does not touch playback state.
+      const sfxEvents = [];
+      const td = window.__vb?.trailerDirector;
+      if (td?._schedule?.length) {
+        const radiusOf = { small: 0.20, medium: 0.50, large: 0.75 };
+        let lastGlassFrame = -99;
+        for (let frame = 0; frame < 5028; frame++) {
+          const entry = td._getScheduleEntryForFrame(frame);
+          if (!entry?.game?.frames) continue;
+          const local = frame - entry.startFrame;
+          const clipTick = entry.startTick + local;
+          // Past the clip's last tick playback holds the final pose: no new events
+          if (clipTick >= entry.game.frames.length) continue;
+          const rec = entry.game.frames[clipTick];
+          const prev = local > 0 ? entry.game.frames[clipTick - 1] : null;
+          if (!rec) continue;
+          const radius = radiusOf[entry.game.ballType || entry.ballType || 'medium'] ?? 0.5;
+          if (rec.hitBy !== -1) {
+            const grounded = rec.hitBy === 0 ? rec.p1Grounded : rec.p2Grounded;
+            sfxEvents.push({ frame, type: 'strike', kind: rec.hitKind, speed: rec.bSpeed, radius, airborne: !grounded });
+          } else if (prev && prev.bvy < -1.2 && rec.bvy > 0.3 && !rec.wallBounce) {
+            sfxEvents.push({ frame, type: 'bounce', speed: -prev.bvy, radius });
+          }
+          if (rec.wallBounce && frame - lastGlassFrame > 8) {
+            lastGlassFrame = frame;
+            sfxEvents.push({ frame, type: 'glass', speed: rec.bSpeed });
+          }
+          if (entry.goalTick >= 0 && clipTick === entry.goalTick) {
+            sfxEvents.push({ frame, type: 'goal' });
+          }
+        }
+      }
+
+      return { activeRenderer, harvestReport, lighting, sfxEvents };
+    }, { shadowQuality: TRAILER_SHADOW_QUALITY, shadowMapSize: TRAILER_SHADOW_MAP_SIZE });
 
     console.log(`[capture] Active WebGL Renderer: ${setupInfo.activeRenderer}`);
+    console.log(`[capture] Stadium lighting: ${TRAILER_SHADOW_QUALITY}, shadow maps per directional light ${JSON.stringify(setupInfo.lighting)} (0 = no shadow)`);
+    fs.writeFileSync(SFX_EVENTS_JSON, JSON.stringify(setupInfo.sfxEvents));
+    console.log(`[capture] Exported ${setupInfo.sfxEvents.length} game-SFX events -> ${SFX_EVENTS_JSON}`);
     if (setupInfo.harvestReport) {
       const hr = setupInfo.harvestReport;
       console.log(
@@ -258,8 +362,7 @@ async function runCapture() {
       const totalRunAway = hr.scheduleSummary.reduce((acc, s) => acc + s.runningAwayTicks, 0);
       console.log(`[capture] Schedule Audit (${hr.scheduleCount} cuts): Max single-tick ball step = ${maxStepOverall.toFixed(3)}m (0 respawns verified!) | Total running-away ticks = ${totalRunAway}`);
       console.table(hr.scheduleSummary);
-      if (process.argv.includes('--harvest-only')) {
-        receiver.server.close();
+      if (harvestOnly) {
         await browser.close();
         await viteServer.close();
         process.exit(0);
@@ -272,7 +375,7 @@ async function runCapture() {
     console.log(`[capture] Stepping & piping ${TOTAL_FRAMES} frames (83.800s footage @ 60 FPS)...`);
 
     const tStart = Date.now();
-    await page.evaluate(async ({ totalFrames, framePort }) => {
+    await page.evaluate(async ({ totalFrames, framePort, jpegQuality }) => {
       const canvas = document.getElementById('viewport');
       const dt = 1 / 60;
 
@@ -280,8 +383,8 @@ async function runCapture() {
         // 1. Step simulation, physics, and directorial camera by exactly 1/60s
         window.__vb.stepDeterministicFrame(dt);
 
-        // 2. Export canvas to high-quality JPEG blob (0.94 quality)
-        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.94));
+        // 2. Export canvas to a near-lossless JPEG blob
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', jpegQuality));
 
         // 3. Pipe binary frame over HTTP directly into FFmpeg stdin
         await fetch(`http://127.0.0.1:${framePort}/frame`, {
@@ -297,7 +400,7 @@ async function runCapture() {
 
       // Notify receiver that all frames have completed
       await fetch(`http://127.0.0.1:${framePort}/done`, { method: 'POST' });
-    }, { totalFrames: TOTAL_FRAMES, framePort: FRAME_SERVER_PORT });
+    }, { totalFrames: TOTAL_FRAMES, framePort: FRAME_SERVER_PORT, jpegQuality: FRAME_JPEG_QUALITY });
 
     const captureElapsedSec = ((Date.now() - tStart) / 1000).toFixed(1);
     console.log(`[capture] Frame stepping complete in ${captureElapsedSec}s (avg ${(TOTAL_FRAMES / captureElapsedSec).toFixed(1)} FPS encoding speed).`);
@@ -350,9 +453,19 @@ async function runCapture() {
     baseV0Filter,
     ...captionFilterSteps,
     '[1:v]trim=duration=10.7,fade=t=in:st=0:d=0.8,fps=60,setpts=PTS-STARTPTS[v1]',
-    '[v0][v1]concat=n=2:v=1:a=0,trim=duration=94.5,fps=60,setpts=PTS-STARTPTS[vout]',
-    '[2:a]volume=enable=\'between(t,44.2,78.4)\':volume=0.75:eval=frame,apad=whole_dur=94.5,atrim=duration=94.5[aout]'
+    '[v0][v1]concat=n=2:v=1:a=0,trim=duration=94.5,fps=60,setpts=PTS-STARTPTS[vout]'
   ].join(';');
+
+  // Game-SFX stem from the events exported by the capture that made RAW_MP4
+  if (fs.existsSync(SFX_EVENTS_JSON) && !process.argv.includes('--no-sfx')) {
+    const events = JSON.parse(fs.readFileSync(SFX_EVENTS_JSON, 'utf8'));
+    const counts = buildSfxStem(events, { audioDir: path.join(ROOT, 'public', 'audio'), outPath: SFX_STEM, durationSec: 94.5 });
+    console.log(`[capture] Game-SFX stem: ${JSON.stringify(counts)} -> ${SFX_STEM}`);
+  } else if (fs.existsSync(SFX_STEM)) {
+    fs.unlinkSync(SFX_STEM);
+  }
+
+  const audioMaster = masterAudio();
 
   // A. Broadcast Master (1080p60 high-bitrate H.264 / 320k AAC)
   console.log('\n[capture] Encoding Deliverable 1: Broadcast Master 1080p60 MP4...');
@@ -360,11 +473,11 @@ async function runCapture() {
     '-y',
     '-i', RAW_MP4,
     '-loop', '1', '-t', '12.0', '-r', '60', '-i', TITLE_CARD,
-    '-i', MUSIC_PATH,
+    '-i', audioMaster,
     ...captionInputs,
     '-filter_complex', filterGraph,
     '-map', '[vout]',
-    '-map', '[aout]',
+    '-map', '2:a',
     '-r', '60',
     '-c:v', 'libx264',
     '-preset', 'slow',
@@ -381,20 +494,18 @@ async function runCapture() {
 
   // B. Social Web Cut (<25 MB for Twitter / Discord)
   console.log('\n[capture] Encoding Deliverable 2: Social Web Cut (<25 MB)...');
-  const socialArgs = [
-    '-y',
-    '-i', MASTER_MP4,
+  // Two-pass to a 24 MB budget: CRF with a maxrate cap can't promise a size.
+  const socialAudioKbps = 192;
+  const socialVideoKbps = Math.floor((24 * 8 * 1024 * 1024) / 94.5 / 1000) - socialAudioKbps;
+  const socialVideoArgs = [
     '-c:v', 'libx264',
     '-preset', 'slow',
-    '-crf', '24.5',
-    '-maxrate', '1900k',
-    '-bufsize', '3800k',
+    '-b:v', `${socialVideoKbps}k`,
     '-pix_fmt', 'yuv420p',
-    '-c:a', 'aac',
-    '-b:a', '192k',
-    SOCIAL_MP4
+    '-passlogfile', path.join(OUT_DIR, 'social_2pass'),
   ];
-  execFileSync('ffmpeg', socialArgs, { stdio: 'inherit' });
+  execFileSync('ffmpeg', ['-y', '-i', MASTER_MP4, ...socialVideoArgs, '-pass', '1', '-an', '-f', 'null', '-'], { stdio: 'inherit' });
+  execFileSync('ffmpeg', ['-y', '-i', MASTER_MP4, ...socialVideoArgs, '-pass', '2', '-c:a', 'aac', '-b:a', `${socialAudioKbps}k`, SOCIAL_MP4], { stdio: 'inherit' });
   const socialSizeMb = (fs.statSync(SOCIAL_MP4).size / (1024 * 1024)).toFixed(2);
   console.log(`[capture] Social Web MP4 created: ${SOCIAL_MP4} (${socialSizeMb} MB)`);
 
