@@ -48,7 +48,21 @@ const SFX_EVENTS_JSON = path.join(OUT_DIR, 'sfx_events.json');
 const SFX_STEM = path.join(OUT_DIR, 'sfx_stem.wav');
 const SFX_GAIN_DB = 0;
 const AUDIO_MASTER_WAV = path.join(OUT_DIR, 'trailer_audio_master.wav');
-const LOUDNESS = 'I=-14:TP=-1.5:LRA=11';
+const TARGET_LUFS = -14;
+// Sample-peak ceiling; inter-sample overs then stay under the -1.5 dBTP target.
+const LIMIT_DBFS = -2.0;
+
+// ebur128 prints its summary on stderr: integrated loudness and true peak.
+function measureLoudness(file) {
+  const log = spawnSync('ffmpeg', [
+    '-hide_banner', '-nostats', '-i', file, '-af', 'ebur128=peak=true', '-f', 'null', '-',
+  ], { encoding: 'utf8' }).stderr;
+  const summary = log.slice(log.lastIndexOf('Summary:'));
+  return {
+    integrated: parseFloat(summary.match(/I:\s+(-?[\d.]+) LUFS/)[1]),
+    truePeak: parseFloat(summary.match(/Peak:\s+(-?[\d.]+|-inf) dBFS/)[1]),
+  };
+}
 
 function masterAudio() {
   const hasSfx = fs.existsSync(SFX_STEM);
@@ -56,25 +70,33 @@ function masterAudio() {
   const mix = hasSfx
     ? '[0:a]apad=whole_dur=94.5,atrim=duration=94.5[music];' +
       `[1:a]apad=whole_dur=94.5,atrim=duration=94.5,volume=${SFX_GAIN_DB}dB[sfx];` +
-      '[music][sfx]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.95[mix]'
+      '[music][sfx]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[mix]'
     : '[0:a]apad=whole_dur=94.5,atrim=duration=94.5[mix]';
+  // Float premaster: overlaps above full scale survive until the limiter
   execFileSync('ffmpeg', [
     '-y', '-i', MUSIC_PATH, ...(hasSfx ? ['-i', SFX_STEM] : []),
-    '-filter_complex', mix, '-map', '[mix]', '-ar', '48000', '-c:a', 'pcm_s24le', premaster,
+    '-filter_complex', mix, '-map', '[mix]', '-ar', '48000', '-c:a', 'pcm_f32le', premaster,
   ], { stdio: 'pipe' });
 
-  // Pass 1 measures; pass 2 applies one linear gain to land exactly on target.
-  // loudnorm prints its measurement JSON on stderr
-  const measured = spawnSync('ffmpeg', [
-    '-hide_banner', '-i', premaster, '-af', `loudnorm=${LOUDNESS}:print_format=json`, '-f', 'null', '-',
-  ], { encoding: 'utf8' }).stderr;
-  const m = JSON.parse(measured.slice(measured.lastIndexOf('{')));
-  execFileSync('ffmpeg', [
-    '-y', '-i', premaster,
-    '-af', `loudnorm=${LOUDNESS}:measured_I=${m.input_i}:measured_TP=${m.input_tp}:measured_LRA=${m.input_lra}:measured_thresh=${m.input_thresh}:offset=${m.target_offset}:linear=true`,
-    '-ar', '48000', '-c:a', 'pcm_s24le', AUDIO_MASTER_WAV,
-  ], { stdio: 'pipe' });
-  console.log(`[capture] Audio master (${hasSfx ? 'music + game SFX' : 'music only'}): ${m.input_i} LUFS -> -14 LUFS target`);
+  // One static gain to the target, then a fixed-ceiling limiter. loudnorm's
+  // linear mode falls back to dynamic gain riding when the peaks can't take the
+  // gain, and alimiter's default auto-level would undo the ceiling.
+  const limit = Math.pow(10, LIMIT_DBFS / 20).toFixed(4);
+  let gainDb = TARGET_LUFS - measureLoudness(premaster).integrated;
+  let result = null;
+  for (let pass = 0; pass < 2; pass++) {
+    execFileSync('ffmpeg', [
+      '-y', '-i', premaster,
+      '-af', `volume=${gainDb.toFixed(2)}dB,alimiter=limit=${limit}:attack=2:release=60:level=disabled`,
+      '-ar', '48000', '-c:a', 'pcm_s24le', AUDIO_MASTER_WAV,
+    ], { stdio: 'pipe' });
+    result = measureLoudness(AUDIO_MASTER_WAV);
+    // Limiting shaves a little loudness; one correction pass recovers it
+    if (Math.abs(result.integrated - TARGET_LUFS) <= 0.2) break;
+    gainDb += TARGET_LUFS - result.integrated;
+  }
+  console.log(`[capture] Audio master (${hasSfx ? `music + game SFX at ${SFX_GAIN_DB} dB` : 'music only'}): ` +
+    `${result.integrated} LUFS, true peak ${result.truePeak} dBTP`);
   return AUDIO_MASTER_WAV;
 }
 
