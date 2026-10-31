@@ -503,11 +503,13 @@ async function runCapture() {
     '-r', '60',
     '-c:v', 'libx264',
     '-preset', 'slow',
-    '-crf', '17',
+    // Headroom for the platforms' own re-encode of the upload
+    '-crf', '15',
     '-fps_mode', 'cfr',
     '-pix_fmt', 'yuv420p',
     '-c:a', 'aac',
     '-b:a', '320k',
+    '-movflags', '+faststart',
     MASTER_MP4
   ];
   execFileSync('ffmpeg', masterArgs, { stdio: 'inherit' });
@@ -527,7 +529,7 @@ async function runCapture() {
     '-passlogfile', path.join(OUT_DIR, 'social_2pass'),
   ];
   execFileSync('ffmpeg', ['-y', '-i', MASTER_MP4, ...socialVideoArgs, '-pass', '1', '-an', '-f', 'null', '-'], { stdio: 'inherit' });
-  execFileSync('ffmpeg', ['-y', '-i', MASTER_MP4, ...socialVideoArgs, '-pass', '2', '-c:a', 'aac', '-b:a', `${socialAudioKbps}k`, SOCIAL_MP4], { stdio: 'inherit' });
+  execFileSync('ffmpeg', ['-y', '-i', MASTER_MP4, ...socialVideoArgs, '-pass', '2', '-c:a', 'aac', '-b:a', `${socialAudioKbps}k`, '-movflags', '+faststart', SOCIAL_MP4], { stdio: 'inherit' });
   const socialSizeMb = (fs.statSync(SOCIAL_MP4).size / (1024 * 1024)).toFixed(2);
   console.log(`[capture] Social Web MP4 created: ${SOCIAL_MP4} (${socialSizeMb} MB)`);
 
