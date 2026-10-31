@@ -22,7 +22,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { TUNING } from '../config/tuning.js';
 import { createBotController, updateBot } from './botController.js';
 import { testHoopCrossing } from '../mechanics/scoring.js';
-import { toTrimeshArrays, backBoundaryTrimesh } from '../sim/arena.js';
+import { toTrimeshArrays } from '../sim/arena.js';
 import { getCourtFloorY } from './botPerception.js';
 import {
   createTelemetryRecorder,
@@ -117,12 +117,6 @@ export async function initHeadless() {
               }
             }
           });
-          // Procedural back-boundary seal: mirror the live arena's double-sided
-          // vertical wall at z = +-60 (see backBoundaryTrimesh in sim/arena.js).
-          {
-            const bb = backBoundaryTrimesh();
-            meshes.push({ name: 'COL_BackBoundary', vertices: bb.vertices, indices: bb.indices, fixInternalEdges: false });
-          }
           if (meshes.length > 0) {
             cachedCollisionMeshes = meshes;
           }

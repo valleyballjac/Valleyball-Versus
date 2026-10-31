@@ -25,6 +25,24 @@ import { RAPIER, getWorld, ENVIRONMENT_GROUPS } from './physics.js';
 const arenaColliderTypes = new Map();
 
 /**
+ * DEBUG: ?showColliders=1 renders the authored collision proxies as colored
+ * wireframes instead of hiding them, so the terrain hand-off can be eyeballed
+ * against the visual mesh. Boundary=cyan, court=green, goal=orange. Off by
+ * default and never active headless, so determinism (LAW 6) is untouched.
+ */
+function wantColliderWireframes() {
+  if (typeof location === 'undefined' || !location.search) return false;
+  return /(?:^|[?&])showColliders=1(?:&|$)/.test(location.search);
+}
+const SHOW_COLLIDERS = wantColliderWireframes();
+
+function colliderDebugColor(owner) {
+  if (owner.includes('Barrier') || owner.includes('Boundary')) return 0x00ffff; // cyan
+  if (owner.includes('Goal') || owner.includes('Hoop')) return 0xffa500; // orange
+  return 0x00ff00; // green — court / anything else
+}
+
+/**
  * Returns the semantic surface type of an arena collider ('court', 'boundary', 'goal')
  * @param {number} handle Rapier collider handle
  * @returns {'court'|'boundary'|'goal'|null}
@@ -159,67 +177,6 @@ export function toTrimeshArrays(geometry, options = {}) {
     degenerateCount,
     invertedCount,
   };
-}
-
-/**
- * Procedural vertical back-boundary wall that seals the open gap at the two
- * back ends of the Valley Court (z = +-60). The authored COL_Barriers geometry
- * leaves the lower back boundary unsealed: below the V-shaped back triangle
- * (whose bottom edge rises from y = 11 at x = 0 to y = 13 at |x| = 25) and the
- * glass above y = 13, there is no collider. A ball or athlete moving
- * horizontally toward z = +-60 below that lower edge tunnels clean past the
- * court and out of the world (measured on a 24 m/s sweep in the gap band
- * y in [7, 11]).
- *
- * This returns a double-sided vertical wall spanning x in [-25, 25], y in
- * [6.0, 30.0] at both z = +60 and z = -60. Double-sided (both windings are
- * emitted) so the wall collides and resolves a correct normal from either
- * approach direction regardless of authored winding. No FIX_INTERNAL_EDGES:
- * the two coincident opposite-wound faces must not be welded together.
- *
- * Deterministic: coordinates are fixed literals, no scene graph, no RNG.
- *
- * @returns {{ vertices: Float32Array, indices: Uint32Array }}
- */
-export function backBoundaryTrimesh() {
-  const X0 = -25;
-  const X1 = 25;
-  const Y0 = 6.0;
-  const Y1 = 30.0;
-  const walls = [60.0, -60.0];
-  // 4 unique corners per wall, 4 triangles per wall (2 for each winding).
-  const vertices = new Float32Array(walls.length * 4 * 3);
-  const indices = new Uint32Array(walls.length * 12);
-  let v = 0;
-  let i = 0;
-  for (const z of walls) {
-    // Corners in the wall's own x-y plane: A(-25,6) B(-25,13) C(25,13) D(25,6).
-    const vi = v / 3;
-    const corners = [
-      [X0, Y0, z],
-      [X0, Y1, z],
-      [X1, Y1, z],
-      [X1, Y0, z],
-    ];
-    for (const c of corners) {
-      vertices[v++] = c[0];
-      vertices[v++] = c[1];
-      vertices[v++] = c[2];
-    }
-    // Front pair (0,1,2),(0,2,3) and back pair (0,2,1),(0,3,2) = double-sided.
-    const tris = [
-      [0, 1, 2],
-      [0, 2, 3],
-      [0, 2, 1],
-      [0, 3, 2],
-    ];
-    for (const t of tris) {
-      indices[i++] = vi + t[0];
-      indices[i++] = vi + t[1];
-      indices[i++] = vi + t[2];
-    }
-  }
-  return { vertices, indices };
 }
 
 /**
@@ -480,8 +437,23 @@ async function loadCourtArena(scene) {
 
     if (hasDedicatedColliders) {
       if (isColliderProxy) {
-        // Dedicated collision geometry: invisible in the render pass
-        object.visible = false;
+        if (SHOW_COLLIDERS) {
+          // Debug view: render the collision proxy as a colored wireframe laid
+          // over the scene (depthTest off so it reads through the visual floor).
+          object.material = new THREE.MeshBasicMaterial({
+            color: colliderDebugColor(owner),
+            wireframe: true,
+            transparent: true,
+            opacity: 0.9,
+            depthTest: false,
+            depthWrite: false,
+          });
+          object.renderOrder = 1000;
+          object.visible = true;
+        } else {
+          // Dedicated collision geometry: invisible in the render pass
+          object.visible = false;
+        }
       } else {
         // Visual mesh: normalise materials, render with shadows, skip physics collision
         object.receiveShadow = true;
@@ -563,30 +535,6 @@ async function loadCourtArena(scene) {
     degenerateCount += dropped;
     invertedCount += droppedInverted;
   });
-
-  // Procedural back-boundary seal (see backBoundaryTrimesh). The authored
-  // COL_Barriers geometry leaves the lower back wall open at z = +-60 below the
-  // V-shaped back triangle / glass, so a horizontal ball or athlete tunnels out
-  // of the world there. Inject a deterministic double-sided vertical wall on the
-  // same fixed body, classified as a 'boundary' collider so gameplay code treats
-  // it exactly like the authored glass.
-  {
-    const { vertices, indices } = backBoundaryTrimesh();
-    const desc = RAPIER.ColliderDesc.trimesh(vertices, indices);
-    const collider = world.createCollider(desc, body);
-    collider.setCollisionGroups(ENVIRONMENT_GROUPS);
-    colliders.push(collider);
-    arenaColliderTypes.set(collider.handle, 'boundary');
-    collidable.set('COL_BackBoundary', indices.length / 3);
-    triangleCount += indices.length / 3;
-    for (let v = 0; v < vertices.length; v += 3) {
-      for (let axis = 0; axis < 3; axis += 1) {
-        const value = vertices[v + axis];
-        if (value < bounds.min[axis]) bounds.min[axis] = value;
-        if (value > bounds.max[axis]) bounds.max[axis] = value;
-      }
-    }
-  }
 
   scene.add(group);
 
