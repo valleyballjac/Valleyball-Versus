@@ -46,7 +46,10 @@ const RAW_CRF = 12;
 // in two passes to the -14 LUFS streaming target with peak headroom for AAC.
 const SFX_EVENTS_JSON = path.join(OUT_DIR, 'sfx_events.json');
 const SFX_STEM = path.join(OUT_DIR, 'sfx_stem.wav');
-const SFX_GAIN_DB = 0;
+// At 0 dB the game's own levels put strikes and glass ~17 dB over the music's
+// local RMS and every hit drives the master limiter; -6 dB sits them ~11 dB
+// over it, bounces ~3 dB: punchy, with the music still leading.
+const SFX_GAIN_DB = -6;
 const AUDIO_MASTER_WAV = path.join(OUT_DIR, 'trailer_audio_master.wav');
 const TARGET_LUFS = -14;
 // Sample-peak ceiling; inter-sample overs then stay under the -1.5 dBTP target.
@@ -69,7 +72,7 @@ function masterAudio() {
   const premaster = path.join(OUT_DIR, 'trailer_audio_premaster.wav');
   const mix = hasSfx
     ? '[0:a]apad=whole_dur=94.5,atrim=duration=94.5[music];' +
-      `[1:a]apad=whole_dur=94.5,atrim=duration=94.5,volume=${SFX_GAIN_DB}dB[sfx];` +
+      '[1:a]apad=whole_dur=94.5,atrim=duration=94.5[sfx];' +
       '[music][sfx]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[mix]'
     : '[0:a]apad=whole_dur=94.5,atrim=duration=94.5[mix]';
   // Float premaster: overlaps above full scale survive until the limiter
@@ -481,7 +484,7 @@ async function runCapture() {
   // Game-SFX stem from the events exported by the capture that made RAW_MP4
   if (fs.existsSync(SFX_EVENTS_JSON) && !process.argv.includes('--no-sfx')) {
     const events = JSON.parse(fs.readFileSync(SFX_EVENTS_JSON, 'utf8'));
-    const counts = buildSfxStem(events, { audioDir: path.join(ROOT, 'public', 'audio'), outPath: SFX_STEM, durationSec: 94.5 });
+    const counts = buildSfxStem(events, { audioDir: path.join(ROOT, 'public', 'audio'), outPath: SFX_STEM, durationSec: 94.5, gainDb: SFX_GAIN_DB });
     console.log(`[capture] Game-SFX stem: ${JSON.stringify(counts)} -> ${SFX_STEM}`);
   } else if (fs.existsSync(SFX_STEM)) {
     fs.unlinkSync(SFX_STEM);

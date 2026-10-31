@@ -61,7 +61,7 @@ function makeRng(seed) {
   };
 }
 
-export function buildSfxStem(events, { audioDir, outPath, durationSec, seed = 20261031 }) {
+export function buildSfxStem(events, { audioDir, outPath, durationSec, gainDb = 0, seed = 20261031 }) {
   const total = Math.ceil(durationSec * OUT_RATE);
   const mix = new Float32Array(total);
   const cache = new Map();
@@ -151,10 +151,13 @@ export function buildSfxStem(events, { audioDir, outPath, durationSec, seed = 20
     }
   }
 
-  // 16-bit stereo WAV, same signal on both channels; soft clip guards overlaps.
+  // 16-bit stereo WAV, same signal on both channels. The trim gain goes on
+  // before the soft clip, so the clip only touches overlaps that still exceed
+  // full scale rather than flattening every loud hit.
+  const trim = Math.pow(10, gainDb / 20);
   const data = Buffer.alloc(total * 4);
   for (let n = 0; n < total; n++) {
-    const v = Math.tanh(mix[n]);
+    const v = Math.tanh(mix[n] * trim);
     const s = Math.max(-32768, Math.min(32767, Math.round(v * 32767)));
     data.writeInt16LE(s, n * 4);
     data.writeInt16LE(s, n * 4 + 2);
