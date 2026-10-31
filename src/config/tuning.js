@@ -452,6 +452,17 @@ const DEFAULTS = {
     // surface. You cannot be lying on the floor while tracking is healthy, and
     // at weight 0.50 the pelvis servo is at 0.50^5 = 3% of full stiffness.
     mountRecoverBelow: 0.50,
+
+    // BALL KNOCKDOWNS. Separate from the contact-force drain above: a ball
+    // touching an athlete never reaches it (drainImpacts returns first). An
+    // unstruck ball that hits the head or torso queues a knockdown when it is
+    // faster than ballKnockdownSpeed (m/s) OR carries more momentum than
+    // ballKnockdownMomentum (kg m/s). The momentum gate is what makes ball size
+    // matter: the large ball (3.9 kg) passes it from about 8.2 m/s, while the
+    // medium (2.2 kg, 14.6 m/s) and small balls hit the speed gate first.
+    // Moved here from hard-coded 14.0 and 32.0 in main.js.
+    ballKnockdownSpeed: 14.0,
+    ballKnockdownMomentum: 32.0,
   },
 
   // THE STAND-UP. Two continuous signals — how low the pelvis is, and which way
@@ -967,6 +978,15 @@ const DEFAULTS = {
     // constant in main.js and moved here where it belongs: it is a feel number
     // and it was the other half of the early-knockdown complaint.
     stopSpeed: 0.2,
+    // THE SLIDE TACKLE. A slider must be moving faster than this (horizontal
+    // m/s) when they touch a standing opponent for the contact to sweep them.
+    // Below it the contact is an ordinary bump. Run is 4.5 and sprint 6.5, so a
+    // tackle takes a sprint or a fast run. Moved here from a hard-coded 5.5 in
+    // main.js; the How to Play screen reads it from here too.
+    slideTackleMinSpeed: 5.5,
+    // Ticks before the same athlete can tackle again, or take part in another
+    // two-slider clash. Moved here from a hard-coded 15 in main.js.
+    slideTackleCooldownTicks: 15,
     // MUSCLE TONE. Damping authority the character KEEPS while knocked down.
     //
     // It is not a floor on the tracking weight — that was tried and measured

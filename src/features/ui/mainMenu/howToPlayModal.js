@@ -2,6 +2,7 @@
  * 4. How To Play Modal (Controls, Match Basics, Scoring & Pro Tips)
  */
 import { soundManager } from '../../../audio/soundManager.js';
+import { TUNING } from '../../../config/tuning.js';
 
 let rootContainer = null;
 let controlsModalEl = null;
@@ -469,7 +470,7 @@ export function buildHowToPlayModal(rootEl) {
       </div>
       <div style="font-size: 11.5px; color: #cbd5e1; line-height: 1.6; display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
         <div>
-          <p style="margin: 0 0 6px 0;"><strong style="color: #ffffff;">Slide Tackles:</strong> Sliding at speed (> 5.5 m/s) into an opponent sweeps their legs, causing an instant ragdoll knockdown!</p>
+          <p style="margin: 0 0 6px 0;"><strong style="color: #ffffff;">Slide Tackles:</strong> Sliding at speed (> ${TUNING.action.slideTackleMinSpeed} m/s) into an opponent sweeps their legs, causing an instant ragdoll knockdown!</p>
           <p style="margin: 0;"><strong style="color: #ffffff;">Physical Bumps:</strong> Running into an opposing athlete shoves you both apart, harder the faster you're closing.</p>
         </div>
         <div>
