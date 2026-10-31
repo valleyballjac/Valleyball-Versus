@@ -6,8 +6,8 @@
 It is intentionally engineered with high physical discipline, a demanding skill ceiling, and zero arcade magnetism.
 
 * **Forever Free, Pure Sim Identity**: Valleyball Versus does not dilute its core simulation to chase mass-market arcade compromises. The upcoming *Valleyball Arenas* title is designed to explore arcade modes and broader accessibility; *Versus* remains the uncompromising, authentic competitive simulation.
-* **Pure Physical Agency**: A ball is struck only where an athlete's physical limb or body collides with it. There is zero artificial homing, zero curve-assist, and zero trajectory manipulation.
-* **Pure Sim by Default**: The default configuration is `pureSim` (`assistRadius: 0.0`, `aimMagnetism: 0.0`). Preset modes (`standard`, `casual`) exist strictly as optional accessibility toggles in Settings.
+* **Pure Physical Agency**: A ball is struck where an athlete's physical limb or body collides with it (on the default Standard preset, also by a well-timed near miss, see below). There is zero artificial homing, zero curve-assist, and zero trajectory manipulation.
+* **Standard by Default**: The default configuration is `standard` (`assistRadius: 0.45`, `assistWindowTicks: 6`, `aimMagnetism: 0.0`): a swing timed within 6 ticks of the sweet spot also connects with a ball up to 0.45 m from the striking limb. `pureSim` (`assistRadius: 0.0`, `aimMagnetism: 0.0`) is the hardcore option for players who want the challenge, where only real limb contact strikes the ball. `casual` widens the forgiveness further. Each player picks a preset on the player setup screen.
 
 ---
 
