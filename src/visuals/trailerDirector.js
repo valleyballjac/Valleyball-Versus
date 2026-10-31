@@ -346,8 +346,12 @@ export class TrailerDirector {
       athlete.actionState.jumpPhase = 0;
     }
     if (athlete.strikeState) {
-      athlete.strikeState.lastStrikeTick = -999;
-      athlete.strikeState.lastResolvedStrikeTick = -999;
+      // -Infinity is strikes.js's "never struck". Any finite tick reads as a
+      // strike in progress; an athlete with no strike kind yet never completes
+      // it, so strikeMix latches at 1, every clip weight is zero, and the ghost
+      // holds the bind pose: a T-pose until that athlete's first real hit.
+      athlete.strikeState.lastStrikeTick = -Infinity;
+      athlete.strikeState.lastResolvedStrikeTick = -Infinity;
       athlete.strikeState.strikePhase = 0;
       athlete.strikeState.strikeMix = 0;
     }
