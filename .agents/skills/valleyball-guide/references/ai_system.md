@@ -57,7 +57,7 @@ A common failure mode of AI implementations is reducing the bot to simple direct
 
 1. **Sprint Commitment & Carving**:
    - The bot should engage `sprintHeld` when closing large distances across court, while accounting for the physical turning radius (arc commitment).
-2. **The Cut Mechanic (`KeyV` / `LB` / `queueBotAction(slot, 'cut')`)**:
+2. **The Cut Mechanic (`KeyV` / `RB` / `queueBotAction(slot, 'cut')`)**:
    - On the sloped mounds and high-velocity descents, turning purely via steering causes sliding and drift.
    - The bot must execute **Cuts** to plant cleats into the turf, instantly kill momentum, and reverse heading to line up physical strikes.
 3. **Slides & Dives**:
