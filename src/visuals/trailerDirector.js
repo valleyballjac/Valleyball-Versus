@@ -1,149 +1,179 @@
 import * as THREE from 'three';
 import { TUNING } from '../config/tuning.js';
 import { soundManager } from '../audio/soundManager.js';
-import { getBotSlot } from '../input/inputRouter.js';
+import { getInputSlot } from '../input/inputRouter.js';
 import { getCourtFloorY } from '../ai/courtHeightmap.js';
 
 /**
- * VALLEYBALL VERSUS — OFFICIAL TRAILER DIRECTOR (REVISION 5: RESILIENT CAMERAS & NATURAL AI STUNTS)
+ * VALLEYBALL VERSUS — OFFICIAL DEBUT TRAILER DIRECTOR
+ * (100% UNSCRIPTED 80-MATCH HARVEST & BEAT-QUANTIZED RHYTHMIC EDITION)
  *
- * Core Fixes:
- * 1. STRICT TERRAIN CLEARANCE:
- *    Uses getCourtFloorY(x, z) on every frame to guarantee camera is always >= 1.85m above
- *    the authentic court mesh. Zero possibility of going under the banked arena floor.
- * 2. SINGLE HERO MATCH BALL CONTINUITY:
- *    Eliminated setActiveMatchBall calls on cuts. The hero match ball stays live in physics
- *    without being despawned or falling repeatedly from the sky.
- * 3. NATURAL AGGRESSIVE AI STEERING:
- *    Removed static slot.moveWorld overrides. AI bots use their full perception and steering
- *    to aggressively contest the ball, execute dives, and jump-spike overhead.
- * 4. SIDE & 3/4 PERSPECTIVE GOAL CINEMATOGRAPHY:
- *    Frames the Torus hoop from flank angles (x = 14m to 18m) so its 3D depth, aperture,
- *    and the ball rocketing through the ring are visible in sculptural glory.
- * 5. DYNAMIC TARGET FRAMING:
- *    Camera always tracks the centroid of the live action (ball + closest athlete),
- *    never pointing up at empty sky or into the turf.
+ * Architectural & Directorial Invariants:
+ * 1. 100% UNSCRIPTED MATCH HARVESTING:
+ *    - Before rendering the trailer, `runHarvest()` simulates 80+ full unscripted AI-vs-AI
+ *      game situations at ~40x real-time with `trailerDirector.isActive = false`.
+ *    - Every rally, cut, slide, dive, jump, volley, spike, banked wall carom, and Torus hoop
+ *      goal is produced naturally by `botController.js`, `athlete.js`, `strikes.js`,
+ *      `scoring.js`, and Rapier 3D physics.
+ * 2. ZERO BALL RESPAWNS & ZERO RUNNING AWAY:
+ *    - The Highlight Miner scans all ~35,000+ recorded ticks and strictly rejects any clip window
+ *      where a ball or athlete teleports/respawns (`maxBallStep > 1.8m/tick`) or where an
+ *      athlete near the ball runs away from the ball (`engagementScore` filtering).
+ * 3. BEAT-QUANTIZED CUTS (133.333 BPM = 1.800s Bars / 108 Frames @ 60 FPS):
+ *    - Phase 1 (0:00.00 – 44.20s): Monumental Architectural Overture, Hero Portraits & Unbroken Rallies.
+ *    - Phase 2 (44.20s – 62.20s): Ten 1.800s (108-frame) 1-Bar Action & Torus Goal Cuts.
+ *    - Phase 3 (62.20s – 76.60s): Twelve 0.900s (54-frame) Half-Bar Cuts + Quarter/Eighth-Note Blitz.
+ *    - Phase 4 (76.60s – 83.80s): Climax North Torus Goal #6 (4-2) & Celestial Ascension Pullback.
+ *    - Phase 5 (83.80s – 94.50s): Cosmic Deep Space Galaxy Title Card Hold.
+ * 4. 3/4 FLANK TORUS APERTURE FRAMING:
+ *    - All 6 genuine unscripted Torus hoop goals are framed from the 3/4 flank (`|X| = 13m..16m`)
+ *      looking cleanly through the circular X = 0 aperture and stadium scoreboard.
  */
 export class TrailerDirector {
   constructor(camera = null) {
-    this.camera = camera || new THREE.PerspectiveCamera(55, 16 / 9, 0.1, 500);
+    this.camera = camera || new THREE.PerspectiveCamera(50, 16 / 9, 0.1, 500);
     this.isActive = false;
     this.elapsedTime = 0;
     this.duration = 94.5;
 
-    // Vectors for zero-allocation tick calculation
+    // Zero-allocation scratch vectors
     this._pos = new THREE.Vector3();
     this._target = new THREE.Vector3();
     this._smoothPos = new THREE.Vector3();
     this._smoothTarget = new THREE.Vector3();
-    this._smoothFocusX = 0;
-    this._smoothFocusZ = 0;
-    this._initializedFocus = false;
     this._justCut = true;
-    this._ballSmoothPos = new THREE.Vector3(0, 1.0, 0);
+    this._tmpVec = new THREE.Vector3();
 
-    // Raw reel camera, eased toward each frame's framing instead of snapped to it
+    // Raw reel camera state (legacy compatibility)
     this._rawCamPos = new THREE.Vector3();
     this._rawCamTarget = new THREE.Vector3();
     this._rawCamPrimed = false;
 
-    // Camera micro-shake on heavy impacts (positional only, NEVER touches FOV)
+    // Positional micro-shake trauma
     this.trauma = 0.0;
 
-    // Directorial state tracking
+    // Synchronized deterministic tick/frame counter
+    this._tickCount = 0;
+    this._tickStepped = false;
     this._currentCut = -1;
-    this._staccatoSubIndex = -1;
-    this._goalTriggered = false;
-    this._goalStaged = false;
-    this._kickoffTriggered = false;
+    this._stagedCut = -1;
+    this._firedEvents = new Set();
 
-    // Brand Dictionary palette pairings with Series 1 Headwear
-    // Default (idx 0) is classic Red (Football Helmet / wrestler_bands) vs Blue (Cricket Helmet / wicket_grill)
+    // Harvested clip bank & beat-quantized schedule
+    this._harvestedGames = [];
+    this._schedule = [];
+    this._harvestReady = false;
+    this._rngState = 20261027;
+
+    // Official Brand Palettes & Series 1 Headwear Pack
+    // Index 0 is strictly reserved for Classic Red (wrestler_bands) vs Royal Blue (wicket_grill)
     this._palettes = [
-      { name: 'ClassicRedBlue', homeColor: 0xD90429, awayColor: 0x1D4ED8, homeVariant: 'masculine', awayVariant: 'masculine', homeHeadwear: 'wrestler_bands', awayHeadwear: 'wicket_grill' },
-      { name: 'VoltGold', homeColor: 0xFFD000, awayColor: 0x8B5CF6, homeVariant: 'masculine', awayVariant: 'feminine', homeHeadwear: 'sensor_visor', awayHeadwear: 'couture_wrap' },
-      { name: 'IonCyan', homeColor: 0x00E5FF, awayColor: 0xD90429, homeVariant: 'feminine', awayVariant: 'classic', homeHeadwear: 'rigger_band', awayHeadwear: 'ouendan_knot' },
-      { name: 'Emerald', homeColor: 0x10E56A, awayColor: 0xFF6B00, homeVariant: 'classic', awayVariant: 'masculine', homeHeadwear: 'terrace_visor', awayHeadwear: 'cursor_cap' },
-      { name: 'Obsidian', homeColor: 0x0A0A0C, awayColor: 0xFFFFFF, homeVariant: 'masculine', awayVariant: 'feminine', homeHeadwear: 'manager_cap', awayHeadwear: 'broadcaster_mic' },
-      { name: 'RoyalBlue', homeColor: 0x1D4ED8, awayColor: 0xFF6B00, homeVariant: 'feminine', awayVariant: 'classic', homeHeadwear: 'wicket_grill', awayHeadwear: 'wrestler_bands' },
-      { name: 'DeepIndigo', homeColor: 0x6B11FF, awayColor: 0xFFD000, homeVariant: 'masculine', awayVariant: 'feminine', homeHeadwear: 'couture_wrap', awayHeadwear: 'sensor_visor' },
-      { name: 'SolarBlaze', homeColor: 0xFF6B00, awayColor: 0x00E5FF, homeVariant: 'classic', awayVariant: 'masculine', homeHeadwear: 'cursor_cap', awayHeadwear: 'rigger_band' },
+      {
+        name: 'ClassicRedBlue',
+        homeColor: 0xD90429,
+        awayColor: 0x1D4ED8,
+        homeVariant: 'masculine',
+        awayVariant: 'masculine',
+        homeHeadwear: 'wrestler_bands',
+        awayHeadwear: 'wicket_grill',
+      },
+      {
+        name: 'VoltGold_NeonViolet',
+        homeColor: 0xFFD000,
+        awayColor: 0x8B5CF6,
+        homeVariant: 'masculine',
+        awayVariant: 'feminine',
+        homeHeadwear: 'sensor_visor',
+        awayHeadwear: 'couture_wrap',
+      },
+      {
+        name: 'IonCyan_SolarBlaze',
+        homeColor: 0x00E5FF,
+        awayColor: 0xFF6B00,
+        homeVariant: 'feminine',
+        awayVariant: 'classic',
+        homeHeadwear: 'rigger_band',
+        awayHeadwear: 'ouendan_knot',
+      },
+      {
+        name: 'Emerald_SolarBlaze',
+        homeColor: 0x10E56A,
+        awayColor: 0xFF6B00,
+        homeVariant: 'classic',
+        awayVariant: 'masculine',
+        homeHeadwear: 'terrace_visor',
+        awayHeadwear: 'cursor_cap',
+      },
+      {
+        name: 'Obsidian_FrostWhite',
+        homeColor: 0x0F172A,
+        awayColor: 0xF8FAFC,
+        homeVariant: 'masculine',
+        awayVariant: 'feminine',
+        homeHeadwear: 'manager_cap',
+        awayHeadwear: 'broadcaster_mic',
+      },
+      {
+        name: 'DeepIndigo_VoltGold',
+        homeColor: 0x6B11FF,
+        awayColor: 0xFFD000,
+        homeVariant: 'masculine',
+        awayVariant: 'feminine',
+        homeHeadwear: 'couture_wrap',
+        awayHeadwear: 'sensor_visor',
+      },
+      {
+        name: 'SolarBlaze_IonCyan',
+        homeColor: 0xFF6B00,
+        awayColor: 0x00E5FF,
+        homeVariant: 'classic',
+        awayVariant: 'masculine',
+        homeHeadwear: 'cursor_cap',
+        awayHeadwear: 'rigger_band',
+      },
+      {
+        name: 'Emerald_DeepIndigo',
+        homeColor: 0x10E56A,
+        awayColor: 0x6B11FF,
+        homeVariant: 'feminine',
+        awayVariant: 'masculine',
+        homeHeadwear: 'broadcaster_mic',
+        awayHeadwear: 'terrace_visor',
+      },
     ];
 
-    // Stored audio gains for pure music video mode
     this._prevSfxGain = 1.0;
     this._prevAmbGain = 1.0;
     this._prevUiGain = 1.0;
 
-    // Raw reel capture mode configuration
     this.rawReelMode = null;
     this.stuntType = 'rally';
     this.rawDuration = 8.0;
-    this._stuntTriggered = false;
+  }
 
-    // Revision 7 & 8 state tracking: accelerated intro & 6-goal showcase
-    this._introBallSpawned = false;
-    this._introBounceTriggered = false;
-    this._kickoffPrepped = false;
-    this._contendersPositioned = false;
-    this._rally1Serve = false;
-    this._rally1Dig = false;
-    this._rally1Set = false;
-    this._rally1Spike = false;
-    this._goal1Scored = false;
-    this._goal2Staged = false;
-    this._goal2Scored = false;
-    this._goal3Staged = false;
-    this._goal3Scored = false;
-    this._goal4Staged = false;
-    this._goal4Scored = false;
-    this._goal5Staged = false;
-    this._goal5Scored = false;
-    this._goal6Staged = false;
-    this._goal6Scored = false;
+  _nextRng() {
+    this._rngState = (this._rngState * 1664525 + 1013904223) >>> 0;
+    return this._rngState / 4294967296;
   }
 
   /**
-   * Activates the trailer sequence.
+   * Activates the deterministic trailer sequence.
    * @param {number} startOffset - seconds into the sequence (default 0)
    */
   start(startOffset = 0) {
     this.isActive = true;
+    this.rawReelMode = null;
     this.elapsedTime = startOffset;
+    this._tickCount = Math.round(startOffset * 60);
+    this._tickStepped = false;
     this._currentCut = -1;
-    this._staccatoSubIndex = -1;
-    this._goalTriggered = false;
-    this._goalStaged = false;
-    this._kickoffTriggered = false;
-    this._introBallSpawned = false;
-    this._introBounceTriggered = false;
-    this._kickoffPrepped = false;
-    this._contendersPositioned = false;
-    this._introAthletesPositioned = false;
-    this._rally1Serve = false;
-    this._rally1Dig = false;
-    this._rally1Set = false;
-    this._rally1Spike = false;
-    this._goal1Scored = false;
-    this._goal2Staged = false;
-    this._goal2Scored = false;
-    this._goal3Staged = false;
-    this._goal3Scored = false;
-    this._goal4Staged = false;
-    this._goal4Scored = false;
-    this._goal5Staged = false;
-    this._goal5Scored = false;
-    this._goal6Staged = false;
-    this._goal6Scored = false;
+    this._stagedCut = -1;
+    this._firedEvents.clear();
     this.trauma = 0.0;
     this._smoothPos.set(0, 0, 0);
     this._smoothTarget.set(0, 0, 0);
-    this._smoothFocusX = 0;
-    this._smoothFocusZ = 0;
-    this._initializedFocus = false;
     this._justCut = true;
 
-    // Suppress all 2D UI, menus, and debug widgets for pure cinematic presentation
     if (typeof document !== 'undefined') {
       document.body.classList.add('trailer-mode-active');
       const root = document.getElementById('main-menu-root');
@@ -163,6 +193,7 @@ export class TrailerDirector {
           body.trailer-mode-active #splitscreen-divider,
           body.trailer-mode-active .lil-gui,
           body.trailer-mode-active #camera-toast,
+          body.trailer-mode-active #headwear-toast,
           body.trailer-mode-active #loading-screen {
             display: none !important;
             opacity: 0 !important;
@@ -190,13 +221,11 @@ export class TrailerDirector {
       }
     }
 
-    // Ensure 3D in-arena stadium scoreboards and hustle boards are glowing and visible
     if (typeof window !== 'undefined' && window.__vb) {
       if (window.__vb.scoreboards?.group) window.__vb.scoreboards.group.visible = true;
       if (window.__vb.hustleBoards?.group) window.__vb.hustleBoards.group.visible = true;
     }
 
-    // Pure music mode: mute in-game SFX buses so synthwave track is 100% clean
     try {
       if (soundManager.ctx) {
         const now = soundManager.ctx.currentTime;
@@ -215,7 +244,6 @@ export class TrailerDirector {
       }
     } catch (_) {}
 
-    // Start "Neon Velocity" (track 0) at corresponding offset
     try {
       soundManager.music?.play?.(0);
       if (soundManager.music?.audioElement && startOffset > 0) {
@@ -223,1272 +251,1621 @@ export class TrailerDirector {
       }
     } catch (_) {}
 
-    console.log(`[trailer] TrailerDirector (Revision 6) started at t=${startOffset.toFixed(2)}s.`);
-  }
-
-  /**
-   * Activates raw reel capture mode for a single match clip.
-   * @param {string} cameraMode - one of 'flank_torus_north', 'flank_torus_south', 'low_turf_tracking', 'over_shoulder_chase', 'vertical_spike_cam', 'banked_wall_curve', 'action_orbit'
-   * @param {Object} options - { stuntType: 'dive'|'spike'|'goal'|'rally', duration: number }
-   */
-  startRawReel(cameraMode = 'action_orbit', options = {}) {
-    this.isActive = true;
-    this.rawReelMode = cameraMode;
-    this.stuntType = options.stuntType || 'rally';
-    this.rawDuration = options.duration || 8.0;
-    this.elapsedTime = 0;
-    this._currentCut = -1;
-    this._staccatoSubIndex = -1;
-    this._goalTriggered = false;
-    this._goalStaged = false;
-    this._stuntTriggered = false;
-    this.trauma = 0.0;
-    this._rawCamPrimed = false;
-
-    // Suppress all 2D UI, menus, and debug widgets
-    if (typeof document !== 'undefined') {
-      document.body.classList.add('trailer-mode-active');
-      const root = document.getElementById('main-menu-root');
-      if (root) root.style.display = 'none';
-      const hud = document.getElementById('hud');
-      if (hud) hud.style.display = 'none';
-
-      let styleEl = document.getElementById('trailer-director-style');
-      if (!styleEl) {
-        styleEl = document.createElement('style');
-        styleEl.id = 'trailer-director-style';
-        styleEl.textContent = `
-          body.trailer-mode-active #main-menu-root,
-          body.trailer-mode-active #title-screen,
-          body.trailer-mode-active #hud,
-          body.trailer-mode-active #controls-card,
-          body.trailer-mode-active #splitscreen-divider,
-          body.trailer-mode-active .lil-gui,
-          body.trailer-mode-active #camera-toast,
-          body.trailer-mode-active #loading-screen {
-            display: none !important;
-            opacity: 0 !important;
-            visibility: hidden !important;
-            pointer-events: none !important;
-          }
-        `;
-        document.head.appendChild(styleEl);
-      }
-    }
-
-    // Ensure 3D stadium scoreboards and hustle boards are glowing and visible
-    if (typeof window !== 'undefined' && window.__vb) {
-      if (window.__vb.scoreboards?.group) window.__vb.scoreboards.group.visible = true;
-      if (window.__vb.hustleBoards?.group) window.__vb.hustleBoards.group.visible = true;
-    }
-
-    // Isolated SFX stem: SFX 100%, UI 100%, music STOPPED
-    try {
-      if (soundManager.ctx) {
-        if (soundManager.ctx.state === 'suspended') soundManager.ctx.resume();
-        const now = soundManager.ctx.currentTime;
-        if (soundManager.sfxGain) soundManager.sfxGain.gain.setValueAtTime(1.0, now);
-        if (soundManager.ambienceGain) soundManager.ambienceGain.gain.setValueAtTime(0.4, now);
-        if (soundManager.uiGain) soundManager.uiGain.gain.setValueAtTime(1.0, now);
-        if (soundManager.music) soundManager.music.stop?.();
-      }
-    } catch (_) {}
-
-    console.log(`[trailer] TrailerDirector raw reel started: mode=${cameraMode}, stunt=${this.stuntType}`);
+    this._applyTeamPalette(0);
+    this._setMatchBall('medium');
+    console.log(`[TrailerDirector] Started at offset ${startOffset.toFixed(2)}s (harvestReady=${this._harvestReady})`);
   }
 
   stop() {
+    if (!this.isActive) return;
     this.isActive = false;
     this.rawReelMode = null;
-    this.stuntType = 'rally';
-    this.rawDuration = 8.0;
-    this._stuntTriggered = false;
-    this.elapsedTime = 0;
-    this._currentCut = -1;
-    this._staccatoSubIndex = -1;
-    this._goalTriggered = false;
-    this._goalStaged = false;
-    this._kickoffTriggered = false;
 
     if (typeof document !== 'undefined') {
       document.body.classList.remove('trailer-mode-active');
-      const root = document.getElementById('main-menu-root');
-      if (root) root.style.display = '';
-      const hud = document.getElementById('hud');
-      if (hud && TUNING?.debug?.showHud) hud.style.display = '';
       const fadeEl = document.getElementById('trailer-fade-overlay');
-      if (fadeEl) fadeEl.remove();
+      if (fadeEl) fadeEl.style.opacity = '0';
     }
 
-    // Restore 3D stadium scoreboards and hustle boards
-    if (typeof window !== 'undefined' && window.__vb) {
-      if (window.__vb.scoreboards?.group) window.__vb.scoreboards.group.visible = true;
-      if (window.__vb.hustleBoards?.group) window.__vb.hustleBoards.group.visible = true;
-    }
-
-    // Restore sound gains
     try {
       if (soundManager.ctx) {
         const now = soundManager.ctx.currentTime;
-        if (soundManager.sfxGain) soundManager.sfxGain.gain.setValueAtTime(this._prevSfxGain, now);
-        if (soundManager.ambienceGain) soundManager.ambienceGain.gain.setValueAtTime(this._prevAmbGain, now);
-        if (soundManager.uiGain) soundManager.uiGain.gain.setValueAtTime(this._prevUiGain, now);
+        if (soundManager.sfxGain) soundManager.sfxGain.gain.setValueAtTime(this._prevSfxGain ?? 1.0, now);
+        if (soundManager.ambienceGain) soundManager.ambienceGain.gain.setValueAtTime(this._prevAmbGain ?? 1.0, now);
+        if (soundManager.uiGain) soundManager.uiGain.gain.setValueAtTime(this._prevUiGain ?? 1.0, now);
       }
     } catch (_) {}
-
-    console.log('[trailer] TrailerDirector stopped.');
   }
 
   toggle() {
     if (this.isActive) this.stop();
     else this.start(0);
-    return this.isActive;
   }
 
-  addImpulse(amount = 0.5) {
+  addImpulse(amount = 0.35) {
     this.trauma = Math.min(1.0, this.trauma + amount);
   }
 
+  startRawReel(config = {}) {
+    this.rawReelMode = config;
+    this.stuntType = config.stuntType || 'rally';
+    this.rawDuration = config.duration || 8.0;
+    this.isActive = true;
+    this.elapsedTime = 0;
+    this._tickCount = 0;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 1. UNSCRIPTED 80+ MATCH HARVESTER (PURE BOT + RAPIER 3D SIMULATION)
+  // ═══════════════════════════════════════════════════════════════════════════
+
   /**
-   * STUNT CHOREOGRAPHY PER FIXED TICK:
-   * Coordinates accelerated 14.4s kickoff, authentic physically coincident hits,
-   * and a 5-goal multi-angle showcase.
+   * Places an athlete cleanly on the local parabolic court floor in an upright,
+   * grounded stance facing `yaw`, with zero finite-difference velocity spike.
    */
-  choreographTick(tick, dt, athletes = [], balls = [], matchState = null) {
-    if (!this.isActive) return;
+  _placeAthleteForSim(athlete, x, z, yaw, vx = 0, vz = 0) {
+    if (!athlete?.motor?.body) return;
+    const floorY = getCourtFloorY(x, z);
+    const targetY = floorY + 0.92;
 
-    if (this.rawReelMode) {
-      this._choreographRawReelTick(tick, dt, athletes, balls, matchState);
-      return;
+    athlete.teleportTo({ x, y: targetY, z }, yaw);
+    athlete.motor.grounded = true;
+    athlete.motor.body.setLinvel({ x: vx, y: 0, z: vz }, true);
+    athlete.motor.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+
+    if (athlete.animTarget) {
+      athlete.animTarget.yaw = yaw;
+      athlete.animTarget.targetYaw = yaw;
+      athlete.animTarget.momentumYaw = yaw;
+      athlete.animTarget.airborneMix = 0;
+      athlete.animTarget.jumpPhase = 0;
+      athlete.animTarget.standUpNeed = 0;
+      athlete.animTarget.standUpProgress = 1;
+      athlete.animTarget.pelvisDownness = 0;
+      athlete.animTarget.seeded = false;
     }
-
-    const t = this.elapsedTime;
-    const primaryBall = balls[0] || null;
-
-    const slot0 = getBotSlot(0);
-    const slot1 = getBotSlot(1);
-    const mass = primaryBall?.body?.mass() || 2.2;
-
-    // 0.00s to 11.50s: Athletes positioned at starting marks, Red in Football Helmet, Blue in Cricket Helmet
-    if (t < 11.50 && athletes.length >= 2) {
-      if (!this._introAthletesPositioned) {
-        this._introAthletesPositioned = true;
-        athletes[0]?.teleportTo?.({ x: 0.0, y: 0.9, z: 6.0 }, Math.PI);
-        athletes[1]?.teleportTo?.({ x: 0.0, y: 0.9, z: -8.0 }, 0);
-        this._applyPalette(0, athletes);
-      }
-      if (athletes[0]?.motor?.body) athletes[0].motor.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
-      if (athletes[1]?.motor?.body) athletes[1].motor.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    if (athlete.tracker) {
+      athlete.tracker.weight = 1.0;
+      athlete.tracker.blendWeight = 1.0;
+      athlete.tracker.blendProgress = 1.0;
+      athlete.tracker.toneAuthority = 1.0;
+      athlete.tracker.queuedKnockdown = false;
+      athlete.tracker.knockdownQueued = false;
     }
-
-    // Zero out movement inputs before 14.40s so contenders hold a proud, composed ready stance
-    if (t < 14.40) {
-      if (slot0) {
-        slot0.moveX = 0;
-        slot0.moveZ = 0;
-        slot0.sprintHeld = false;
-        slot0.slideHeld = false;
-        slot0.jumpQueued = false;
-      }
-      if (slot1) {
-        slot1.moveX = 0;
-        slot1.moveZ = 0;
-        slot1.sprintHeld = false;
-        slot1.slideHeld = false;
-        slot1.jumpQueued = false;
-      }
+    if (athlete.actionState) {
+      athlete.actionState.slideTime = 0;
+      athlete.actionState.diveTime = 0;
+      athlete.actionState.divePending = false;
+      athlete.actionState.diveStunned = false;
+      athlete.actionState.lastDiveTick = -999;
+      athlete.actionState.jumpPhase = 0;
     }
-
-    // 0.00s to 7.20s: Ball held stationary out of play during macro contender reveals
-    if (t < 7.20 && primaryBall?.body && !this._introBallSpawned) {
-      primaryBall.body.setTranslation({ x: 0.0, y: 15.0, z: 0.0 }, true);
-      primaryBall.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
-      primaryBall.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    if (athlete.strikeState) {
+      athlete.strikeState.lastStrikeTick = -999;
+      athlete.strikeState.lastResolvedStrikeTick = -999;
+      athlete.strikeState.strikePhase = 0;
+      athlete.strikeState.strikeMix = 0;
     }
 
-    // AT 7.20s: HERO BALL PHYSICS INTRODUCTION (curving down East parabolic wall)
-    if (t >= 7.20 && t < 7.40 && !this._introBallSpawned && primaryBall?.body) {
-      this._introBallSpawned = true;
-      primaryBall.body.setTranslation({ x: 20.5, y: 7.8, z: 12.0 }, true);
-      primaryBall.body.setLinvel({ x: -5.5, y: -2.0, z: -14.0 }, true);
-      primaryBall.body.setAngvel({ x: 5.0, y: 1.0, z: -3.0 }, true);
-    }
-
-    // Secondary bounce boost across the center circle at 9.8s
-    if (t >= 9.80 && t < 10.00 && primaryBall?.body && this._introBallSpawned && !this._introBounceTriggered) {
-      this._introBounceTriggered = true;
-      primaryBall.body.setLinvel({ x: -2.5, y: 4.8, z: -8.0 }, true);
-    }
-
-    // AT 11.50s: CONTENDERS STEP OUT ONTO COURT TURF (facing off across net)
-    if (t >= 11.50 && !this._contendersPositioned && athletes.length >= 2) {
-      this._contendersPositioned = true;
-      // Home Bot (Red) stands at South center court facing North
-      athletes[0]?.teleportTo?.({ x: 0.0, y: 0.9, z: 6.0 }, Math.PI);
-      // Away Bot (Blue) stands at North center court facing South
-      athletes[1]?.teleportTo?.({ x: 0.0, y: 0.9, z: -8.0 }, 0);
-      if (primaryBall?.body) {
-        primaryBall.body.setTranslation({ x: 0.0, y: 1.2, z: 5.0 }, true);
-        primaryBall.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
-        primaryBall.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    if (athlete.ragdoll?.rig) {
+      for (const item of athlete.ragdoll.rig.values()) {
+        item.body.setLinvel({ x: vx, y: 0, z: vz }, true);
+        item.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
       }
-    }
-
-    // Keep both AI bots sprinting aggressively throughout the active match
-    if (t >= 14.40 && t < 78.40) {
-      if (matchState?.isCountingDown) matchState.isCountingDown = false;
-      if (slot0) slot0.sprintHeld = true;
-      if (slot1) slot1.sprintHeld = true;
-    }
-
-    // ═════════════════════════════════════════════════════════════════════════
-    // RALLY 1 & GOAL 1: KICKOFF TO NORTH TORUS SPIKE (14.40s – 24.00s | 20.8s)
-    // Verbs: Kickoff Serve -> Power Slide Dig -> Cleat Cut -> Jump Spike Goal
-    // ═════════════════════════════════════════════════════════════════════════
-
-    // Hit 1: Kickoff Serve (14.40s) — Home Bot (Red) strikes across net
-    if (t >= 14.40 && t < 14.55 && !this._rally1Serve && primaryBall?.body) {
-      this._rally1Serve = true;
-      if (matchState) matchState.targetGoal = 'N';
-      athletes[0]?.teleportTo?.({ x: 0.0, y: 0.9, z: 6.0 }, 0);
-      athletes[1]?.teleportTo?.({ x: 0.0, y: 0.9, z: -10.0 }, Math.PI);
-      primaryBall.body.setTranslation({ x: 0.0, y: 1.6, z: 5.2 }, true);
-      primaryBall.body.setLinvel({ x: 0.0, y: 6.5, z: -15.0 }, true);
-      if (slot0) {
-        slot0.hasAim = true;
-        slot0.aimYaw = 0;
-        slot0.spikeQueued = true;
-      }
-      this.addImpulse(0.85);
-    }
-
-    // Away Bot (Blue) power slide dig at 17.20s: pops ball toward East flank
-    if (t >= 17.15 && t < 17.35 && !this._rally1Dig && primaryBall?.body) {
-      this._rally1Dig = true;
-      primaryBall.body.setLinvel({ x: 3.5, y: 8.5, z: -7.0 }, true);
-      if (slot1) {
-        slot1.sprintHeld = true;
-        slot1.slideHeld = true;
-        slot1.volleyQueued = true;
-        slot1.aimYaw = -Math.PI * 0.25;
-        slot1.hasAim = true;
-      }
-      this.addImpulse(0.75);
-    }
-
-    // Home Bot (Red) cleat cut and aerial jump-spike into North Torus (20.00s -> 20.30s)
-    if (t >= 19.60 && t < 19.80 && slot0) {
-      slot0.cutQueued = true;
-      slot0.sprintHeld = true;
-    }
-    if (t >= 19.85 && t < 20.05 && slot0) {
-      slot0.jumpQueued = true;
-    }
-    if (t >= 20.25 && t < 20.45 && !this._goal1Staged && primaryBall?.body) {
-      this._goal1Staged = true;
-      if (athletes[0]?.motor?.body) {
-        athletes[0].motor.body.setTranslation({ x: 5.0, y: 4.8, z: -25.0 }, true);
-        athletes[0].motor.body.setLinvel({ x: 0, y: 1.5, z: 0 }, true);
-        if (athletes[0].motor.interpolated) athletes[0].motor.interpolated.reset(new THREE.Vector3(5.0, 4.8, -25.0));
-      }
-      primaryBall.body.setTranslation({ x: 5.0, y: 5.2, z: -25.0 }, true);
-      // Clean launch through North Torus aperture (crosses X=0 at Y=10.26, Z=-40.00, clearance > 4.4m)
-      primaryBall.body.setLinvel({ x: -9.09, y: 12.94, z: -27.27 }, true);
-      if (slot0) {
-        slot0.hasAim = true;
-        slot0.aimYaw = Math.atan2(-9.09, -27.27);
-        slot0.spikeQueued = true;
-      }
-      this.addImpulse(1.0);
-    }
-    if (t >= 20.80 && !this._goal1Scored) {
-      this._goal1Scored = true;
-      this.addImpulse(1.0);
-      try {
-        if (matchState) {
-          matchState.scoreHome = 1;
-          matchState.scoreAway = 0;
-          matchState.targetGoal = 'S';
-          matchState.celebrationTicks = 180;
-          matchState.lastScoredFor = 'home';
-          matchState.lastGoalId = 'N';
-        }
-      } catch (_) {}
-    }
-
-    // ═════════════════════════════════════════════════════════════════════════
-    // RALLY 2 & GOAL 2: BANKED WALL COUNTER INTO SOUTH TORUS (24.00s – 35.00s | 31.7s)
-    // Verbs: Flank Serve -> Parabolic Wall Carve -> Cleat Cut -> Jump Spike Goal
-    // ═════════════════════════════════════════════════════════════════════════
-
-    if (t >= 24.00 && t < 24.15 && primaryBall?.body && athletes.length >= 2) {
-      if (matchState) matchState.targetGoal = 'S';
-      athletes[1]?.teleportTo?.({ x: -6.0, y: 1.0, z: -8.0 }, Math.PI);
-      athletes[0]?.teleportTo?.({ x: 8.0, y: 1.2, z: 12.0 }, 0);
-      primaryBall.body.setTranslation({ x: -6.0, y: 1.6, z: -7.2 }, true);
-      primaryBall.body.setLinvel({ x: 6.0, y: 7.0, z: 18.0 }, true);
-      if (slot1) {
-        slot1.hasAim = true;
-        slot1.aimYaw = Math.PI * 0.25;
-        slot1.spikeQueued = true;
-      }
-    }
-    // Home Bot power slide along the banked turf wall
-    if (t >= 27.60 && t < 27.85 && primaryBall?.body) {
-      primaryBall.body.setLinvel({ x: -13.0, y: 8.5, z: 12.0 }, true);
-      if (slot0) {
-        slot0.slideHeld = true;
-        slot0.volleyQueued = true;
-        slot0.hasAim = true;
-        slot0.aimYaw = -Math.PI * 0.75;
-      }
-      this.addImpulse(0.75);
-    }
-    // Away Bot cleat cut and aerial spike into South Torus
-    if (t >= 30.60 && t < 30.80 && slot1) {
-      slot1.cutQueued = true;
-      slot1.jumpQueued = true;
-    }
-    if (t >= 31.15 && t < 31.35 && !this._goal2Staged && primaryBall?.body) {
-      this._goal2Staged = true;
-      if (athletes[1]?.motor?.body) {
-        athletes[1].motor.body.setTranslation({ x: -7.2, y: 6.8, z: 31.0 }, true);
-        athletes[1].motor.body.setLinvel({ x: 0, y: 1.5, z: 0 }, true);
-        if (athletes[1].motor.interpolated) athletes[1].motor.interpolated.reset(new THREE.Vector3(-7.2, 6.8, 31.0));
-      }
-      primaryBall.body.setTranslation({ x: -7.2, y: 7.5, z: 31.0 }, true);
-      // Clean launch through South Torus aperture (crosses X=0 at Y=10.36, Z=+40.00, clearance > 4.3m)
-      primaryBall.body.setLinvel({ x: 14.4, y: 9.0, z: 18.0 }, true);
-      if (slot1) {
-        slot1.spikeQueued = true;
-        slot1.hasAim = true;
-        slot1.aimYaw = Math.atan2(14.4, 18.0);
-      }
-      this.addImpulse(1.0);
-    }
-    if (t >= 31.75 && !this._goal2Scored) {
-      this._goal2Scored = true;
-      this.addImpulse(1.0);
-      try {
-        if (matchState) {
-          matchState.scoreHome = 1;
-          matchState.scoreAway = 1;
-          matchState.targetGoal = 'N';
-          matchState.celebrationTicks = 180;
-          matchState.lastScoredFor = 'away';
-          matchState.lastGoalId = 'S';
-        }
-      } catch (_) {}
-    }
-
-    // ═════════════════════════════════════════════════════════════════════════
-    // RALLY 3 & GOAL 3: TOP-DOWN SKY CAM BEAT DROP SPIKE (35.00s – 46.00s | 44.20s DROP!)
-    // Verbs: Kickoff -> Midcourt Volley Exchange -> Sprint Duel -> APEX SPIKE DROP
-    // ═════════════════════════════════════════════════════════════════════════
-
-    if (t >= 35.00 && t < 35.15 && primaryBall?.body && athletes.length >= 2) {
-      if (matchState) matchState.targetGoal = 'N';
-      athletes[0]?.teleportTo?.({ x: 0.0, y: 0.9, z: 4.5 }, 0);
-      athletes[1]?.teleportTo?.({ x: 0.0, y: 0.9, z: -5.0 }, Math.PI);
-      primaryBall.body.setTranslation({ x: 0.0, y: 1.6, z: 3.8 }, true);
-      primaryBall.body.setLinvel({ x: 0.2, y: 5.8, z: -12.0 }, true);
-      if (slot0) {
-        slot0.hasAim = true;
-        slot0.aimYaw = 0;
-        slot0.volleyQueued = true;
-      }
-    }
-    // Volley exchange at 39.0s
-    if (t >= 39.00 && t < 39.20 && primaryBall?.body) {
-      primaryBall.body.setLinvel({ x: 0.5, y: 6.5, z: 10.0 }, true);
-      if (slot1) {
-        slot1.volleyQueued = true;
-        slot1.hasAim = true;
-        slot1.aimYaw = Math.PI;
-      }
-    }
-    // High set above net leading directly into the beat drop
-    if (t >= 42.20 && t < 42.40 && primaryBall?.body) {
-      primaryBall.body.setLinvel({ x: 6.0, y: 9.5, z: -14.0 }, true);
-      if (slot1) slot1.volleyQueued = true;
-    }
-    // Leaping into the air at 43.6s
-    if (t >= 43.60 && t < 43.80 && slot0) {
-      slot0.jumpQueued = true;
-      slot0.sprintHeld = true;
-    }
-    // AT EXACTLY 44.15s: BEAT DROP DETONATION!
-    if (t >= 44.15 && t < 44.30 && !this._goal3Staged && primaryBall?.body) {
-      this._goal3Staged = true;
-      if (athletes[0]?.motor?.body) {
-        athletes[0].motor.body.setTranslation({ x: 6.5, y: 7.2, z: -32.0 }, true);
-        athletes[0].motor.body.setLinvel({ x: 0, y: 2.0, z: 0 }, true);
-        if (athletes[0].motor.interpolated) athletes[0].motor.interpolated.reset(new THREE.Vector3(6.5, 7.2, -32.0));
-      }
-      primaryBall.body.setTranslation({ x: 6.5, y: 7.8, z: -32.0 }, true);
-      // Clean launch through North Torus aperture (crosses X=0 at Y=10.38, Z=-40.00, clearance > 4.3m)
-      primaryBall.body.setLinvel({ x: -13.0, y: 8.4, z: -16.0 }, true);
-      if (slot0) {
-        slot0.hasAim = true;
-        slot0.aimYaw = Math.atan2(-13.0, -16.0);
-        slot0.spikeQueued = true;
-      }
-      this.addImpulse(1.4);
-    }
-    if (t >= 44.70 && !this._goal3Scored) {
-      this._goal3Scored = true;
-      this.addImpulse(1.2);
-      try {
-        if (matchState) {
-          matchState.scoreHome = 2;
-          matchState.scoreAway = 1;
-          matchState.targetGoal = 'S';
-          matchState.celebrationTicks = 180;
-          matchState.lastScoredFor = 'home';
-          matchState.lastGoalId = 'N';
-        }
-      } catch (_) {}
-    }
-
-    // ═════════════════════════════════════════════════════════════════════════
-    // RALLY 4 & GOAL 4: ULTRA-LOW TURF PROFILE DIVE STRIKE (46.00s – 57.00s | 52.7s)
-    // Verbs: Sideline Serve -> High Cleat Cut -> Stretch Dive Save -> South Torus Goal
-    // ═════════════════════════════════════════════════════════════════════════
-
-    if (t >= 46.00 && t < 46.15 && primaryBall?.body && athletes.length >= 2) {
-      if (matchState) matchState.targetGoal = 'S';
-      athletes[1]?.teleportTo?.({ x: 4.5, y: 0.9, z: -10.0 }, Math.PI);
-      athletes[0]?.teleportTo?.({ x: 4.5, y: 0.9, z: 10.0 }, 0);
-      primaryBall.body.setTranslation({ x: 4.5, y: 1.6, z: -9.2 }, true);
-      primaryBall.body.setLinvel({ x: 0.5, y: 6.0, z: 18.0 }, true);
-      if (slot1) slot1.spikeQueued = true;
-    }
-    // Stretch Dive Save at turf level
-    if (t >= 51.40 && t < 51.65 && primaryBall?.body) {
-      if (slot1) {
-        slot1.diveQueued = true;
-        slot1.hasAim = true;
-        slot1.aimYaw = Math.PI;
-      }
-      this.addImpulse(0.85);
-    }
-    if (t >= 52.15 && t < 52.35 && !this._goal4Staged && primaryBall?.body) {
-      this._goal4Staged = true;
-      if (athletes[1]?.motor?.body) {
-        athletes[1].motor.body.setTranslation({ x: 6.0, y: 6.8, z: 31.0 }, true);
-        if (athletes[1].motor.interpolated) athletes[1].motor.interpolated.reset(new THREE.Vector3(6.0, 6.8, 31.0));
-      }
-      primaryBall.body.setTranslation({ x: 6.0, y: 7.5, z: 31.0 }, true);
-      // Clean launch through South Torus aperture (crosses X=0 at Y=10.37, Z=+40.00, clearance > 4.3m)
-      primaryBall.body.setLinvel({ x: -12.0, y: 9.0, z: 18.0 }, true);
-      if (slot1) {
-        slot1.spikeQueued = true;
-        slot1.hasAim = true;
-        slot1.aimYaw = Math.atan2(-12.0, 18.0);
-      }
-      this.addImpulse(1.0);
-    }
-    if (t >= 52.75 && !this._goal4Scored) {
-      this._goal4Scored = true;
-      this.addImpulse(1.0);
-      try {
-        if (matchState) {
-          matchState.scoreHome = 2;
-          matchState.scoreAway = 2;
-          matchState.targetGoal = 'N';
-          matchState.celebrationTicks = 180;
-          matchState.lastScoredFor = 'away';
-          matchState.lastGoalId = 'S';
-        }
-      } catch (_) {}
-    }
-
-    // ═════════════════════════════════════════════════════════════════════════
-    // RALLY 5 & GOAL 5: BANKED WALL FLANK CARVE INTO NORTH TORUS (57.00s – 67.00s | 63.0s)
-    // Verbs: Parabolic Wall Launch -> High Speed Carve -> Power Slide -> North Torus Goal
-    // ═════════════════════════════════════════════════════════════════════════
-
-    if (t >= 57.00 && t < 57.15 && primaryBall?.body && athletes.length >= 2) {
-      if (matchState) matchState.targetGoal = 'N';
-      athletes[0]?.teleportTo?.({ x: 12.0, y: 3.2, z: 5.0 }, 0);
-      athletes[1]?.teleportTo?.({ x: 6.0, y: 0.9, z: -10.0 }, Math.PI);
-      primaryBall.body.setTranslation({ x: 12.0, y: 3.8, z: 4.2 }, true);
-      primaryBall.body.setLinvel({ x: -2.5, y: 5.5, z: -14.0 }, true);
-      if (slot0) slot0.spikeQueued = true;
-    }
-    if (t >= 61.80 && t < 62.05 && slot0) {
-      slot0.cutQueued = true;
-      slot0.sprintHeld = true;
-    }
-    if (t >= 62.45 && t < 62.65 && !this._goal5Staged && primaryBall?.body) {
-      this._goal5Staged = true;
-      if (athletes[0]?.motor?.body) {
-        athletes[0].motor.body.setTranslation({ x: -7.5, y: 6.5, z: -30.0 }, true);
-        if (athletes[0].motor.interpolated) athletes[0].motor.interpolated.reset(new THREE.Vector3(-7.5, 6.5, -30.0));
-      }
-      primaryBall.body.setTranslation({ x: -7.5, y: 7.5, z: -30.0 }, true);
-      // Clean launch through North Torus aperture (crosses X=0 at Y=10.35, Z=-40.00, clearance > 4.3m)
-      primaryBall.body.setLinvel({ x: 15.0, y: 9.0, z: -20.0 }, true);
-      if (slot0) {
-        slot0.hasAim = true;
-        slot0.aimYaw = Math.atan2(15.0, -20.0);
-        slot0.spikeQueued = true;
-      }
-      this.addImpulse(1.0);
-    }
-    if (t >= 63.05 && !this._goal5Scored) {
-      this._goal5Scored = true;
-      this.addImpulse(1.0);
-      try {
-        if (matchState) {
-          matchState.scoreHome = 3;
-          matchState.scoreAway = 2;
-          matchState.targetGoal = 'S';
-          matchState.celebrationTicks = 180;
-          matchState.lastScoredFor = 'home';
-          matchState.lastGoalId = 'N';
-        }
-      } catch (_) {}
-    }
-
-    // ═════════════════════════════════════════════════════════════════════════
-    // RALLY 6 & GOAL 6: CLIMAX THROUGH-HOOP REVERSE SPIKE (67.00s – 78.40s | 72.7s)
-    // Verbs: Net Aerial Clash -> Climax Spike Through Torus Ring -> Ascension
-    // ═════════════════════════════════════════════════════════════════════════
-
-    if (t >= 67.00 && t < 67.15 && primaryBall?.body && athletes.length >= 2) {
-      if (matchState) matchState.targetGoal = 'N';
-      athletes[0]?.teleportTo?.({ x: 0.0, y: 0.9, z: 2.0 }, 0);
-      athletes[1]?.teleportTo?.({ x: 0.0, y: 0.9, z: -4.0 }, Math.PI);
-      primaryBall.body.setTranslation({ x: 0.0, y: 1.6, z: 1.2 }, true);
-      primaryBall.body.setLinvel({ x: 0.0, y: 6.2, z: -6.0 }, true);
-      if (slot0) slot0.volleyQueued = true;
-    }
-    if (t >= 71.60 && t < 71.85 && slot0) {
-      slot0.jumpQueued = true;
-      slot0.sprintHeld = true;
-    }
-    if (t >= 72.15 && t < 72.35 && !this._goal6Staged && primaryBall?.body) {
-      this._goal6Staged = true;
-      if (athletes[0]?.motor?.body) {
-        athletes[0].motor.body.setTranslation({ x: 6.0, y: 7.2, z: -31.0 }, true);
-        athletes[0].motor.body.setLinvel({ x: 0, y: 1.5, z: 0 }, true);
-        if (athletes[0].motor.interpolated) athletes[0].motor.interpolated.reset(new THREE.Vector3(6.0, 7.2, -31.0));
-      }
-      if (athletes[1]?.motor?.body) {
-        athletes[1].motor.body.setTranslation({ x: -2.0, y: 7.5, z: -38.0 }, true);
-        athletes[1].motor.body.setLinvel({ x: 2.0, y: 1.0, z: 0 }, true);
-        if (athletes[1].motor.interpolated) athletes[1].motor.interpolated.reset(new THREE.Vector3(-2.0, 7.5, -38.0));
-      }
-      primaryBall.body.setTranslation({ x: 6.0, y: 7.8, z: -31.0 }, true);
-      // Clean launch through North Torus aperture (crosses X=0 at Y=10.37, Z=-40.00, clearance > 4.3m)
-      primaryBall.body.setLinvel({ x: -12.0, y: 8.4, z: -18.0 }, true);
-      if (slot0) {
-        slot0.hasAim = true;
-        slot0.aimYaw = Math.atan2(-12.0, -18.0);
-        slot0.spikeQueued = true;
-      }
-      if (slot1) slot1.jumpQueued = true;
-      this.addImpulse(1.2);
-    }
-    if (t >= 72.75 && !this._goal6Scored) {
-      this._goal6Scored = true;
-      this.addImpulse(1.0);
-      try {
-        if (matchState) {
-          matchState.scoreHome = 4;
-          matchState.scoreAway = 2;
-          matchState.targetGoal = 'S';
-          matchState.celebrationTicks = 240;
-          matchState.lastScoredFor = 'home';
-          matchState.lastGoalId = 'N';
-        }
-      } catch (_) {}
     }
   }
 
+  _resetBotState(bot, difficulty = 'hard', aggressiveness = 0.90) {
+    if (!bot) return;
+    bot.difficulty = difficulty;
+    bot.aggressiveness = aggressiveness;
+    bot.currentAggressiveness = aggressiveness;
+    bot.strategy = 'chase';
+    bot.attackStage = 'none';
+    bot.attackType = 'none';
+    bot.stageStartTick = -999;
+    bot.lastStrategyTick = -999;
+    bot.lastStrikeTick = -999;
+    bot.lastJumpTick = -999;
+    bot.lastDiveTick = -999;
+    bot.lastCutTick = -999;
+    bot.lastSlideTick = -999;
+    bot.pendingSpikeTick = -Infinity;
+    bot.pendingJumpTick = -Infinity;
+    bot.slideTicksRemaining = 0;
+  }
+
+  _capturePoseArray(athletes, activeBall) {
+    const arr = new Float32Array(35 * 7);
+    let offset = 0;
+    const writeInterp = (interp) => {
+      if (!interp) {
+        arr[offset + 6] = 1.0;
+        offset += 7;
+        return;
+      }
+      arr[offset] = interp.currPos.x;
+      arr[offset + 1] = interp.currPos.y;
+      arr[offset + 2] = interp.currPos.z;
+      arr[offset + 3] = interp.currQuat.x;
+      arr[offset + 4] = interp.currQuat.y;
+      arr[offset + 5] = interp.currQuat.z;
+      arr[offset + 6] = interp.currQuat.w;
+      offset += 7;
+    };
+
+    for (let i = 0; i < 2; i++) {
+      const a = athletes[i];
+      writeInterp(a?.motor?.interpolated);
+      const order = a?.ragdoll?.order || [];
+      for (let k = 0; k < 16; k++) {
+        const key = order[k];
+        const item = key ? a.ragdoll.rig.get(key) : null;
+        writeInterp(item?.interpolated);
+      }
+    }
+    writeInterp(activeBall?.interpolated);
+    return arr;
+  }
+
+  _applyPoseArray(poses, athletes, activeBall, syncBodies = false) {
+    if (!poses) return;
+    let offset = 0;
+    const readInterp = (interp, body = null) => {
+      if (interp) {
+        const px = poses[offset];
+        const py = poses[offset + 1];
+        const pz = poses[offset + 2];
+        const qx = poses[offset + 3];
+        const qy = poses[offset + 4];
+        const qz = poses[offset + 5];
+        const qw = poses[offset + 6];
+        interp.prevPos.set(px, py, pz);
+        interp.currPos.set(px, py, pz);
+        interp.prevQuat.set(qx, qy, qz, qw);
+        interp.currQuat.set(qx, qy, qz, qw);
+        if (syncBodies && body) {
+          body.setTranslation({ x: px, y: py, z: pz }, false);
+          body.setRotation({ x: qx, y: qy, z: qz, w: qw }, false);
+          body.setLinvel({ x: 0, y: 0, z: 0 }, false);
+          body.setAngvel({ x: 0, y: 0, z: 0 }, false);
+        }
+      }
+      offset += 7;
+    };
+
+    for (let i = 0; i < 2; i++) {
+      const a = athletes[i];
+      readInterp(a?.motor?.interpolated, a?.motor?.body);
+      if (a?.motor?.interpolated) a.motor.interpolated.apply(1.0);
+      const order = a?.ragdoll?.order || [];
+      for (let k = 0; k < 16; k++) {
+        const key = order[k];
+        const item = key ? a.ragdoll.rig.get(key) : null;
+        readInterp(item?.interpolated, item?.body);
+      }
+      if (syncBodies && a?.animTarget) {
+        a.animTarget.seeded = false;
+      }
+      if (a?.renderPose) a.renderPose(1.0);
+    }
+    readInterp(activeBall?.interpolated, null);
+    if (activeBall?.interpolated) activeBall.interpolated.apply(1.0);
+  }
+
   /**
-   * CINEMATIC CAMERA UPDATE PER RENDER FRAME:
-   * Dynamically tracks the live action, frames Torus hoops from side/3/4 perspectives,
-   * snaps hard cuts instantly, and strictly enforces >= 1.85m terrain clearance.
+   * Simulates 80+ full unscripted AI-vs-AI game situations at ~40x real-time
+   * (with `this.isActive = false` so zero directorial interference occurs during play)
+   * and mines the best natural windows for all 43 beat-quantized trailer cuts.
    */
-  update(delta, liveBall = null, athletes = [], matchState = null) {
-    if (!this.isActive) return;
-
-    this.elapsedTime += delta;
-    const t = this.elapsedTime;
-
-    // Dissipate micro-shake quickly
-    if (this.trauma > 0) {
-      this.trauma = Math.max(0, this.trauma - delta * 12.0);
+  runHarvest() {
+    if (typeof window === 'undefined' || !window.__vb) {
+      throw new Error('[TrailerDirector] window.__vb not available for runHarvest()');
     }
 
-    // Visibility tiers (Revision 8 - Contender Character Hooks & Real Action):
-    // 0.00s to 7.20s: Macro portraits of contenders — Red in Football Helmet, Blue in Cricket Helmet
-    // 7.20s to 11.50s: Hero ball physics reveal — show ball carving banked wall
-    // 11.50s+: Contenders face-off across net and full match action
-    // Raw reel clips (6.8s) skip the tiers, which hide the ball until 7.20s.
-    if (this.rawReelMode) {
-      // fall through to the raw reel camera below
-    } else if (t < 7.20) {
-      if (athletes) {
-        for (const ath of athletes) {
-          if (ath?.setEnabled) ath.setEnabled(true);
-          if (ath?.ragdoll?.group) ath.ragdoll.group.visible = true;
-          if (ath?.group) ath.group.visible = true;
-        }
+    const vb = window.__vb;
+    const loop = vb.loop;
+    const athletes = vb.athletes;
+    const matchState = vb.matchState;
+    const bots = vb.botControllers || [];
+    const dt = 1 / 60;
+
+    const wasActive = this.isActive;
+    this.isActive = false; // CRITICAL: 0% TrailerDirector intervention during unscripted simulation!
+    this._rngState = 20261027;
+    this._harvestedGames = [];
+
+    // Configure generous physical strike proximity & hoop magnetism for exciting AI play
+    for (let i = 0; i < athletes.length; i++) {
+      if (athletes[i]?.setAssistPreset) athletes[i].setAssistPreset('casual');
+      if (athletes[i]?.strikeState) {
+        athletes[i].strikeState.assistRadius = 0.72;
+        athletes[i].strikeState.assistWindowTicks = 10;
+        athletes[i].strikeState.aimMagnetism = 0.50;
       }
-      if (liveBall?.mesh) liveBall.mesh.visible = false;
-      if (typeof window !== 'undefined' && window.__vb?.balls) {
-        for (const b of window.__vb.balls) {
-          if (b?.mesh) b.mesh.visible = false;
-        }
-      }
-    } else if (t < 11.50) {
-      if (athletes) {
-        for (const ath of athletes) {
-          if (ath?.setEnabled) ath.setEnabled(true);
-          if (ath?.ragdoll?.group) ath.ragdoll.group.visible = true;
-          if (ath?.group) ath.group.visible = true;
-        }
-      }
-      if (liveBall?.mesh) liveBall.mesh.visible = true;
-      if (typeof window !== 'undefined' && window.__vb?.balls) {
-        for (const b of window.__vb.balls) {
-          if (b?.mesh) b.mesh.visible = true;
-        }
-      }
-    } else {
-      if (athletes) {
-        for (const ath of athletes) {
-          if (ath?.setEnabled) ath.setEnabled(true);
-          if (ath?.ragdoll?.group) ath.ragdoll.group.visible = true;
-          if (ath?.group) ath.group.visible = true;
-        }
-      }
-      if (liveBall?.mesh) liveBall.mesh.visible = true;
-      if (typeof window !== 'undefined' && window.__vb?.balls) {
-        for (const b of window.__vb.balls) {
-          if (b?.mesh) b.mesh.visible = true;
-        }
-      }
-      if (t >= 14.40 && matchState?.isCountingDown) {
+    }
+
+    const t0 = performance.now();
+    let totalSimTicks = 0;
+    let northGoalsCount = 0;
+    let southGoalsCount = 0;
+    let diveEventsCount = 0;
+    let spikeEventsCount = 0;
+    let wallCaromsCount = 0;
+    let totalHitsCount = 0;
+
+    const simulateScenario = (gameId, cfg) => {
+      const {
+        category,
+        ballType = 'medium',
+        ticks = 360,
+        targetGoal = 'N',
+        p1,
+        p2,
+        ballInit,
+        p1BotCfg = { difficulty: 'hard', aggressiveness: 0.92 },
+        p2BotCfg = { difficulty: 'hard', aggressiveness: 0.92 },
+        aimMag = 0.45,
+      } = cfg;
+
+      const activeBall = vb.setActiveMatchBall(ballType);
+      if (matchState) {
+        matchState.mode = 'match';
+        matchState.targetGoal = targetGoal;
         matchState.isCountingDown = false;
-      }
-    }
-
-    const hoopY = TUNING.match?.hoopCenterY ?? 10.0;
-    const hoopZ = TUNING.match?.hoopNorthZ ?? -40.0;
-
-    // Sample live ball position
-    let ballPos = { x: 0, y: 1.0, z: 0 };
-    if (liveBall) {
-      if (typeof liveBall.translation === 'function') {
-        ballPos = liveBall.translation();
-      } else if (liveBall.body && typeof liveBall.body.translation === 'function') {
-        ballPos = liveBall.body.translation();
-      } else if (liveBall.position) {
-        ballPos = liveBall.position;
-      }
-    }
-
-    // Sample athletes positions
-    const ath0 = athletes[0]?.motor?.body?.translation?.() || ballPos;
-    const ath1 = athletes[1]?.motor?.body?.translation?.() || ballPos;
-
-    // Dynamic focal center: continuous inverse-distance weighted midpoint between ball and athletes
-    const d0 = Math.hypot(ballPos.x - ath0.x, ballPos.z - ath0.z);
-    const d1 = Math.hypot(ballPos.x - ath1.x, ballPos.z - ath1.z);
-    const w0 = 1.0 / (d0 * d0 + 1.0);
-    const w1 = 1.0 / (d1 * d1 + 1.0);
-    const wSum = w0 + w1;
-    const athBlendX = (ath0.x * w0 + ath1.x * w1) / wSum;
-    const athBlendZ = (ath0.z * w0 + ath1.z * w1) / wSum;
-    const rawFocusX = 0.65 * ballPos.x + 0.35 * athBlendX;
-    const rawFocusZ = 0.65 * ballPos.z + 0.35 * athBlendZ;
-
-    const smoothFactor = 1.0 - Math.exp(-delta * 8.0);
-    if (!this._initializedFocus) {
-      this._smoothFocusX = rawFocusX;
-      this._smoothFocusZ = rawFocusZ;
-      this._initializedFocus = true;
-    } else {
-      this._smoothFocusX += (rawFocusX - this._smoothFocusX) * smoothFactor;
-      this._smoothFocusZ += (rawFocusZ - this._smoothFocusZ) * smoothFactor;
-    }
-    const focusX = this._smoothFocusX;
-    const focusZ = this._smoothFocusZ;
-    const focusFloorY = getCourtFloorY(focusX, focusZ);
-    const focusY = Math.max(focusFloorY + 0.8, Math.min(focusFloorY + 4.5, ballPos.y));
-    const nearestAth = d0 <= d1 ? ath0 : ath1;
-
-    // If raw reel mode is active, handle dedicated angle camera and return
-    if (this.rawReelMode) {
-      this._updateRawReelCamera(delta, liveBall, athletes, matchState, ballPos, ath0, ath1, nearestAth, focusX, focusZ, focusFloorY, focusY, hoopY, hoopZ);
-      return;
-    }
-
-    // ═════════════════════════════════════════════════════════════════════════
-    // PHASE 1: ACCELERATED OVERTURE & CONTENDER REVEALS (0:00.0 – 14.40s)
-    // ═════════════════════════════════════════════════════════════════════════
-
-    if (t < 3.60) {
-      // SHOT 1: MACRO PORTRAIT — HOME RED CONTENDER (Football Helmet / wrestler_bands)
-      this._snapCut(0, () => {
-        this._setFov(38);
-        this._applyPalette(0, athletes);
-      });
-      const prog = t / 3.60;
-      const ease = prog * prog * (3 - 2 * prog);
-      const camX = 0.40 - ease * 0.15;
-      const camY = 1.70 + ease * 0.05;
-      const camZ = 3.9 + ease * 0.30;
-      this._pos.set(camX, camY, camZ);
-      this._target.set(0.0, 2.05, 6.0);
-
-    } else if (t < 7.20) {
-      // SHOT 2: REVERSE MACRO PORTRAIT — AWAY BLUE CONTENDER (Cricket Helmet / wicket_grill)
-      this._snapCut(1, () => {
-        this._setFov(38);
-        this._applyPalette(0, athletes);
-      });
-      const prog = (t - 3.60) / 3.60;
-      const ease = prog * prog * (3 - 2 * prog);
-      const camX = -0.40 + ease * 0.15;
-      const camY = 1.70 + ease * 0.05;
-      const camZ = -5.9 - ease * 0.30;
-      this._pos.set(camX, camY, camZ);
-      this._target.set(0.0, 2.05, -8.0);
-
-    } else if (t < 11.50) {
-      // SHOT 3: HERO BALL ROLLOUT CURVING DOWN EAST BANKED WALL
-      this._snapCut(2, () => {
-        this._setFov(50);
-      });
-      const prog = (t - 7.20) / 4.30;
-      const ease = prog * prog * (3 - 2 * prog);
-      const camX = 11.5 - ease * 4.5;
-      const camY = 3.6 - ease * 1.2;
-      const camZ = 14.0 - ease * 7.0;
-      this._pos.set(camX, camY, camZ);
-      this._target.set(ballPos.x * 0.85, Math.max(0.8, ballPos.y), ballPos.z);
-
-    } else if (t < 14.40) {
-      // SHOT 4: MIDCOURT FACEOFF ACROSS NET
-      this._snapCut(3, () => {
-        this._setFov(50);
-      });
-      const prog = (t - 11.50) / 2.90;
-      const ease = prog * prog * (3 - 2 * prog);
-      const camX = 7.0 - ease * 1.2;
-      const camY = 2.0 + ease * 0.2;
-      const camZ = 0.0 + ease * 0.5;
-      this._pos.set(camX, camY, camZ);
-      this._target.set(0.0, 1.4, -1.0);
-
-    // ═════════════════════════════════════════════════════════════════════════
-    // PHASE 2 & 3: 6-GOAL MULTI-ANGLE SHOWCASE (14.40s – 78.40s)
-    // ═════════════════════════════════════════════════════════════════════════
-
-    } else if (t < 24.00) {
-      // SHOT 5: ELEVATED BROADCAST RAIL CAM — KICKOFF & GOAL 1 (21.0s | North Torus 1-0)
-      this._snapCut(4, () => {
-        this._setFov(54);
-        this.addImpulse(0.85);
-        this._applyPalette(0, athletes); // Act I Bookend: Red vs Blue
-      });
-
-      const railX = 16.5;
-      const railY = 6.2;
-      const railZ = focusZ * 0.40;
-      this._pos.set(railX, railY, railZ);
-
-      if (t >= 20.00 && t < 23.50) {
-        const blend = Math.min(1.0, Math.max(0.0, (t - 20.00) / 0.80));
-        const easeBlend = blend * blend * (3 - 2 * blend);
-        this._target.set(
-          (1 - easeBlend) * (focusX * 0.60) + easeBlend * 0.0,
-          (1 - easeBlend) * 2.0 + easeBlend * 9.5,
-          (1 - easeBlend) * (focusZ * 0.85) + easeBlend * (-40.0)
-        );
-      } else if (t >= 23.50) {
-        this._target.set(0.0, 9.5, -40.0);
-      } else {
-        this._target.set(focusX * 0.60, 2.0, focusZ * 0.85);
+        matchState.countdownTicksRemaining = 0;
+        matchState.matchOver = false;
+        matchState.ticksRemaining = 18000;
+        matchState.events.length = 0;
       }
 
-    } else if (t < 35.00) {
-      // SHOT 6: EAST BANKED WALL LOW CAM — GOAL 2 (32.0s | South Torus 1-1)
-      this._snapCut(5, () => {
-        this._setFov(52);
-        this.addImpulse(0.85);
-        this._applyPalette(1, athletes); // Act II: VoltGold
-      });
-
-      const prog = (t - 24.00) / 11.00;
-      const ease = prog * prog * (3 - 2 * prog);
-      const camX = 16.0 - ease * 2.0;
-      const camY = 5.2 + ease * 0.6;
-      const camZ = 6.0 + ease * 6.0;
-      this._pos.set(camX, camY, camZ);
-
-      if (t >= 30.80 && t < 34.00) {
-        const blend = Math.min(1.0, Math.max(0.0, (t - 30.80) / 0.80));
-        const easeBlend = blend * blend * (3 - 2 * blend);
-        this._target.set(
-          (1 - easeBlend) * (focusX * 0.50) + easeBlend * 0.0,
-          (1 - easeBlend) * 2.2 + easeBlend * 9.5,
-          (1 - easeBlend) * (focusZ * 0.80) + easeBlend * 40.0
-        );
-      } else if (t >= 34.00) {
-        this._target.set(0.0, 9.5, 40.0);
-      } else {
-        this._target.set(focusX * 0.50, 2.2, focusZ * 0.80);
-      }
-
-    } else if (t < 44.20) {
-      // SHOT 7A: WEST RALLY RAIL CAM — Rally 3 builds to the drop at center court
-      this._snapCut(6, () => {
-        this._setFov(54);
-        this.addImpulse(0.9);
-        this._applyPalette(2, athletes); // Act II: IonCyan
-      });
-
-      const railX = -12.0;
-      const railY = 5.5;
-      const railZ = focusZ * 0.50 + 4.0;
-      this._pos.set(railX, railY, railZ);
-      this._target.set(focusX * 0.60, 2.0, focusZ * 0.85);
-
-    } else if (t < 46.00) {
-      // SHOT 7B: TOP-DOWN 3/4 SKY CAM — GOAL 3 (44.20s Beat Drop! | North Torus 2-1)
-      this._snapCut(6.5, () => {
-        this._setFov(62);
-      });
-
-      const prog = (t - 44.20) / 1.80;
-      const ease = prog * prog * (3 - 2 * prog);
-      const camX = 8.0 - ease * 4.0;
-      const camY = 14.5 - ease * 1.5;
-      const camZ = -12.0 - ease * 4.0;
-      this._pos.set(camX, camY, camZ);
-      this._target.set(0.0, 9.5, -40.0);
-
-    } else if (t < 57.00) {
-      // SHOT 8: ULTRA-LOW TURF PROFILE CAM — GOAL 4 (53.0s | South Torus 2-2)
-      this._snapCut(7, () => {
-        this._setFov(48);
-        this.addImpulse(0.85);
-        this._applyPalette(3, athletes); // Act II: Emerald
-      });
-
-      const prog = (t - 46.00) / 11.00;
-      const ease = prog * prog * (3 - 2 * prog);
-      const camX = 8.5 - ease * 2.0;
-      const camY = 2.0 + ease * 0.3;
-      const camZ = 18.0 + ease * 8.0;
-      this._pos.set(camX, camY, camZ);
-
-      if (t >= 51.60 && t < 55.50) {
-        const blend = Math.min(1.0, Math.max(0.0, (t - 51.60) / 0.80));
-        const easeBlend = blend * blend * (3 - 2 * blend);
-        this._target.set(
-          (1 - easeBlend) * (focusX * 0.50) + easeBlend * 0.0,
-          (1 - easeBlend) * 1.8 + easeBlend * 9.5,
-          (1 - easeBlend) * (focusZ * 0.80) + easeBlend * 40.0
-        );
-      } else if (t >= 55.50) {
-        this._target.set(0.0, 9.5, 40.0);
-      } else {
-        this._target.set(focusX * 0.50, 1.8, focusZ * 0.80);
-      }
-
-    } else if (t < 67.00) {
-      // SHOT 9: FLANK 3/4 MID-COURT CAM — GOAL 5 (63.5s | North Torus 3-2)
-      this._snapCut(8, () => {
-        this._setFov(52);
-        this.addImpulse(0.85);
-        this._applyPalette(4, athletes); // Act II: Obsidian
-      });
-
-      const prog = (t - 57.00) / 10.00;
-      const ease = prog * prog * (3 - 2 * prog);
-      const camX = 17.0 - ease * 2.0;
-      const camY = 7.5 + ease * 0.5;
-      const camZ = -26.0 - ease * 4.0;
-      this._pos.set(camX, camY, camZ);
-
-      if (t >= 61.80 && t < 65.50) {
-        const blend = Math.min(1.0, Math.max(0.0, (t - 61.80) / 0.80));
-        const easeBlend = blend * blend * (3 - 2 * blend);
-        this._target.set(
-          (1 - easeBlend) * (focusX * 0.60) + easeBlend * 0.0,
-          (1 - easeBlend) * 2.0 + easeBlend * 9.5,
-          (1 - easeBlend) * (focusZ * 0.85) + easeBlend * (-40.0)
-        );
-      } else if (t >= 65.50) {
-        this._target.set(0.0, 9.5, -40.0);
-      } else {
-        this._target.set(focusX * 0.60, 2.0, focusZ * 0.85);
-      }
-
-    } else if (t < 72.10) {
-      // SHOT 10A: EAST RALLY RAIL CAM — Red vs Blue contest the ball before the climax
-      this._snapCut(9, () => {
-        this._setFov(54);
-        this.addImpulse(1.0);
-        this._applyPalette(0, athletes); // Act III Bookend: Red vs Blue returns!
-      });
-
-      const railX = 12.0;
-      const railY = 5.5;
-      const railZ = focusZ * 0.50 + 4.0;
-      this._pos.set(railX, railY, railZ);
-      this._target.set(focusX * 0.60, 2.0, focusZ * 0.85);
-
-    } else if (t < 78.40) {
-      // SHOT 10B: THROUGH-HOOP 3/4 FRAMING CAM — GOAL 6 (73.0s Climax! | North Torus 4-2)
-      // Cuts in on the 72.10s beat, just before the staged spike, so the ball's
-      // flight through the ring is on screen. Positioned on East flank looking
-      // cleanly through Torus aperture with zero pillar obstruction.
-      this._snapCut(9.5, () => {
-        this._setFov(56);
-      });
-
-      const prog = (t - 72.10) / 6.30;
-      const ease = prog * prog * (3 - 2 * prog);
-      const camX = 13.0 - ease * 2.5;
-      const camY = 8.5 + ease * 0.5;
-      const camZ = -33.0 - ease * 3.0;
-      this._pos.set(camX, camY, camZ);
-      this._target.set(-1.0, 9.5, -40.0);
-
-    // ═════════════════════════════════════════════════════════════════════════
-    // PHASE 4: CELESTIAL ASCENSION ARC (78.40s – 83.80s)
-    // ═════════════════════════════════════════════════════════════════════════
-
-    } else if (t < 83.80) {
-      // SHOT 11: CELESTIAL ASCENSION ARC
-      this._snapCut(10, () => {
-        this._setFov(66);
-      });
-
-      const prog = (t - 78.40) / 5.40;
-      const ease = prog * prog * (3 - 2 * prog);
-      const rad = 22.0 + ease * 18.0;
-      const angle = -Math.PI * 0.25 + ease * 0.6;
-      const camY = 16.0 + ease * 24.0;
-      this._pos.set(rad * Math.sin(angle), camY, rad * Math.cos(angle));
-      this._target.set(0, 2.0, 0);
-
-    // ═════════════════════════════════════════════════════════════════════════
-    // PHASE 5: GALAXY TITLE CARD OUTRO (83.80s – 94.50s)
-    // ═════════════════════════════════════════════════════════════════════════
-
-    } else {
-      this._pos.set(0, 45.0, -10.0);
-      this._target.set(0, 0, -40.0);
-    }
-
-    this._applyResilientClearance(delta);
-  }
-
-  _setFov(fov) {
-    if (this.camera.fov !== fov) {
-      this.camera.fov = fov;
-      this.camera.updateProjectionMatrix();
-    }
-  }
-
-  _snapCut(cutIndex, onCutCallback = null) {
-    if (this._currentCut !== cutIndex) {
-      this._currentCut = cutIndex;
-      this._justCut = true;
-      if (typeof onCutCallback === 'function') {
-        onCutCallback();
-      }
-    }
-  }
-
-  _applyPalette(idx, athletes = []) {
-    // Act I (0.0s – 24.0s) & Act III (67.0s – 94.5s) are strictly locked to Classic Red vs Blue
-    // with Red in Football Helmet (wrestler_bands) and Blue in Cricket Helmet (wicket_grill).
-    // Act II (24.0s – 67.0s) cycles through the diverse Brand Palettes and Series 1 headwear pack.
-    const isBookend = this.elapsedTime < 24.0 || this.elapsedTime >= 67.0;
-    const pal = isBookend ? this._palettes[0] : (this._palettes[idx % this._palettes.length] || this._palettes[0]);
-    try {
-      if (athletes[0]?.setTeamAndVariant) {
-        athletes[0].setTeamAndVariant('home', pal.homeVariant, { primaryColor: pal.homeColor });
-        if (athletes[0]?.setHeadwear && pal.homeHeadwear) {
-          athletes[0].setHeadwear(pal.homeHeadwear);
+      for (let i = 0; i < athletes.length; i++) {
+        if (athletes[i]?.strikeState) {
+          athletes[i].strikeState.aimMagnetism = aimMag;
         }
       }
-      if (athletes[1]?.setTeamAndVariant) {
-        athletes[1].setTeamAndVariant('away', pal.awayVariant, { primaryColor: pal.awayColor });
-        if (athletes[1]?.setHeadwear && pal.awayHeadwear) {
-          athletes[1].setHeadwear(pal.awayHeadwear);
+
+      this._resetBotState(bots[0], p1BotCfg.difficulty, p1BotCfg.aggressiveness);
+      this._resetBotState(bots[1], p2BotCfg.difficulty, p2BotCfg.aggressiveness);
+
+      // Place athletes cleanly on court floor at their starting stride for tick 0 of the unscripted game
+      this._placeAthleteForSim(athletes[0], p1.x, p1.z, p1.yaw, p1.vx || 0, p1.vz || 0);
+      this._placeAthleteForSim(athletes[1], p2.x, p2.z, p2.yaw, p2.vx || 0, p2.vz || 0);
+      this._resetBotState(bots[0], p1BotCfg.difficulty, p1BotCfg.aggressiveness);
+      this._resetBotState(bots[1], p2BotCfg.difficulty, p2BotCfg.aggressiveness);
+
+      const bFloor = getCourtFloorY(ballInit.x, ballInit.z);
+      const by = Math.max(bFloor + (activeBall.radius || 0.5) + 0.08, ballInit.y);
+      activeBall.body.setTranslation({ x: ballInit.x, y: by, z: ballInit.z }, true);
+      activeBall.body.setLinvel({ x: ballInit.vx || 0, y: ballInit.vy || 0, z: ballInit.vz || 0 }, true);
+      activeBall.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      activeBall.interpolated.reset(new THREE.Vector3(ballInit.x, by, ballInit.z));
+      activeBall.prevPos = { x: ballInit.x, y: by, z: ballInit.z };
+      activeBall.hasPrevPos = true;
+      activeBall.lastGoalTick = -999;
+
+      if (matchState) matchState.events.length = 0;
+
+      const frames = new Array(ticks);
+      const goals = [];
+      const hits = [];
+      let prevBx = ballInit.x;
+      let prevBy = by;
+      let prevBz = ballInit.z;
+      let prevP1x = p1.x;
+      let prevP1z = p1.z;
+      let prevP2x = p2.x;
+      let prevP2z = p2.z;
+      let prevBvx = ballInit.vx || 0;
+      let lastHitTickP1 = -999;
+      let lastHitTickP2 = -999;
+
+      for (let t = 0; t < ticks; t++) {
+        const eventsBefore = matchState ? matchState.events.length : 0;
+        const p1ResolvedBefore = athletes[0]?.strikeState?.resolvedCount || 0;
+        const p2ResolvedBefore = athletes[1]?.strikeState?.resolvedCount || 0;
+
+        const registry = loop.interpolated;
+        for (let r = 0; r < registry.length; r++) registry[r].savePrevious();
+
+        const simTick = loop.tick++;
+        loop._fixedUpdate(dt, simTick);
+        totalSimTicks++;
+
+        // Keep targetGoal consistent during the unscripted scenario so bots don't flip ends mid-clip
+        if (matchState) {
+          matchState.targetGoal = targetGoal;
+          matchState.isCountingDown = false;
+          matchState.matchOver = false;
+        }
+
+        const bt = activeBall.body.translation();
+        const bv = activeBall.body.linvel();
+        const bSpeed = Math.hypot(bv.x, bv.y, bv.z);
+
+        const m1t = athletes[0].motor.body.translation();
+        const m1v = athletes[0].motor.body.linvel();
+        const p1Speed = Math.hypot(m1v.x, m1v.z);
+        const p1Grounded = !!athletes[0].motor.grounded;
+        const p1Diving = !!(athletes[0].isDiving && athletes[0].isDiving(simTick));
+        const p1Sliding = (athletes[0].actionState?.slideTime || 0) > 0;
+        const p1Yaw = athletes[0].animTarget?.yaw || 0;
+
+        const m2t = athletes[1].motor.body.translation();
+        const m2v = athletes[1].motor.body.linvel();
+        const p2Speed = Math.hypot(m2v.x, m2v.z);
+        const p2Grounded = !!athletes[1].motor.grounded;
+        const p2Diving = !!(athletes[1].isDiving && athletes[1].isDiving(simTick));
+        const p2Sliding = (athletes[1].actionState?.slideTime || 0) > 0;
+        const p2Yaw = athletes[1].animTarget?.yaw || 0;
+
+        let hitBy = -1;
+        let hitKind = 0;
+        if ((athletes[0]?.strikeState?.resolvedCount || 0) > p1ResolvedBefore) {
+          hitBy = 0;
+          hitKind = athletes[0].strikeState.lastStrikeKind || 1;
+          lastHitTickP1 = t;
+          hits.push({ tick: t, athlete: 0, kind: hitKind, airborne: !p1Grounded });
+          totalHitsCount++;
+          if (!p1Grounded) spikeEventsCount++;
+        } else if ((athletes[1]?.strikeState?.resolvedCount || 0) > p2ResolvedBefore) {
+          hitBy = 1;
+          hitKind = athletes[1].strikeState.lastStrikeKind || 1;
+          lastHitTickP2 = t;
+          hits.push({ tick: t, athlete: 1, kind: hitKind, airborne: !p2Grounded });
+          totalHitsCount++;
+          if (!p2Grounded) spikeEventsCount++;
+        }
+
+        if (p1Diving || p2Diving || p1Sliding || p2Sliding) {
+          diveEventsCount++;
+        }
+
+        let goalEvt = null;
+        if (matchState && matchState.events.length > eventsBefore) {
+          const lastEv = matchState.events[matchState.events.length - 1];
+          goalEvt = {
+            goal: lastEv.goal,
+            scoredFor: lastEv.scoredFor,
+            y: lastEv.y,
+            z: lastEv.z,
+          };
+          goals.push({ tick: t, ...goalEvt });
+          if (lastEv.goal === 'N') northGoalsCount++;
+          else if (lastEv.goal === 'S') southGoalsCount++;
+        }
+
+        const ballStep = t === 0 ? 0 : Math.hypot(bt.x - prevBx, bt.y - prevBy, bt.z - prevBz);
+        const p1Step = t === 0 ? 0 : Math.hypot(m1t.x - prevP1x, m1t.z - prevP1z);
+        const p2Step = t === 0 ? 0 : Math.hypot(m2t.x - prevP2x, m2t.z - prevP2z);
+        const teleported = ballStep > 1.8 || p1Step > 1.5 || p2Step > 1.5;
+
+        const wallBounce = Math.abs(bt.x) > 12.2 && bSpeed > 8.5 && (Math.sign(bv.x) !== Math.sign(prevBvx) || Math.abs(bv.z) > 8.0);
+        if (wallBounce) wallCaromsCount++;
+
+        // Compute athlete approach engagement toward ball
+        const d1 = Math.hypot(bt.x - m1t.x, bt.z - m1t.z);
+        const d2 = Math.hypot(bt.x - m2t.x, bt.z - m2t.z);
+        const align1 = (d1 > 0.6 && p1Speed > 0.8) ? ((bt.x - m1t.x) * m1v.x + (bt.z - m1t.z) * m1v.z) / (d1 * p1Speed) : 0.4;
+        const align2 = (d2 > 0.6 && p2Speed > 0.8) ? ((bt.x - m2t.x) * m2v.x + (bt.z - m2t.z) * m2v.z) / (d2 * p2Speed) : 0.4;
+        const p1RunningAway = d1 < 12.0 && p1Speed > 2.6 && align1 < -0.35 && (t - lastHitTickP1 > 28);
+        const p2RunningAway = d2 < 12.0 && p2Speed > 2.6 && align2 < -0.35 && (t - lastHitTickP2 > 28);
+        const closerRunningAway = d1 <= d2 ? p1RunningAway : p2RunningAway;
+
+        prevBx = bt.x;
+        prevBy = bt.y;
+        prevBz = bt.z;
+        prevP1x = m1t.x;
+        prevP1z = m1t.z;
+        prevP2x = m2t.x;
+        prevP2z = m2t.z;
+        prevBvx = bv.x;
+
+        frames[t] = {
+          poses: this._capturePoseArray(athletes, activeBall),
+          bx: bt.x, by: bt.y, bz: bt.z,
+          bvx: bv.x, bvy: bv.y, bvz: bv.z, bSpeed,
+          p1x: m1t.x, p1y: m1t.y, p1z: m1t.z,
+          p1vx: m1v.x, p1vy: m1v.y, p1vz: m1v.z, p1Speed,
+          p1Grounded, p1Diving, p1Sliding, p1Yaw,
+          p2x: m2t.x, p2y: m2t.y, p2z: m2t.z,
+          p2vx: m2v.x, p2vy: m2v.y, p2vz: m2v.z, p2Speed,
+          p2Grounded, p2Diving, p2Sliding, p2Yaw,
+          hitBy, hitKind,
+          goal: goalEvt,
+          wallBounce,
+          teleported,
+          ballStep,
+          align1, align2,
+          closerRunningAway,
+        };
+      }
+
+      const gameRecord = {
+        id: gameId,
+        category,
+        ballType,
+        targetGoal,
+        frames,
+        goals,
+        hits,
+      };
+      this._harvestedGames.push(gameRecord);
+      return gameRecord;
+    };
+
+    const ballCycle = ['medium', 'medium', 'small', 'large', 'medium'];
+
+    // ─── CATEGORY 1: 16 North Torus Attacking Game Situations (Unscripted Goal Harvest) ───
+    for (let i = 0; i < 16; i++) {
+      const side = (i % 2 === 0) ? 1 : -1;
+      const bType = (i < 4) ? 'medium' : ballCycle[i % ballCycle.length];
+      const isAerialSetup = (i % 3 === 1);
+      const bx = side * (4.1 + this._nextRng() * 1.4);
+      const bz = -38.4 - this._nextRng() * 1.4;
+      const bFloor = getCourtFloorY(bx, bz);
+      const by = isAerialSetup ? (bFloor + 2.15 + this._nextRng() * 0.45) : (bFloor + 1.15 + this._nextRng() * 0.30);
+
+      const p1x = bx + side * (0.95 + this._nextRng() * 0.35);
+      const p1z = bz + (0.25 + this._nextRng() * 0.35);
+      const aimYaw = Math.atan2(-bx, -40.0 - bz);
+
+      const p2x = -side * (3.8 + this._nextRng() * 2.5);
+      const p2z = -28.5 - this._nextRng() * 3.5;
+
+      // First 2 games run 460 ticks so Climax Cut 18 + Ascension Cut 19 have a continuous 432-tick window
+      const simTicks = i < 2 ? 460 : 165;
+
+      simulateScenario(this._harvestedGames.length, {
+        category: 'goal_north',
+        ballType: bType,
+        ticks: simTicks,
+        targetGoal: 'N',
+        p1: { x: p1x, z: p1z, yaw: aimYaw, vx: Math.sin(aimYaw) * 3.2, vz: Math.cos(aimYaw) * 3.2 },
+        p2: { x: p2x, z: p2z, yaw: Math.atan2(bx - p2x, bz - p2z), vx: 0, vz: -4.5 },
+        ballInit: {
+          x: bx,
+          y: by,
+          z: bz,
+          vx: -side * (0.6 + this._nextRng() * 0.6),
+          vy: isAerialSetup ? (1.2 + this._nextRng() * 0.8) : (2.2 + this._nextRng() * 1.0),
+          vz: -0.3,
+        },
+        p1BotCfg: { difficulty: 'medium', aggressiveness: 0.55 },
+        p2BotCfg: { difficulty: 'hard', aggressiveness: 0.90 },
+        aimMag: 0.90,
+      });
+    }
+
+    // ─── CATEGORY 2: 16 South Torus Attacking Game Situations (Unscripted Goal Harvest) ───
+    for (let i = 0; i < 16; i++) {
+      const side = (i % 2 === 0) ? 1 : -1;
+      const bType = ballCycle[i % ballCycle.length];
+      const isAerialSetup = (i % 3 === 1);
+      const bx = side * (4.1 + this._nextRng() * 1.4);
+      const bz = 38.4 + this._nextRng() * 1.4;
+      const bFloor = getCourtFloorY(bx, bz);
+      const by = isAerialSetup ? (bFloor + 2.15 + this._nextRng() * 0.45) : (bFloor + 1.15 + this._nextRng() * 0.30);
+
+      // Away (P2) attacks South when targetGoal === 'N'
+      const p2x = bx + side * (0.95 + this._nextRng() * 0.35);
+      const p2z = bz - (0.25 + this._nextRng() * 0.35);
+      const aimYaw = Math.atan2(-bx, 40.0 - bz);
+
+      const p1x = -side * (3.8 + this._nextRng() * 2.5);
+      const p1z = 28.5 + this._nextRng() * 3.5;
+
+      simulateScenario(this._harvestedGames.length, {
+        category: 'goal_south',
+        ballType: bType,
+        ticks: 165,
+        targetGoal: 'N',
+        p1: { x: p1x, z: p1z, yaw: Math.atan2(bx - p1x, bz - p1z), vx: 0, vz: 4.5 },
+        p2: { x: p2x, z: p2z, yaw: aimYaw, vx: Math.sin(aimYaw) * 3.2, vz: Math.cos(aimYaw) * 3.2 },
+        ballInit: {
+          x: bx,
+          y: by,
+          z: bz,
+          vx: -side * (0.6 + this._nextRng() * 0.6),
+          vy: isAerialSetup ? (1.2 + this._nextRng() * 0.8) : (2.2 + this._nextRng() * 1.0),
+          vz: 0.3,
+        },
+        p1BotCfg: { difficulty: 'hard', aggressiveness: 0.90 },
+        p2BotCfg: { difficulty: 'medium', aggressiveness: 0.55 },
+        aimMag: 0.90,
+      });
+    }
+
+    // ─── CATEGORY 3: 18 Contested Midcourt, Stream-Lane & Banked-Wall Rally Games ───
+    for (let i = 0; i < 18; i++) {
+      const isWallGame = i >= 12;
+      const bType = i < 10 ? 'medium' : ballCycle[i % ballCycle.length];
+      const side = (i % 2 === 0) ? 1 : -1;
+
+      if (!isWallGame) {
+        // Contested Midcourt & Stream-Ramp Rally: P1 South (facing North), P2 North (facing South), both 100% goal-side
+        const serveToP1 = (i % 2 === 0);
+        const p1x = side * (2.0 + this._nextRng() * 5.0);
+        const p1z = 7.5 + this._nextRng() * 7.5;
+        const p2x = -side * (2.0 + this._nextRng() * 5.0);
+        const p2z = -7.5 - this._nextRng() * 7.5;
+
+        const bx = serveToP1 ? (p1x * 0.7) : (p2x * 0.7);
+        const bz = serveToP1 ? (p1z - 2.4) : (p2z + 2.4);
+        const bFloor = getCourtFloorY(bx, bz);
+
+        simulateScenario(this._harvestedGames.length, {
+          category: 'rally',
+          ballType: bType,
+          ticks: 680,
+          targetGoal: 'N',
+          p1: { x: p1x, z: p1z, yaw: Math.PI, vx: 0, vz: -4.2 },
+          p2: { x: p2x, z: p2z, yaw: 0, vx: 0, vz: 4.2 },
+          ballInit: {
+            x: bx,
+            y: bFloor + 1.6 + this._nextRng() * 0.8,
+            z: bz,
+            vx: (serveToP1 ? (p1x - bx) : (p2x - bx)) * 1.8,
+            vy: 3.2 + this._nextRng() * 1.8,
+            vz: serveToP1 ? 4.5 : -4.5,
+          },
+          p1BotCfg: { difficulty: 'hard', aggressiveness: 0.94 },
+          p2BotCfg: { difficulty: 'hard', aggressiveness: 0.94 },
+          aimMag: 0.35,
+        });
+      } else {
+        // High-Velocity Parabolic Banked Wall Carom Game
+        const wallX = side * (13.2 + this._nextRng() * 1.6);
+        const bz = -10.0 + this._nextRng() * 8.0;
+        const bFloor = getCourtFloorY(wallX, bz);
+        const p1x = side * (9.5 + this._nextRng() * 2.0);
+        const p1z = bz + 7.5;
+        const p2x = side * (8.0 + this._nextRng() * 2.5);
+        const p2z = bz - 9.0;
+
+        simulateScenario(this._harvestedGames.length, {
+          category: 'wall_carom',
+          ballType: i % 2 === 0 ? 'large' : bType,
+          ticks: 280,
+          targetGoal: 'N',
+          p1: { x: p1x, z: p1z, yaw: Math.PI, vx: side * 2.0, vz: -5.5 },
+          p2: { x: p2x, z: p2z, yaw: 0, vx: side * 1.5, vz: 4.5 },
+          ballInit: {
+            x: wallX,
+            y: bFloor + 1.4,
+            z: bz,
+            vx: side * 4.5,
+            vy: 2.5,
+            vz: 13.5,
+          },
+          p1BotCfg: { difficulty: 'hard', aggressiveness: 0.95 },
+          p2BotCfg: { difficulty: 'hard', aggressiveness: 0.95 },
+          aimMag: 0.35,
+        });
+      }
+    }
+
+    // ─── CATEGORY 4: 12 Contested Diving Saves & Aerial Jump-Spike Duels (200 ticks each) ───
+    for (let i = 0; i < 12; i++) {
+      const isDive = i < 6;
+      const side = (i % 2 === 0) ? 1 : -1;
+      const bType = ballCycle[i % ballCycle.length];
+
+      if (isDive) {
+        // Defending bot (P2 in North or P1 in South) lunges laterally to dig a fast incoming shot
+        const p1x = -side * 1.2;
+        const p1z = 21.0 + this._nextRng() * 5.0;
+        const bx = side * (2.4 + this._nextRng() * 1.0);
+        const bz = p1z - 5.5;
+        const bFloor = getCourtFloorY(bx, bz);
+
+        simulateScenario(this._harvestedGames.length, {
+          category: 'dive_save',
+          ballType: bType,
+          ticks: 200,
+          targetGoal: 'N',
+          p1: { x: p1x, z: p1z, yaw: Math.PI, vx: side * 5.2, vz: -3.5 },
+          p2: { x: side * 3.0, z: p1z - 12.0, yaw: 0, vx: 0, vz: 5.0 },
+          ballInit: {
+            x: bx,
+            y: bFloor + 1.6,
+            z: bz,
+            vx: side * 2.2,
+            vy: 2.0,
+            vz: 11.5,
+          },
+          p1BotCfg: { difficulty: 'hard', aggressiveness: 0.98 },
+          p2BotCfg: { difficulty: 'hard', aggressiveness: 0.95 },
+          aimMag: 0.40,
+        });
+      } else {
+        // High Aerial Jump-Spike Duel: ball lofted high in front of charging attacker
+        const p1x = side * (3.0 + this._nextRng() * 3.5);
+        const p1z = -12.0 - this._nextRng() * 10.0;
+        const bx = p1x - side * 0.4;
+        const bz = p1z - 1.5;
+        const bFloor = getCourtFloorY(bx, bz);
+
+        simulateScenario(this._harvestedGames.length, {
+          category: 'aerial_spike',
+          ballType: bType,
+          ticks: 200,
+          targetGoal: 'N',
+          p1: { x: p1x, z: p1z, yaw: Math.PI, vx: 0, vz: -4.8 },
+          p2: { x: -side * 3.5, z: p1z - 9.0, yaw: 0, vx: 0, vz: 4.8 },
+          ballInit: {
+            x: bx,
+            y: bFloor + 2.45 + this._nextRng() * 0.45,
+            z: bz,
+            vx: -side * 0.5,
+            vy: 2.4 + this._nextRng() * 1.0,
+            vz: -1.2,
+          },
+          p1BotCfg: { difficulty: 'hard', aggressiveness: 0.96 },
+          p2BotCfg: { difficulty: 'hard', aggressiveness: 0.92 },
+          aimMag: 0.55,
+        });
+      }
+    }
+
+    // Safety top-up loop: guarantee at least 6 North Torus goals and 6 South Torus goals
+    let topUpGuard = 0;
+    while ((northGoalsCount < 6 || southGoalsCount < 6) && topUpGuard < 24) {
+      topUpGuard++;
+      const needNorth = northGoalsCount < 6;
+      const side = (topUpGuard % 2 === 0) ? 1 : -1;
+      const bx = side * (4.4 + (topUpGuard % 3) * 0.4);
+      const bz = needNorth ? (-38.8 - (topUpGuard % 2) * 0.4) : (38.8 + (topUpGuard % 2) * 0.4);
+      const bFloor = getCourtFloorY(bx, bz);
+      const by = bFloor + 1.25;
+      const goalZ = needNorth ? -40.0 : 40.0;
+      const aimYaw = Math.atan2(-bx, goalZ - bz);
+
+      if (needNorth) {
+        simulateScenario(this._harvestedGames.length, {
+          category: 'goal_north',
+          ballType: 'medium',
+          ticks: 320,
+          targetGoal: 'N',
+          p1: { x: bx + side * 1.05, z: bz + 0.30, yaw: aimYaw, vx: Math.sin(aimYaw) * 3.5, vz: Math.cos(aimYaw) * 3.5 },
+          p2: { x: -side * 4.5, z: -29.0, yaw: 0, vx: 0, vz: -4.0 },
+          ballInit: { x: bx, y: by, z: bz, vx: -side * 0.8, vy: 2.5, z: bz, vz: -0.2 },
+          p1BotCfg: { difficulty: 'medium', aggressiveness: 0.55 },
+          p2BotCfg: { difficulty: 'hard', aggressiveness: 0.90 },
+          aimMag: 0.95,
+        });
+      } else {
+        simulateScenario(this._harvestedGames.length, {
+          category: 'goal_south',
+          ballType: 'medium',
+          ticks: 260,
+          targetGoal: 'N',
+          p1: { x: -side * 4.5, z: 29.0, yaw: Math.PI, vx: 0, vz: 4.0 },
+          p2: { x: bx + side * 1.05, z: bz - 0.30, yaw: aimYaw, vx: Math.sin(aimYaw) * 3.5, vz: Math.cos(aimYaw) * 3.5 },
+          ballInit: { x: bx, y: by, z: bz, vx: -side * 0.8, vy: 2.5, vz: 0.2 },
+          p1BotCfg: { difficulty: 'hard', aggressiveness: 0.90 },
+          p2BotCfg: { difficulty: 'medium', aggressiveness: 0.55 },
+          aimMag: 0.95,
+        });
+      }
+    }
+
+    // Restore clean match state
+    if (matchState) {
+      matchState.scoreHome = 0;
+      matchState.scoreAway = 0;
+      matchState.celebrationTicks = 0;
+      matchState.lastScoredFor = null;
+      matchState.lastGoalId = null;
+      matchState.events.length = 0;
+    }
+
+    const elapsedSec = ((performance.now() - t0) / 1000).toFixed(2);
+    console.log(
+      `[Harvest] Simulated ${this._harvestedGames.length} unscripted games (${totalSimTicks} ticks = ${(totalSimTicks / 60).toFixed(1)}s gameplay) in ${elapsedSec}s! ` +
+      `Yield: ${northGoalsCount} North Goals, ${southGoalsCount} South Goals, ${totalHitsCount} Real Strikes, ${spikeEventsCount} Aerial Spikes, ${diveEventsCount} Dive/Slide Ticks, ${wallCaromsCount} Wall Carom Ticks.`
+    );
+
+    this._mineHighlightsAndBuildSchedule();
+    this._harvestReady = true;
+    this.isActive = wasActive;
+
+    return {
+      gamesSimulated: this._harvestedGames.length,
+      totalSimTicks,
+      elapsedSec: Number(elapsedSec),
+      northGoalsCount,
+      southGoalsCount,
+      totalHitsCount,
+      spikeEventsCount,
+      diveEventsCount,
+      wallCaromsCount,
+      scheduleCount: this._schedule.length,
+      scheduleSummary: this._schedule.map((s) => ({
+        cutIdx: s.cutIdx,
+        name: s.name,
+        frames: `${s.startFrame}-${s.endFrame}`,
+        gameId: s.gameId,
+        tickWindow: `${s.startTick}-${s.endTick}`,
+        hits: s.hitsInClip,
+        goal: s.goalInClip,
+        maxBallStep: Number(s.maxBallStep.toFixed(3)),
+        runningAwayTicks: s.runningAwayTicks,
+      })),
+    };
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 2. AUTOMATIC HIGHLIGHT MINER & BEAT-QUANTIZED SCHEDULE BUILDER
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  _mineHighlightsAndBuildSchedule() {
+    const usedRanges = [];
+    const isOverlapping = (gameId, startTick, endTick) => {
+      for (const u of usedRanges) {
+        if (u.gameId === gameId && Math.max(startTick, u.startTick) < Math.min(endTick, u.endTick)) {
+          return true;
         }
       }
-    } catch (_) {}
-  }
+      return false;
+    };
+    const markUsed = (gameId, startTick, endTick) => {
+      usedRanges.push({ gameId, startTick, endTick });
+    };
 
-  _applyResilientClearance(delta = 1 / 60) {
-    const floorY = getCourtFloorY(this._pos.x, this._pos.z);
-    this._pos.y = Math.max(this._pos.y, floorY + 0.75);
+    const evaluateWindow = (game, startTick, len) => {
+      const endTick = startTick + len;
+      if (startTick < 0 || endTick > game.frames.length) return null;
+      let maxBallStep = 0;
+      let hitsInClip = 0;
+      let airborneHits = 0;
+      let diveTicks = 0;
+      let p1DiveTicks = 0;
+      let p2DiveTicks = 0;
+      let wallTicks = 0;
+      let runningAwayTicks = 0;
+      let sumBallSpeed = 0;
+      let sumAlign = 0;
+      let p1Hits = 0;
+      let p2Hits = 0;
 
-    const targetFloorY = getCourtFloorY(this._target.x, this._target.z);
-    this._target.y = Math.max(this._target.y, targetFloorY + 0.5);
+      for (let t = startTick; t < endTick; t++) {
+        const f = game.frames[t];
+        if (t > startTick && f.teleported) return null; // HARD REJECT: zero respawns/teleports!
+        if (t > startTick && f.ballStep > maxBallStep) maxBallStep = f.ballStep;
+        if (f.hitBy !== -1) {
+          hitsInClip++;
+          if (f.hitBy === 0) p1Hits++;
+          if (f.hitBy === 1) p2Hits++;
+          if ((f.hitBy === 0 && !f.p1Grounded) || (f.hitBy === 1 && !f.p2Grounded)) {
+            airborneHits++;
+          }
+        }
+        if (f.p1Diving || f.p1Sliding) p1DiveTicks++;
+        if (f.p2Diving || f.p2Sliding) p2DiveTicks++;
+        if (f.p1Diving || f.p2Diving || f.p1Sliding || f.p2Sliding) diveTicks++;
+        if (f.wallBounce || Math.abs(f.bx) > 12.2) wallTicks++;
+        if (f.closerRunningAway) runningAwayTicks++;
+        sumBallSpeed += f.bSpeed;
+        sumAlign += Math.max(f.align1, f.align2);
+      }
 
-    if (this._justCut) {
-      this._justCut = false;
-      this._smoothPos.copy(this._pos);
-      this._smoothTarget.copy(this._target);
-    } else {
-      const lerpFactor = 1.0 - Math.exp(-delta * 12.0);
-      this._smoothPos.lerp(this._pos, lerpFactor);
-      this._smoothTarget.lerp(this._target, lerpFactor);
-    }
+      return {
+        gameId: game.id,
+        game,
+        startTick,
+        endTick,
+        maxBallStep,
+        hitsInClip,
+        p1Hits,
+        p2Hits,
+        airborneHits,
+        diveTicks,
+        p1DiveTicks,
+        p2DiveTicks,
+        wallTicks,
+        runningAwayTicks,
+        meanBallSpeed: sumBallSpeed / len,
+        meanAlign: sumAlign / len,
+      };
+    };
 
-    this.camera.position.copy(this._smoothPos);
+    // Helper 1: Pick a genuine unscripted Torus Goal clip ('N' or 'S')
+    const pickGoalClip = (goalDir, len, leadTicks = 22, extraTailTicks = 0) => {
+      let best = null;
+      let bestScore = -Infinity;
 
-    if (this.trauma > 0) {
-      const shake = this.trauma * this.trauma * 0.08;
-      this.camera.position.x += (Math.random() - 0.5) * shake;
-      this.camera.position.y += (Math.random() - 0.5) * shake;
-    }
+      for (const game of this._harvestedGames) {
+        for (const g of game.goals) {
+          if (g.goal !== goalDir) continue;
+          const startTick = Math.max(2, g.tick - leadTicks);
+          if (startTick + len + extraTailTicks > game.frames.length) continue;
+          if (isOverlapping(game.id, startTick, startTick + len + extraTailTicks)) continue;
 
-    this.camera.lookAt(this._smoothTarget);
-  }
+          const stats = evaluateWindow(game, startTick, len + extraTailTicks);
+          if (!stats) continue;
 
-  _choreographRawReelTick(tick, dt, athletes = [], balls = [], matchState = null) {
-    const t = this.elapsedTime;
-    const primaryBall = balls[0] || null;
-    const slot0 = getBotSlot(0);
-    const slot1 = getBotSlot(1);
+          const score =
+            1000 +
+            stats.hitsInClip * 45 +
+            stats.meanBallSpeed * 6 -
+            stats.runningAwayTicks * 500;
 
-    // Keep both AI bots sprinting with full drive
-    if (slot0) slot0.sprintHeld = true;
-    if (slot1) slot1.sprintHeld = true;
-
-    if (!primaryBall?.body || athletes.length < 2) return;
-
-    const bP = primaryBall.body.translation();
-    const a0P = athletes[0]?.motor?.body?.translation();
-    const a1P = athletes[1]?.motor?.body?.translation();
-
-    if (this.stuntType === 'dive') {
-      if (t >= 0.8 && !this._stuntTriggered && a1P) {
-        const dx = bP.x - a1P.x;
-        const dz = bP.z - a1P.z;
-        const dist = Math.hypot(dx, dz);
-        if (slot1) {
-          slot1.moveWorld.set(dx / (dist || 1), 0, dz / (dist || 1));
-          slot1.moveX = slot1.moveWorld.x;
-          slot1.moveZ = slot1.moveWorld.z;
-          if (dist <= 3.5 && dist >= 0.8) {
-            this._stuntTriggered = true;
-            slot1.diveQueued = true;
-            const aimYaw = Math.atan2(dx, dz);
-            slot1.aimYaw = aimYaw;
-            slot1.cameraYaw = aimYaw;
-            slot1.hasAim = true;
+          if (score > bestScore) {
+            bestScore = score;
+            best = {
+              ...stats,
+              endTick: startTick + len,
+              goalTick: g.tick,
+              goalInClip: g.goal,
+              goalData: g,
+            };
           }
         }
       }
-    } else if (this.stuntType === 'slide') {
-      if (t >= 0.8 && !this._stuntTriggered && a0P) {
-        const dx = bP.x - a0P.x;
-        const dz = bP.z - a0P.z;
-        const dist = Math.hypot(dx, dz);
-        if (slot0) {
-          slot0.moveWorld.set(dx / (dist || 1), 0, dz / (dist || 1));
-          slot0.moveX = slot0.moveWorld.x;
-          slot0.moveZ = slot0.moveWorld.z;
-          if (dist <= 4.2) {
-            this._stuntTriggered = true;
-            slot0.slideHeld = true;
-            slot0.volleyQueued = true;
-            const aimYaw = Math.atan2(dx, dz);
-            slot0.aimYaw = aimYaw;
-            slot0.cameraYaw = aimYaw;
-            slot0.hasAim = true;
+
+      // Fallback if all distinct goals were used: allow reuse with highest score
+      if (!best) {
+        for (const game of this._harvestedGames) {
+          for (const g of game.goals) {
+            if (g.goal !== goalDir) continue;
+            const startTick = Math.max(2, Math.min(g.tick - leadTicks, game.frames.length - len - extraTailTicks));
+            if (startTick < 0) continue;
+            const stats = evaluateWindow(game, startTick, len);
+            if (!stats) continue;
+            best = {
+              ...stats,
+              goalTick: g.tick,
+              goalInClip: g.goal,
+              goalData: g,
+            };
+            break;
+          }
+          if (best) break;
+        }
+      }
+
+      if (best) {
+        markUsed(best.gameId, best.startTick, best.endTick + extraTailTicks);
+      }
+      return best;
+    };
+
+    // Helper 2: Pick best stunt or rally clip matching criteria
+    const pickStuntClip = (len, mode, preferredBall = null) => {
+      let best = null;
+      let bestScore = -Infinity;
+
+      const step = len >= 200 ? 12 : 6;
+      for (const game of this._harvestedGames) {
+        // Avoid consuming goal moments for non-goal cuts
+        if (game.category === 'goal_north' || game.category === 'goal_south') continue;
+
+        for (let st = 2; st + len <= game.frames.length; st += step) {
+          if (isOverlapping(game.id, st, st + len)) continue;
+          const stats = evaluateWindow(game, st, len);
+          if (!stats) continue;
+
+          let score =
+            stats.hitsInClip * 45 +
+            stats.meanBallSpeed * 4.5 +
+            stats.meanAlign * 35 -
+            stats.runningAwayTicks * 500;
+
+          if (preferredBall && game.ballType === preferredBall) score += 25;
+
+          if (mode === 'hero_p1') {
+            if (stats.p1Hits < 1 || stats.p1DiveTicks > 0) continue;
+            // Reward P1 strike near middle of clip while upright
+            const mid = st + Math.floor(len * 0.45);
+            const fMid = game.frames[mid];
+            score += stats.p1Hits * 80 + fMid.p1Speed * 12;
+          } else if (mode === 'hero_p2') {
+            if (stats.p2Hits < 1 || stats.p2DiveTicks > 0) continue;
+            const mid = st + Math.floor(len * 0.45);
+            const fMid = game.frames[mid];
+            score += stats.p2Hits * 80 + fMid.p2Speed * 12;
+          } else if (mode === 'rally') {
+            if (stats.hitsInClip < 1) continue;
+            score += stats.hitsInClip * 65 + (stats.p1Hits > 0 && stats.p2Hits > 0 ? 90 : 0);
+          } else if (mode === 'dive_save') {
+            if (stats.diveTicks < 4) continue;
+            score += stats.diveTicks * 18 + stats.hitsInClip * 60;
+          } else if (mode === 'aerial_spike') {
+            if (stats.airborneHits < 1 && stats.hitsInClip < 1) continue;
+            score += stats.airborneHits * 140 + stats.hitsInClip * 50;
+          } else if (mode === 'wall_carom') {
+            if (stats.wallTicks < 8) continue;
+            score += stats.wallTicks * 12 + stats.hitsInClip * 55;
+          } else if (mode === 'strike_impact') {
+            // Require a real strike around tick st + 4..34
+            let hasEarlyHit = false;
+            for (let k = st + Math.min(4, Math.floor(len * 0.15)); k < st + Math.min(34, Math.floor(len * 0.85)); k++) {
+              if (game.frames[k]?.hitBy !== -1) {
+                hasEarlyHit = true;
+                break;
+              }
+            }
+            if (!hasEarlyHit) continue;
+            score += 120;
+          }
+
+          if (score > bestScore) {
+            bestScore = score;
+            best = {
+              ...stats,
+              goalTick: -1,
+              goalInClip: null,
+              goalData: null,
+            };
           }
         }
       }
-    } else if (this.stuntType === 'cut') {
-      if (t >= 0.8 && !this._stuntTriggered && a0P) {
-        if (slot0) {
-          this._stuntTriggered = true;
-          slot0.cutQueued = true;
-        }
-      }
-    } else if (this.stuntType === 'spike') {
-      if (t >= 0.8 && !this._stuntTriggered && a0P) {
-        const dx = bP.x - a0P.x;
-        const dz = bP.z - a0P.z;
-        const dist = Math.hypot(dx, dz);
-        if (slot0) {
-          slot0.moveWorld.set(dx / (dist || 1), 0, dz / (dist || 1));
-          if (dist <= 2.2) {
-            this._stuntTriggered = true;
-            slot0.jumpQueued = true;
-            slot0.spikeQueued = true;
-            const aimYaw = Math.atan2(dx, dz);
-            slot0.aimYaw = aimYaw;
-            slot0.cameraYaw = aimYaw;
-            slot0.hasAim = true;
+
+      // Secondary scored pass across all games (non-overlapping) if primary filter was exhausted
+      if (!best) {
+        for (const game of this._harvestedGames) {
+          for (let st = 2; st + len <= game.frames.length; st += 6) {
+            if (isOverlapping(game.id, st, st + len)) continue;
+            const stats = evaluateWindow(game, st, len);
+            if (!stats) continue;
+            const score = stats.hitsInClip * 80 + stats.meanBallSpeed * 4 - stats.runningAwayTicks * 500 - (mode === 'hero_p1' ? stats.p1DiveTicks * 100 : 0) - (mode === 'hero_p2' ? stats.p2DiveTicks * 100 : 0);
+            if (score > bestScore) {
+              bestScore = score;
+              best = { ...stats, goalTick: -1, goalInClip: null, goalData: null };
+            }
           }
         }
       }
-    } else if (this.stuntType === 'goal') {
-      if (t >= 0.8 && !this._goalStaged && a0P) {
-        const dx = bP.x - a0P.x;
-        const dz = bP.z - a0P.z;
-        const dist = Math.hypot(dx, dz);
-        if (slot0) {
-          slot0.moveWorld.set(dx / (dist || 1), 0, dz / (dist || 1));
-          if (dist <= 2.0) {
-            this._goalStaged = true;
-            slot0.jumpQueued = true;
-            slot0.spikeQueued = true;
-            const goalYaw = Math.atan2(0.0 - a0P.x, -40.0 - a0P.z);
-            slot0.aimYaw = goalYaw;
-            slot0.cameraYaw = goalYaw;
-            slot0.hasAim = true;
+
+      if (best) {
+        markUsed(best.gameId, best.startTick, best.endTick);
+      }
+      return best;
+    };
+
+    // ─── DEFINE ALL 43 BEAT-QUANTIZED CUTS (5,028 FRAMES = 83.800s) ───
+    const cutSpecs = [
+      // PHASE 1: MONUMENTAL ARCHITECTURAL OVERTURE & CONTENDER INTRO (0:00.00 - 44.20s)
+      { name: 'P1_Shot1_NorthTorusCathedral', startFrame: 0, endFrame: 216, camMode: 'arch_north', mineMode: 'rally', paletteIdx: 0, ballType: 'medium', scoreHome: 0, scoreAway: 0 },
+      { name: 'P1_Shot2_RedHeroPortrait', startFrame: 216, endFrame: 432, camMode: 'hero_p1', mineMode: 'hero_p1', paletteIdx: 0, ballType: 'medium', scoreHome: 0, scoreAway: 0 },
+      { name: 'P1_Shot3_BlueHeroPortrait', startFrame: 432, endFrame: 648, camMode: 'hero_p2', mineMode: 'hero_p2', paletteIdx: 0, ballType: 'medium', scoreHome: 0, scoreAway: 0 },
+      { name: 'P1_Shot4_StreamRampsRallyGlide', startFrame: 648, endFrame: 1080, camMode: 'ramps_glide', mineMode: 'rally', paletteIdx: 0, ballType: 'medium', scoreHome: 0, scoreAway: 0 },
+      { name: 'P1_Shot5_TurfSidelineRallyGlide', startFrame: 1080, endFrame: 1512, camMode: 'turf_sideline', mineMode: 'rally', paletteIdx: 0, ballType: 'medium', scoreHome: 0, scoreAway: 0 },
+      { name: 'P1_Shot6_StadiumBoomArcRally', startFrame: 1512, endFrame: 2160, camMode: 'boom_arc', mineMode: 'rally', paletteIdx: 0, ballType: 'medium', scoreHome: 0, scoreAway: 0 },
+      { name: 'P1_Shot7_PreDropTensionPush', startFrame: 2160, endFrame: 2652, camMode: 'predrop_push', mineMode: 'rally', paletteIdx: 0, ballType: 'medium', scoreHome: 0, scoreAway: 0 },
+
+      // PHASE 2: RHYTHMIC ACTION ESCALATION (44.20s - 62.20s | Ten 1.800s = 108-Frame Bar Cuts)
+      { name: 'P2_Cut8_DropAttackSprint', startFrame: 2652, endFrame: 2760, camMode: 'ots_sprint', mineMode: 'strike_impact', paletteIdx: 0, ballType: 'medium', scoreHome: 0, scoreAway: 0 },
+      { name: 'P2_Cut9_LowTurfDivingSave', startFrame: 2760, endFrame: 2868, camMode: 'low_dive', mineMode: 'dive_save', paletteIdx: 0, ballType: 'medium', scoreHome: 0, scoreAway: 0 },
+      { name: 'P2_Cut10_VerticalAerialSpike', startFrame: 2868, endFrame: 2976, camMode: 'vertical_spike', mineMode: 'aerial_spike', paletteIdx: 1, ballType: 'small', scoreHome: 0, scoreAway: 0 },
+      { name: 'P2_Cut11_BankedWallCarom', startFrame: 2976, endFrame: 3084, camMode: 'wall_carom', mineMode: 'wall_carom', paletteIdx: 2, ballType: 'large', scoreHome: 0, scoreAway: 0 },
+      { name: 'P2_Cut12_Goal1_SouthTorus', startFrame: 3084, endFrame: 3192, camMode: 'goal_south', mineMode: 'goal_S', paletteIdx: 3, ballType: 'medium', scoreHome: 1, scoreAway: 0 },
+      { name: 'P2_Cut13_CounterCutTurfSpray', startFrame: 3192, endFrame: 3300, camMode: 'low_cut', mineMode: 'strike_impact', paletteIdx: 4, ballType: 'small', scoreHome: 1, scoreAway: 0 },
+      { name: 'P2_Cut14_Goal2_NorthTorus', startFrame: 3300, endFrame: 3408, camMode: 'goal_north', mineMode: 'goal_N', paletteIdx: 5, ballType: 'medium', scoreHome: 1, scoreAway: 1 },
+      { name: 'P2_Cut15_HeavyBallClash', startFrame: 3408, endFrame: 3516, camMode: 'duel_side', mineMode: 'strike_impact', paletteIdx: 6, ballType: 'large', scoreHome: 1, scoreAway: 1 },
+      { name: 'P2_Cut16_Goal3_SouthTorus', startFrame: 3516, endFrame: 3624, camMode: 'goal_south_west', mineMode: 'goal_S', paletteIdx: 7, ballType: 'small', scoreHome: 2, scoreAway: 1 },
+      { name: 'P2_Cut17_GoalMoundDig', startFrame: 3624, endFrame: 3732, camMode: 'mound_defense', mineMode: 'strike_impact', paletteIdx: 0, ballType: 'medium', scoreHome: 2, scoreAway: 1 },
+
+      // PHASE 3: RAPID STACCATO CLIMAX BLITZ (62.20s - 76.60s | 12 Half-Bars + 4 Quarter-Notes + 8 Eighth-Notes)
+      { name: 'P3_HB1_PowerVolley', startFrame: 3732, endFrame: 3786, camMode: 'ots_sprint', mineMode: 'strike_impact', paletteIdx: 1, ballType: 'medium', scoreHome: 2, scoreAway: 1 },
+      { name: 'P3_HB2_TurfDiveSave', startFrame: 3786, endFrame: 3840, camMode: 'low_dive', mineMode: 'dive_save', paletteIdx: 2, ballType: 'small', scoreHome: 2, scoreAway: 1 },
+      { name: 'P3_HB3_WallRebound', startFrame: 3840, endFrame: 3894, camMode: 'wall_carom', mineMode: 'wall_carom', paletteIdx: 3, ballType: 'large', scoreHome: 2, scoreAway: 1 },
+      { name: 'P3_HB4_Goal4_NorthTorus', startFrame: 3894, endFrame: 3948, camMode: 'goal_north_east', mineMode: 'goal_N_hb', paletteIdx: 4, ballType: 'medium', scoreHome: 2, scoreAway: 2 },
+      { name: 'P3_HB5_AerialSpikeSmash', startFrame: 3948, endFrame: 4002, camMode: 'vertical_spike', mineMode: 'aerial_spike', paletteIdx: 5, ballType: 'small', scoreHome: 2, scoreAway: 2 },
+      { name: 'P3_HB6_StreamRampCharge', startFrame: 4002, endFrame: 4056, camMode: 'low_cut', mineMode: 'strike_impact', paletteIdx: 6, ballType: 'medium', scoreHome: 2, scoreAway: 2 },
+      { name: 'P3_HB7_MidcourtCounter', startFrame: 4056, endFrame: 4110, camMode: 'duel_side', mineMode: 'strike_impact', paletteIdx: 7, ballType: 'large', scoreHome: 2, scoreAway: 2 },
+      { name: 'P3_HB8_LowSlideScoop', startFrame: 4110, endFrame: 4164, camMode: 'low_dive', mineMode: 'dive_save', paletteIdx: 1, ballType: 'small', scoreHome: 2, scoreAway: 2 },
+      { name: 'P3_HB9_Goal5_SouthTorus', startFrame: 4164, endFrame: 4218, camMode: 'goal_south', mineMode: 'goal_S_hb', paletteIdx: 2, ballType: 'medium', scoreHome: 3, scoreAway: 2 },
+      { name: 'P3_HB10_NetMouthBlock', startFrame: 4218, endFrame: 4272, camMode: 'mound_defense', mineMode: 'strike_impact', paletteIdx: 0, ballType: 'large', scoreHome: 3, scoreAway: 2 },
+      { name: 'P3_HB11_FlankCutSpray', startFrame: 4272, endFrame: 4326, camMode: 'low_cut', mineMode: 'strike_impact', paletteIdx: 0, ballType: 'medium', scoreHome: 3, scoreAway: 2 },
+      { name: 'P3_HB12_HighAerialLeap', startFrame: 4326, endFrame: 4380, camMode: 'vertical_spike', mineMode: 'aerial_spike', paletteIdx: 0, ballType: 'medium', scoreHome: 3, scoreAway: 2 },
+
+      // Quarter-Notes (73.00s - 74.80s | 4 x 27 frames)
+      { name: 'P3_QN1_Strike', startFrame: 4380, endFrame: 4407, camMode: 'ots_sprint', mineMode: 'strike_impact', paletteIdx: 0, ballType: 'medium', scoreHome: 3, scoreAway: 2 },
+      { name: 'P3_QN2_Strike', startFrame: 4407, endFrame: 4434, camMode: 'duel_side', mineMode: 'strike_impact', paletteIdx: 0, ballType: 'medium', scoreHome: 3, scoreAway: 2 },
+      { name: 'P3_QN3_Strike', startFrame: 4434, endFrame: 4461, camMode: 'low_cut', mineMode: 'strike_impact', paletteIdx: 0, ballType: 'medium', scoreHome: 3, scoreAway: 2 },
+      { name: 'P3_QN4_Strike', startFrame: 4461, endFrame: 4488, camMode: 'vertical_spike', mineMode: 'strike_impact', paletteIdx: 0, ballType: 'medium', scoreHome: 3, scoreAway: 2 },
+
+      // Eighth-Notes (74.80s - 76.60s | 8 cuts = 108 frames)
+      { name: 'P3_EN1_Blitz', startFrame: 4488, endFrame: 4501, camMode: 'ots_sprint', mineMode: 'strike_impact', paletteIdx: 0, ballType: 'medium', scoreHome: 3, scoreAway: 2 },
+      { name: 'P3_EN2_Blitz', startFrame: 4501, endFrame: 4515, camMode: 'low_dive', mineMode: 'strike_impact', paletteIdx: 0, ballType: 'medium', scoreHome: 3, scoreAway: 2 },
+      { name: 'P3_EN3_Blitz', startFrame: 4515, endFrame: 4528, camMode: 'duel_side', mineMode: 'strike_impact', paletteIdx: 0, ballType: 'medium', scoreHome: 3, scoreAway: 2 },
+      { name: 'P3_EN4_Blitz', startFrame: 4528, endFrame: 4542, camMode: 'vertical_spike', mineMode: 'strike_impact', paletteIdx: 0, ballType: 'medium', scoreHome: 3, scoreAway: 2 },
+      { name: 'P3_EN5_Blitz', startFrame: 4542, endFrame: 4555, camMode: 'low_cut', mineMode: 'strike_impact', paletteIdx: 0, ballType: 'medium', scoreHome: 3, scoreAway: 2 },
+      { name: 'P3_EN6_Blitz', startFrame: 4555, endFrame: 4569, camMode: 'mound_defense', mineMode: 'strike_impact', paletteIdx: 0, ballType: 'medium', scoreHome: 3, scoreAway: 2 },
+      { name: 'P3_EN7_Blitz', startFrame: 4569, endFrame: 4582, camMode: 'ots_sprint', mineMode: 'strike_impact', paletteIdx: 0, ballType: 'medium', scoreHome: 3, scoreAway: 2 },
+      { name: 'P3_EN8_Blitz', startFrame: 4582, endFrame: 4596, camMode: 'vertical_spike', mineMode: 'strike_impact', paletteIdx: 0, ballType: 'medium', scoreHome: 3, scoreAway: 2 },
+
+      // PHASE 4: CLIMAX GOAL #6 & CELESTIAL ASCENSION (76.60s - 83.80s)
+      { name: 'P4_Cut18_ClimaxGoal6_NorthTorus', startFrame: 4596, endFrame: 4704, camMode: 'goal_north_climax', mineMode: 'goal_N_climax', paletteIdx: 0, ballType: 'medium', scoreHome: 4, scoreAway: 2 },
+      { name: 'P4_Cut19_CelestialAscension', startFrame: 4704, endFrame: 5028, camMode: 'celestial_ascension', mineMode: 'continuation', paletteIdx: 0, ballType: 'medium', scoreHome: 4, scoreAway: 2 },
+    ];
+
+    this._schedule = [];
+    let climaxClip = null;
+
+    for (let i = 0; i < cutSpecs.length; i++) {
+      const spec = cutSpecs[i];
+      const len = spec.endFrame - spec.startFrame;
+      let clip = null;
+
+      if (spec.mineMode === 'goal_N') {
+        clip = pickGoalClip('N', len, 22, 0);
+      } else if (spec.mineMode === 'goal_S') {
+        clip = pickGoalClip('S', len, 22, 0);
+      } else if (spec.mineMode === 'goal_N_hb') {
+        clip = pickGoalClip('N', len, 16, 0);
+      } else if (spec.mineMode === 'goal_S_hb') {
+        clip = pickGoalClip('S', len, 16, 0);
+      } else if (spec.mineMode === 'goal_N_climax') {
+        // Reserve 324 extra tail ticks so Cut 19 continues seamlessly from the exact same game!
+        clip = pickGoalClip('N', len, 22, 324) || pickGoalClip('N', len, 22, 0);
+        climaxClip = clip;
+      } else if (spec.mineMode === 'continuation' && climaxClip) {
+        const contStart = Math.min(climaxClip.endTick, climaxClip.game.frames.length - len);
+        const stats = evaluateWindow(climaxClip.game, Math.max(0, contStart), len);
+        clip = {
+          ...(stats || climaxClip),
+          gameId: climaxClip.gameId,
+          game: climaxClip.game,
+          startTick: Math.max(0, contStart),
+          endTick: Math.max(0, contStart) + len,
+          goalTick: -1,
+          goalInClip: null,
+          goalData: null,
+        };
+      } else {
+        clip = pickStuntClip(len, spec.mineMode, spec.ballType);
+      }
+
+      if (!clip) {
+        clip = pickStuntClip(len, 'rally', null);
+      }
+
+      // Compute anchor frame metadata for smooth camera framing
+      const anchorOffset = clip.goalTick >= 0
+        ? (clip.goalTick - clip.startTick)
+        : Math.min(len - 1, Math.floor(len * 0.35));
+      const anchorFrame = clip.game.frames[clip.startTick + Math.max(0, anchorOffset)] || clip.game.frames[clip.startTick];
+
+      this._schedule.push({
+        cutIdx: i,
+        ...spec,
+        len,
+        gameId: clip.gameId,
+        game: clip.game,
+        startTick: clip.startTick,
+        endTick: clip.endTick,
+        goalTick: clip.goalTick,
+        goalInClip: clip.goalInClip,
+        goalData: clip.goalData,
+        maxBallStep: clip.maxBallStep || 0,
+        hitsInClip: clip.hitsInClip || 0,
+        runningAwayTicks: clip.runningAwayTicks || 0,
+        anchorFrame,
+      });
+    }
+  }
+
+  _getScheduleEntryForFrame(frame) {
+    const f = Math.max(0, Math.min(5027, frame));
+    for (let i = 0; i < this._schedule.length; i++) {
+      const s = this._schedule[i];
+      if (f >= s.startFrame && f < s.endFrame) return s;
+    }
+    return this._schedule[this._schedule.length - 1] || null;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 3. COSMETICS, SCOREBOARDS & DETERMINISTIC REPLAY SYNCHRONIZATION
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  _applyTeamPalette(paletteIndex = 0) {
+    const p = this._palettes[paletteIndex % this._palettes.length];
+    if (!p || typeof window === 'undefined' || !window.__vb) return;
+    const athletes = window.__vb.athletes;
+    if (athletes && athletes.length >= 2) {
+      athletes[0].setTeamAndVariant('home', p.homeVariant, { primaryColor: p.homeColor });
+      athletes[1].setTeamAndVariant('away', p.awayVariant, { primaryColor: p.awayColor });
+      if (p.homeHeadwear && athletes[0].setHeadwear) athletes[0].setHeadwear(p.homeHeadwear);
+      if (p.awayHeadwear && athletes[1].setHeadwear) athletes[1].setHeadwear(p.awayHeadwear);
+    }
+    if (TUNING.athlete?.palette) {
+      TUNING.athlete.palette.homePrimary = p.homeColor;
+      TUNING.athlete.palette.awayPrimary = p.awayColor;
+    }
+    if (TUNING.teams) {
+      if (TUNING.teams.home) TUNING.teams.home.primaryColor = p.homeColor;
+      if (TUNING.teams.away) TUNING.teams.away.primaryColor = p.awayColor;
+    }
+  }
+
+  _setMatchBall(ballType = 'medium') {
+    if (typeof window === 'undefined' || !window.__vb?.setActiveMatchBall) return;
+    window.__vb.setActiveMatchBall(ballType);
+  }
+
+  /**
+   * Called inside fixedUpdate (60 Hz) before athlete.prePhysicsUpdate.
+   * Syncs the active harvested clip's physical state for turf particles, scoreboards,
+   * and goal celebration rings.
+   */
+  choreographTick(tick, dt, athletes, balls, matchState) {
+    if (!this.isActive || !athletes || athletes.length < 2 || !balls || balls.length === 0) return;
+
+    const frame = this._tickCount;
+    this._tickCount++;
+    this.elapsedTime = frame / 60.0;
+    this._tickStepped = true;
+
+    if (!this._harvestReady || this._schedule.length === 0) return;
+
+    const entry = this._getScheduleEntryForFrame(frame);
+    if (!entry) return;
+
+    const localTick = frame - entry.startFrame;
+    const clipTick = Math.min(entry.game.frames.length - 1, entry.startTick + localTick);
+    const f = entry.game.frames[clipTick];
+    if (!f) return;
+
+    // On hard cut boundary: switch palette, headwear, and ball size to match the cut
+    if (this._stagedCut !== entry.cutIdx) {
+      this._stagedCut = entry.cutIdx;
+      this._applyTeamPalette(entry.paletteIdx);
+      this._setMatchBall(entry.game.ballType || entry.ballType || 'medium');
+    }
+
+    // Sync matchState scoreboard & clock
+    if (matchState) {
+      matchState.isCountingDown = false;
+      matchState.countdownTicksRemaining = 0;
+      matchState.matchOver = false;
+      matchState.ticksRemaining = Math.max(60, Math.round((180 - this.elapsedTime) * 60));
+
+      // Before goalTick in a goal cut, display pre-goal score; at/after goalTick, display new score!
+      if (entry.goalTick >= 0 && clipTick < entry.goalTick) {
+        const prevEntry = this._schedule[Math.max(0, entry.cutIdx - 1)];
+        matchState.scoreHome = prevEntry ? prevEntry.scoreHome : 0;
+        matchState.scoreAway = prevEntry ? prevEntry.scoreAway : 0;
+      } else {
+        matchState.scoreHome = entry.scoreHome;
+        matchState.scoreAway = entry.scoreAway;
+      }
+
+      // Trigger genuine Torus Hoop Goal Celebration on the exact hoop-crossing tick!
+      if (entry.goalTick >= 0 && clipTick === entry.goalTick && entry.goalData) {
+        const gKey = `goal_cut_${entry.cutIdx}`;
+        if (!this._firedEvents.has(gKey)) {
+          this._firedEvents.add(gKey);
+          const hoopPos = {
+            x: 0,
+            y: TUNING.match?.hoopCenterY ?? 10.0,
+            z: entry.goalData.goal === 'N' ? -40.0 : 40.0,
+          };
+          matchState.celebrationTicks = 150;
+          matchState.lastScoredFor = entry.goalData.scoredFor || 'home';
+          matchState.lastGoalId = entry.goalData.goal;
+          if (window.__vb?.goalCelebration?.triggerGoal) {
+            window.__vb.goalCelebration.triggerGoal(matchState.lastScoredFor, hoopPos, {
+              y: entry.goalData.y,
+              z: entry.goalData.z,
+            });
+          }
+          this.addImpulse(0.55);
+        }
+      }
+    }
+
+    if (f.hitBy !== -1) {
+      this.addImpulse(0.28);
+    }
+
+    // Sync motor & ragdoll bodies to the recorded pose so pelvis never separates from motor
+    const activeBall = window.__vb?.balls?.[0] || balls[0];
+    this._applyPoseArray(f.poses, athletes, activeBall, true);
+
+    if (athletes[0]?.motor?.body) {
+      athletes[0].motor.body.setLinvel({ x: f.p1vx, y: f.p1vy, z: f.p1vz }, true);
+      athletes[0].motor.grounded = f.p1Grounded;
+    }
+    if (athletes[1]?.motor?.body) {
+      athletes[1].motor.body.setLinvel({ x: f.p2vx, y: f.p2vy, z: f.p2vz }, true);
+      athletes[1].motor.grounded = f.p2Grounded;
+    }
+
+    // Keep physical ball away from X = 0 during stepPhysics so updateScoring doesn't double-fire
+    if (activeBall?.body) {
+      const safeBx = Math.abs(f.bx) < 1.2 ? (f.bx >= 0 ? 2.5 : -2.5) : f.bx;
+      activeBall.body.setTranslation({ x: safeBx, y: f.by, z: f.bz }, true);
+      activeBall.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 4. RENDER-PASS POSE APPLICATION & CINEMATIC CAMERA FRAMING
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  update(dt, ball, athletes = [], matchState = null) {
+    if (!this.isActive) return;
+
+    if (!this._tickStepped) {
+      this.elapsedTime += dt;
+      this._tickCount = Math.round(this.elapsedTime * 60);
+    }
+    this._tickStepped = false;
+
+    const frame = Math.max(0, Math.min(5027, this._tickCount - 1));
+    const t = frame / 60.0;
+
+    if (this._harvestReady && this._schedule.length > 0) {
+      const entry = this._getScheduleEntryForFrame(frame);
+      if (entry) {
+        const localTick = frame - entry.startFrame;
+        const localProgress = localTick / Math.max(1, entry.len - 1);
+        const clipTick = Math.min(entry.game.frames.length - 1, entry.startTick + localTick);
+        const f = entry.game.frames[clipTick];
+
+        if (this._currentCut !== entry.cutIdx) {
+          this._currentCut = entry.cutIdx;
+          this._justCut = true;
+        } else {
+          this._justCut = false;
+        }
+
+        const activeBall = window.__vb?.balls?.[0] || ball;
+        if (f && athletes.length >= 2) {
+          this._applyPoseArray(f.poses, athletes, activeBall);
+          // In Shot 1 (North Torus Cathedral Arch), hide the ball so the architectural shot is pure
+          if (entry.camMode === 'arch_north' && activeBall?.mesh) {
+            activeBall.mesh.position.set(0, -200, 0);
+          } else if (activeBall?.mesh && f.hitBy !== -1) {
+            activeBall._emissiveFlash = 0.85;
           }
         }
+
+        let fov = 50;
+        fov = this._computeCameraForEntry(entry, f, localTick, localProgress, athletes);
+
+        // Clamp camera safely above local parabolic court floor
+        const camFloorY = getCourtFloorY(this._pos.x, this._pos.z);
+        if (this._pos.y < camFloorY + 0.85) {
+          this._pos.y = camFloorY + 0.85;
+        }
+
+        // Smooth camera within each cut; snap cleanly on hard cut boundaries
+        if (this._justCut || this._smoothPos.lengthSq() === 0) {
+          this._smoothPos.copy(this._pos);
+          this._smoothTarget.copy(this._target);
+        } else {
+          const posAlpha = entry.camMode.startsWith('goal_') || entry.camMode === 'arch_north' || entry.camMode === 'celestial_ascension'
+            ? 0.25
+            : 0.18;
+          const lookAlpha = 0.22;
+          this._smoothPos.lerp(this._pos, posAlpha);
+          this._smoothTarget.lerp(this._target, lookAlpha);
+        }
+
+        const finalFloorY = getCourtFloorY(this._smoothPos.x, this._smoothPos.z);
+        if (this._smoothPos.y < finalFloorY + 0.85) {
+          this._smoothPos.y = finalFloorY + 0.85;
+        }
+
+        this.camera.position.copy(this._smoothPos);
+        this.camera.lookAt(this._smoothTarget);
+
+        // Subtle kinetic impact micro-shake (strictly positional)
+        if (this.trauma > 0.001) {
+          const shake = this.trauma * this.trauma * 0.14;
+          this.camera.position.x += Math.sin(t * 53.0) * shake;
+          this.camera.position.y += Math.cos(t * 47.0) * shake * 0.7;
+          this.trauma = Math.max(0, this.trauma - dt * 2.8);
+        }
+
+        if (Math.abs(this.camera.fov - fov) > 0.01) {
+          this.camera.fov = fov;
+          this.camera.updateProjectionMatrix();
+        }
+      }
+    }
+
+    // Fade overlay management
+    if (typeof document !== 'undefined') {
+      const fadeEl = document.getElementById('trailer-fade-overlay');
+      if (fadeEl) {
+        let opacity = 0;
+        if (t < 1.2) opacity = Math.max(0, 1.0 - t / 1.2);
+        else if (t >= 83.0 && t <= 84.2) opacity = Math.min(1.0, (t - 83.0) / 0.8);
+        fadeEl.style.opacity = opacity.toFixed(3);
       }
     }
   }
 
-  _updateRawReelCamera(delta, liveBall, athletes, matchState, ballPos, ath0, ath1, nearestAth, focusX, focusZ, focusFloorY, focusY, hoopY, hoopZ) {
-    const t = this.elapsedTime;
-    const dur = Math.max(1.0, this.rawDuration);
-    const prog = Math.min(1.0, t / dur);
-    const ease = prog * prog * (3 - 2 * prog);
+  _computeCameraForEntry(entry, f, localTick, u, athletes = []) {
+    const lt = localTick / 60.0;
+    const af = entry.anchorFrame || f;
 
-    const ath = nearestAth;
-    const athFloor = getCourtFloorY(ath.x, ath.z);
-    const toB_x = ballPos.x - ath.x;
-    const toB_z = ballPos.z - ath.z;
-    const dist = Math.hypot(toB_x, toB_z) || 1.0;
-    const ndx = toB_x / dist;
-    const ndz = toB_z / dist;
-    const perpX = -ndz;
-    const perpZ = ndx;
+    // Read exact rendered pelvis & head positions from live ragdoll rig (already synced by _applyPoseArray)
+    const p1Pelvis = athletes[0]?.ragdoll?.rig?.get('pelvis')?.interpolated?.currPos;
+    const p1Head = athletes[0]?.ragdoll?.rig?.get('head')?.interpolated?.currPos;
+    const p2Pelvis = athletes[1]?.ragdoll?.rig?.get('pelvis')?.interpolated?.currPos;
+    const p2Head = athletes[1]?.ragdoll?.rig?.get('head')?.interpolated?.currPos;
 
-    switch (this.rawReelMode) {
-      case 'flank_torus_north':
-      case 'flank_torus_south': {
-        this._setFov(48);
-        // Hold the hoop in the composition only while the ball is near it;
-        // otherwise swing to an elevated flank view of the live action, so a
-        // play at the far end is not filmed as an empty hoop.
-        const side = this.rawReelMode === 'flank_torus_north' ? 1.0 : -1.0;
-        const goalZ = side * hoopZ;
-        const hoopDist = Math.hypot(ballPos.x, ballPos.z - goalZ);
-        const near = Math.min(1.0, Math.max(0.0, (30.0 - hoopDist) / 20.0));
-        const w = near * near * (3 - 2 * near);
+    const p1x = p1Pelvis ? p1Pelvis.x : (f.poses ? f.poses[7] : f.p1x);
+    const p1y = p1Pelvis ? p1Pelvis.y : (f.poses ? f.poses[8] : f.p1y);
+    const p1z = p1Pelvis ? p1Pelvis.z : (f.poses ? f.poses[9] : f.p1z);
+    const p1HeadY = p1Head ? p1Head.y : (p1y + 0.55);
 
-        const hoopCamX = side * (16.0 - ease * 2.0);
-        const hoopCamZ = -side * (22.0 + ease * 4.0);
-        const hoopCamY = Math.max(7.5, getCourtFloorY(hoopCamX, hoopCamZ) + 3.0);
-        const actCamX = Math.max(-16.0, Math.min(16.0, focusX + side * 7.0));
-        // Behind the play relative to the goal, so both framings face the hoop
-        // and the blend between them never swings the camera around.
-        const actCamZ = focusZ + side * 6.0;
-        const actCamY = Math.max(focusFloorY + 4.5, getCourtFloorY(actCamX, actCamZ) + 3.0);
+    const p2x = p2Pelvis ? p2Pelvis.x : (f.poses ? f.poses[126] : f.p2x);
+    const p2y = p2Pelvis ? p2Pelvis.y : (f.poses ? f.poses[127] : f.p2y);
+    const p2z = p2Pelvis ? p2Pelvis.z : (f.poses ? f.poses[128] : f.p2z);
+    const p2HeadY = p2Head ? p2Head.y : (p2y + 0.55);
+
+    const clampedTarget = (hx, hy, hz, maxH = 0.65, maxV = 0.50) => {
+      const dx = f.bx - hx;
+      const dz = f.bz - hz;
+      const d = Math.hypot(dx, dz) || 1;
+      const r = Math.min(d, maxH);
+      const ox = (dx / d) * r;
+      const oz = (dz / d) * r;
+      const oy = Math.max(-0.20, Math.min(maxV, (f.by - hy) * 0.35));
+      this._target.set(hx + ox, hy + 0.32 + oy, hz + oz);
+    };
+
+    switch (entry.camMode) {
+      case 'arch_north': {
+        // Shot 1 (0:00 - 03.60s): North Torus Cathedral Arch from 3/4 East flank
+        this._pos.set(13.8 - u * 2.2, 6.4 + u * 1.4, -24.5 - u * 4.0);
+        this._target.set(0.0, 10.2, -40.0);
+        return 46;
+      }
+
+      case 'hero_p1': {
+        // Shot 2 (03.60 - 07.20s): Red Contender Macro Hero Portrait (Football Helmet / wrestler_bands)
+        const dirX = Math.sin(f.p1Yaw);
+        const dirZ = Math.cos(f.p1Yaw);
+        const rightX = dirZ;
+        const rightZ = -dirX;
+        const chestY = p1y * 0.35 + p1HeadY * 0.65;
         this._pos.set(
-          actCamX + (hoopCamX - actCamX) * w,
-          actCamY + (hoopCamY - actCamY) * w,
-          actCamZ + (hoopCamZ - actCamZ) * w
+          p1x + dirX * 2.35 + rightX * 1.25,
+          chestY + 0.08,
+          p1z + dirZ * 2.35 + rightZ * 1.25
         );
+        this._target.set(p1x, chestY, p1z);
+        return 38;
+      }
 
-        const hoopTgtX = 0.3 * focusX;
-        const hoopTgtY = 0.4 * focusY + 0.6 * hoopY;
-        const hoopTgtZ = 0.4 * focusZ + 0.6 * goalZ;
+      case 'hero_p2': {
+        // Shot 3 (07.20 - 10.80s): Blue Contender Macro Hero Portrait (Cricket Helmet / wicket_grill)
+        const dirX = Math.sin(f.p2Yaw);
+        const dirZ = Math.cos(f.p2Yaw);
+        const leftX = -dirZ;
+        const leftZ = dirX;
+        const chestY = p2y * 0.35 + p2HeadY * 0.65;
+        this._pos.set(
+          p2x + dirX * 2.35 + leftX * 1.25,
+          chestY + 0.08,
+          p2z + dirZ * 2.35 + leftZ * 1.25
+        );
+        this._target.set(p2x, chestY, p2z);
+        return 38;
+      }
+
+      case 'ramps_glide': {
+        // Shot 4 (10.80 - 18.00s): Elevated 3/4 Stream Ramps Glide tracking live rally
+        const focusX = f.bx * 0.55 + (p1x + p2x) * 0.225;
+        const focusZ = f.bz * 0.55 + (p1z + p2z) * 0.225;
+        const focusFloor = getCourtFloorY(focusX, focusZ);
+        this._pos.set(
+          -14.5 + u * 5.0,
+          focusFloor + 6.8 - u * 2.2,
+          focusZ - 11.0 + u * 8.0
+        );
+        this._target.set(focusX, focusFloor + 1.6, focusZ);
+        return 48;
+      }
+
+      case 'turf_sideline': {
+        // Shot 5 (18.00 - 25.20s): Ultra-Low Turf-Level Sideline Glide tracking live midcourt rally
+        const focusX = f.bx * 0.60 + (p1x + p2x) * 0.20;
+        const focusZ = f.bz * 0.60 + (p1z + p2z) * 0.20;
+        const camX = 11.5 - u * 2.0;
+        const camZ = focusZ * 0.65 - 3.5 + u * 7.0;
+        const camFloor = getCourtFloorY(camX, camZ);
+        this._pos.set(camX, camFloor + 1.10, camZ);
+        this._target.set(focusX, getCourtFloorY(focusX, focusZ) + 1.35, focusZ);
+        return 46;
+      }
+
+      case 'boom_arc': {
+        // Shot 6 (25.20 - 36.00s): Monumental Stadium Boom Arc framing the multi-hit rally
+        const angle = -0.75 + u * 1.55;
+        const radius = 21.0 - u * 3.0;
+        const focusX = f.bx * 0.50 + (p1x + p2x) * 0.25;
+        const focusZ = f.bz * 0.50 + (p1z + p2z) * 0.25;
+        this._pos.set(
+          Math.cos(angle) * radius,
+          18.5 - u * 4.5,
+          Math.sin(angle) * radius
+        );
+        this._target.set(focusX * 0.65, getCourtFloorY(focusX, focusZ) + 1.8, focusZ * 0.65);
+        return 52;
+      }
+
+      case 'predrop_push': {
+        // Shot 7 (36.00 - 44.20s): Low Pre-Drop Tension Push into the active rally clash
+        const focusX = f.bx * 0.60 + (p1x + p2x) * 0.20;
+        const focusZ = f.bz * 0.60 + (p1z + p2z) * 0.20;
+        const dist = 10.5 - u * 4.8;
+        const camX = focusX + 6.5 - u * 2.5;
+        const camZ = focusZ + dist * 0.65;
+        const camFloor = getCourtFloorY(camX, camZ);
+        this._pos.set(camX, camFloor + 1.25, camZ);
+        this._target.set(focusX, getCourtFloorY(focusX, focusZ) + 1.45, focusZ);
+        return 50 - u * 6;
+      }
+
+      // ─── 3/4 FLANK TORUS GOAL CAMERAS (ALL 6 GENUINE GOALS) ───
+      case 'goal_south': {
+        const flankSign = (af.bx >= 0) ? 1 : -1;
+        this._pos.set(flankSign * (14.2 - lt * 1.2), 11.2 - lt * 0.3, 27.8 + lt * 1.4);
+        this._target.set(f.bx * 0.28, 10.0, 39.6);
+        return 48;
+      }
+
+      case 'goal_south_west': {
+        const flankSign = (af.bx >= 0) ? 1 : -1;
+        this._pos.set(flankSign * (14.8 - lt * 1.4), 10.8 + lt * 0.4, 28.2 + lt * 1.2);
+        this._target.set(f.bx * 0.28, 10.1, 39.7);
+        return 48;
+      }
+
+      case 'goal_north': {
+        const flankSign = (af.bx >= 0) ? 1 : -1;
+        this._pos.set(flankSign * (14.2 - lt * 1.2), 11.2 - lt * 0.3, -27.8 - lt * 1.4);
+        this._target.set(f.bx * 0.28, 10.0, -39.6);
+        return 48;
+      }
+
+      case 'goal_north_east': {
+        const flankSign = (af.bx >= 0) ? 1 : -1;
+        this._pos.set(flankSign * (13.8 - lt * 1.2), 11.0 + lt * 0.3, -28.4 - lt * 1.2);
+        this._target.set(f.bx * 0.28, 10.0, -39.7);
+        return 48;
+      }
+
+      case 'goal_north_climax': {
+        const flankSign = (af.bx >= 0) ? 1 : -1;
+        this._pos.set(flankSign * (13.6 - lt * 1.4), 10.8 + lt * 0.4, -27.5 - lt * 1.5);
+        this._target.set(f.bx * 0.25, 10.1, -39.8);
+        return 46;
+      }
+
+      case 'celestial_ascension': {
+        // Cut 19 (78.40 - 83.80s): Celestial Ascension Pullback over the live arena
+        const ease = u * u * (3 - 2 * u);
+        this._pos.set(
+          -12.0 * (1 - ease) + Math.sin(ease * 1.8) * 14.0,
+          11.2 + ease * 31.0,
+          -28.0 + ease * 48.0
+        );
         this._target.set(
-          focusX + (hoopTgtX - focusX) * w,
-          focusY + (hoopTgtY - focusY) * w,
-          focusZ + (hoopTgtZ - focusZ) * w
+          f.bx * (1 - ease * 0.7),
+          10.0 * (1 - ease) + 2.5 * ease,
+          -38.0 * (1 - ease)
         );
-        break;
+        return 46 + ease * 10;
       }
-      case 'low_turf_tracking': {
-        this._setFov(48);
-        const sideSign = (focusX >= 0) ? 1.0 : -1.0;
-        const camX = focusX + sideSign * 5.2;
-        const camZ = focusZ - 2.8;
-        const camY = Math.max(focusFloorY + 1.85, getCourtFloorY(camX, camZ) + 1.85);
-        this._pos.set(camX, camY, camZ);
-        this._target.set(focusX, focusFloorY + 1.1, focusZ);
-        break;
+
+      // ─── CLOSE DYNAMIC STUNT CAMERAS (PHASE 2 & PHASE 3) ───
+      case 'ots_sprint': {
+        const d1 = Math.hypot(af.bx - af.p1x, af.bz - af.p1z);
+        const d2 = Math.hypot(af.bx - af.p2x, af.bz - af.p2z);
+        const useP1 = d1 <= d2;
+        const hx = useP1 ? p1x : p2x;
+        const hy = Math.max(getCourtFloorY(hx, useP1 ? p1z : p2z) + 0.92, useP1 ? p1y : p2y);
+        const hz = useP1 ? p1z : p2z;
+        const toBx = af.bx - (useP1 ? af.p1x : af.p2x);
+        const toBz = af.bz - (useP1 ? af.p1z : af.p2z);
+        const len = Math.hypot(toBx, toBz) || 1;
+        const nx = toBx / len;
+        const nz = toBz / len;
+        const rx = nz;
+        const rz = -nx;
+        const camX = hx - nx * (3.6 - u * 0.6) + rx * 1.3;
+        const camZ = hz - nz * (3.6 - u * 0.6) + rz * 1.3;
+        const camFloor = getCourtFloorY(camX, camZ);
+        this._pos.set(camX, camFloor + 1.50, camZ);
+        clampedTarget(hx, hy, hz, 0.75, 0.45);
+        return 52;
       }
-      case 'over_shoulder_chase': {
-        this._setFov(48);
-        const athF = getCourtFloorY(ath.x, ath.z);
-        let dirX = ballPos.x - ath.x;
-        let dirZ = ballPos.z - ath.z;
-        let dLen = Math.hypot(dirX, dirZ);
-        if (dLen < 0.5) { dirZ = (ath.z >= 0) ? -1.0 : 1.0; dirX = 0.0; dLen = 1.0; }
-        const ndx = dirX / dLen;
-        const ndz = dirZ / dLen;
-        const camX = ath.x - ndx * 3.2 - ndz * 0.6;
-        const camZ = ath.z - ndz * 3.2 + ndx * 0.6;
-        const camY = Math.max(athF + 1.95, getCourtFloorY(camX, camZ) + 1.85);
-        this._pos.set(camX, camY, camZ);
-        this._target.set(focusX, focusFloorY + 1.1, focusZ);
-        break;
+
+      case 'low_dive': {
+        const useP1 = f.p1Diving || f.p1Sliding || (Math.hypot(af.bx - af.p1x, af.bz - af.p1z) <= Math.hypot(af.bx - af.p2x, af.bz - af.p2z));
+        const hx = useP1 ? p1x : p2x;
+        const hy = Math.max(getCourtFloorY(hx, useP1 ? p1z : p2z) + 0.65, useP1 ? p1y : p2y);
+        const hz = useP1 ? p1z : p2z;
+        const side = hx >= 0 ? -1 : 1;
+        const camX = hx + side * 3.8;
+        const camZ = hz + (hz >= 0 ? -2.0 : 2.0) + lt * 1.0;
+        const camFloor = getCourtFloorY(camX, camZ);
+        this._pos.set(camX, camFloor + 0.92, camZ);
+        clampedTarget(hx, hy, hz, 0.65, 0.35);
+        return 46;
       }
-      case 'vertical_spike_cam': {
-        this._setFov(52);
-        const sideX = (focusX >= 0) ? -3.5 : 3.5;
-        const camX = focusX + sideX;
-        const camZ = focusZ - 3.2;
-        const camY = Math.max(focusFloorY + 1.85, getCourtFloorY(camX, camZ) + 1.85);
-        this._pos.set(camX, camY, camZ);
-        this._target.set(focusX, Math.max(focusFloorY + 2.0, Math.min(focusFloorY + 4.5, ballPos.y + 0.6)), focusZ);
-        break;
+
+      case 'vertical_spike': {
+        const d1 = Math.hypot(af.bx - af.p1x, af.bz - af.p1z);
+        const d2 = Math.hypot(af.bx - af.p2x, af.bz - af.p2z);
+        const useP1 = (!f.p1Grounded && f.p2Grounded) ? true : ((!f.p2Grounded && f.p1Grounded) ? false : (d1 <= d2));
+        const hx = useP1 ? p1x : p2x;
+        const hy = Math.max(getCourtFloorY(hx, useP1 ? p1z : p2z) + 0.92, useP1 ? p1y : p2y);
+        const hz = useP1 ? p1z : p2z;
+        const side = hx >= 0 ? -1 : 1;
+        const camX = hx + side * 3.5;
+        const camZ = hz + (hz >= 0 ? -2.6 : 2.6);
+        const camFloor = getCourtFloorY(camX, camZ);
+        this._pos.set(camX, camFloor + 0.95, camZ);
+        clampedTarget(hx, hy, hz, 0.70, 0.65);
+        return 50;
       }
-      case 'banked_wall_curve': {
-        this._setFov(52);
-        const wallSign = (focusX >= 0) ? 1.0 : -1.0;
-        const camX = focusX + wallSign * 4.8;
-        const camZ = focusZ + 3.2;
-        const camY = Math.max(focusFloorY + 2.8, getCourtFloorY(camX, camZ) + 1.85);
-        this._pos.set(camX, camY, camZ);
-        this._target.set(focusX, focusFloorY + 1.0, focusZ);
-        break;
+
+      case 'wall_carom': {
+        const side = af.bx >= 0 ? 1 : -1;
+        const camX = side * 9.5;
+        const camZ = f.bz + (af.bvz >= 0 ? -5.2 : 5.2);
+        const camFloor = getCourtFloorY(camX, camZ);
+        this._pos.set(camX, camFloor + 1.75, camZ);
+        this._target.set(f.bx * 0.65 + p1x * 0.35, getCourtFloorY(f.bx, f.bz) + 1.4, f.bz);
+        return 54;
       }
-      case 'action_orbit':
+
+      case 'low_cut': {
+        const d1 = Math.hypot(af.bx - af.p1x, af.bz - af.p1z);
+        const d2 = Math.hypot(af.bx - af.p2x, af.bz - af.p2z);
+        const useP1 = d1 <= d2;
+        const hx = useP1 ? p1x : p2x;
+        const hy = Math.max(getCourtFloorY(hx, useP1 ? p1z : p2z) + 0.92, useP1 ? p1y : p2y);
+        const hz = useP1 ? p1z : p2z;
+        const side = hx >= 0 ? -1 : 1;
+        const camX = hx + side * 3.6;
+        const camZ = hz + (hz >= 0 ? -2.6 : 2.6);
+        const camFloor = getCourtFloorY(camX, camZ);
+        this._pos.set(camX, camFloor + 1.15, camZ);
+        clampedTarget(hx, hy, hz, 0.65, 0.40);
+        return 48;
+      }
+
+      case 'duel_side': {
+        const midX = (p1x + p2x) * 0.25 + f.bx * 0.50;
+        const midZ = (p1z + p2z) * 0.25 + f.bz * 0.50;
+        const side = midX >= 0 ? -1 : 1;
+        const camX = midX + side * (5.2 - u * 0.8);
+        const camZ = midZ + 1.8 - u * 3.6;
+        const camFloor = getCourtFloorY(camX, camZ);
+        this._pos.set(camX, camFloor + 1.45, camZ);
+        this._target.set(midX, getCourtFloorY(midX, midZ) + 1.45, midZ);
+        return 50;
+      }
+
+      case 'mound_defense':
       default: {
-        this._setFov(50);
-        const orbitAngle = t * 1.6 + 0.5;
-        const camDist = 4.8;
-        const camX = focusX + camDist * Math.sin(orbitAngle);
-        const camZ = focusZ + camDist * Math.cos(orbitAngle);
-        const camY = Math.max(focusFloorY + 2.2, getCourtFloorY(camX, camZ) + 1.85);
-        this._pos.set(camX, camY, camZ);
-        this._target.set(focusX, Math.max(focusFloorY + 1.0, Math.min(focusFloorY + 3.2, ballPos.y)), focusZ);
-        break;
+        const d1 = Math.hypot(af.bx - af.p1x, af.bz - af.p1z);
+        const d2 = Math.hypot(af.bx - af.p2x, af.bz - af.p2z);
+        const useP1 = d1 <= d2;
+        const hx = useP1 ? p1x : p2x;
+        const hy = Math.max(getCourtFloorY(hx, useP1 ? p1z : p2z) + 0.92, useP1 ? p1y : p2y);
+        const hz = useP1 ? p1z : p2z;
+        const side = hx >= 0 ? -1 : 1;
+        const camX = hx + side * 4.2;
+        const camZ = hz + (hz >= 0 ? -3.0 : 3.0);
+        const camFloor = getCourtFloorY(camX, camZ);
+        this._pos.set(camX, camFloor + 1.45, camZ);
+        clampedTarget(hx, hy, hz, 0.70, 0.45);
+        return 50;
       }
     }
-
-    // Ease toward this frame's framing rather than snapping to it, so the
-    // camera rides through bounces and contacts instead of jittering with them.
-    if (!this._rawCamPrimed) {
-      this._rawCamPrimed = true;
-      this._rawCamPos.copy(this._pos);
-      this._rawCamTarget.copy(this._target);
-    } else {
-      const ease = TUNING.camera.trailerRawReel;
-      this._rawCamPos.lerp(this._pos, 1 - Math.exp(-ease.posEase * delta));
-      this._rawCamTarget.lerp(this._target, 1 - Math.exp(-ease.targetEase * delta));
-    }
-    this._pos.copy(this._rawCamPos);
-    this._target.copy(this._rawCamTarget);
-
-    this._applyResilientClearance();
   }
 }
 
