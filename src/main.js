@@ -3188,6 +3188,12 @@ function handleStartMatch(configs, matchRulesOrBall = {}) {
   console.log('[match] starting 10s flyover cutscene...');
 }
 
+/** Who practises after a match: the human's own player (P2 when they played Team 2 vs AI). */
+function practicePlayerConfig() {
+  const configs = getPlayerConfigs();
+  return configs.find((c) => c && c.type === 'human') || configs[0];
+}
+
 function handleStartPractice(playerConfig = null, ballChoice = 'all') {
   hideMainMenu();
   hideInGameMenu();
@@ -3198,6 +3204,11 @@ function handleStartPractice(playerConfig = null, ballChoice = 'all') {
   gameState = 'practice';
   TUNING.match.mode = 'practice';
   selectedPracticeBallType = ballChoice;
+
+  // Practice is one human athlete. Drop any bots the last match left running:
+  // after a match where P1 was the AI, the practice athlete was still bot-driven.
+  botControllers = [];
+  activeBotSlots = [];
 
   // Reset practice drill stats
   practiceStats.goals = 0;
@@ -3338,7 +3349,7 @@ function handleFinishPractice() {
   }
   showPracticeSummary(practiceStats, practiceSessionTicks / 60, {
     onPracticeAgain: () => {
-      handleStartPractice(getPlayerConfigs()[0], selectedPracticeBallType);
+      handleStartPractice(practicePlayerConfig(), selectedPracticeBallType);
     },
     onCustomize: () => {
       hideVictoryScreen();
@@ -3487,10 +3498,11 @@ function handleEnterSetup(mode = 'match') {
   }
 
   athleteManager.stageForLobby(mode);
+  // Re-dress both athletes from their configs: practice may have dressed athlete 0
+  // as the P2 human, and the preview must show each column's own player.
   const setupCfgs = getPlayerConfigs();
   for (let i = 0; i < 2; i++) {
-    const hw = setupCfgs[i]?.headwear;
-    if (hw && athletes[i] && athletes[i].headwear !== hw) athletes[i].setHeadwear(hw);
+    if (setupCfgs[i]) handlePlayerConfigChange(i, setupCfgs[i]);
   }
   cinematicCamera.startSetupPreview();
   console.log(`[mainMenu] entered setup (${mode}) -> 3D athlete staging active`);
@@ -3642,7 +3654,7 @@ async function boot() {
 
   initVictoryScreen({
     onRematch: handleRematch,
-    onPracticeMode: handleStartPractice,
+    onPracticeMode: () => handleStartPractice(practicePlayerConfig(), selectedPracticeBallType),
     onMainMenu: returnToMainMenu,
   });
 
@@ -3650,7 +3662,7 @@ async function boot() {
     onResume: () => {},
     onOpen: hideControlsOverlay,
     onRematch: handleRematch,
-    onPracticeMode: () => handleStartPractice(getPlayerConfigs()[0], selectedPracticeBallType),
+    onPracticeMode: () => handleStartPractice(practicePlayerConfig(), selectedPracticeBallType),
     onFinishPractice: handleFinishPractice,
     onMainMenu: returnToMainMenu,
     onRenderSettingsChange: (settings) => {
