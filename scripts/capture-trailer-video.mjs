@@ -345,6 +345,9 @@ async function runCapture() {
         for (let frame = 0; frame < 5028; frame++) {
           const entry = td._getScheduleEntryForFrame(frame);
           if (!entry?.game?.frames) continue;
+          // The opening architecture shot hides the ball; its clip's hits would
+          // play as phantom smacks over the fade-in
+          if (entry.camMode === 'arch_north') continue;
           const local = frame - entry.startFrame;
           const clipTick = entry.startTick + local;
           // Past the clip's last tick playback holds the final pose: no new events
