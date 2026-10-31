@@ -316,6 +316,10 @@ export function showPlayerSetup(mode = 'match', options = {}) {
     applyControllerAssignments(null, 'practice');
   }
 
+  // A solo lobby's shared cursor starts on the human's column (P2 when the human plays Team 2).
+  const cfgs = getPlayerConfigs();
+  setFocusedColumn(mode === 'match' && cfgs[0].type !== 'human' && cfgs[1].type === 'human' ? 1 : 0);
+
   const focusRows = getPlayerFocusRow();
   focusRows[0] = (mode === 'practice') ? 1 : 0;
   focusRows[1] = 0;

@@ -548,6 +548,30 @@ export function assignDefaultDeviceForSlot(slotIndex) {
   }
 }
 
+/** Player slot a gamepad is assigned to for the next match, or -1 if it is on the bench. */
+export function getAssignedSlotForPad(padIndex) {
+  if (!explicitDeviceMappings) return -1;
+  for (let s = 0; s < 2; s++) {
+    const m = explicitDeviceMappings[s];
+    if (m && m.type === 'gamepad' && m.padIndex === padIndex) return s;
+  }
+  return -1;
+}
+
+/**
+ * Player slot a keyboard keyset (0 = WASD, 1 = IJKL) drives in a match: the slot
+ * it was assigned to, else its default. Same rule as resolveDeviceRouting().
+ */
+export function getMatchSlotForKeyset(keyset) {
+  if (explicitDeviceMappings) {
+    for (let s = 0; s < 2; s++) {
+      const m = explicitDeviceMappings[s];
+      if (m && m.type === 'keyboard' && (m.keyId === 'kb2' ? 1 : 0) === keyset) return s;
+    }
+  }
+  return keyset;
+}
+
 export function clearDeviceMappingForSlot(slotIndex) {
   if (explicitDeviceMappings) {
     delete explicitDeviceMappings[slotIndex];

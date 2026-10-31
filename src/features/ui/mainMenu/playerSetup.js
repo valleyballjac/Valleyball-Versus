@@ -1293,6 +1293,25 @@ export function cycleOption(playerIdx, rowIdx, direction = 1) {
   }
 }
 
+/**
+ * Versus lobby: both players are human and each has its own assigned device.
+ * Every device then edits only its own player's column. Otherwise (one human,
+ * or spectating) any device drives one shared cursor, and LB / RB / Tab switch
+ * columns so the human can set up the AI too.
+ */
+export function isVersusLobby() {
+  if (currentSetupMode !== 'match') return false;
+  const mappings = getExplicitDeviceMappings();
+  return !!mappings && [0, 1].every((i) => playerConfigs[i]?.type === 'human' && !!mappings[i]);
+}
+
+function lobbyDeviceLabel(idx) {
+  const m = getExplicitDeviceMappings()?.[idx];
+  if (!m) return `P${idx + 1}`;
+  if (m.type === 'gamepad') return `P${idx + 1} · PAD ${m.padIndex + 1}`;
+  return `P${idx + 1} · ${m.keyId === 'kb2' ? 'IJKL' : 'WASD'}`;
+}
+
 export function getConnectedPads() {
   if (typeof navigator.getGamepads !== 'function') return [];
   const raw = navigator.getGamepads();
@@ -1565,7 +1584,7 @@ export function buildPlayerColumn(idx, label, themeColor) {
   const ctrlTag = document.createElement('span');
   ctrlTag.id = `ctrl-tag-p${idx + 1}`;
   ctrlTag.style.cssText = 'font-size: 10px; font-weight: 800; margin-left: 8px; letter-spacing: 0.05em; color: #ffffff;';
-  ctrlTag.innerHTML = idx === 0 ? '<span class="contextual-btn-badge" style="border-color:#10b981;color:#10b981;">ACTIVE FOCUS</span>' : '<span class="contextual-btn-badge">LB/RB SWITCH</span>';
+  ctrlTag.innerHTML = idx === 0 ? '<span class="contextual-btn-badge" style="border-color:#10b981;color:#10b981;">ACTIVE FOCUS</span>' : '<span class="contextual-btn-badge">LB/RB/TAB SWITCH</span>';
   ctrlTagEls[idx] = ctrlTag;
 
   pHeader.appendChild(labelSpan);
@@ -2132,8 +2151,7 @@ export function updateFocusUI() {
   const ballBox = document.getElementById('match-ball-selector-box');
   const durationBox = document.getElementById('match-duration-selector-box');
   const arenaBox = document.getElementById('arena-selector-box');
-  const pads = getConnectedPads();
-  const isSingleController = pads.length < 2;
+  const sharedCursor = !isVersusLobby();
 
   // 1. PRACTICE MODE (Single Page)
   if (currentSetupMode === 'practice') {
@@ -2283,21 +2301,21 @@ export function updateFocusUI() {
     const tag = ctrlTagEls[idx];
     const col = idx === 0 ? col1El : col2El;
     if (tag) {
-      if (!isSingleController) {
-        tag.innerHTML = `<span class="contextual-btn-badge">[P${idx + 1} / PAD ${idx + 1}]</span>`;
+      if (!sharedCursor) {
+        tag.innerHTML = `<span class="contextual-btn-badge">[${lobbyDeviceLabel(idx)}]</span>`;
         tag.style.color = '#ffffff';
       } else {
         if (focusedColumn === idx) {
           tag.innerHTML = `<span class="contextual-btn-badge" style="border-color:#10b981;color:#10b981;box-shadow:0 0 10px rgba(16,185,129,0.5);">ACTIVE FOCUS</span>`;
         } else {
           tag.innerHTML = idx === 0
-            ? `<span class="contextual-btn-badge" style="animation:bumper-pulse 1.8s infinite;border-color:#00e5ff;color:#00e5ff;">◀ LB SWITCH</span>`
-            : `<span class="contextual-btn-badge" style="animation:bumper-pulse 1.8s infinite;border-color:#ff2e55;color:#ff2e55;">RB SWITCH ▶</span>`;
+            ? `<span class="contextual-btn-badge" style="animation:bumper-pulse 1.8s infinite;border-color:#00e5ff;color:#00e5ff;">◀ LB / TAB SWITCH</span>`
+            : `<span class="contextual-btn-badge" style="animation:bumper-pulse 1.8s infinite;border-color:#ff2e55;color:#ff2e55;">TAB / RB SWITCH ▶</span>`;
         }
       }
     }
     if (col && !playerReadyState[idx]) {
-      if (isSingleController && focusedColumn === idx) {
+      if (sharedCursor && focusedColumn === idx) {
         col.style.borderColor = 'rgba(255, 255, 255, 0.45)';
       } else {
         col.style.borderColor = 'rgba(255, 255, 255, 0.15)';
@@ -2305,7 +2323,7 @@ export function updateFocusUI() {
     }
 
     const activeRow = playerFocusRow[idx];
-    const isThisColActive = !isSingleController || focusedColumn === idx;
+    const isThisColActive = !sharedCursor || focusedColumn === idx;
 
     // Rows 0..7: Type, AI Agg, Team, Color, Headwear, Physique, Camera, Strike Assist
     [0, 1, 2, 3, 4, 5, 6, 7].forEach((rIdx) => {
@@ -2338,7 +2356,7 @@ export function updateFocusUI() {
 
   // Row 8: Action Row (Back and Next)
   if (btnBack && btnNext) {
-    const isActionFocused = isSingleController
+    const isActionFocused = sharedCursor
       ? (playerFocusRow[focusedColumn] === 8)
       : (playerFocusRow[0] === 8 || playerFocusRow[1] === 8);
     if (isActionFocused) {
@@ -2452,6 +2470,7 @@ export const playerSetup = {
   updateFocusUI,
   updateInputBadgesUI,
   applyControllerAssignments,
+  isVersusLobby,
   setPlayerType,
   setPlayerHeadwear,
   cyclePlayerHeadwear,

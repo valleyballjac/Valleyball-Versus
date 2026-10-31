@@ -1,6 +1,6 @@
 import { soundManager } from '../../../audio/soundManager.js';
 import { state } from './state.js';
-import { getControllerAssignments } from '../../../input/inputRouter.js';
+import { getControllerAssignments, getAssignedSlotForPad, getMatchSlotForKeyset } from '../../../input/inputRouter.js';
 import { createMenuPadTracker, MENU_PAD } from '../../../input/menuPads.js';
 import { hideMainMenuSettingsModal, getMainMenuSettingsModalEl } from './settingsModal.js';
 import { hideHowToPlayModal, getControlsModalEl } from './howToPlayModal.js';
@@ -53,6 +53,119 @@ export function moveScreen1Row(col, delta) {
   navCallbacks.playerSetup.playerFocusRow[col] = next;
   navCallbacks.playerSetup.updateFocusUI();
   soundManager.playTone(520, 0.035, 'sine', 0.12);
+}
+
+// Match lobby keys: [keyset, action]. Keyset 0 = WASD + Space, 1 = IJKL + Enter + arrows,
+// matching the keysets the keyboard plays with (see inputRouter KEYSETS).
+const LOBBY_KEYS = {
+  KeyW: [0, 'up'], KeyS: [0, 'down'], KeyA: [0, 'left'], KeyD: [0, 'right'], Space: [0, 'act'],
+  KeyI: [1, 'up'], KeyK: [1, 'down'], KeyJ: [1, 'left'], KeyL: [1, 'right'], Enter: [1, 'act'],
+  ArrowUp: [1, 'up'], ArrowDown: [1, 'down'], ArrowLeft: [1, 'left'], ArrowRight: [1, 'right'],
+};
+
+function soloHumanSlot() {
+  const cfgs = navCallbacks.playerSetup.playerConfigs;
+  if (cfgs[0]?.type === 'human') return 0;
+  if (cfgs[1]?.type === 'human') return 1;
+  return navCallbacks.playerSetup.focusedColumn;
+}
+
+/** Versus lobbies only let a device ready its own player; ownerSlot -1 means any. */
+function toggleReadyFrom(ownerSlot, target) {
+  if (ownerSlot >= 0 && ownerSlot !== target) {
+    soundManager.playTone(220, 0.1, 'sawtooth', 0.15);
+    return;
+  }
+  navCallbacks.playerSetup.togglePlayerReady(target);
+}
+
+function toggleFocusedColumn() {
+  navCallbacks.playerSetup.focusedColumn = 1 - navCallbacks.playerSetup.focusedColumn;
+  soundManager.playTone(440, 0.06, 'sine', 0.2);
+  navCallbacks.playerSetup.updateFocusUI();
+}
+
+/** Screen 1 (players): one navigation step in column `col`. Returns true if an option changed. */
+function screen1Action(col, action) {
+  const ps = navCallbacks.playerSetup;
+  const row = ps.playerFocusRow[col];
+  if (action === 'up' || action === 'down') {
+    moveScreen1Row(col, action === 'up' ? -1 : 1);
+    return false;
+  }
+  if (action === 'left' || action === 'right') {
+    if (row === 8) {
+      ps.screen1ActionCol = action === 'left' ? 0 : 1;
+      ps.updateFocusUI();
+      soundManager.playTone(400, 0.04, 'sine', 0.15);
+      return false;
+    }
+    ps.cycleOption(col, row, action === 'left' ? -1 : 1);
+    return true;
+  }
+  if (action === 'act') {
+    if (row === 8) {
+      if (ps.screen1ActionCol === 0) {
+        ps.btnBack?.click();
+      } else {
+        ps.setupPage = 2;
+        window._updateSetupPage();
+      }
+      return false;
+    }
+    ps.cycleOption(col, row, 1);
+    return true;
+  }
+  return false;
+}
+
+/** Screen 2 (match rules): one shared cursor for every device. */
+function rulesAction(action, ownerSlot) {
+  const ps = navCallbacks.playerSetup;
+  const row = ps.matchRulesFocusRow;
+  if (action === 'up' || action === 'down') {
+    ps.matchRulesFocusRow = Math.max(0, Math.min(3, row + (action === 'up' ? -1 : 1)));
+    ps.updateFocusUI();
+  } else if (action === 'left' || action === 'right') {
+    const dir = action === 'left' ? -1 : 1;
+    if (row === 0) ps.cycleMatchBall(dir);
+    else if (row === 1) ps.cycleMatchDuration(dir);
+    else if (row === 2) ps.cycleArena(dir);
+    else {
+      ps.matchRulesActionCol = Math.max(0, Math.min(3, (ps.matchRulesActionCol ?? 2) + dir));
+      ps.updateFocusUI();
+      soundManager.playTone(400, 0.04, 'sine', 0.15);
+    }
+  } else if (action === 'act') {
+    if (ps.matchCountdownActive) ps.launchMatchNow();
+    else if (row === 0) ps.cycleMatchBall(1);
+    else if (row === 1) ps.cycleMatchDuration(1);
+    else if (row === 2) ps.cycleArena(1);
+    else {
+      const col = ps.matchRulesActionCol ?? 2;
+      if (col === 0) ps.btnBack?.click();
+      else if (col === 1) toggleReadyFrom(ownerSlot, 0);
+      else if (col === 2) {
+        if (!ps.btnStartMatch?.disabled) ps.btnStartMatch?.click();
+      } else toggleReadyFrom(ownerSlot, 1);
+    }
+  } else if (action === 'back') {
+    if (ps.matchCountdownActive) {
+      ps.cancelMatchCountdown();
+      ps.playerReadyState[0] = false;
+      ps.playerReadyState[1] = false;
+      soundManager.playTone(330, 0.12, 'sine', 0.2);
+      ps.updateReadyUI();
+    } else {
+      ps.setupPage = 1;
+      window._updateSetupPage();
+      soundManager.playTone(330, 0.08, 'sine', 0.15);
+    }
+  } else if (action === 'start') {
+    if (ps.matchCountdownActive) ps.launchMatchNow();
+    else if (!ps.btnStartMatch?.disabled) ps.btnStartMatch?.click();
+    else toggleReadyFrom(ownerSlot, ownerSlot >= 0 ? ownerSlot : soloHumanSlot());
+  }
 }
 
 export function startMenuGamepadPolling() {
@@ -284,92 +397,26 @@ export function startMenuGamepadPolling() {
       return;
     }
 
-    // --- CASE B: MATCH MODE SCREEN 2 (MATCH RULES) ---
+    // --- MATCH MODE (SCREEN 1: PLAYERS, SCREEN 2: MATCH RULES) ---
+    // Versus: WASD + Space edits the WASD player's column and IJKL + Enter + arrows the
+    // IJKL player's, wherever they were assigned. Otherwise every key drives the shared
+    // cursor and Tab switches columns.
+    const versus = navCallbacks.playerSetup.isVersusLobby();
+    const keyOwner = (keyset) => (versus ? getMatchSlotForKeyset(keyset) : -1);
+
     if (navCallbacks.playerSetup.setupPage === 2) {
       if (e.code === 'Escape') {
         e.preventDefault();
-        if (navCallbacks.playerSetup.matchCountdownActive) {
-          navCallbacks.playerSetup.cancelMatchCountdown();
-          navCallbacks.playerSetup.playerReadyState[0] = false;
-          navCallbacks.playerSetup.playerReadyState[1] = false;
-          soundManager.playTone(330, 0.12, 'sine', 0.2);
-          navCallbacks.playerSetup.updateReadyUI();
-          return;
-        }
-        navCallbacks.playerSetup.setupPage = 1;
-        window._updateSetupPage();
-        soundManager.playTone(330, 0.08, 'sine', 0.15);
+        rulesAction('back', -1);
         return;
       }
-
-      if (e.code === 'ArrowUp' || e.code === 'KeyW' || e.code === 'KeyI') {
-        e.preventDefault();
-        navCallbacks.playerSetup.matchRulesFocusRow = Math.max(0, navCallbacks.playerSetup.matchRulesFocusRow - 1);
-        navCallbacks.playerSetup.updateFocusUI();
-        return;
-      }
-      if (e.code === 'ArrowDown' || e.code === 'KeyS' || e.code === 'KeyK') {
-        e.preventDefault();
-        navCallbacks.playerSetup.matchRulesFocusRow = Math.min(3, navCallbacks.playerSetup.matchRulesFocusRow + 1);
-        navCallbacks.playerSetup.updateFocusUI();
-        return;
-      }
-      if (e.code === 'ArrowLeft' || e.code === 'KeyA' || e.code === 'KeyJ') {
-        e.preventDefault();
-        if (navCallbacks.playerSetup.matchRulesFocusRow === 0) navCallbacks.playerSetup.cycleMatchBall(-1);
-        else if (navCallbacks.playerSetup.matchRulesFocusRow === 1) navCallbacks.playerSetup.cycleMatchDuration(-1);
-        else if (navCallbacks.playerSetup.matchRulesFocusRow === 2) navCallbacks.playerSetup.cycleArena(-1);
-        else if (navCallbacks.playerSetup.matchRulesFocusRow === 3) {
-          navCallbacks.playerSetup.matchRulesActionCol = Math.max(0, (navCallbacks.playerSetup.matchRulesActionCol ?? 2) - 1);
-          navCallbacks.playerSetup.updateFocusUI();
-          soundManager.playTone(400, 0.04, 'sine', 0.15);
-        }
-        return;
-      }
-      if (e.code === 'ArrowRight' || e.code === 'KeyD' || e.code === 'KeyL') {
-        e.preventDefault();
-        if (navCallbacks.playerSetup.matchRulesFocusRow === 0) navCallbacks.playerSetup.cycleMatchBall(1);
-        else if (navCallbacks.playerSetup.matchRulesFocusRow === 1) navCallbacks.playerSetup.cycleMatchDuration(1);
-        else if (navCallbacks.playerSetup.matchRulesFocusRow === 2) navCallbacks.playerSetup.cycleArena(1);
-        else if (navCallbacks.playerSetup.matchRulesFocusRow === 3) {
-          navCallbacks.playerSetup.matchRulesActionCol = Math.min(3, (navCallbacks.playerSetup.matchRulesActionCol ?? 2) + 1);
-          navCallbacks.playerSetup.updateFocusUI();
-          soundManager.playTone(400, 0.04, 'sine', 0.15);
-        }
-        return;
-      }
-      if (e.code === 'Space' || e.code === 'Enter') {
-        e.preventDefault();
-        if (navCallbacks.playerSetup.matchCountdownActive) {
-          navCallbacks.playerSetup.launchMatchNow();
-          return;
-        }
-        if (navCallbacks.playerSetup.matchRulesFocusRow === 0) {
-          navCallbacks.playerSetup.cycleMatchBall(1);
-        } else if (navCallbacks.playerSetup.matchRulesFocusRow === 1) {
-          navCallbacks.playerSetup.cycleMatchDuration(1);
-        } else if (navCallbacks.playerSetup.matchRulesFocusRow === 2) {
-          navCallbacks.playerSetup.cycleArena(1);
-        } else if (navCallbacks.playerSetup.matchRulesFocusRow === 3) {
-          const col = navCallbacks.playerSetup.matchRulesActionCol ?? 2;
-          if (col === 0) {
-            navCallbacks.playerSetup.btnBack?.click();
-          } else if (col === 1) {
-            navCallbacks.playerSetup.togglePlayerReady(0);
-          } else if (col === 2) {
-            if (!navCallbacks.playerSetup.btnStartMatch?.disabled) {
-              navCallbacks.playerSetup.btnStartMatch?.click();
-            }
-          } else if (col === 3) {
-            navCallbacks.playerSetup.togglePlayerReady(1);
-          }
-        }
-        return;
-      }
+      const nav = LOBBY_KEYS[e.code];
+      if (!nav) return;
+      e.preventDefault();
+      rulesAction(nav[1], keyOwner(nav[0]));
       return;
     }
 
-    // --- CASE C: MATCH MODE SCREEN 1 (PLAYER & TEAM SETUP) ---
     if (e.code === 'Escape') {
       e.preventDefault();
       navCallbacks.showTitleScreen?.();
@@ -378,154 +425,15 @@ export function startMenuGamepadPolling() {
 
     if (e.code === 'Tab') {
       e.preventDefault();
-      navCallbacks.playerSetup.focusedColumn = 1 - navCallbacks.playerSetup.focusedColumn;
-      soundManager.playTone(440, 0.06, 'sine', 0.2);
-      navCallbacks.playerSetup.updateFocusUI();
+      if (versus) soundManager.playTone(220, 0.1, 'sawtooth', 0.15);
+      else toggleFocusedColumn();
       return;
     }
 
-    // Unified Arrow Keys navigation
-    if (e.code === 'ArrowUp') {
-      e.preventDefault();
-      moveScreen1Row(navCallbacks.playerSetup.focusedColumn, -1);
-      return;
-    }
-    if (e.code === 'ArrowDown') {
-      e.preventDefault();
-      moveScreen1Row(navCallbacks.playerSetup.focusedColumn, 1);
-      return;
-    }
-    if (e.code === 'ArrowLeft') {
-      e.preventDefault();
-      const col = navCallbacks.playerSetup.focusedColumn;
-      const row = navCallbacks.playerSetup.playerFocusRow[col];
-      if (row === 8) {
-        navCallbacks.playerSetup.screen1ActionCol = 0;
-        navCallbacks.playerSetup.updateFocusUI();
-        soundManager.playTone(400, 0.04, 'sine', 0.15);
-      } else {
-        navCallbacks.playerSetup.cycleOption(col, row, -1);
-      }
-      return;
-    }
-    if (e.code === 'ArrowRight') {
-      e.preventDefault();
-      const col = navCallbacks.playerSetup.focusedColumn;
-      const row = navCallbacks.playerSetup.playerFocusRow[col];
-      if (row === 8) {
-        navCallbacks.playerSetup.screen1ActionCol = 1;
-        navCallbacks.playerSetup.updateFocusUI();
-        soundManager.playTone(400, 0.04, 'sine', 0.15);
-      } else {
-        navCallbacks.playerSetup.cycleOption(col, row, 1);
-      }
-      return;
-    }
-
-    // Player 1 Keyboard Controls (WASD navigation, Space action)
-    if (e.code === 'KeyW') {
-      e.preventDefault();
-      navCallbacks.playerSetup.focusedColumn = 0;
-      moveScreen1Row(0, -1);
-      return;
-    }
-    if (e.code === 'KeyS') {
-      e.preventDefault();
-      navCallbacks.playerSetup.focusedColumn = 0;
-      moveScreen1Row(0, 1);
-      return;
-    }
-    if (e.code === 'KeyA') {
-      e.preventDefault();
-      navCallbacks.playerSetup.focusedColumn = 0;
-      if (navCallbacks.playerSetup.playerFocusRow[0] === 8) {
-        navCallbacks.playerSetup.screen1ActionCol = 0;
-        navCallbacks.playerSetup.updateFocusUI();
-        soundManager.playTone(400, 0.04, 'sine', 0.15);
-      } else {
-        navCallbacks.playerSetup.cycleOption(0, navCallbacks.playerSetup.playerFocusRow[0], -1);
-      }
-      return;
-    }
-    if (e.code === 'KeyD') {
-      e.preventDefault();
-      navCallbacks.playerSetup.focusedColumn = 0;
-      if (navCallbacks.playerSetup.playerFocusRow[0] === 8) {
-        navCallbacks.playerSetup.screen1ActionCol = 1;
-        navCallbacks.playerSetup.updateFocusUI();
-        soundManager.playTone(400, 0.04, 'sine', 0.15);
-      } else {
-        navCallbacks.playerSetup.cycleOption(0, navCallbacks.playerSetup.playerFocusRow[0], 1);
-      }
-      return;
-    }
-    if (e.code === 'Space') {
-      e.preventDefault();
-      if (navCallbacks.playerSetup.playerFocusRow[0] === 8) {
-        if (navCallbacks.playerSetup.screen1ActionCol === 0) {
-          navCallbacks.playerSetup.btnBack?.click();
-        } else {
-          navCallbacks.playerSetup.setupPage = 2;
-          window._updateSetupPage();
-        }
-      } else {
-        navCallbacks.playerSetup.cycleOption(0, navCallbacks.playerSetup.playerFocusRow[0], 1);
-      }
-      return;
-    }
-
-    // Player 2 Keyboard Controls (IJKL navigation, Enter action)
-    if (e.code === 'KeyI') {
-      e.preventDefault();
-      navCallbacks.playerSetup.focusedColumn = 1;
-      moveScreen1Row(1, -1);
-      return;
-    }
-    if (e.code === 'KeyK') {
-      e.preventDefault();
-      navCallbacks.playerSetup.focusedColumn = 1;
-      moveScreen1Row(1, 1);
-      return;
-    }
-    if (e.code === 'KeyJ') {
-      e.preventDefault();
-      navCallbacks.playerSetup.focusedColumn = 1;
-      if (navCallbacks.playerSetup.playerFocusRow[1] === 8) {
-        navCallbacks.playerSetup.screen1ActionCol = 0;
-        navCallbacks.playerSetup.updateFocusUI();
-        soundManager.playTone(400, 0.04, 'sine', 0.15);
-      } else {
-        navCallbacks.playerSetup.cycleOption(1, navCallbacks.playerSetup.playerFocusRow[1], -1);
-      }
-      return;
-    }
-    if (e.code === 'KeyL') {
-      e.preventDefault();
-      navCallbacks.playerSetup.focusedColumn = 1;
-      if (navCallbacks.playerSetup.playerFocusRow[1] === 8) {
-        navCallbacks.playerSetup.screen1ActionCol = 1;
-        navCallbacks.playerSetup.updateFocusUI();
-        soundManager.playTone(400, 0.04, 'sine', 0.15);
-      } else {
-        navCallbacks.playerSetup.cycleOption(1, navCallbacks.playerSetup.playerFocusRow[1], 1);
-      }
-      return;
-    }
-    if (e.code === 'Enter') {
-      e.preventDefault();
-      const targetIdx = navCallbacks.playerSetup.focusedColumn;
-      if (navCallbacks.playerSetup.playerFocusRow[targetIdx] === 8) {
-        if (navCallbacks.playerSetup.screen1ActionCol === 0) {
-          navCallbacks.playerSetup.btnBack?.click();
-        } else {
-          navCallbacks.playerSetup.setupPage = 2;
-          window._updateSetupPage();
-        }
-      } else {
-        navCallbacks.playerSetup.cycleOption(targetIdx, navCallbacks.playerSetup.playerFocusRow[targetIdx], 1);
-      }
-      return;
-    }
+    const nav = LOBBY_KEYS[e.code];
+    if (!nav) return;
+    e.preventDefault();
+    screen1Action(versus ? keyOwner(nav[0]) : navCallbacks.playerSetup.focusedColumn, nav[1]);
   };
   window.addEventListener('keydown', onMenuKeyDown);
 
@@ -637,7 +545,6 @@ export function startMenuGamepadPolling() {
     // 3. Player Setup Active
     if (!navCallbacks.playerSetup.playerSetupEl || navCallbacks.playerSetup.playerSetupEl.style.display !== 'flex') return;
 
-    const isSingleController = pads.length < 2;
     if (navCallbacks.playerSetup.updateInputBadgesUI) {
       navCallbacks.playerSetup.updateInputBadgesUI();
     } else {
@@ -647,8 +554,9 @@ export function startMenuGamepadPolling() {
     }
 
     if (navCallbacks.playerSetup.currentSetupMode === 'practice') {
-      const pad = pads[0] || null;
-      if (pad) {
+      // Solo screen: any pad drives it, not just the first one connected.
+      for (const pad of pads) {
+        if (navCallbacks.playerSetup.playerSetupEl.style.display !== 'flex') return;
         const e = menuPads.pressed(pad);
 
         if (e & MENU_PAD.up) {
@@ -712,361 +620,75 @@ export function startMenuGamepadPolling() {
       return;
     }
 
-    // --- MATCH MODE SCREEN 2 (MATCH RULES) ---
-    if (navCallbacks.playerSetup.setupPage === 2) {
-      if (isSingleController) {
-        const pad = pads[0];
-        if (!pad) return;
-        const e = menuPads.pressed(pad);
+    // --- MATCH MODE (SCREEN 1: PLAYERS, SCREEN 2: MATCH RULES) ---
+    // Versus: each pad drives only the player it was assigned to; bench pads sit out.
+    // Otherwise (one human or spectating) every pad drives the shared cursor.
+    const versus = navCallbacks.playerSetup.isVersusLobby();
+    const page = navCallbacks.playerSetup.setupPage;
+    for (const pad of pads) {
+      const e = menuPads.pressed(pad);
+      if (!e) continue;
+      const ownerSlot = versus ? getAssignedSlotForPad(pad.index) : -1;
+      if (versus && ownerSlot < 0) continue;
 
+      if (page === 2) {
+        if (e & MENU_PAD.up) rulesAction('up', ownerSlot);
+        if (e & MENU_PAD.down) rulesAction('down', ownerSlot);
+        if (e & (MENU_PAD.left | MENU_PAD.lb)) rulesAction('left', ownerSlot);
+        else if (e & (MENU_PAD.right | MENU_PAD.rb)) rulesAction('right', ownerSlot);
+        if (e & MENU_PAD.a) rulesAction('act', ownerSlot);
+        if (e & (MENU_PAD.b | MENU_PAD.back)) rulesAction('back', ownerSlot);
+        else if (e & MENU_PAD.start) rulesAction('start', ownerSlot);
+      } else {
+        const col = versus ? ownerSlot : navCallbacks.playerSetup.focusedColumn;
         if (e & MENU_PAD.up) {
-          navCallbacks.playerSetup.matchRulesFocusRow = Math.max(0, navCallbacks.playerSetup.matchRulesFocusRow - 1);
-          navCallbacks.playerSetup.updateFocusUI();
+          screen1Action(col, 'up');
+          triggerMenuHaptics(pad, 25, 0.15, 0.05);
         }
         if (e & MENU_PAD.down) {
-          navCallbacks.playerSetup.matchRulesFocusRow = Math.min(3, navCallbacks.playerSetup.matchRulesFocusRow + 1);
-          navCallbacks.playerSetup.updateFocusUI();
+          screen1Action(col, 'down');
+          triggerMenuHaptics(pad, 25, 0.15, 0.05);
         }
-
-        if (e & MENU_PAD.left) {
-          if (navCallbacks.playerSetup.matchRulesFocusRow === 0) navCallbacks.playerSetup.cycleMatchBall(-1);
-          else if (navCallbacks.playerSetup.matchRulesFocusRow === 1) navCallbacks.playerSetup.cycleMatchDuration(-1);
-          else if (navCallbacks.playerSetup.matchRulesFocusRow === 2) navCallbacks.playerSetup.cycleArena(-1);
-          else if (navCallbacks.playerSetup.matchRulesFocusRow === 3) {
-            navCallbacks.playerSetup.matchRulesActionCol = Math.max(0, (navCallbacks.playerSetup.matchRulesActionCol ?? 2) - 1);
-            navCallbacks.playerSetup.updateFocusUI();
-            soundManager.playTone(400, 0.04, 'sine', 0.15);
-          }
-        }
-        if (e & MENU_PAD.right) {
-          if (navCallbacks.playerSetup.matchRulesFocusRow === 0) navCallbacks.playerSetup.cycleMatchBall(1);
-          else if (navCallbacks.playerSetup.matchRulesFocusRow === 1) navCallbacks.playerSetup.cycleMatchDuration(1);
-          else if (navCallbacks.playerSetup.matchRulesFocusRow === 2) navCallbacks.playerSetup.cycleArena(1);
-          else if (navCallbacks.playerSetup.matchRulesFocusRow === 3) {
-            navCallbacks.playerSetup.matchRulesActionCol = Math.min(3, (navCallbacks.playerSetup.matchRulesActionCol ?? 2) + 1);
-            navCallbacks.playerSetup.updateFocusUI();
-            soundManager.playTone(400, 0.04, 'sine', 0.15);
-          }
-        }
-
-        if (e & MENU_PAD.lb) {
-          if (navCallbacks.playerSetup.matchRulesFocusRow === 0) navCallbacks.playerSetup.cycleMatchBall(-1);
-          else if (navCallbacks.playerSetup.matchRulesFocusRow === 1) navCallbacks.playerSetup.cycleMatchDuration(-1);
-          else if (navCallbacks.playerSetup.matchRulesFocusRow === 2) navCallbacks.playerSetup.cycleArena(-1);
-          else if (navCallbacks.playerSetup.matchRulesFocusRow === 3) {
-            navCallbacks.playerSetup.matchRulesActionCol = Math.max(0, (navCallbacks.playerSetup.matchRulesActionCol ?? 2) - 1);
-            navCallbacks.playerSetup.updateFocusUI();
-          }
-        }
-        if (e & MENU_PAD.rb) {
-          if (navCallbacks.playerSetup.matchRulesFocusRow === 0) navCallbacks.playerSetup.cycleMatchBall(1);
-          else if (navCallbacks.playerSetup.matchRulesFocusRow === 1) navCallbacks.playerSetup.cycleMatchDuration(1);
-          else if (navCallbacks.playerSetup.matchRulesFocusRow === 2) navCallbacks.playerSetup.cycleArena(1);
-          else if (navCallbacks.playerSetup.matchRulesFocusRow === 3) {
-            navCallbacks.playerSetup.matchRulesActionCol = Math.min(3, (navCallbacks.playerSetup.matchRulesActionCol ?? 2) + 1);
-            navCallbacks.playerSetup.updateFocusUI();
-          }
-        }
-
-        if (e & MENU_PAD.a) {
-          if (navCallbacks.playerSetup.matchCountdownActive) {
-            navCallbacks.playerSetup.launchMatchNow();
-          } else if (navCallbacks.playerSetup.matchRulesFocusRow === 0) {
-            navCallbacks.playerSetup.cycleMatchBall(1);
-          } else if (navCallbacks.playerSetup.matchRulesFocusRow === 1) {
-            navCallbacks.playerSetup.cycleMatchDuration(1);
-          } else if (navCallbacks.playerSetup.matchRulesFocusRow === 2) {
-            navCallbacks.playerSetup.cycleArena(1);
-          } else if (navCallbacks.playerSetup.matchRulesFocusRow === 3) {
-            const col = navCallbacks.playerSetup.matchRulesActionCol ?? 2;
-            if (col === 0) navCallbacks.playerSetup.btnBack?.click();
-            else if (col === 1) navCallbacks.playerSetup.togglePlayerReady(0);
-            else if (col === 2) {
-              if (!navCallbacks.playerSetup.btnStartMatch?.disabled) navCallbacks.playerSetup.btnStartMatch?.click();
-            } else if (col === 3) navCallbacks.playerSetup.togglePlayerReady(1);
-          }
-        }
-
-        if ((e & MENU_PAD.b) || (e & MENU_PAD.back)) {
-          if (navCallbacks.playerSetup.matchCountdownActive) {
-            navCallbacks.playerSetup.cancelMatchCountdown();
-            navCallbacks.playerSetup.playerReadyState[0] = false;
-            navCallbacks.playerSetup.playerReadyState[1] = false;
-            soundManager.playTone(330, 0.12, 'sine', 0.2);
-            navCallbacks.playerSetup.updateReadyUI();
+        const step = (action) => {
+          if (screen1Action(col, action)) {
+            soundManager.playTone(660, 0.045, 'sine', 0.18);
+            triggerMenuHaptics(pad, 35, 0.25, 0.1);
           } else {
-            navCallbacks.playerSetup.setupPage = 1;
-            window._updateSetupPage();
-            soundManager.playTone(330, 0.08, 'sine', 0.15);
+            triggerMenuHaptics(pad, 30, 0.2, 0.05);
           }
-        }
-
-        if (e & MENU_PAD.start) {
-          if (navCallbacks.playerSetup.matchCountdownActive) {
-            navCallbacks.playerSetup.launchMatchNow();
-          } else if (!navCallbacks.playerSetup.btnStartMatch?.disabled) {
-            navCallbacks.playerSetup.btnStartMatch?.click();
+        };
+        if (e & MENU_PAD.left) step('left');
+        if (e & MENU_PAD.right) step('right');
+        if (e & MENU_PAD.a) step('act');
+        if (e & (MENU_PAD.lb | MENU_PAD.rb)) {
+          // Switching columns is how a solo player sets up the AI; versus columns are locked.
+          if (versus) {
+            soundManager.playTone(220, 0.1, 'sawtooth', 0.15);
           } else {
-            navCallbacks.playerSetup.togglePlayerReady(navCallbacks.playerSetup.focusedColumn);
+            toggleFocusedColumn();
+            triggerMenuHaptics(pad, 40, 0.3, 0.15);
           }
         }
-
-        return;
+        if (e & (MENU_PAD.b | MENU_PAD.back)) {
+          if (navCallbacks.playerSetup.btnBack) {
+            navCallbacks.playerSetup.btnBack.click();
+          } else {
+            navCallbacks.showTitleScreen?.();
+          }
+          soundManager.playTone(330, 0.08, 'sine', 0.15);
+          triggerMenuHaptics(pad, 30, 0.2, 0.05);
+          return;
+        } else if (e & MENU_PAD.start) {
+          navCallbacks.playerSetup.setupPage = 2;
+          window._updateSetupPage();
+          soundManager.playTone(660, 0.05, 'sine', 0.2);
+          triggerMenuHaptics(pad, 35, 0.25, 0.1);
+        }
       }
 
-      // Dual Gamepads on Screen 2
-      [0, 1].forEach((playerIdx) => {
-        const pad = pads[playerIdx];
-        if (!pad) return;
-        const e = menuPads.pressed(pad);
-
-        if (e & MENU_PAD.up) {
-          navCallbacks.playerSetup.matchRulesFocusRow = Math.max(0, navCallbacks.playerSetup.matchRulesFocusRow - 1);
-          navCallbacks.playerSetup.updateFocusUI();
-        }
-        if (e & MENU_PAD.down) {
-          navCallbacks.playerSetup.matchRulesFocusRow = Math.min(4, navCallbacks.playerSetup.matchRulesFocusRow + 1);
-          navCallbacks.playerSetup.updateFocusUI();
-        }
-
-        if (e & MENU_PAD.left) {
-          if (navCallbacks.playerSetup.matchRulesFocusRow === 0) navCallbacks.playerSetup.cycleMatchBall(-1);
-          else if (navCallbacks.playerSetup.matchRulesFocusRow === 1) navCallbacks.playerSetup.cycleMatchDuration(-1);
-          else if (navCallbacks.playerSetup.matchRulesFocusRow === 2) navCallbacks.playerSetup.cycleArena(-1);
-          else if (navCallbacks.playerSetup.matchRulesFocusRow === 3) { navCallbacks.playerSetup.focusedColumn = 0; navCallbacks.playerSetup.updateFocusUI(); }
-        }
-        if (e & MENU_PAD.right) {
-          if (navCallbacks.playerSetup.matchRulesFocusRow === 0) navCallbacks.playerSetup.cycleMatchBall(1);
-          else if (navCallbacks.playerSetup.matchRulesFocusRow === 1) navCallbacks.playerSetup.cycleMatchDuration(1);
-          else if (navCallbacks.playerSetup.matchRulesFocusRow === 2) navCallbacks.playerSetup.cycleArena(1);
-          else if (navCallbacks.playerSetup.matchRulesFocusRow === 3) { navCallbacks.playerSetup.focusedColumn = 1; navCallbacks.playerSetup.updateFocusUI(); }
-        }
-
-        if (e & MENU_PAD.lb) {
-          if (navCallbacks.playerSetup.matchRulesFocusRow === 0) navCallbacks.playerSetup.cycleMatchBall(-1);
-          else if (navCallbacks.playerSetup.matchRulesFocusRow === 1) navCallbacks.playerSetup.cycleMatchDuration(-1);
-          else if (navCallbacks.playerSetup.matchRulesFocusRow === 2) navCallbacks.playerSetup.cycleArena(-1);
-        }
-        if (e & MENU_PAD.rb) {
-          if (navCallbacks.playerSetup.matchRulesFocusRow === 0) navCallbacks.playerSetup.cycleMatchBall(1);
-          else if (navCallbacks.playerSetup.matchRulesFocusRow === 1) navCallbacks.playerSetup.cycleMatchDuration(1);
-          else if (navCallbacks.playerSetup.matchRulesFocusRow === 2) navCallbacks.playerSetup.cycleArena(1);
-        }
-
-        if (e & MENU_PAD.a) {
-          if (navCallbacks.playerSetup.matchCountdownActive) {
-            navCallbacks.playerSetup.launchMatchNow();
-          } else if (navCallbacks.playerSetup.matchRulesFocusRow === 0) {
-            navCallbacks.playerSetup.cycleMatchBall(1);
-          } else if (navCallbacks.playerSetup.matchRulesFocusRow === 1) {
-            navCallbacks.playerSetup.cycleMatchDuration(1);
-          } else if (navCallbacks.playerSetup.matchRulesFocusRow === 2) {
-            navCallbacks.playerSetup.cycleArena(1);
-          } else if (navCallbacks.playerSetup.matchRulesFocusRow === 3) {
-            navCallbacks.playerSetup.togglePlayerReady(playerIdx);
-          } else if (navCallbacks.playerSetup.matchRulesFocusRow === 4) {
-            if (!navCallbacks.playerSetup.btnStartMatch?.disabled) navCallbacks.playerSetup.btnStartMatch?.click();
-          }
-        }
-
-        if ((e & MENU_PAD.b) || (e & MENU_PAD.back)) {
-          if (navCallbacks.playerSetup.matchCountdownActive) {
-            navCallbacks.playerSetup.cancelMatchCountdown();
-            navCallbacks.playerSetup.playerReadyState[0] = false;
-            navCallbacks.playerSetup.playerReadyState[1] = false;
-            soundManager.playTone(330, 0.12, 'sine', 0.2);
-            navCallbacks.playerSetup.updateReadyUI();
-          } else {
-            navCallbacks.playerSetup.setupPage = 1;
-            window._updateSetupPage();
-            soundManager.playTone(330, 0.08, 'sine', 0.15);
-          }
-        }
-
-        if (e & MENU_PAD.start) {
-          if (navCallbacks.playerSetup.matchCountdownActive) {
-            navCallbacks.playerSetup.launchMatchNow();
-          } else if (!navCallbacks.playerSetup.btnStartMatch?.disabled) {
-            navCallbacks.playerSetup.btnStartMatch?.click();
-          } else {
-            navCallbacks.playerSetup.togglePlayerReady(playerIdx);
-          }
-        }
-      });
-      return;
+      // A page change or a launch belongs to the next poll.
+      if (navCallbacks.playerSetup.setupPage !== page || navCallbacks.playerSetup.playerSetupEl.style.display !== 'flex') return;
     }
-
-    // --- MATCH MODE SCREEN 1 (PLAYER & TEAM SETUP) ---
-    if (isSingleController) {
-      const pad = pads[0];
-      if (!pad) return;
-      const e = menuPads.pressed(pad);
-
-      if (e & MENU_PAD.up) {
-        moveScreen1Row(navCallbacks.playerSetup.focusedColumn, -1);
-        triggerMenuHaptics(pad, 25, 0.15, 0.05);
-      }
-      if (e & MENU_PAD.down) {
-        moveScreen1Row(navCallbacks.playerSetup.focusedColumn, 1);
-        triggerMenuHaptics(pad, 25, 0.15, 0.05);
-      }
-
-      if (e & MENU_PAD.left) {
-        const col = navCallbacks.playerSetup.focusedColumn;
-        const row = navCallbacks.playerSetup.playerFocusRow[col];
-        if (row === 8) {
-          navCallbacks.playerSetup.screen1ActionCol = 0;
-          navCallbacks.playerSetup.updateFocusUI();
-          soundManager.playTone(400, 0.04, 'sine', 0.15);
-          triggerMenuHaptics(pad, 30, 0.2, 0.05);
-        } else {
-          navCallbacks.playerSetup.cycleOption(col, row, -1);
-          soundManager.playTone(660, 0.045, 'sine', 0.18);
-          triggerMenuHaptics(pad, 35, 0.25, 0.1);
-        }
-      }
-      if (e & MENU_PAD.right) {
-        const col = navCallbacks.playerSetup.focusedColumn;
-        const row = navCallbacks.playerSetup.playerFocusRow[col];
-        if (row === 8) {
-          navCallbacks.playerSetup.screen1ActionCol = 1;
-          navCallbacks.playerSetup.updateFocusUI();
-          soundManager.playTone(400, 0.04, 'sine', 0.15);
-          triggerMenuHaptics(pad, 30, 0.2, 0.05);
-        } else {
-          navCallbacks.playerSetup.cycleOption(col, row, 1);
-          soundManager.playTone(660, 0.045, 'sine', 0.18);
-          triggerMenuHaptics(pad, 35, 0.25, 0.1);
-        }
-      }
-
-      if (e & MENU_PAD.lb) {
-        navCallbacks.playerSetup.focusedColumn = 1 - navCallbacks.playerSetup.focusedColumn;
-        soundManager.playTone(440, 0.06, 'sine', 0.2);
-        triggerMenuHaptics(pad, 40, 0.3, 0.15);
-        navCallbacks.playerSetup.updateFocusUI();
-      }
-      if (e & MENU_PAD.rb) {
-        navCallbacks.playerSetup.focusedColumn = 1 - navCallbacks.playerSetup.focusedColumn;
-        soundManager.playTone(440, 0.06, 'sine', 0.2);
-        triggerMenuHaptics(pad, 40, 0.3, 0.15);
-        navCallbacks.playerSetup.updateFocusUI();
-      }
-
-      if (e & MENU_PAD.a) {
-        const col = navCallbacks.playerSetup.focusedColumn;
-        const row = navCallbacks.playerSetup.playerFocusRow[col];
-        if (row === 8) {
-          if (navCallbacks.playerSetup.screen1ActionCol === 0) {
-            navCallbacks.playerSetup.btnBack?.click();
-          } else {
-            navCallbacks.playerSetup.setupPage = 2;
-            window._updateSetupPage();
-          }
-        } else {
-          navCallbacks.playerSetup.cycleOption(col, row, 1);
-          soundManager.playTone(660, 0.045, 'sine', 0.18);
-          triggerMenuHaptics(pad, 35, 0.25, 0.1);
-        }
-      }
-
-      if ((e & MENU_PAD.b) || (e & MENU_PAD.back)) {
-        if (navCallbacks.playerSetup.btnBack) {
-          navCallbacks.playerSetup.btnBack.click();
-        } else {
-          navCallbacks.showTitleScreen?.();
-        }
-        soundManager.playTone(330, 0.08, 'sine', 0.15);
-        triggerMenuHaptics(pad, 30, 0.2, 0.05);
-        return;
-      }
-
-      if (e & MENU_PAD.start) {
-        navCallbacks.playerSetup.setupPage = 2;
-        window._updateSetupPage();
-        soundManager.playTone(660, 0.05, 'sine', 0.2);
-        triggerMenuHaptics(pad, 35, 0.25, 0.1);
-      }
-
-      return;
-    }
-
-    // Match Mode: Two Gamepads Connected on Screen 1 (Pad 0 drives P1, Pad 1 drives P2)
-    [0, 1].forEach((playerIdx) => {
-      const pad = pads[playerIdx];
-      if (!pad) return;
-      const e = menuPads.pressed(pad);
-
-      if (e & MENU_PAD.up) {
-        moveScreen1Row(playerIdx, -1);
-        triggerMenuHaptics(pad, 25, 0.15, 0.05);
-      }
-      if (e & MENU_PAD.down) {
-        moveScreen1Row(playerIdx, 1);
-        triggerMenuHaptics(pad, 25, 0.15, 0.05);
-      }
-
-      if (e & MENU_PAD.left) {
-        const row = navCallbacks.playerSetup.playerFocusRow[playerIdx];
-        if (row === 8) {
-          navCallbacks.playerSetup.screen1ActionCol = 0;
-          navCallbacks.playerSetup.updateFocusUI();
-          soundManager.playTone(400, 0.04, 'sine', 0.15);
-          triggerMenuHaptics(pad, 30, 0.2, 0.05);
-        } else {
-          navCallbacks.playerSetup.cycleOption(playerIdx, row, -1);
-          soundManager.playTone(660, 0.045, 'sine', 0.18);
-          triggerMenuHaptics(pad, 35, 0.25, 0.1);
-        }
-      }
-      if (e & MENU_PAD.right) {
-        const row = navCallbacks.playerSetup.playerFocusRow[playerIdx];
-        if (row === 8) {
-          navCallbacks.playerSetup.screen1ActionCol = 1;
-          navCallbacks.playerSetup.updateFocusUI();
-          soundManager.playTone(400, 0.04, 'sine', 0.15);
-          triggerMenuHaptics(pad, 30, 0.2, 0.05);
-        } else {
-          navCallbacks.playerSetup.cycleOption(playerIdx, row, 1);
-          soundManager.playTone(660, 0.045, 'sine', 0.18);
-          triggerMenuHaptics(pad, 35, 0.25, 0.1);
-        }
-      }
-
-      if (e & MENU_PAD.a) {
-        const row = navCallbacks.playerSetup.playerFocusRow[playerIdx];
-        if (row === 8) {
-          if (navCallbacks.playerSetup.screen1ActionCol === 0) {
-            navCallbacks.playerSetup.btnBack?.click();
-          } else {
-            navCallbacks.playerSetup.setupPage = 2;
-            window._updateSetupPage();
-          }
-        } else {
-          navCallbacks.playerSetup.cycleOption(playerIdx, row, 1);
-          soundManager.playTone(660, 0.045, 'sine', 0.18);
-          triggerMenuHaptics(pad, 35, 0.25, 0.1);
-        }
-      }
-
-      if ((e & MENU_PAD.b) || (e & MENU_PAD.back)) {
-        if (navCallbacks.playerSetup.btnBack) {
-          navCallbacks.playerSetup.btnBack.click();
-        } else {
-          navCallbacks.showTitleScreen?.();
-        }
-        soundManager.playTone(330, 0.08, 'sine', 0.15);
-        triggerMenuHaptics(pad, 30, 0.2, 0.05);
-        return;
-      }
-
-      if (e & MENU_PAD.start) {
-        navCallbacks.playerSetup.setupPage = 2;
-        window._updateSetupPage();
-        soundManager.playTone(660, 0.05, 'sine', 0.2);
-        triggerMenuHaptics(pad, 35, 0.25, 0.1);
-      }
-    });
   }, 50);
 
   window._cleanupSetupListeners = () => {
