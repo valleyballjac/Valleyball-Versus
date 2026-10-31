@@ -1465,6 +1465,9 @@ export class TrailerDirector {
 
     // Sync matchState scoreboard & clock
     if (matchState) {
+      // main.js suspends game scoring during playback, so the director runs the
+      // celebration countdown that updateScoring otherwise owns
+      if (matchState.celebrationTicks > 0) matchState.celebrationTicks -= 1;
       matchState.isCountingDown = false;
       matchState.countdownTicksRemaining = 0;
       matchState.matchOver = false;
@@ -1491,7 +1494,11 @@ export class TrailerDirector {
             z: entry.goalData.goal === 'N' ? -40.0 : 40.0,
           };
           matchState.celebrationTicks = 150;
-          matchState.lastScoredFor = entry.goalData.scoredFor || 'home';
+          // Credit the side whose score this cut raises, so the banner, the ring
+          // colour and the scoreboard agree. The harvest's own credit follows its
+          // fixed attacking end, not the trailer's scoreline.
+          const prevEntry = this._schedule[Math.max(0, entry.cutIdx - 1)];
+          matchState.lastScoredFor = entry.scoreHome > (prevEntry ? prevEntry.scoreHome : 0) ? 'home' : 'away';
           matchState.lastGoalId = entry.goalData.goal;
           if (window.__vb?.goalCelebration?.triggerGoal) {
             window.__vb.goalCelebration.triggerGoal(matchState.lastScoredFor, hoopPos, {

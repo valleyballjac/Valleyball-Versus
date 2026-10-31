@@ -2226,8 +2226,9 @@ function fixedUpdate(dt, tick) {
   // 12 — IMPACTS
   drainImpacts(tick, dt);
 
-  // 12b — SCORING
-  if (matchState && (gameState === 'match' || gameState === 'practice')) {
+  // 12b — SCORING. Suspended while the trailer plays: its replayed ball jumps
+  // across the hoop planes on cuts, and the director stages every goal itself.
+  if (matchState && (gameState === 'match' || gameState === 'practice') && !trailerDirector?.isActive) {
     const goalsBefore = matchState.events.length;
     updateScoring(matchState, balls, tick);
     if (matchState.events.length > goalsBefore) {
