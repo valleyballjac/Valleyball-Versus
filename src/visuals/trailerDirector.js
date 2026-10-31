@@ -174,6 +174,11 @@ export class TrailerDirector {
     this._smoothTarget.set(0, 0, 0);
     this._justCut = true;
 
+    // A goal scored during the harvest leaves celebrationTicks running, which
+    // lights the "GOAL SCORED" banner over the opening shots.
+    const matchState = typeof window !== 'undefined' ? window.__vb?.matchState : null;
+    if (matchState) matchState.celebrationTicks = 0;
+
     if (typeof document !== 'undefined') {
       document.body.classList.add('trailer-mode-active');
       const root = document.getElementById('main-menu-root');
@@ -1131,6 +1136,33 @@ export class TrailerDirector {
       return best;
     };
 
+    // Hero portraits frame the athlete chest-high from 2.35 m, so a stumble, a
+    // crouch or a stalled T-pose fills the screen. Head-over-pelvis height and
+    // hand spread in the recorded poses catch all three (an athlete in stride
+    // reads ~0.56 m and ~0.8 m).
+    const rigOrder = (typeof window !== 'undefined' && window.__vb?.athletes?.[0]?.ragdoll?.order) || [];
+    const iHead = rigOrder.indexOf('head');
+    const iPelvis = rigOrder.indexOf('pelvis');
+    const iHandL = rigOrder.indexOf('handL');
+    const iHandR = rigOrder.indexOf('handR');
+    const heroPosture = (game, startTick, len, athleteIdx) => {
+      if (iHead < 0 || iPelvis < 0 || iHandL < 0 || iHandR < 0) return { badFrac: 0, meanUpright: 0 };
+      const base = athleteIdx * 17 + 1;
+      let bad = 0;
+      let uprightSum = 0;
+      for (let t = startTick; t < startTick + len; t++) {
+        const p = game.frames[t].poses;
+        const upright = p[(base + iHead) * 7 + 1] - p[(base + iPelvis) * 7 + 1];
+        const spread = Math.hypot(
+          p[(base + iHandL) * 7] - p[(base + iHandR) * 7],
+          p[(base + iHandL) * 7 + 2] - p[(base + iHandR) * 7 + 2]
+        );
+        uprightSum += upright;
+        if (upright < 0.45 || spread > 1.35) bad++;
+      }
+      return { badFrac: bad / len, meanUpright: uprightSum / len };
+    };
+
     // Helper 2: Pick best stunt or rally clip matching criteria
     const pickStuntClip = (len, mode, preferredBall = null) => {
       let best = null;
@@ -1156,15 +1188,19 @@ export class TrailerDirector {
 
           if (mode === 'hero_p1') {
             if (stats.p1Hits < 1 || stats.p1DiveTicks > 0) continue;
+            const posture = heroPosture(game, st, len, 0);
+            if (posture.badFrac > 0.1) continue;
             // Reward P1 strike near middle of clip while upright
             const mid = st + Math.floor(len * 0.45);
             const fMid = game.frames[mid];
-            score += stats.p1Hits * 80 + fMid.p1Speed * 12;
+            score += stats.p1Hits * 80 + fMid.p1Speed * 12 + posture.meanUpright * 300;
           } else if (mode === 'hero_p2') {
             if (stats.p2Hits < 1 || stats.p2DiveTicks > 0) continue;
+            const posture = heroPosture(game, st, len, 1);
+            if (posture.badFrac > 0.1) continue;
             const mid = st + Math.floor(len * 0.45);
             const fMid = game.frames[mid];
-            score += stats.p2Hits * 80 + fMid.p2Speed * 12;
+            score += stats.p2Hits * 80 + fMid.p2Speed * 12 + posture.meanUpright * 300;
           } else if (mode === 'rally') {
             if (stats.hitsInClip < 1) continue;
             score += stats.hitsInClip * 65 + (stats.p1Hits > 0 && stats.p2Hits > 0 ? 90 : 0);
@@ -1204,12 +1240,19 @@ export class TrailerDirector {
 
       // Secondary scored pass across all games (non-overlapping) if primary filter was exhausted
       if (!best) {
+        const heroIdx = mode === 'hero_p1' ? 0 : mode === 'hero_p2' ? 1 : -1;
         for (const game of this._harvestedGames) {
+          // A goal behind a hero portrait lights the GOAL banner mid-introduction
+          if (heroIdx >= 0 && (game.category === 'goal_north' || game.category === 'goal_south')) continue;
           for (let st = 2; st + len <= game.frames.length; st += 6) {
             if (isOverlapping(game.id, st, st + len)) continue;
             const stats = evaluateWindow(game, st, len);
             if (!stats) continue;
-            const score = stats.hitsInClip * 80 + stats.meanBallSpeed * 4 - stats.runningAwayTicks * 500 - (mode === 'hero_p1' ? stats.p1DiveTicks * 100 : 0) - (mode === 'hero_p2' ? stats.p2DiveTicks * 100 : 0);
+            let score = stats.hitsInClip * 80 + stats.meanBallSpeed * 4 - stats.runningAwayTicks * 500 - (mode === 'hero_p1' ? stats.p1DiveTicks * 100 : 0) - (mode === 'hero_p2' ? stats.p2DiveTicks * 100 : 0);
+            if (heroIdx >= 0) {
+              const posture = heroPosture(game, st, len, heroIdx);
+              score += posture.meanUpright * 300 - posture.badFrac * 2000;
+            }
             if (score > bestScore) {
               bestScore = score;
               best = { ...stats, goalTick: -1, goalInClip: null, goalData: null };
@@ -1750,10 +1793,12 @@ export class TrailerDirector {
           11.2 + ease * 31.0,
           -28.0 + ease * 48.0
         );
+        // Aim from the north hoop to centre court: after the goal the ball can
+        // fly anywhere, and following it left this shot on empty turf and sky.
         this._target.set(
-          f.bx * (1 - ease * 0.7),
+          0,
           10.0 * (1 - ease) + 2.5 * ease,
-          -38.0 * (1 - ease)
+          -40.0 * (1 - ease)
         );
         return 46 + ease * 10;
       }
