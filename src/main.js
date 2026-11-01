@@ -87,8 +87,8 @@ import {
 import { createMountFollowerState, runMountFollower } from './mechanics/mountFollower.js';
 import { createActionState, runActions } from './mechanics/actions.js';
 import {
-  createStrikeState, runStrikes, resolveStrikeContact, resolveBraceRedirect, strikeProbe, checkStrikeAssist,
-  KIND_NAME,
+  createStrikeState, resetStrikeState, runStrikes, resolveStrikeContact, resolveBraceRedirect, strikeProbe,
+  checkStrikeAssist, KIND_NAME,
 } from './mechanics/strikes.js';
 import { createMatchState, updateScoring, matchProbe } from './mechanics/scoring.js';
 import { createScoreboards, updateScoreboards } from './visuals/scoreboards.js';
@@ -3420,14 +3420,7 @@ function returnToMainMenu() {
   for (let i = 0; i < athletes.length; i++) {
     const a = athletes[i];
     if (!a) continue;
-    if (a.strikeState) {
-      a.strikeState.resolvedCount = 0;
-      a.strikeState.whiffCount = 0;
-      a.strikeState.lastResolvedStrikeTick = -999;
-      a.strikeState.lastStrikeTick = -999;
-      a.strikeState.strikePhase = 0;
-      a.strikeState.strikeMix = 0;
-    }
+    if (a.strikeState) resetStrikeState(a.strikeState);
     if (a.actionState) {
       a.actionState.slideTime = 0;
       a.actionState.diveTime = 0;

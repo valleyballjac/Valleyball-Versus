@@ -191,6 +191,39 @@ export function createStrikeState() {
 }
 
 /**
+ * What a reset KEEPS: the athlete's assist configuration, the goal it attacks,
+ * and the once-per-athlete rate check. Everything else is per-session.
+ */
+const STRIKE_STATE_KEPT_ON_RESET = [
+  'assistPreset', 'assistRadius', 'assistWindowTicks', 'aimMagnetism', 'targetGoalZ', 'ratesChecked',
+];
+
+/**
+ * Puts every latch, clock and counter back to "never struck", read from
+ * createStrikeState itself so a field added there can never be missed here.
+ *
+ * WHY "never" HAS TO BE -Infinity AND NOT A TICK IN THE PAST. The menu reset
+ * used to write lastStrikeTick = -999 and leave lastStrikeKind alone. A finite
+ * tick reads as a strike in progress (see THE SHARE in runStrikes), and an
+ * athlete who had never pressed still held KIND_NONE, which has no row — so
+ * the phase could not climb, strikeMix eased to 1 and stayed there, and the
+ * action tier handed the whole blend to a strike node that does not exist. The
+ * mixer filled the empty weight with the bind pose: a T-pose that lasted until
+ * that athlete's next press.
+ *
+ * Not for a tick loop: it allocates one fresh state to copy from.
+ *
+ * @param {object} state
+ */
+export function resetStrikeState(state) {
+  const fresh = createStrikeState();
+  for (const key of Object.keys(fresh)) {
+    if (STRIKE_STATE_KEPT_ON_RESET.includes(key)) continue;
+    state[key] = fresh[key];
+  }
+}
+
+/**
  * The table row for a recorded kind. A row, not a branch.
  *
  * @param {number} kind
@@ -648,7 +681,11 @@ export function runStrikes({ state, input, motor, ghost, balls, volleyQueued, sp
   // Eased toward 1 while a strike is unfinished and toward 0 once it has
   // completed, at one rate — the same construction as slideMix and diveMix, so
   // the action tier combines three demands the way it already combines two.
-  const striking = Number.isFinite(state.lastStrikeTick) && state.strikePhase < 1;
+  //
+  // A strike with no ROW never asks for a share: there is no clip to give it
+  // to, and the ratchet above cannot advance it to 1, so it would hold the
+  // action tier forever with nothing playing in it (see resetStrikeState).
+  const striking = row !== null && Number.isFinite(state.lastStrikeTick) && state.strikePhase < 1;
   const ease = 1 - Math.exp(-strike.mixEase * dt);
   state.strikeMix += ((striking ? 1 : 0) - state.strikeMix) * ease;
 
