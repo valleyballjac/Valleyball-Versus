@@ -31,6 +31,7 @@ These tags hold work that is not on `main`. To look at one, run `git show <tag>`
 | `archive/locker-claude` | Locker stages 1-2 experiment |
 | `archive/locker-gemini` | Locker experiment with the in-engine photo booth, which exists only here |
 | `archive/movement-feel-v0.4` | Movement sweep branch; the tuning is on `main` and the report is in `reports/` |
+| `archive/demo-*` | Three unreferenced commits rescued from the old `Valleyball-Demo` clone, September 2026 |
 
 Commits inside `archive/primary-wip-2026-11-01`:
 
@@ -47,3 +48,6 @@ Renders and deliverables are not in git. They live next to the repo, in `../medi
 
 - `media/claude-outputs/`: trailer masters, explainer publishing docs, headgear pack and earlier outputs
 - `media/agent-handovers/`: Hermes, Argon and Gemini handover prompts
+- `media/debut-trailer-render-inputs/`: raw footage, stems and captions behind the final debut trailer, for `--composite-only` re-encodes
+- `media/raw-footage-capture-worktree/`: 54 clips and masters from the Oct 24 trailer pass that exist nowhere else
+- `media/demo-clone-scraps/`: tuning files, test scripts and the v0.3.1 itch.io zip from the old `Valleyball-Demo` clone
