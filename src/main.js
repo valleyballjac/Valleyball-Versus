@@ -375,12 +375,9 @@ function installRespawnHotkey() {
       return;
     }
     // "Escape" — TOGGLE IN-GAME SETTINGS & PAUSE MENU (continuous play clock)
-    if (isHotkey(event, 'Escape')) {
-      if (gameState === 'menu') {
-        showTitleScreen();
-      } else {
-        toggleInGameMenu();
-      }
+    // In menus, onMenuKeyDown owns Escape, one screen at a time.
+    if (isHotkey(event, 'Escape') && gameState !== 'menu') {
+      toggleInGameMenu();
     }
   });
 }
