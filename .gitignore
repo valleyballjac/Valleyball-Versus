@@ -1,25 +1,25 @@
 node_modules/
 dist/
-captures/
-.DS_Store
-*.log
-_fable/
-scratch/
-test_*.mjs
-!scripts/test_ball_roll.mjs
-!scripts/test_boundary_drops.mjs
-!scripts/test_corner_cap_negative.mjs
-!scripts/test_athlete_corner_traversal.mjs
-!scripts/test_headwear_selector.mjs
-!scripts/test_setup_headwear.mjs
-test_ball_roll_report.json
-test_boundary_drops_report.json
-test_athlete_corner_traversal_report.json
-audit_collision_coverage_report.json
-diff.mjs
-*_backup.glb
-c.json
-current_tuning.json
-user_tuning.json
 dist-itch/
 release/
+captures/
+scratch/
+_fable/
+.DS_Store
+*.log
+*_backup.glb
+
+# Renders and deliverables live outside the repo, in ../media.
+Claude outputs/
+
+# Session worktrees created by Claude Code.
+.claude/worktrees/
+
+# Scratch files and generated reports at the repo root only.
+/test_*.mjs
+/test_*_report.json
+/audit_collision_coverage_report.json
+/diff.mjs
+/c.json
+/current_tuning.json
+/user_tuning.json

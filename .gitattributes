@@ -1,0 +1,15 @@
+# Store and check out text as LF on every platform. Mixed endings were
+# causing phantom diffs across worktrees.
+* text=auto eol=lf
+
+*.bat text eol=crlf
+
+*.blend binary
+*.glb binary
+*.jpg binary
+*.jpeg binary
+*.mp3 binary
+*.mp4 binary
+*.pdf binary
+*.png binary
+*.wav binary
