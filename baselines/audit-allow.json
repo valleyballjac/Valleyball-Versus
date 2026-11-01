@@ -80,9 +80,9 @@
   },
   "clips": {},
   "size": {
-    "src/config/tuning.js": 1789,
+    "src/config/tuning.js": 1806,
     "src/main.js": 4008,
-    "src/mechanics/strikes.js": 1018,
+    "src/mechanics/strikes.js": 1055,
     "src/sim/animtarget.js": 2011
   }
 }
