@@ -20,7 +20,7 @@
     "src/features/match/matchManager.js": 5,
     "src/features/ui/mainMenu/settingsModal.js": 8,
     "src/input/inputRouter.js": 2,
-    "src/main.js": 62
+    "src/main.js": 60
   },
   "dead-module": {
     "src/features/athletes/index.js": 1,
@@ -32,7 +32,6 @@
   },
   "dead-import": {
     "src/ai/botController.js :: projectBallPosition": 1,
-    "src/ai/botSteering.js :: TUNING": 1,
     "src/features/ui/mainMenu/index.js :: ARENA_OPTIONS": 1,
     "src/features/ui/mainMenu/index.js :: BALL_OPTIONS": 1,
     "src/features/ui/mainMenu/index.js :: CAMERA_OPTIONS": 1,
@@ -80,8 +79,8 @@
   },
   "clips": {},
   "size": {
-    "src/config/tuning.js": 1806,
-    "src/main.js": 4008,
+    "src/config/tuning.js": 1850,
+    "src/main.js": 4152,
     "src/mechanics/strikes.js": 1055,
     "src/sim/animtarget.js": 2011
   }
