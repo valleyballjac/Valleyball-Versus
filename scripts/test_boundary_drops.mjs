@@ -24,6 +24,12 @@
  *      entrapment regression). A missing court floor under a perimeter point
  *      is a failure, not a skip.
  *
+ *   3. Glass top-seam sweep, in a world built with the GAME's collider flags
+ *      (FIX_INTERNAL_EDGES on every COL_ proxy, as src/sim/arena.js builds
+ *      them). The regulation ball is fired at the side and back glass so its
+ *      centre crosses the pane near the y = 13 chamfer seam; any ball centre
+ *      that ends up past the glass is a breach.
+ *
  * Exit contract: exit code 0 when every corner entity rests at shelf height
  * and every perimeter entity stays above the kill plane, 1 otherwise. Writes
  * test_boundary_drops_report.json next to the package root.
@@ -35,6 +41,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import RAPIER from '@dimforge/rapier3d-compat';
+import { TUNING } from '../src/config/tuning.js';
 import { buildWorld, surfaceY } from './test_ball_roll.mjs';
 import {
   buildFanWorld,
@@ -103,6 +110,29 @@ const COURT_Z = 58.0;
 const SWEEP_SPEED = 24.0;       // m/s, hard-strike horizontal speed
 const SWEEP_LAUNCH_INSET = 8.0; // spawn distance in from the rim plane (m)
 const SWEEP_BREACH_Z = 65.0;    // |z| past the glass plane = tunnelled through
+
+// Side-wall top seam sweep — run against the colliders AS THE GAME BUILDS THEM
+// (buildWorld({ colliderFlags: 'game' })): src/sim/arena.js gives every COL_
+// proxy FIX_INTERNAL_EDGES, while the default harness world gives it to
+// COL_Court only, which is why every check above passes on a seam that leaks.
+//
+// The seam: each side glass (|x| = 25, y up to 13) has its top edge cut into
+// ~72 segments, but the 45° chamfer above it started with ONE 120 m edge from
+// z = -60 to +60. Nothing was welded across it — 142 wall vertices sat
+// mid-edge on the chamfer (T-junctions), so both sides were open boundary
+// edges, and FIX_INTERNAL_EDGES dropped the contacts there. A ball whose
+// centre crossed the glass plane within ~0.2 m of y = 13 passed straight
+// through, at lob speed as well as strike speed: 342 of these 1280 shots.
+// scripts/weld_barrier_tjunctions.mjs split the chamfer at those vertices.
+// The back glass (|z| = 60) top edge had 9 T-junctions per end but never
+// leaked here; it was welded in the same pass and is swept as the control.
+const SEAM_TOP_Y = 13.0;                          // side/back glass top = chamfer base
+const SEAM_CROSS_YS = [12.85, 12.95, 13.05, 13.15]; // ball-centre height at the glass plane
+const SEAM_SPEEDS = [10.0, 25.0];                 // m/s: a lob and a hard strike
+const SEAM_DIVE_RAD = 0.245;                      // 14 deg below horizontal
+const SEAM_LAUNCH_INSET = 4.0;                    // m inside the glass at launch
+const SEAM_TICKS = 150;
+const SEAM_BREACH_TOL = 0.05; // m — a ball CENTRE past the glass surface has left
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -259,11 +289,49 @@ function runBackBoundarySweep(sim, probe, kind, wallZ, x) {
   return { missingSurface: false, fellOut, maxAbsZ: +maxAbsZ.toFixed(2), minY: +minY.toFixed(2) };
 }
 
+/** True once a ball CENTRE is past the glass: the side or back pane below the
+ * chamfer, the 45° chamfer (13..18 m), or the outer vertical glass above it. */
+function centrePastGlass(p) {
+  const rise = Math.min(Math.max(p.y - SEAM_TOP_Y, 0), 5);
+  return Math.abs(p.x) > 25 + rise + SEAM_BREACH_TOL ||
+    Math.abs(p.z) > 60 + rise + SEAM_BREACH_TOL ||
+    p.y < KILL_FLOOR_Y;
+}
+
+/**
+ * Fire the regulation ball at a glass pane so its centre crosses the pane's
+ * plane at height `crossY`, travelling `speed` m/s at SEAM_DIVE_RAD below
+ * horizontal (gravity pre-compensated). `axis` 'x' = side glass at
+ * x = sign*25 (station `along` is z); 'z' = back glass at z = sign*60.
+ */
+function runSeamShot(sim, axis, sign, along, crossY, speed) {
+  const vh = speed * Math.cos(SEAM_DIVE_RAD);
+  const vy = -speed * Math.sin(SEAM_DIVE_RAD);
+  const t = SEAM_LAUNCH_INSET / vh;
+  const y0 = crossY - vy * t - 0.5 * TUNING.physics.gravityY * t * t;
+  const inset = (axis === 'x' ? 25 : 60) - SEAM_LAUNCH_INSET;
+  const body = axis === 'x'
+    ? spawnEntity(sim, 'ball', sign * inset, y0, along, 0, 0, false)
+    : spawnEntity(sim, 'ball', along, y0, sign * inset, 0, 0, false);
+  body.setLinvel(axis === 'x'
+    ? { x: sign * vh, y: vy, z: 0 }
+    : { x: 0, y: vy, z: sign * vh }, true);
+  let breach = null;
+  for (let tick = 0; tick < SEAM_TICKS && !breach; tick++) {
+    sim.step();
+    const p = body.translation();
+    if (centrePastGlass(p)) breach = { tick, x: +p.x.toFixed(2), y: +p.y.toFixed(2), z: +p.z.toFixed(2) };
+  }
+  sim.removeRigidBody(body);
+  return { fellOut: !!breach, breach };
+}
+
 // ═══ TEST ═══
 
 async function main() {
   await RAPIER.init();
   const { sim, probe } = await buildWorld();
+  const { sim: gameSim } = await buildWorld({ colliderFlags: 'game' });
   const { world: fanWorld } = await buildFanWorld();
 
   const results = [];
@@ -317,6 +385,39 @@ async function main() {
     }
   }
 
+  // Glass top-seam sweep, GAME collider flags: both side panes (the leak) and
+  // both back panes (welded, the control), every station, four crossing
+  // heights around y = 13, a lob and a hard strike.
+  const seamPanes = [
+    { axis: 'x', sign: 1, stations: range(-56.0, 56.0, 2.0) },
+    { axis: 'x', sign: -1, stations: range(-56.0, 56.0, 2.0) },
+    { axis: 'z', sign: 1, stations: range(-22.0, 22.0, 2.0) },
+    { axis: 'z', sign: -1, stations: range(-22.0, 22.0, 2.0) },
+  ];
+  let seamShots = 0;
+  for (const { axis, sign, stations } of seamPanes) {
+    for (const along of stations) {
+      for (const crossY of SEAM_CROSS_YS) {
+        for (const speed of SEAM_SPEEDS) {
+          const r = runSeamShot(gameSim, axis, sign, along, crossY, speed);
+          seamShots++;
+          if (r.fellOut) failures++;
+          results.push({
+            region: 'glass_top_seam_game_flags',
+            pane: `${axis === 'x' ? 'side x' : 'back z'}=${sign * (axis === 'x' ? 25 : 60)}`,
+            x: axis === 'x' ? sign * 25 : along,
+            z: axis === 'x' ? along : sign * 60,
+            station: along,
+            kind: 'ball', crossY, speed, ...r, fail: r.fellOut,
+          });
+        }
+      }
+    }
+  }
+  const seamFails = results.filter((r) => r.region === 'glass_top_seam_game_flags' && r.fail);
+  const seamByPane = {};
+  for (const r of seamFails) seamByPane[r.pane] = (seamByPane[r.pane] || 0) + 1;
+
   const pass = failures === 0;
   const report = {
     pass,
@@ -331,6 +432,15 @@ async function main() {
     cornerPoints: cornerPoints.length,
     entities: results.length,
     failures,
+    glassTopSeam: {
+      colliderFlags: 'game',
+      shots: seamShots,
+      breaches: seamFails.length,
+      byPane: seamByPane,
+      first: seamFails.slice(0, 8).map((r) => ({
+        pane: r.pane, station: r.station, crossY: r.crossY, speed: r.speed, breach: r.breach,
+      })),
+    },
     worst: results
       .filter((r) => r.fail)
       .slice(0, 32)
@@ -355,11 +465,16 @@ async function main() {
   console.log(`corner fan dynamic drops: ${cornerPoints.length} points x 2 entities`);
   console.log(`perimeter roll points: ${perimSpawns.length} x 2 entities`);
   console.log(`back-boundary high-speed sweeps: ${sweepXs.length * 2} points x 2 entities`);
+  console.log(
+    `glass top-seam sweep (game collider flags): ${seamShots} shots, ${seamFails.length} breaches` +
+      (seamFails.length ? ` ${JSON.stringify(seamByPane)}` : ''),
+  );
   console.log(`spawned ${results.length} entities, ${failures} failures`);
   console.log(pass ? 'DROP TEST PASS — corner fan holds, perimeter sealed' : 'DROP TEST FAIL — see report');
   console.log(`report: ${outPath}`);
 
   fanWorld.free();
+  gameSim.free();
   sim.free();
   process.exitCode = pass ? 0 : 1;
 }
