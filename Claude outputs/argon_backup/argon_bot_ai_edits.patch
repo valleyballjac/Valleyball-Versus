@@ -1,0 +1,752 @@
+diff --git a/src/ai/botController.js b/src/ai/botController.js
+index 1bbdfc7..800ac03 100644
+--- a/src/ai/botController.js
++++ b/src/ai/botController.js
+@@ -339,19 +339,31 @@ function selectStrategy(bot, perception, params, tick) {
+   if (isPositionedBehindBall && distToBall < 12.0 && hasPossessionPriority) {
+     if (isHard || agg >= 0.6) {
+       const inFlank = Math.abs(perception.ball.position.x) > 6.0 || perception.stream.isInStreamLane;
+-
+-      if (!inFlank) {
++      const hasScoringAngle = Math.abs(perception.ball.position.x) >= 3.5;
++
++      if (isFinishing && hasScoringAngle) {
++        // Already in finishing zone with a clean flank crossing angle: finish directly instead of retreating!
++        if (perception.ball.isAerialBall && distToBall <= 4.5) {
++          bot.attackType = ATTACK_TYPE.SET_AND_SPIKE_4_STAGE;
++          bot.attackStage = ATTACK_STAGE.AERIAL_FINISH;
++        } else if (perception.stream.isAtStreamHead && distToBall <= 3.2 && agg >= 0.65) {
++          bot.attackType = ATTACK_TYPE.SET_AND_SPIKE_4_STAGE;
++          bot.attackStage = ATTACK_STAGE.SETUP_POP;
++        } else {
++          bot.attackType = ATTACK_TYPE.FAST_BREAK_2_STAGE;
++          bot.attackStage = ATTACK_STAGE.RETRIEVE;
++        }
++      } else if (!inFlank) {
+         // Center channel: Route out to flank stream to get proper aperture angle!
+         bot.attackType = ATTACK_TYPE.STREAM_RUN_3_STAGE;
+-      } else if (!isFinishing) {
++        bot.attackStage = ATTACK_STAGE.RETRIEVE;
++      } else {
+         // Flank: Prioritize Set & Spike combo for clean aerial goals!
+         bot.attackType = (isHard || agg >= 0.5)
+           ? ATTACK_TYPE.SET_AND_SPIKE_4_STAGE
+           : ATTACK_TYPE.STREAM_RUN_3_STAGE;
+-      } else {
+-        bot.attackType = ATTACK_TYPE.SET_AND_SPIKE_4_STAGE;
++        bot.attackStage = ATTACK_STAGE.RETRIEVE;
+       }
+-      bot.attackStage = ATTACK_STAGE.RETRIEVE;
+       bot.stageStartTick = tick;
+       return STRATEGY.MULTI_STAGE_ATTACK;
+     } else if (bot.difficulty === 'medium') {
+@@ -534,7 +546,6 @@ function executeChase(bot, perception, params, slot, tick) {
+       maxSpeed: profile.maxApproachSpeed,
+       currentVel: selfVel,
+     });
+-    slot.hasAim = false;
+     if (tick - bot.lastCutTick >= bot.cutCooldownTicks &&
+         shouldExecuteCut(selfVel, slot.moveWorld, { minSpeed: 2.8, isDownhill: perception.terrain?.isDownhillFacing })) {
+       slot.cutQueued = true;
+@@ -587,7 +598,6 @@ function executeChase(bot, perception, params, slot, tick) {
+       minDrive: 0.65,
+       currentVel: selfVel,
+     });
+-    slot.hasAim = false;
+   }
+ 
+   // Check cut execution when redirecting sharply toward intercept
+@@ -620,7 +630,6 @@ function executePosition(bot, perception, params, slot, tick) {
+       maxSpeed: profile.maxApproachSpeed,
+       currentVel: selfVel,
+     });
+-    slot.hasAim = false;
+     if (tick - bot.lastCutTick >= bot.cutCooldownTicks &&
+         shouldExecuteCut(selfVel, slot.moveWorld, { minSpeed: 2.8, isDownhill: perception.terrain?.isDownhillFacing })) {
+       slot.cutQueued = true;
+@@ -651,9 +660,11 @@ function executePosition(bot, perception, params, slot, tick) {
+       decelFactor: profile.decelFactor,
+       runwayOffset: posOffset + 0.8,
+     });
+-    slot.aimYaw = computeClearanceAimYaw(ballPos, attackGoalPos, defendGoalPos);
+-    slot.hasAim = true;
+-    slot.cameraYaw = slot.aimYaw;
++    if (distToBall < 2.2) {
++      slot.aimYaw = computeClearanceAimYaw(ballPos, attackGoalPos, defendGoalPos);
++      slot.hasAim = true;
++      slot.cameraYaw = slot.aimYaw;
++    }
+   } else {
+     steerToward(slot, selfPos, _interceptTarget, {
+       sprint: shouldSprint,
+@@ -663,7 +674,6 @@ function executePosition(bot, perception, params, slot, tick) {
+       minDrive: 0.60,
+       currentVel: selfVel,
+     });
+-    slot.hasAim = false;
+   }
+ 
+   // Check cut execution when decelerating or turning into position pocket
+@@ -694,8 +704,8 @@ function executeStreamDribble(bot, perception, params, slot, tick) {
+     steerGoalSideArc(slot, selfPos, ballPos, defendGoalPos, {
+       sprint: true,
+       maxSpeed: profile.maxApproachSpeed,
++      currentVel: perception.self.velocity,
+     });
+-    slot.hasAim = false;
+     return;
+   }
+ 
+@@ -711,13 +721,13 @@ function executeStreamDribble(bot, perception, params, slot, tick) {
+   const distToBall = Math.hypot(ballPos.x - selfPos.x, ballPos.z - selfPos.z);
+   const isCloseToBall = distToBall <= posOffset * 1.6;
+ 
+-  // When close, drive through the ball toward attackHead!
+-  // When further away, target the pocket behind the ball along the heading to attackHead.
++  // When close, step into the strike zone toward attackHead;
++  // when further away, target the pocket behind the ball along the heading to attackHead.
+   const targetX = isCloseToBall
+-    ? ballPos.x + dirHeadX * 0.75
++    ? ballPos.x + dirHeadX * 0.45
+     : ballPos.x - dirHeadX * posOffset;
+   const targetZ = isCloseToBall
+-    ? ballPos.z + dirHeadZ * 0.75
++    ? ballPos.z + dirHeadZ * 0.45
+     : ballPos.z - dirHeadZ * posOffset;
+   _interceptTarget.set(targetX, 0, targetZ);
+ 
+@@ -732,14 +742,16 @@ function executeStreamDribble(bot, perception, params, slot, tick) {
+     maxSpeed: profile.maxApproachSpeed * (isBallRunningAway ? 1.0 : 0.95),
+     decelFactor: profile.decelFactor,
+     minDrive: isCloseToBall ? 0.85 : 0.65,
+-    facePos: attackHead,
++    facePos: isCloseToBall ? attackHead : undefined,
+     currentVel: perception.self.velocity,
+   });
+ 
+-  // Face toward the attacking stream head so athlete naturally pushes upcourt
+-  slot.aimYaw = computeAimYaw(selfPos, attackHead);
+-  slot.hasAim = true;
+-  slot.cameraYaw = slot.aimYaw;
++  if (distToBall <= 2.2) {
++    // Face toward the attacking stream head when in dribble contact range
++    slot.aimYaw = computeAimYaw(selfPos, attackHead);
++    slot.hasAim = true;
++    slot.cameraYaw = slot.aimYaw;
++  }
+ }
+ 
+ /**
+@@ -767,7 +779,6 @@ function executeMultiStageAttack(bot, perception, freshPerception, params, slot,
+       maxSpeed: profile.maxApproachSpeed,
+       currentVel: freshPerception.self.velocity,
+     });
+-    slot.hasAim = false;
+     return;
+   }
+ 
+@@ -797,9 +808,9 @@ function executeMultiStageAttack(bot, perception, freshPerception, params, slot,
+       const courtFloorY = getCourtFloorY(ballPos.x, ballPos.z);
+       const ballAltitude = freshPerception.ball.altitude ?? (ballPos.y - (courtFloorY + (profile.radius ?? 0.4)));
+       const isGroundBall = freshPerception.ball.isGroundBall || ballAltitude < 0.70;
+-      const isKick = isGroundBall && ballRelY <= 0.40 && ballRelY >= -0.6;
++      const isKick = isGroundBall && ballRelY < 0.36 && ballRelY >= -0.6;
+       const wantedKind = isKick ? 'kick' : 'volley';
+-      const horizon = (wantedKind === 'kick' ? 14 : 20) * (1 / 60);
++      const horizon = (wantedKind === 'kick' ? 10 : 16) * (1 / 60);
+       const gravityY = TUNING?.physics?.gravityY ?? -12.0;
+       const contactRelY = (ballPos.y + freshPerception.ball.velocity.y * horizon + 0.5 * gravityY * horizon * horizon) - selfPos.y;
+       const athFutureX = selfPos.x + freshPerception.self.velocity.x * horizon;
+@@ -816,8 +827,8 @@ function executeMultiStageAttack(bot, perception, freshPerception, params, slot,
+       const isRocketingUp = freshPerception.ball.isRising && freshPerception.ball.velocity.y > 2.0;
+       const isReachable = !oppHasPriority && !isRocketingUp && (
+         isKick
+-          ? (contactDist <= 1.25 && contactRelY >= -0.6 && contactRelY <= 0.40)
+-          : (contactDist <= 1.35 && contactRelY >= -0.2 && contactRelY <= 2.2)
++          ? (contactDist <= 1.25 && contactRelY >= -0.6 && contactRelY <= 0.36)
++          : (ballRelY >= 0.35 && contactDist <= 1.35 && contactRelY >= 0.15 && contactRelY <= 2.2)
+       );
+ 
+       if (isReachable && isGoalSide) {
+@@ -837,6 +848,7 @@ function executeMultiStageAttack(bot, perception, freshPerception, params, slot,
+           slot.cameraYaw = slot.aimYaw;
+           slot.hasAim = true;
+           bot.lastStrikeTick = tick;
++          bot.lastStrikeAimYaw = slot.aimYaw;
+           bot.lastStrikeKind = wantedKind;
+           bot.pendingSpikeTick = -Infinity;
+           bot.stats.strikeAttempts++;
+@@ -881,19 +893,22 @@ function executeMultiStageAttack(bot, perception, freshPerception, params, slot,
+         arriveRadius: 0.3,
+         maxSpeed: profile.maxApproachSpeed,
+         minDrive: 0.8,
+-        aimYaw,
++        aimYaw: distToBall <= 2.2 ? aimYaw : undefined,
++        currentVel: freshPerception.self.velocity,
+       });
+ 
+-      slot.aimYaw = aimYaw;
+-      slot.cameraYaw = aimYaw;
+-      slot.hasAim = true;
++      if (distToBall <= 2.2) {
++        slot.aimYaw = aimYaw;
++        slot.cameraYaw = aimYaw;
++        slot.hasAim = true;
++      }
+ 
+       // When ball is in physical reach, pop it up!
+       const ballRelY = ballPos.y - selfPos.y;
+       const isPopReachable = distToBall <= 1.25 && ballRelY >= -0.5 && ballRelY <= 1.5;
+       if (isPopReachable && isGoalSide) {
+         slot.volleyQueued = true; // Contextual kick / soft pop touch
+-        const horizon = 14 * (1 / 60);
++        const horizon = 10 * (1 / 60);
+         const contactPos = {
+           x: ballPos.x + freshPerception.ball.velocity.x * horizon,
+           y: ballPos.y + freshPerception.ball.velocity.y * horizon,
+@@ -904,8 +919,9 @@ function executeMultiStageAttack(bot, perception, freshPerception, params, slot,
+         slot.cameraYaw = popAimYaw;
+         slot.hasAim = true;
+         bot.lastStrikeTick = tick;
++        bot.lastStrikeAimYaw = popAimYaw;
+         bot.lastPopTick = tick;
+-        bot.lastStrikeKind = 'kick';
++        bot.lastStrikeKind = ballRelY < 0.36 ? 'kick' : 'volley';
+         bot.stats.strikeAttempts++;
+ 
+         // Advance to aerial finish: will jump once ball is observed rising and elevated
+@@ -943,34 +959,38 @@ function executeMultiStageAttack(bot, perception, freshPerception, params, slot,
+         arriveRadius: 0.3,
+         maxSpeed: 1.0,
+         minDrive: 0.8,
+-        aimYaw,
++        aimYaw: distToApex <= 2.2 ? aimYaw : undefined,
++        currentVel: freshPerception.self.velocity,
+       });
+ 
+-      slot.aimYaw = aimYaw;
+-      slot.cameraYaw = aimYaw;
+-      slot.hasAim = true;
++      if (distToApex <= 2.2) {
++        slot.aimYaw = aimYaw;
++        slot.cameraYaw = aimYaw;
++        slot.hasAim = true;
++      }
+ 
+       const courtFloorY = getCourtFloorY(ballPos.x, ballPos.z);
+       const ballHeightAboveFloor = ballPos.y - (courtFloorY + (perception.ball?.radius ?? 0.4));
+-      // Trigger jump when approaching ball in air
+-      if (distToBall <= 2.2 && ballHeightAboveFloor >= 1.4 && freshPerception.self.grounded) {
++      // Trigger jump when approaching ball in air; queue spike 2 ticks after liftoff
++      // so the 42-tick spike windup (windowOpen: 30, sweetTick: 42) peaks at jump apex!
++      if (distToBall <= 2.4 && ballHeightAboveFloor >= 1.3 && freshPerception.self.grounded) {
+         if (tick - bot.lastJumpTick >= bot.jumpCooldownTicks) {
+           slot.jumpPressed = true;
+           slot.jumpQueued = true;
+           bot.lastJumpTick = tick;
+-          bot.pendingSpikeTick = tick + 14; // Schedule spike near jump apex
++          bot.pendingSpikeTick = tick + 2;
+         }
+       }
+ 
+-      // Smash spike downward ONLY when airborne and within reach!
++      // Smash spike downward when airborne and within predicted reach!
+       const ballRelAthY = ballPos.y - selfPos.y;
+       const spikeDist3D = Math.hypot(ballPos.x - selfPos.x, ballRelAthY - 1.4, ballPos.z - selfPos.z);
+-      if (spikeDist3D <= 1.40 && !freshPerception.self.grounded && (tick - bot.lastJumpTick >= 6 || tick >= bot.pendingSpikeTick)) {
++      if (spikeDist3D <= 2.20 && !freshPerception.self.grounded && (tick - bot.lastJumpTick >= 2 || tick >= bot.pendingSpikeTick)) {
+         const windowClose = TUNING.strike[bot.lastStrikeKind]?.windowClose ?? 30;
+         if (tick - bot.lastStrikeTick >= windowClose + 2) {
+           slot.action2Pressed = true; // Spike
+           slot.spikeQueued = true;
+-          const horizon = 42 * (1 / 60);
++          const horizon = 36 * (1 / 60);
+           const contactPos = {
+             x: ballPos.x + freshPerception.ball.velocity.x * horizon,
+             y: ballPos.y + freshPerception.ball.velocity.y * horizon,
+@@ -981,6 +1001,7 @@ function executeMultiStageAttack(bot, perception, freshPerception, params, slot,
+           slot.cameraYaw = spikeAimYaw;
+           slot.hasAim = true;
+           bot.lastStrikeTick = tick;
++          bot.lastStrikeAimYaw = spikeAimYaw;
+           bot.lastStrikeKind = 'spike';
+           bot.stats.strikeAttempts++;
+           bot.pendingSpikeTick = -Infinity;
+@@ -1011,11 +1032,11 @@ function executeStrike(bot, perception, freshPerception, params, slot, tick) {
+   const vecToGoal = perception.hoops.vecToAttackGoal;
+   const profile = freshPerception.ballPhysicsProfile;
+ 
+-  // Drive forward THROUGH the ball toward the goal
++  // Step decisively into the ball along the shot line so limbs connect at sweetTick
+   _interceptTarget.set(
+-    ballPos.x + vecToGoal.x * 0.6,
++    ballPos.x + vecToGoal.x * 0.45,
+     0,
+-    ballPos.z + vecToGoal.z * 0.6
++    ballPos.z + vecToGoal.z * 0.45
+   );
+   const distToBall = Math.hypot(ballPos.x - selfPos.x, ballPos.z - selfPos.z);
+   const shouldSprint = distToBall > 0.8 && (bot.rng() < (params.sprintUsage ?? 0.8));
+@@ -1080,12 +1101,14 @@ function executeDefend(bot, perception, params, slot, tick) {
+       maxSpeed: profile.maxApproachSpeed,
+       decelFactor: profile.decelFactor,
+       minDrive: 0.75,
+-      facePos: attackGoalPos,
++      facePos: distToBall <= 2.4 ? attackGoalPos : undefined,
+       currentVel: selfVel,
+     });
+-    slot.aimYaw = computeClearanceAimYaw(selfPos, attackGoalPos, defendPos);
+-    slot.hasAim = true;
+-    slot.cameraYaw = slot.aimYaw;
++    if (distToBall <= 2.4) {
++      slot.aimYaw = computeClearanceAimYaw(selfPos, attackGoalPos, defendPos);
++      slot.hasAim = true;
++      slot.cameraYaw = slot.aimYaw;
++    }
+   } else {
+     // HOLD DEFENSIVE BLOCKING POSITION:
+     // Stand strictly between the ball/opponent and defending goal aperture to guard the net!
+@@ -1110,12 +1133,9 @@ function executeDefend(bot, perception, params, slot, tick) {
+       arriveRadius: 0.8,
+       maxSpeed: profile.maxApproachSpeed,
+       minDrive: 0.5,
+-      facePos: ballPos, // Face the ball while blocking!
++      facePos: distToTarget <= 1.6 ? ballPos : undefined, // Face the ball once stationed at the rim; face run path while retreating!
+       currentVel: selfVel,
+     });
+-    slot.aimYaw = computeClearanceAimYaw(selfPos, attackGoalPos, defendPos);
+-    slot.hasAim = true;
+-    slot.cameraYaw = slot.aimYaw;
+ 
+     // Anchor at the rim with Cut: when sliding down the mound slope or stopping at the rim
+     if (tick - bot.lastCutTick >= bot.cutCooldownTicks) {
+@@ -1139,15 +1159,24 @@ function executeRecover(bot, perception, params, slot, tick) {
+ /**
+  * PREDICTIVE STRIKE ARBITRATOR:
+  * Anticipates ball arrival matching physical animation windups:
+- *   - Spike: 42 ticks windup
+- *   - Volley: 20 ticks windup
+- *   - Kick: 14 ticks windup
++ *   - Spike: 42 ticks windup (windowOpen: 30, sweetTick: 42, windowClose: 54)
++ *   - Volley: 15-16 ticks windup (windowOpen: 12, sweetTick: 15, windowClose: 30)
++ *   - Kick: 8-10 ticks windup (windowOpen: 8, sweetTick: 8, windowClose: 17)
+  */
+ function evaluatePredictiveStrikes(bot, freshPerception, params, slot, tick) {
+   if (freshPerception.self.isRecovering) return;
+ 
++  // Hold locked strike aim yaw while an active strike swing window is still open
++  // so the athlete's torso and striking limbs stay squared to the shot through contact.
++  const activeWindowClose = TUNING.strike[bot.lastStrikeKind]?.windowClose ?? 30;
++  if (tick - bot.lastStrikeTick <= activeWindowClose && Number.isFinite(bot.lastStrikeAimYaw)) {
++    slot.aimYaw = bot.lastStrikeAimYaw;
++    slot.cameraYaw = bot.lastStrikeAimYaw;
++    slot.hasAim = true;
++  }
++
+   // ═══ ZERO-TOLERANCE OWN-GOAL GUARD ═══
+-  // If facing within 80 degrees of defending goal, or if athlete is on the wrong side of the ball,
++  // If facing within 70 degrees of defending goal, or if athlete is on the wrong side of the ball,
+   // ALL strikes, volleys, kicks, and dives are strictly forbidden!
+   if (freshPerception.goalSide.facingDefendGoal) return;
+   if (!freshPerception.goalSide.isGoalSide) return;
+@@ -1186,7 +1215,7 @@ function evaluatePredictiveStrikes(bot, freshPerception, params, slot, tick) {
+ 
+   // Helper: project ball motion across windup horizon to guarantee precision aim at contact
+   const getAimYaw = (kind) => {
+-    const horizon = (kind === 'kick' ? 14 : (kind === 'spike' ? 42 : 20)) * (1 / 60);
++    const horizon = (kind === 'kick' ? 10 : (kind === 'spike' ? 38 : 16)) * (1 / 60);
+     const contactPos = {
+       x: ballPos.x + ballVel.x * horizon,
+       y: ballPos.y + ballVel.y * horizon,
+@@ -1233,12 +1262,13 @@ function evaluatePredictiveStrikes(bot, freshPerception, params, slot, tick) {
+   if (oppHasPriority) return;
+ 
+   // ═══ SCHEDULED APEX SPIKE (Airborne Jump-Spike) ═══
++  const isDiving = (tick - bot.lastDiveTick) <= 32;
+   if (bot.pendingSpikeTick > 0 && tick >= bot.pendingSpikeTick) {
+-    if (!freshPerception.self.grounded) {
++    if (!freshPerception.self.grounded && !isDiving) {
+       const distToBall = Math.hypot(ballPos.x - selfPos.x, ballPos.z - selfPos.z);
+-      const isBallAirborne = ballAltitude >= 1.2;
+-      const isBallReachableY = ballRelAthY >= 0.2 && ballRelAthY <= 3.2;
+-      if (distToBall <= 1.35 && isBallAirborne && isBallReachableY) {
++      const isBallAirborne = ballAltitude >= 1.1;
++      const isBallReachableY = ballRelAthY >= 0.2 && ballRelAthY <= 3.4;
++      if ((distToBall <= 2.4 || distAtArrival <= spikeReach * 1.15) && isBallAirborne && isBallReachableY) {
+         slot.spikeQueued = true;
+         bot.lastStrikeTick = tick;
+         bot.lastStrikeKind = 'spike';
+@@ -1250,6 +1280,7 @@ function evaluatePredictiveStrikes(bot, freshPerception, params, slot, tick) {
+         slot.aimYaw = aimYaw;
+         slot.cameraYaw = aimYaw;
+         slot.hasAim = true;
++        bot.lastStrikeAimYaw = aimYaw;
+         bot.pendingSpikeTick = -Infinity;
+         return;
+       }
+@@ -1260,22 +1291,24 @@ function evaluatePredictiveStrikes(bot, freshPerception, params, slot, tick) {
+ 
+   // ═══ 1. CANDIDATE: SPIKE (Aerial smash on high balls) ═══
+   // A spike strictly requires an actual airborne ball well above court floor (altitude >= 1.5m)
+-  const isHighBall = !isGroundBall && (ballAltitude >= 1.5 || (ballRelAthY >= 1.0 && ballAltitude >= 1.3));
++  const isHighBall = !isGroundBall && !isDiving && (ballAltitude >= 1.5 || (ballRelAthY >= 1.0 && ballAltitude >= 1.3));
+   // Allow spikes across the entire court when attacking or defending!
+-  const canSpikeHere = true;
++  const canSpikeHere = !isDiving;
+ 
+   const canSpikePrediction = isHighBall && liveDistXZ <= 2.8 &&
+-    (ticksToArrive >= 16 && ticksToArrive <= 46) && distAtArrival <= spikeReach &&
++    (ticksToArrive >= 18 && ticksToArrive <= 46) && distAtArrival <= spikeReach &&
+     (arrivalRelY >= 0.8 && arrivalRelY <= 3.4);
+   const canSpikeImmediate = isHighBall &&
+     (liveDistXZ <= 2.0) && (ballRelAthY >= 0.8 && ballRelAthY <= 3.4);
+ 
+-  if (canSpikePrediction || canSpikeImmediate) {
++  if ((canSpikePrediction || canSpikeImmediate) && !isDiving) {
+     if (freshPerception.self.grounded) {
+       if (tick - bot.lastJumpTick >= bot.jumpCooldownTicks) {
+         slot.jumpQueued = true;
+         bot.lastJumpTick = tick;
+-        bot.pendingSpikeTick = tick + 14;
++        // Start spike 2 ticks after liftoff so its 42-tick windup (windowOpen: 30, sweetTick: 42)
++        // peaks right at the athlete's jump apex (~30-42 ticks into flight).
++        bot.pendingSpikeTick = tick + 2;
+         return;
+       }
+     } else {
+@@ -1292,15 +1325,17 @@ function evaluatePredictiveStrikes(bot, freshPerception, params, slot, tick) {
+       slot.aimYaw = aimYaw;
+       slot.cameraYaw = aimYaw;
+       slot.hasAim = true;
++      bot.lastStrikeAimYaw = aimYaw;
+       return;
+     }
+   }
+ 
+   // ═══ 2. CANDIDATE: VOLLEY (elevates +28° to +46° at 24.5 m/s to score or clear) ═══
+-  const isVolleyReachable = arrivalRelY >= -0.2 && arrivalRelY <= 3.0;
++  // East button selects Volley only when ballRelAthY >= 0.36 at the moment of press
++  const isVolleyReachable = ballRelAthY >= 0.35 && arrivalRelY >= 0.15 && arrivalRelY <= 2.9;
+   // Volley is the primary scoring weapon from flanks and passing weapon from center
+   const isVolleyPredictive = !inDribbleClimb && !isGroundBall && liveDistXZ <= 2.2 &&
+-    (ticksToArrive >= 14 && ticksToArrive <= 26) && distAtArrival <= strikeReach && isVolleyReachable;
++    (ticksToArrive >= 12 && ticksToArrive <= 22) && distAtArrival <= strikeReach && isVolleyReachable;
+   if (isVolleyPredictive) {
+     const isRocketingUp = freshPerception.ball.isRising && freshPerception.ball.velocity.y > 2.5 && ballRelAthY < 0.8;
+     if (!isRocketingUp) {
+@@ -1329,13 +1364,15 @@ function evaluatePredictiveStrikes(bot, freshPerception, params, slot, tick) {
+       slot.aimYaw = aimYaw;
+       slot.cameraYaw = aimYaw;
+       slot.hasAim = true;
++      bot.lastStrikeAimYaw = aimYaw;
+       return;
+     }
+   }
+ 
+   // ═══ 3. CANDIDATE: KICK (East button contextual kick for low & ground balls) ═══
+-  const isKickReachable = (isGroundBall || arrivalRelY <= 0.40) && arrivalRelY >= -0.6 && ballRelAthY <= 0.50 && ballRelAthY >= -0.6;
+-  const isKickPredictive = !inDribbleClimb && liveDistXZ <= 1.8 && (ticksToArrive >= 10 && ticksToArrive <= 18) &&
++  // East button selects Kick only when ball is below hips (ballRelAthY < 0.36) at press
++  const isKickReachable = (isGroundBall || arrivalRelY <= 0.36) && arrivalRelY >= -0.6 && ballRelAthY < 0.36 && ballRelAthY >= -0.6;
++  const isKickPredictive = !inDribbleClimb && liveDistXZ <= 1.8 && (ticksToArrive >= 6 && ticksToArrive <= 15) &&
+     distAtArrival <= kickReach && isKickReachable;
+   if (isKickPredictive) {
+     slot.volleyQueued = true; // East button triggers kick for low balls (+55° upward loft)
+@@ -1348,6 +1385,7 @@ function evaluatePredictiveStrikes(bot, freshPerception, params, slot, tick) {
+     slot.aimYaw = aimYaw;
+     slot.cameraYaw = aimYaw;
+     slot.hasAim = true;
++    bot.lastStrikeAimYaw = aimYaw;
+     return;
+   }
+ 
+@@ -1364,25 +1402,26 @@ function evaluatePredictiveStrikes(bot, freshPerception, params, slot, tick) {
+     const rDotV = rx * vx + ry * vy + rz * vz;
+     if (rDotV < 0) { // closing in
+       const tClose = -rDotV / vRelSq;
+-      // Window-synchronized arrival time: kick [8, 17] ticks, volley [12, 30] ticks
+-      const isKickTime = isGroundBall && ballRelAthY <= 0.50 && (tClose >= 0.14 && tClose <= 0.28);
+-      const isVolleyTime = !isGroundBall && (tClose >= 0.18 && tClose <= 0.40);
++      // Window-synchronized arrival time: kick [6, 15] ticks (0.10-0.25s), volley [12, 22] ticks (0.19-0.36s)
++      const isKickTime = ballRelAthY < 0.36 && (tClose >= 0.10 && tClose <= 0.25);
++      const isVolleyTime = ballRelAthY >= 0.35 && (tClose >= 0.19 && tClose <= 0.36);
+       if (isKickTime || isVolleyTime) {
+         const minX = rx + vx * tClose;
+         const minY = ry + vy * tClose;
+         const minZ = rz + vz * tClose;
+         const minDist = Math.hypot(minX, minY, minZ);
+ 
+-        if (minDist <= strikeReach && Math.abs(minY) <= 1.5) {
++        if (minDist <= strikeReach && Math.abs(minY) <= 1.4) {
+           slot.volleyQueued = true;
+           bot.lastStrikeTick = tick;
+-          bot.lastStrikeKind = isGroundBall && ballRelAthY <= 0.50 ? 'kick' : 'volley';
++          bot.lastStrikeKind = isKickTime ? 'kick' : 'volley';
+           bot.pendingSpikeTick = -Infinity;
+           bot.stats.strikeAttempts++;
+           const aimYaw = getAimYaw(bot.lastStrikeKind);
+           slot.aimYaw = aimYaw;
+           slot.cameraYaw = aimYaw;
+           slot.hasAim = true;
++          bot.lastStrikeAimYaw = aimYaw;
+           return;
+         }
+       }
+@@ -1401,8 +1440,8 @@ function evaluatePredictiveStrikes(bot, freshPerception, params, slot, tick) {
+   if (!inMultiStageAdvance && !isRocketingUp && isBallControllable && relClosing <= 0.5 &&
+       liveDistXZ <= maxPocketReach && ballRelAthY >= -0.5 && ballRelAthY <= 2.2) {
+     if (!inDribbleClimb) {
+-      if (isGroundBall && ballRelAthY <= 0.50) {
+-        // Ground ball: NEVER spike downward into floor! Kick upward to loft ball toward goal or clear
++      if (ballRelAthY < 0.36) {
++        // Low / ground ball: East button triggers Kick (+55° upward loft)
+         slot.volleyQueued = true;
+         bot.lastStrikeKind = 'kick';
+       } else if (isAerialBall && canSpikeHere) {
+@@ -1414,7 +1453,7 @@ function evaluatePredictiveStrikes(bot, freshPerception, params, slot, tick) {
+           if (tick - bot.lastJumpTick >= bot.jumpCooldownTicks) {
+             slot.jumpQueued = true;
+             bot.lastJumpTick = tick;
+-            bot.pendingSpikeTick = tick + 14;
++            bot.pendingSpikeTick = tick + 2;
+             return;
+           } else {
+             slot.volleyQueued = true;
+@@ -1422,7 +1461,7 @@ function evaluatePredictiveStrikes(bot, freshPerception, params, slot, tick) {
+           }
+         }
+       } else {
+-        // Mid ball (0.65m - 1.75m): Volley line drive toward goal
++        // Mid ball (ballRelAthY >= 0.36): Volley line drive toward goal
+         slot.volleyQueued = true;
+         bot.lastStrikeKind = 'volley';
+       }
+@@ -1433,32 +1472,37 @@ function evaluatePredictiveStrikes(bot, freshPerception, params, slot, tick) {
+       slot.aimYaw = aimYaw;
+       slot.cameraYaw = aimYaw;
+       slot.hasAim = true;
++      bot.lastStrikeAimYaw = aimYaw;
+       return;
+     }
+   }
+ 
+   // ═══ 6. EMERGENCY DIVE SAVE (Open-court lunges & goal-mouth saves) ═══
+   const diveCooldown = params.diveCooldownTicks ?? 90; // 1.5s hard cooldown
+-  if (freshPerception.self.grounded && !freshPerception.self.isRecovering && (tick - bot.lastDiveTick >= diveCooldown)) {
++  const outsideStandingPocket = liveDistXZ > 1.60;
++  if (outsideStandingPocket && !inDribbleClimb && freshPerception.self.grounded && !freshPerception.self.isRecovering && (tick - bot.lastDiveTick >= diveCooldown)) {
+     const isDefSouth = defendGoalPos.z > 0;
+-    const landingX = freshPerception.ballIntercept.position.x;
+-    const landingZ = freshPerception.ballIntercept.position.z;
++    const hasBounce = freshPerception.trajectory.hasBounce && !freshPerception.ball.isGrounded;
++    const targetDivePos = hasBounce ? freshPerception.trajectory.nextBouncePos : freshPerception.ballIntercept.position;
++    const landingX = targetDivePos.x;
++    const landingZ = targetDivePos.z;
+ 
+-    // Defending goal mouth (|X| <= 8m, near net) OR high-aggression open-court save
+-    const inGoalMouth = Math.abs(landingX) <= 8.0 && (
++    // Defending goal mouth (|X| <= 8m, near net) OR falling ball about to bounce out of standing reach
++    const inGoalMouth = Math.abs(landingX) <= 8.0 && freshPerception.threat > 0.25 && (
+       isDefSouth ? (landingZ >= 24.0 && landingZ <= 39.0) : (landingZ <= -24.0 && landingZ >= -39.0)
+     );
+-    const isOpenCourtDive = (bot.currentAggressiveness ?? 0.6) >= 0.60;
++    const isOpenCourtDive = hasBounce && !freshPerception.ball.isRising &&
++      freshPerception.ball.altitude >= 0.20 && freshPerception.ball.altitude <= 1.80;
+ 
+     if (inGoalMouth || isOpenCourtDive) {
+-      const interceptTicks = freshPerception.ballIntercept.ticksToArrive;
+-      // Ball is landing imminently within 4 to 32 ticks (0.06s to 0.53s)
+-      if (interceptTicks >= 4 && interceptTicks <= 32) {
++      const eventTicks = hasBounce ? freshPerception.trajectory.ticksToNextBounce : freshPerception.ballIntercept.ticksToArrive;
++      // Ball is hitting the turf imminently within 8 to 24 ticks (0.13s to 0.40s)
++      if (eventTicks >= 8 && eventTicks <= 24) {
+         const distToLanding = Math.hypot(landingX - selfPos.x, landingZ - selfPos.z);
+-        const diveMin = params.diveDistMin ?? 1.4;
+-        const diveMax = params.diveDistMax ?? 5.5;
++        const diveMin = Math.max(1.65, params.diveDistMin ?? 1.65);
++        const diveMax = Math.min(3.2, params.diveDistMax ?? 3.2);
+         if (distToLanding >= diveMin && distToLanding <= diveMax) {
+-          const diveYaw = computeAimYaw(selfPos, freshPerception.ballIntercept.position);
++          const diveYaw = computeAimYaw(selfPos, targetDivePos);
+           const diveDirX = Math.sin(diveYaw);
+           const diveDirZ = Math.cos(diveYaw);
+           const vecToDefend = freshPerception.hoops.vecToDefendGoal;
+@@ -1485,20 +1529,25 @@ function evaluatePredictiveStrikes(bot, freshPerception, params, slot, tick) {
+ }
+ 
+ /**
+- * Evaluates whether the bot should execute a power slide (slideHeld) to scoop a low ball
+- * or brake on steep valley terrain.
++ * Evaluates whether the bot should execute a power slide (slideHeld) to scoop a low ball.
++ * Sharp turns on slopes are handled by Athletic Cuts (cutQueued) rather than committed slides.
+  */
+ function evaluateSlide(bot, perception, params, slot, tick) {
+   if (bot.slideTicksRemaining > 0) return;
+-  const slideCooldown = bot.slideCooldownTicks ?? 75;
++  const slideCooldown = Math.max(110, bot.slideCooldownTicks ?? 110);
+   if (tick - bot.lastSlideTick < slideCooldown) return;
+ 
++  // Never slide if a strike, jump, cut, or dive is active or queued
++  if (slot.volleyQueued || slot.spikeQueued || slot.jumpQueued || slot.diveQueued || slot.cutQueued) return;
++  if (tick - bot.lastStrikeTick <= 30) return;
++  if (!perception.goalSide.isGoalSide) return;
++
+   const athlete = perception.self;
+   if (!athlete.grounded || athlete.isRecovering) return;
+ 
+   const selfVel = athlete.velocity;
+   const hSpeed = Math.hypot(selfVel.x, selfVel.z);
+-  const minSpeed = TUNING.action?.minSlideSpeed ?? 4.0;
++  const minSpeed = TUNING.action?.minSlideSpeed ?? 4.2;
+   if (hSpeed < minSpeed) return;
+ 
+   const selfPos = athlete.position;
+@@ -1507,24 +1556,26 @@ function evaluateSlide(bot, perception, params, slot, tick) {
+   const toBallZ = ballPos.z - selfPos.z;
+   const distToBall = Math.hypot(toBallX, toBallZ);
+   const ballRelAthY = ballPos.y - selfPos.y;
++  const ballAltitude = perception.ball.altitude ?? 0;
++  const ticksToArrive = perception.ballIntercept.ticksToArrive;
+ 
+   const vNormX = selfVel.x / hSpeed;
+   const vNormZ = selfVel.z / hSpeed;
+   const dotToBall = (toBallX * vNormX + toBallZ * vNormZ) / (distToBall || 1);
+ 
+-  // Scenario 1: Low-altitude ball intercept scoop
+-  const isLowBall = ballRelAthY <= 1.6 && ballPos.y <= 2.2;
+-  const isApproachingLowBall = isLowBall && distToBall >= 2.0 && distToBall <= 6.5 && dotToBall > 0.45;
+-
+-  // Scenario 2: Parabolic wall carve / steep slope turn
+-  const isSteepCourt = Math.abs(selfPos.z) > 12.0 || Math.abs(selfPos.x) > 12.0;
+-  const isSharpSlopeTurn = isSteepCourt && hSpeed > 4.8 && slot.moveWorld && (vNormX * slot.moveWorld.x + vNormZ * slot.moveWorld.z) < 0.25;
++  // Tightly-timed low-ball scoop slide: ball is low on the turf, arriving in 8-20 ticks,
++  // 2.2m-3.8m ahead directly along the athlete's sprint vector (dot > 0.80).
++  const isLowBall = ballAltitude <= 0.85 && ballRelAthY <= 0.65 && ballRelAthY >= -0.6;
++  const isApproachingLowBall = isLowBall &&
++    ticksToArrive >= 8 && ticksToArrive <= 20 &&
++    distToBall >= 2.2 && distToBall <= 3.8 &&
++    dotToBall > 0.80;
+ 
+-  if (isApproachingLowBall || isSharpSlopeTurn) {
++  if (isApproachingLowBall) {
+     const agg = bot.currentAggressiveness ?? 0.6;
+-    if (bot.rng() < (0.65 + agg * 0.25)) {
++    if (bot.rng() < (0.55 + agg * 0.25)) {
+       bot.lastSlideTick = tick;
+-      bot.slideTicksRemaining = 18; // ~0.3s of committed sliding
++      bot.slideTicksRemaining = 12; // ~0.2s of crisp committed slide scoop
+       slot.slideHeld = true;
+       bot.stats.slideCount = (bot.stats.slideCount || 0) + 1;
+     }
+diff --git a/src/ai/botSteering.js b/src/ai/botSteering.js
+index 61fe10a..19aa546 100644
+--- a/src/ai/botSteering.js
++++ b/src/ai/botSteering.js
+@@ -28,18 +28,6 @@ export function steerToward(inputSlot, currentPos, targetPos, options = {}) {
+     const minDrive = options.minDrive ?? 0.0;
+     const currentVel = options.currentVel;
+ 
+-    // Apply facing / aim alignment if specified
+-    if (options.aimYaw !== undefined) {
+-        inputSlot.aimYaw = options.aimYaw;
+-        inputSlot.cameraYaw = options.aimYaw;
+-        inputSlot.hasAim = true;
+-    } else if (options.facePos) {
+-        const yaw = computeAimYaw(currentPos, options.facePos);
+-        inputSlot.aimYaw = yaw;
+-        inputSlot.cameraYaw = yaw;
+-        inputSlot.hasAim = true;
+-    }
+-
+     // Compute direction vector in XZ plane, ignore Y
+     _scratchToTarget.set(targetPos.x - currentPos.x, 0, targetPos.z - currentPos.z);
+     const distance = _scratchToTarget.length();
+@@ -49,6 +37,16 @@ export function steerToward(inputSlot, currentPos, targetPos, options = {}) {
+         inputSlot.moveX = 0;
+         inputSlot.moveZ = 0;
+         inputSlot.sprintHeld = false;
++        if (options.aimYaw !== undefined) {
++            inputSlot.aimYaw = options.aimYaw;
++            inputSlot.cameraYaw = options.aimYaw;
++            inputSlot.hasAim = true;
++        } else if (options.facePos) {
++            const yaw = computeAimYaw(currentPos, options.facePos);
++            inputSlot.aimYaw = yaw;
++            inputSlot.cameraYaw = yaw;
++            inputSlot.hasAim = true;
++        }
+         return;
+     }
+ 
+@@ -58,6 +56,47 @@ export function steerToward(inputSlot, currentPos, targetPos, options = {}) {
+ 
+     // Normalized direction toward target
+     scratchDir.copy(_scratchToTarget).divideScalar(distance);
++    const dirX = scratchDir.x;
++    const dirZ = scratchDir.z;
++
++    // ═══ NATURAL FORWARD-FACING LOCOMOTION YAW ═══
++    // Blend actual horizontal velocity with desired path tangent when running so the
++    // 2D locomotion blend-space stays in the forward run/sprint sector instead of
++    // backpedaling or side-skidding from counter-steering damping forces.
++    let travelYaw = Math.atan2(dirX, dirZ);
++    let hSpeed = 0;
++    if (currentVel) {
++        hSpeed = Math.hypot(currentVel.x, currentVel.z);
++        if (hSpeed > 0.85) {
++            const vnx = currentVel.x / hSpeed;
++            const vnz = currentVel.z / hSpeed;
++            const velDotDir = vnx * dirX + vnz * dirZ;
++            if (velDotDir > -0.15) {
++                const bx = vnx * 0.62 + dirX * 0.38;
++                const bz = vnz * 0.62 + dirZ * 0.38;
++                if (bx * bx + bz * bz > 1e-4) {
++                    travelYaw = Math.atan2(bx, bz);
++                }
++            }
++        }
++    }
++
++    let wantedYaw = travelYaw;
++    if (options.aimYaw !== undefined || options.facePos) {
++        const explicitYaw = options.aimYaw !== undefined
++            ? options.aimYaw
++            : computeAimYaw(currentPos, options.facePos);
++        const alignCos = Math.sin(explicitYaw) * Math.sin(travelYaw) + Math.cos(explicitYaw) * Math.cos(travelYaw);
++        // Lock to explicit aimYaw when within strike preparation range (distance <= 2.8m),
++        // moving at controlled speed, or when explicit aim is within ~65 deg of travel.
++        // Never sprint long-distance across the court facing backward against travel!
++        if (distance <= 2.8 || hSpeed <= 2.4 || alignCos >= 0.42) {
++            wantedYaw = explicitYaw;
++        }
++    }
++    inputSlot.aimYaw = wantedYaw;
++    inputSlot.cameraYaw = wantedYaw;
++    inputSlot.hasAim = true;
+ 
+     let speedScale = maxSpeed * (options.decelFactor ?? 1.0);
+     if (arrive && distance < arriveRadius) {
+@@ -203,7 +242,6 @@ export function steerGoalAlignedApproach(inputSlot, selfPos, selfVel, ballPos, a
+             arrive: false,
+             maxSpeed: options.maxSpeed ?? 1.0,
+             minDrive: 0.85,
+-            aimYaw,
+             currentVel: selfVel,
+         });
+         return;
+@@ -223,7 +261,6 @@ export function steerGoalAlignedApproach(inputSlot, selfPos, selfVel, ballPos, a
+             arrive: false,
+             maxSpeed: options.maxSpeed ?? 1.0,
+             minDrive: 0.80,
+-            aimYaw,
+             currentVel: selfVel,
+         });
+         return;
+@@ -262,7 +299,6 @@ export function steerGoalAlignedApproach(inputSlot, selfPos, selfVel, ballPos, a
+             arrive: false,
+             maxSpeed: options.maxSpeed ?? 1.0,
+             minDrive: 0.85,
+-            aimYaw,
+             currentVel: selfVel,
+         });
+     }
