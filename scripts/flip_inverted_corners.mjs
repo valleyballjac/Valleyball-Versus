@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
@@ -11,7 +12,7 @@ if (typeof globalThis.FileReader === 'undefined') {
   };
 }
 
-const ROOT = 'C:/Users/Jac/Documents/Dev/Valleyball/work/card-green-boundary-slope';
+const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const IN = path.join(ROOT, 'public', 'models', 'arena.glb');
 const DO_FLIP = process.argv.includes('--flip');
 

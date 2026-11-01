@@ -1,7 +1,8 @@
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
-const outDir = 'C:\\Users\\portt\\Dev\\Valleyball\\Valleyball-Demo\\public\\audio';
+const outDir = fileURLToPath(new URL('../public/audio', import.meta.url));
 if (!fs.existsSync(outDir)) {
   fs.mkdirSync(outDir, { recursive: true });
 }

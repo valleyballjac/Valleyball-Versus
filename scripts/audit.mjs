@@ -2,7 +2,7 @@
  * THE AUDIT — the project's laws as code, not prose.
  *
  *   npm run audit              check every rule against baselines/audit-allow.json
- *   npm run audit -- --update  rewrite the allow-list from the current tree
+ *   node scripts/audit.mjs --update  rewrite the allow-list from the current tree
  *                              (only ever to SHRINK it after paying down debt,
  *                              or with a stated reason in the commit message)
  *

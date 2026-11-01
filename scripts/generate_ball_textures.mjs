@@ -1,5 +1,5 @@
 import fs from 'fs';
-import { chromium } from 'file:///C:/Users/portt/Dev/Valleyball/Valleyball-Demo/node_modules/playwright/index.mjs';
+import { chromium } from 'playwright';
 
 async function generateBallTextures() {
   console.log('Fetching Natural Earth 50m land GeoJSON...');

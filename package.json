@@ -8,7 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "deploy": "gh-pages -d dist",
+    "deploy": "npm run build && gh-pages -d dist",
     "package:itch": "node scripts/package_itch.mjs",
     "determinism": "node scripts/determinism.mjs",
     "test": "node --test \"test/*.test.mjs\" && node scripts/test_boundary_drops.mjs && node scripts/test_athlete_corner_traversal.mjs",
