@@ -99,9 +99,25 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 
 // ═══ WORLD BUILD (mirrors src/ai/headlessSim.js) ═══
+//
+// TWO COLLIDER-FLAG MODES, because the game and this harness disagree.
+//
+//   default — headlessSim's flags: FIX_INTERNAL_EDGES and the inverted-triangle
+//             filter on COL_Court only, two-sided COL_Barriers / COL_Goals,
+//             friction 0.3 / restitution 0.75 on everything.
+//   'game'  — src/sim/arena.js loadCourtArena's flags: EVERY COL_ proxy is a
+//             "court surface" there (isColliderProxy), so every one of them
+//             gets FIX_INTERNAL_EDGES and the inverted filter, and no
+//             friction/restitution is set (Rapier defaults, 0.5 / 0).
+//
+// The difference is not cosmetic. FIX_INTERNAL_EDGES makes a trimesh one-sided
+// and drops contacts on open (unwelded) edges, so a seam that holds in the
+// default world can leak in the game. Pass { colliderFlags: 'game' } for any
+// check that has to see the arena the player plays in.
 
 export async function buildWorld(options = {}) {
   await RAPIER.init();
+  const gameFlags = options.colliderFlags === 'game';
 
   const modelPath = path.join(ROOT, 'public', 'models', 'arena.glb');
   const glbBuffer = fs.readFileSync(modelPath);
@@ -116,7 +132,7 @@ export async function buildWorld(options = {}) {
         if (obj.isMesh && obj.name && obj.name.startsWith('COL_')) {
           const geom = obj.geometry.clone();
           geom.applyMatrix4(obj.matrixWorld);
-          const isCourtSurface = obj.name === 'COL_Court';
+          const isCourtSurface = gameFlags || obj.name === 'COL_Court';
           const { vertices, indices } = toTrimeshArrays(geom, {
             filterInverted: isCourtSurface,
             maxInvertedY: 4.0,
@@ -152,7 +168,7 @@ export async function buildWorld(options = {}) {
         const desc = flags
           ? RAPIER.ColliderDesc.trimesh(m.vertices, m.indices, flags)
           : RAPIER.ColliderDesc.trimesh(m.vertices, m.indices);
-        desc.setFriction(0.3).setRestitution(0.75);
+        if (!gameFlags) desc.setFriction(0.3).setRestitution(0.75);
         w.createCollider(desc, groundBody);
       }
       w.step();
