@@ -13,8 +13,10 @@ This document provides mandatory operational context, architectural invariants, 
 - **Title**: Valleyball Versus (v0.3.6)
 - **Stack**: Three.js (r185.1), Rapier3D (`@dimforge/rapier3d-compat` 0.19.3), Vite (8.2.2), vanilla modern JavaScript (ES modules).
 - **Core Concept**: Pure physics sports simulation featuring physical active ragdolls, mass-normal strikes, zero artificial ball magnetism, dynamic target goal switching, and locked 60+ FPS performance.
-- **Working Root**: `C:\Users\portt\Dev\Valleyball\Valleyball-Demo`
+- **Working Root**: This repository. On Jac's laptop that is `C:\Users\portt\Dev\Valleyball\Valleyball-Versus-AI`.
 - **Canonical Arena**: The **Valley Court** (`public/models/arena.glb`) is the sole canonical arena. The procedural test bowl is **permanently retired**.
+- **Arena Source of Truth**: `arena.glb` itself. Since v11.1, collider fixes have been scripted patches to the GLB (`scripts/flip_inverted_corners.mjs`, `scripts/weld_barrier_tjunctions.mjs`, `scripts/arena_*.mjs`), and the Blender sources for v10.0 and later are not in this repo. **Never re-export the arena from a `.blend` without porting those fixes**, or they will be silently undone.
+- **Roadmap**: [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ---
 
@@ -76,10 +78,15 @@ Every AI model working on this project must respect these laws. Code that violat
 - `src/sim/`: Physics, athlete rig, motor, ball, and arena collision.
 - `src/mechanics/`: Game rules, scoring, goal switching, strike impulse delivery, mount recovery.
 - `src/input/`: Gamepad and keyboard abstraction layer (`inputRouter.js`).
-- `src/ui/`: DOM menus, lobby, HUD overlays, pause screen, and victory stats.
+- `src/ui/`: In-match DOM: HUD overlays, pause menu, countdown, and victory stats.
+- `src/features/ui/mainMenu/`: Title screen, lobby, player setup, controller assignment, and How to Play.
+- `src/features/`: Athlete roster, match lifecycle, and fixtures (`?fixture=`). `src/main.js` still owns much of this logic; see the roadmap.
+- `src/ai/`: Bot brain, perception, steering, and the headless simulation used for evaluation and training.
 - `src/visuals/`: Cameras, jumbotrons, scoreboards, turf particles, and goal celebration effects.
 - `src/audio/`: WebAudio sound synthesizer and positional SFX.
-- `scripts/`: Offline tools, determinism validators, bot training, and packaging scripts.
+- `scripts/`: Offline tools, determinism validators, bot training, arena patches, and packaging scripts.
+- `docs/`: The roadmap and the rules of the sport. Finished handovers and reviews go in `docs/archive/`, which also indexes work preserved in git tags.
+- `reports/`: Measurement reports.
 
 ---
 
@@ -107,8 +114,17 @@ npm run dev
 # Build production bundle
 npm run build
 
+# Run unit tests plus the boundary drop and corner traversal gates
+npm test
+
+# Check the audit ratchet (--update locks in the current counts, on purpose)
+npm run audit
+
 # Run physics determinism verification
 npm run determinism
+
+# Play one fixture in the full game, headless (--duration N for a quick check)
+npm run fixture
 
 # Run headless match evaluation
 npm run eval:match
@@ -116,7 +132,7 @@ npm run eval:match
 # Run bot evolutionary training harness
 npm run train:bot
 
-# Deploy to GitHub Pages (gh-pages branch)
+# Build, then deploy to GitHub Pages (gh-pages branch)
 npm run deploy
 
 # Package self-contained zip for itch.io
@@ -125,19 +141,23 @@ npm run package:itch
 
 ---
 
-## 8. PRIMARY ROADMAP FOR INCOMING AGENTS (v0.2.5 Status)
+## 8. ROADMAP
 
-1. **AI Retraining, Valley Court Parity & Combat Competency (COMPLETE in v0.2.4 - v0.2.5)**:
-   - Evaluated on exact Valley Court trimesh (`COL_Court`, `COL_Barriers`, `COL_Goals`).
-   - 3D ball intercept solver restricted to striking envelope ($0.15\text{m} \le h_{\text{turf}} \le 3.6\text{m}$), ending high-altitude intercept delusions.
-   - De-locked rigid multi-stage attack scripts and unmuted strikes; synchronized aerial spikes with jump apex.
-   - Dynamic diving saves unlocked for uncatchable ground bounces on defensive halves; athletic Cuts integrated.
-2. **Performance Polish on Goals (COMPLETE in v0.2.4)**:
-   - `src/visuals/scoreboards.js` celebration flashing uses emissive material uniforms without 2D canvas redraw bottlenecks.
-   - Pre-warmed `goalCelebration.js` point light eliminates WebGL shader recompilation hitches.
-3. **Sport Ceremony & Match Presentation (COMPLETE in v0.2.4)**:
-   - Kickoff ritual with low-angle sideline cinematic tracking shot and countdown cues.
-   - Match conclusion presentation with orbiting heroic camera framing and delayed telemetry overlay.
-4. **Next Roadmap Focus**:
-   - Defensive Mechanics: Agile physical brace that never locks player locomotion.
-   - Dynamic crowd audio reaction based on shot power and near-miss hoop trajectories.
+[`docs/ROADMAP.md`](docs/ROADMAP.md) is the only roadmap. Update it when priorities change, and don't start a new one.
+
+---
+
+## 9. WORKSPACE & BRANCH RULES
+
+1. **`main` is the release line.** Branch from it and fetch first, because more than one clone pushes to it. Pushing, merging to `main`, deploying, and publishing all need Jac's explicit go-ahead.
+2. **Game fixes never go on tooling branches.** Trailer, capture, and experiment branches drift from `main`, and fixes stranded on them have to be rescued later. Branch game fixes from `main`.
+3. **Remove worktrees when their work lands.** A worktree that outlives its branch's purpose is how this workspace became tangled.
+4. **No media in git.** Renders, footage, and deliverables go in `../media`. `captures/` is gitignored scratch output.
+5. **No loose handovers.** Put next steps in the roadmap, and put a finished handover in `docs/archive/` with the date in its name.
+
+### Release checklist
+
+1. Run `npm version <x.y.z> --no-git-tag-version`, then update the badge in `index.html`, `titleScreen.js`, `inGameMenu.js`, and the title in this file. `test/version.test.mjs` fails if one is missed.
+2. Run `npm test`, `npm run audit`, `npm run determinism`, and `npm run build`. If the audit's size ratchet fails because of intended growth, run `npm run audit -- --update` and say so in the commit.
+3. Play-test anything that touches input with a real controller.
+4. With Jac's go-ahead: merge to `main`, tag, push, `npm run deploy`, and `npm run package:itch` for the itch.io upload.

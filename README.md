@@ -1,6 +1,6 @@
-# Valleyball Versus (v0.2.0)
+# Valleyball Versus
 
-**Valleyball Versus** is a high-velocity 3D arcade sports game built with deterministic [Rapier3D](https://rapier.rs/) physics, [Three.js](https://threejs.org/) WebGL rendering, and procedural ragdoll animation.
+**Valleyball Versus** is a high-velocity 3D physics sports game built with deterministic [Rapier3D](https://rapier.rs/) physics, [Three.js](https://threejs.org/) WebGL rendering, and procedural ragdoll animation.
 
 🎮 **[Play Live on GitHub Pages](https://valleyballjac.github.io/Valleyball-Versus/)**
 
@@ -12,6 +12,8 @@
   - Full two-player splitscreen multiplayer with independent player cameras and customizable athlete builds (`Classic`, `Masculine`, `Feminine`).
   - Match Ball selection (`Official Match`, `Heavy Striker`, `Float Server`).
   - Dynamic Target Goal Switching: Attacking ends flip dynamically across the arena after every goal scored, synchronized across end boards, ribbon scoreboards, and player cameras.
+- **AI Opponents**:
+  - Play against bots at Easy, Medium, or Hard, tune their aggressiveness, or watch AI vs AI as a spectator.
 - **Practice Sandbox**:
   - Solo training mode to master movement, slides, dives, volleys, and aerial power spikes.
 - **Hustle Board Telemetry**:
@@ -26,8 +28,9 @@
 ## Documentation & Rulebooks
 
 - 📖 **[Official Gameplay Source of Truth & Rulebook](docs/VALLEYBALL_GAMEPLAY_SOURCE_OF_TRUTH.md)**: Canonical rules of Valleyball—continuous momentum, dynamic goal switching invariants, spawns, and ball profiles.
-- 📐 **[Technical Architecture & Post-Mortem](docs/POST_MORTEM_AND_HANDOVER_v0.2.0.md)**: Deep dive into the Rapier 3D physics pipeline, decoupled micro-clock overlay, and the 7 Invariant Laws.
-- 🤖 **[Operational Directives for AI Agents](AGENTS.md)**: Grounding instructions and constraints for incoming autonomous AI models.
+- 🗺️ **[Roadmap](docs/ROADMAP.md)**: What's next, including 2v2 in v0.4.
+- 🤖 **[Operational Directives for AI Agents](AGENTS.md)**: Architectural laws, conventions, and release checklist.
+- 📐 **[Archive](docs/archive/README.md)**: Earlier post-mortems, plus an index of work preserved in git tags.
 
 ---
 
@@ -57,7 +60,7 @@ Valleyball Versus supports full dual-gamepad input (Xbox, PlayStation, standard 
 ## Development & Local Setup
 
 ### Prerequisites
-- [Node.js](https://nodejs.org/) (v18 or higher recommended)
+- [Node.js](https://nodejs.org/) (v20.19+ or v22.12+)
 - `npm`
 
 ### Installation & Run
@@ -77,6 +80,9 @@ npm run build
 
 # Preview production build
 npm run preview
+
+# Run the tests
+npm test
 ```
 
 ---
@@ -87,4 +93,4 @@ Valleyball Versus is deployed to GitHub Pages using Vite:
 ```bash
 npm run deploy
 ```
-This builds the production bundle with the `/Valleyball-Versus/` base path and publishes the distribution to the `gh-pages` branch.
+This builds the production bundle with the `/Valleyball-Versus/` base path and publishes it to the `gh-pages` branch. Deploy from a clean checkout of `main`, because the build includes any uncommitted changes.

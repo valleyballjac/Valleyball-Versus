@@ -44,12 +44,11 @@ The Valley Court is an authored, organically contoured arena featuring a central
 All athlete and ball spawns are derived from authored court landmarks in `src/config/tuning.js`:
 
 ### Athlete Spawns
-* **Home Team (South Half)**:
-  - P1 Primary: `(0.0, 1.20, 22.0)` facing North ($\text{yaw} = \pi$)
-  - P3 (2v2 Wing): `(-8.0, 1.20, 28.0)` facing North
-* **Away Team (North Half)**:
-  - P2 Primary: `(0.0, 1.20, -22.0)` facing South ($\text{yaw} = 0$)
-  - P4 (2v2 Wing): `(8.0, 1.20, -28.0)` facing South
+Athletes spawn 7.5 m above the stream heads in `TUNING.match.streamHeads`:
+* **Home Team (South Half, +Z)**: `sw (-12.78, 8.24, 39.96)` and `se (12.78, 8.24, 39.96)`, facing North ($\text{yaw} = 0$)
+* **Away Team (North Half, -Z)**: `nw (-12.78, 8.24, -39.96)` and `ne (12.78, 8.24, -39.96)`, facing South ($\text{yaw} = \pi$)
+* **1v1**: each athlete takes a random head on its own side.
+* **2v2 (v0.4, not built yet)**: P1 and P3 take both South heads; P2 and P4 take both North heads.
 
 ### Ball Stream Drop Spawns
 Rather than spawning flat on the floor, balls are dropped from the elevated stream heads or high-elevation center drops:
