@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { assetUrl } from '../config/tuning.js';
+import { assetUrl, HALLOWEEN_SKINS } from '../config/tuning.js';
 
 /**
  * Brand Ball component: Renders the official 3D globe ball slowly spinning
@@ -76,10 +76,10 @@ export function createBrandBall(container, options = {}) {
   const geometry = new THREE.SphereGeometry(1.0, 36, 26);
 
   const textureLoader = new THREE.TextureLoader();
-  const diffuseMap = textureLoader.load(assetUrl('textures/ball_medium.png'));
+  const diffuseMap = textureLoader.load(assetUrl(HALLOWEEN_SKINS ? 'textures/ball_pumpkin_medium.png' : 'textures/ball_medium.png'));
   diffuseMap.colorSpace = THREE.SRGBColorSpace;
 
-  const emissiveMap = textureLoader.load(assetUrl('textures/ball_medium_emissive.png'));
+  const emissiveMap = textureLoader.load(assetUrl(HALLOWEEN_SKINS ? 'textures/ball_pumpkin_medium_emissive.png' : 'textures/ball_medium_emissive.png'));
   emissiveMap.colorSpace = THREE.SRGBColorSpace;
 
   const material = new THREE.MeshStandardMaterial({

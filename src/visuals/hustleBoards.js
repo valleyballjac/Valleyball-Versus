@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { TUNING } from '../config/tuning.js';
+import { TUNING, HALLOWEEN_SKINS } from '../config/tuning.js';
 import { displayCoordinator } from './displayCoordinator.js';
 
 /**
@@ -497,7 +497,7 @@ function drawHustleBoard(ctx, W, H, data, outlineColor) {
 
     ctx.font = `700 ${Math.round(26 * scale)}px ${ATHLETIC_FONT}`;
     ctx.fillStyle = '#94a3b8';
-    ctx.fillText('ENTER PRACTICE SANDBOX OR 1V1 MATCH FOR LIVE METRICS', W / 2, H * 0.48);
+    ctx.fillText(HALLOWEEN_SKINS ? 'RULEBOOK AUDIT: NO RULE SAYS DOGS CANNOT PLAY VALLEYBALL 🐕🎃' : 'ENTER PRACTICE SANDBOX OR 1V1 MATCH FOR LIVE METRICS', W / 2, H * 0.48);
 
     const chips = [
       ['GOALS', 'ACCURACY %', 'SWEET SPOTS'],
@@ -523,7 +523,7 @@ function drawHustleBoard(ctx, W, H, data, outlineColor) {
 
     ctx.font = `600 ${Math.round(18 * scale)}px ${ATHLETIC_FONT}`;
     ctx.fillStyle = '#64748b';
-    ctx.fillText('LIVE TELEMETRY ARMED · 4 ARENA SCREENS', W / 2, H * 0.90);
+    ctx.fillText(HALLOWEEN_SKINS ? 'CANINE DIVISION ARMED · HALLOWEEN PUMPKIN EDITION' : 'LIVE TELEMETRY ARMED · 4 ARENA SCREENS', W / 2, H * 0.90);
     return;
   }
 

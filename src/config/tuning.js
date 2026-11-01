@@ -38,6 +38,14 @@ export function assetUrl(path) {
  * group: changing the timestep at runtime destroys determinism.
  */
 
+/**
+ * HALLOWEEN THEME TOGGLE:
+ * Set to true for the official Halloween Pumpkin Valleyball skins (retaining
+ * the full globe aesthetic with pumpkin colors, gourd ribs & jack-o'-lantern coastlines).
+ * Set to false for the default planetary skins.
+ */
+export const HALLOWEEN_SKINS = true;
+
 const DEFAULTS = {
   // Construction-time: the loop binds fixedHz once. LAW 6.
   loop: { fixedHz: 60, maxFrameTime: 0.25 },
@@ -215,8 +223,8 @@ const DEFAULTS = {
       angularDrag: 0.015,
       colorA: 0xd32f2f,   // crimson
       colorB: 0xf5f5f5,   // white
-      textureUrl: assetUrl('textures/ball_small.png'),
-      emissiveUrl: assetUrl('textures/ball_small_emissive.png'),
+      textureUrl: assetUrl(HALLOWEEN_SKINS ? 'textures/ball_pumpkin_small.png' : 'textures/ball_small.png'),
+      emissiveUrl: assetUrl(HALLOWEEN_SKINS ? 'textures/ball_pumpkin_small_emissive.png' : 'textures/ball_small_emissive.png'),
     },
     {
       id: 'medium',
@@ -229,8 +237,8 @@ const DEFAULTS = {
       angularDrag: 0.015,
       colorA: 0x1976d2,   // blue
       colorB: 0xfbc02d,   // yellow
-      textureUrl: assetUrl('textures/ball_medium.png'),
-      emissiveUrl: assetUrl('textures/ball_medium_emissive.png'),
+      textureUrl: assetUrl(HALLOWEEN_SKINS ? 'textures/ball_pumpkin_medium.png' : 'textures/ball_medium.png'),
+      emissiveUrl: assetUrl(HALLOWEEN_SKINS ? 'textures/ball_pumpkin_medium_emissive.png' : 'textures/ball_medium_emissive.png'),
     },
     {
       id: 'large',
@@ -243,8 +251,8 @@ const DEFAULTS = {
       angularDrag: 0.012,
       colorA: 0x7b1fa2,   // purple
       colorB: 0xb0bec5,   // silver
-      textureUrl: assetUrl('textures/ball_large.png'),
-      emissiveUrl: assetUrl('textures/ball_large_emissive.png'),
+      textureUrl: assetUrl(HALLOWEEN_SKINS ? 'textures/ball_pumpkin_large.png' : 'textures/ball_large.png'),
+      emissiveUrl: assetUrl(HALLOWEEN_SKINS ? 'textures/ball_pumpkin_large_emissive.png' : 'textures/ball_large_emissive.png'),
     },
   ],
 
