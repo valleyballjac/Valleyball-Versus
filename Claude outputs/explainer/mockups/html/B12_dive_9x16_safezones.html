@@ -1,0 +1,84 @@
+<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600;700&family=Space+Grotesk:wght@400;500;600&family=Syncopate:wght@700&display=swap" rel="stylesheet"><style>
+  :root {
+    --chalk: #F5F5F7;
+    --text-sub: #C8C8D4;
+    --text-muted: #8E8E9E;
+    --spec-cyan: #00E5FF;
+    --surface-border: rgba(255, 255, 255, 0.12);
+    --spectral-linear: linear-gradient(90deg, #FF2A42 0%, #FF6B00 14.3%, #FFD000 28.6%, #10E56A 42.9%, #00E5FF 57.2%, #1F65FF 71.5%, #6B11FF 85.8%, #E000B8 100%);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { position: relative; overflow: hidden; background: #000; -webkit-font-smoothing: antialiased; }
+  .bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .card {
+    position: absolute;
+    background: rgba(10, 10, 14, 0.80);
+    border: 1px solid var(--surface-border);
+    border-radius: 8px;
+    box-shadow: 0 18px 48px rgba(3, 3, 8, 0.62);
+    overflow: hidden;
+  }
+  .seam { width: 100%; background: var(--spectral-linear); }
+  .eyebrow { display: flex; align-items: center; font-family: 'JetBrains Mono', monospace; font-weight: 600; text-transform: uppercase; }
+  .dot { border-radius: 50%; background: var(--spectral-linear); flex: 0 0 auto; }
+  .pre { color: var(--spec-cyan); }
+  .sep { color: rgba(255, 255, 255, 0.28); }
+  .suf { color: var(--text-muted); }
+  .headline { font-family: 'Syncopate', sans-serif; font-weight: 700; text-transform: uppercase; color: var(--chalk); }
+  .prose { font-family: 'Space Grotesk', sans-serif; font-weight: 400; color: var(--text-sub); letter-spacing: 0.01em; }
+  .chips { display: flex; align-items: center; flex-wrap: wrap; border-top: 1px solid rgba(255, 255, 255, 0.08);
+    font-family: 'JetBrains Mono', monospace; font-weight: 600; text-transform: uppercase; color: var(--chalk); }
+  .ctl { display: inline-flex; align-items: center; }
+  .cap { display: inline-flex; align-items: center; justify-content: center; font-family: 'JetBrains Mono', monospace;
+    font-weight: 700; color: var(--chalk); background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.30); }
+  .cap.pad { border-radius: 50%; border-color: var(--c); color: var(--c); box-shadow: 0 0 10px color-mix(in srgb, var(--c) 45%, transparent); }
+  .cap.key { border-radius: 5px; }
+  .ctl-or { color: rgba(255, 255, 255, 0.35); }
+  .ctl-label { color: var(--spec-cyan); }
+
+    body { width: 1080px; height: 1920px; }
+    .scrim { position: absolute; left: 0; top: 0; width: 1080px; height: 760px;
+      background: linear-gradient(to bottom, rgba(3,3,8,0.80) 0%, rgba(3,3,8,0.55) 45%, rgba(3,3,8,0) 100%); }
+    .top { position: absolute; left: 64px; top: 200px; width: 862px; display: flex; flex-direction: column; gap: 22px; }
+    .top .eyebrow { gap: 14px; font-size: 22px; letter-spacing: 0.20em; }
+    .top .dot { width: 14px; height: 14px; }
+    .top .headline { font-size: 62px; letter-spacing: 0.06em; line-height: 1.12;
+      text-shadow: 0 4px 24px rgba(3,3,8,0.85), 0 0 2px rgba(3,3,8,0.6); }
+    .top .seam { width: 150px; height: 5px; border-radius: 3px; }
+    .card { left: 60px; bottom: 504px; width: 870px; border-radius: 14px; }
+    .wrap { padding: 30px 36px 28px; display: flex; flex-direction: column; gap: 18px; }
+    .card .eyebrow { gap: 12px; font-size: 19px; letter-spacing: 0.18em; }
+    .card .dot { width: 12px; height: 12px; }
+    .prose { font-size: 37px; line-height: 1.36; color: #DCDCE6; }
+    .chips { padding-top: 20px; gap: 18px; font-size: 20px; letter-spacing: 0.14em; }
+    .ctl { gap: 10px; }
+    .cap { min-width: 44px; height: 44px; padding: 0 10px; font-size: 21px; }
+    .ctl-label { margin-left: 6px; }
+    .card .seam { height: 5px; }
+    .ko { position: absolute; background: rgba(255, 40, 70, 0.22); display: flex; align-items: center; justify-content: center; }
+    .ko span { font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 20px; letter-spacing: 0.16em; color: rgba(255,255,255,0.85); }
+    .ko span.v { writing-mode: vertical-rl; }
+    .safe { position: absolute; border: 3px dashed rgba(0, 229, 255, 0.85); }
+  </style></head><body>
+    <img class="bg" src="file:///C:/Users/portt/Dev/Valleyball/Valleyball-Versus-AI/Claude%20outputs/explainer/mockups/bg/dive_9x16.jpg">
+    <div class="scrim"></div>
+    <div class="top">
+      <div class="eyebrow"><span class="dot"></span><span class="pre">PART 6/8</span><span class="sep">·</span><span class="suf" style="color:#B8B8C8">HOW TO DEFEND</span></div>
+      <div class="headline">LAY OUT FOR IT.</div>
+      <div class="seam"></div>
+    </div>
+    <div class="card">
+      <div class="wrap">
+        <div class="eyebrow"><span class="dot"></span><span class="pre">THE DIVE // 12</span><span class="sep">·</span><span class="suf">LAST-DITCH SAVE</span></div>
+        <div class="prose">Dive to throw your whole body at a ball you can’t reach on foot. A good dive pops it back into play.</div>
+        <div class="chips"><span class="ctl"><span class="cap pad" style="--c:#a855f7">X</span><span class="ctl-or">/</span><span class="cap key">Q</span><span class="ctl-label">DIVE</span></span><span class="sep">·</span><span>FULL LAYOUT</span><span class="sep">·</span><span>1 S RECOVERY</span></div>
+      </div>
+      <div class="seam"></div>
+    </div>
+    
+    <div class="ko" style="left:0;top:0;width:1080px;height:130px"><span>TABS / LIVE</span></div>
+    <div class="ko" style="left:0;bottom:0;width:1080px;height:480px"><span>CAPTION · USERNAME · SOUND</span></div>
+    <div class="ko" style="right:0;top:130px;width:150px;height:1310px"><span class="v">LIKE · COMMENT · SHARE</span></div>
+    <div class="ko" style="left:0;top:130px;width:60px;height:1310px"></div>
+    <div class="safe" style="left:60px;top:130px;width:870px;height:1310px"></div>
+  </body></html>
