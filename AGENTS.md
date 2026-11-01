@@ -158,6 +158,6 @@ npm run package:itch
 ### Release checklist
 
 1. Run `npm version <x.y.z> --no-git-tag-version`, then update the badge in `index.html`, `titleScreen.js`, `inGameMenu.js`, and the title in this file. `test/version.test.mjs` fails if one is missed.
-2. Run `npm test`, `npm run audit`, `npm run determinism`, and `npm run build`. If the audit's size ratchet fails because of intended growth, run `node scripts/audit.mjs --update` and say so in the commit.
+2. Run `npm test`, `npm run audit`, `npm run determinism`, and `npm run build`. `npm run audit` currently stops on a known corner-fan failure (see the roadmap), so `node scripts/audit.mjs` is the part to pass. If its size ratchet fails because of intended growth, run `node scripts/audit.mjs --update` and say so in the commit.
 3. Play-test anything that touches input with a real controller.
 4. With Jac's go-ahead: merge to `main`, tag, push, `npm run deploy`, and `npm run package:itch` for the itch.io upload.

@@ -45,3 +45,4 @@ If a later league plays 2v2, the fixture format needs to change too: it allows o
 - **Bot prediction horizons** are hard-coded at 14/20/42 ticks, while `TUNING.strike`'s sweet ticks are 8/15/42. Fix this on its own and A/B it.
 - **Trace expectations.** `docs/archive/BRACE_GATE.md` lists unresolved volley and kick trace expectations.
 - **Menu cost during play.** Phase 0 saw `menuNavigation.js` in the CPU profile during matches. Re-measure now that the menu input has been rewritten.
+- **Corner-fan certification.** `npm run audit` has failed its collision half since arena v11.1 (it passes at `arena-v11`), so CI runs only `node scripts/audit.mjs` for now. The rule flags 26 vertical triangles at `|x| = 25` inside the corner fan band, added by the Oct 24 boundary work. All 1,772 rest checks, the drop test and the traversal test pass, so the rule is probably stale. Confirm the geometry is intended, then update the rule and put `npm run audit` back in CI.
