@@ -3797,6 +3797,12 @@ async function boot() {
   window.__vb.showVictoryScreen = showVictoryScreen;
   window.__vb.scoreboards = scoreboards;
   window.__vb.hustleBoards = hustleBoards;
+  window.__vb.goalCelebration = goalCelebration;
+  window.__vb.turfParticles = turfParticles;
+  Object.defineProperty(window.__vb, 'botControllers', {
+    get: () => botControllers,
+    configurable: true,
+  });
   window.__vb.updateHustleBoards = updateHustleBoards;
   window.__vb.displayCoordinator = displayCoordinator;
   window.__vb.practiceStats = practiceStats;

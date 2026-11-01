@@ -17,11 +17,13 @@ import { fileURLToPath } from 'node:url';
 import { spawn, execFileSync } from 'node:child_process';
 import { chromium } from 'playwright';
 import { createServer } from 'vite';
+import { ALL_TRAILER_OVERLAYS, generateTrailerCaptions } from './generate_trailer_captions.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const VITE_PORT = 5183;
 const FRAME_SERVER_PORT = 5189;
 const OUT_DIR = path.join(ROOT, 'captures', 'trailer');
+const CAPTIONS_DIR = path.join(OUT_DIR, 'captions');
 const RAW_MP4 = path.join(OUT_DIR, 'raw_footage_1080p60.mp4');
 const MASTER_MP4 = path.join(OUT_DIR, 'valleyball_versus_official_trailer_1080p60.mp4');
 const DEBUT_MP4 = path.join(OUT_DIR, 'valleyball_versus_debut_trailer_1080p60.mp4');
@@ -31,10 +33,14 @@ const TITLE_CARD = path.join(OUT_DIR, 'title_card_galaxy.png');
 
 fs.mkdirSync(OUT_DIR, { recursive: true });
 
-async function ensureTitleCard() {
+async function ensureTitleCardAndCaptions() {
   if (!fs.existsSync(TITLE_CARD)) {
     console.log('[capture] Generating title_card_galaxy.png...');
     execFileSync('node', [path.join(ROOT, 'scripts', 'generate_title_card.mjs')], { stdio: 'inherit' });
+  }
+  const missingCaption = ALL_TRAILER_OVERLAYS.some((c) => !fs.existsSync(path.join(CAPTIONS_DIR, c.file)));
+  if (missingCaption || process.argv.includes('--regen-captions')) {
+    await generateTrailerCaptions();
   }
 }
 
@@ -120,178 +126,229 @@ async function runCapture() {
   console.log('║      Zero Dropped Frames | NVIDIA RTX 3050 Ti | 94.500s CFR      ║');
   console.log('╚══════════════════════════════════════════════════════════════════╝\n');
 
-  await ensureTitleCard();
+  await ensureTitleCardAndCaptions();
 
-  // 1. Start frame pipe receiver and FFmpeg child process
-  const receiver = await startFramePipeReceiver(RAW_MP4);
+  const compositeOnly = process.argv.includes('--composite-only') && fs.existsSync(RAW_MP4);
+  if (!compositeOnly) {
+    // 1. Start frame pipe receiver and FFmpeg child process
+    const receiver = await startFramePipeReceiver(RAW_MP4);
 
-  // 2. Start Vite server
-  console.log(`[capture] Launching Vite server on port ${VITE_PORT}...`);
-  const viteServer = await createServer({
-    root: ROOT,
-    configFile: path.join(ROOT, 'vite.config.js'),
-    logLevel: 'warn',
-    server: { port: VITE_PORT, strictPort: true },
-  });
-  await viteServer.listen();
-  console.log(`[capture] Vite server running at http://localhost:${VITE_PORT}/Valleyball-Versus/`);
+    // 2. Start Vite server
+    console.log(`[capture] Launching Vite server on port ${VITE_PORT}...`);
+    const viteServer = await createServer({
+      root: ROOT,
+      configFile: path.join(ROOT, 'vite.config.js'),
+      logLevel: 'warn',
+      server: { port: VITE_PORT, strictPort: true },
+    });
+    await viteServer.listen();
+    console.log(`[capture] Vite server running at http://localhost:${VITE_PORT}/Valleyball-Versus/`);
 
-  // 3. Launch GPU-Accelerated Chromium forced onto NVIDIA RTX 3050 Ti
-  console.log('[capture] Spawning GPU-accelerated Chromium with NVIDIA RTX 3050 Ti hardware lock...');
-  const browser = await chromium.launch({
-    headless: true,
-    channel: 'chromium',
-    args: [
-      '--force_high_performance_gpu',
-      '--use-gl=angle',
-      '--use-angle=d3d11',
-      '--enable-gpu-rasterization',
-      '--enable-zero-copy',
-      '--ignore-gpu-blocklist',
-      '--no-sandbox',
-      '--autoplay-policy=no-user-gesture-required',
-      '--disable-background-timer-throttling',
-      '--disable-renderer-backgrounding',
-      '--disable-backgrounding-occluded-windows',
-      '--window-size=1920,1080',
-    ],
-  });
+    // 3. Launch GPU-Accelerated Chromium forced onto NVIDIA RTX 3050 Ti
+    console.log('[capture] Spawning GPU-accelerated Chromium with NVIDIA RTX 3050 Ti hardware lock...');
+    const browser = await chromium.launch({
+      headless: true,
+      channel: 'chromium',
+      args: [
+        '--force_high_performance_gpu',
+        '--use-gl=angle',
+        '--use-angle=d3d11',
+        '--enable-gpu-rasterization',
+        '--enable-zero-copy',
+        '--ignore-gpu-blocklist',
+        '--no-sandbox',
+        '--autoplay-policy=no-user-gesture-required',
+        '--disable-background-timer-throttling',
+        '--disable-renderer-backgrounding',
+        '--disable-backgrounding-occluded-windows',
+        '--window-size=1920,1080',
+      ],
+    });
 
-  const context = await browser.newContext({
-    viewport: { width: 1920, height: 1080 },
-    deviceScaleFactor: 1,
-  });
+    const context = await browser.newContext({
+      viewport: { width: 1920, height: 1080 },
+      deviceScaleFactor: 1,
+    });
 
-  const page = await context.newPage();
-  page.setDefaultTimeout(360000);
+    const page = await context.newPage();
+    page.setDefaultTimeout(600000);
 
-  // 4. Load Valleyball Versus
-  const url = `http://localhost:${VITE_PORT}/Valleyball-Versus/`;
-  console.log(`[capture] Navigating to ${url}...`);
-  await page.goto(url, { waitUntil: 'load', timeout: 120000 });
-  await page.waitForTimeout(5000); // Allow assets, shaders, and arena.glb to settle
+    // 4. Load Valleyball Versus
+    const url = `http://localhost:${VITE_PORT}/Valleyball-Versus/`;
+    console.log(`[capture] Navigating ${url}...`);
+    await page.goto(url, { waitUntil: 'load', timeout: 120000 });
+    await page.waitForTimeout(5000); // Allow assets, shaders, and arena.glb to settle
 
-  // 5. Setup match, verify active GPU, pre-warm WebGL shaders, and enter deterministic mode
-  const setupInfo = await page.evaluate(async (framePort) => {
-    // Hide all UI
-    let style = document.getElementById('cap-ui-hide');
-    if (!style) {
-      style = document.createElement('style');
-      style.id = 'cap-ui-hide';
-      document.head.appendChild(style);
-    }
-    style.textContent = `
-      #hud, #controls-card, #splitscreen-divider, .lil-gui, #main-menu-root, #title-screen, #loading-screen, #camera-toast {
-        display: none !important;
-        opacity: 0 !important;
-        visibility: hidden !important;
+    // 5. Setup match, verify active GPU, pre-warm WebGL shaders, and enter deterministic mode
+    const setupInfo = await page.evaluate(async (framePort) => {
+      // Hide all UI
+      let style = document.getElementById('cap-ui-hide');
+      if (!style) {
+        style = document.createElement('style');
+        style.id = 'cap-ui-hide';
+        document.head.appendChild(style);
       }
-    `;
+      style.textContent = `
+        #hud, #controls-card, #splitscreen-divider, .lil-gui, #main-menu-root, #title-screen, #loading-screen, #camera-toast {
+          display: none !important;
+          opacity: 0 !important;
+          visibility: hidden !important;
+        }
+      `;
 
-    // Verify Active GPU renderer
-    const canvas = document.getElementById('viewport');
-    const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
-    const ext = gl.getExtension('WEBGL_debug_renderer_info');
-    const activeRenderer = ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+      // Verify Active GPU renderer
+      const canvas = document.getElementById('viewport');
+      const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+      const ext = gl.getExtension('WEBGL_debug_renderer_info');
+      const activeRenderer = ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
 
-    // Start 1v1 AI vs AI Match with Red (Football Helmet / wrestler_bands) vs Blue (Cricket Helmet / wicket_grill)
-    if (window.__vb && window.__vb.startMatch) {
-      const configs = [
-        { id: 'p1', name: 'Home Bot', team: 'home', variant: 'masculine', cameraMode: 'chase', type: 'ai', difficulty: 'hard', aggressiveness: 0.95, primaryColor: 0xD90429, headwear: 'wrestler_bands' },
-        { id: 'p2', name: 'Away Bot', team: 'away', variant: 'masculine', cameraMode: 'chase', type: 'ai', difficulty: 'hard', aggressiveness: 0.95, primaryColor: 0x1D4ED8, headwear: 'wicket_grill' }
-      ];
-      window.__vb.startMatch(configs, { ball: 'medium', duration: 300, arena: 'court' });
-      if (window.__vb.skipFlyover) window.__vb.skipFlyover();
+      // Start 1v1 AI vs AI Match with Red (Football Helmet / wrestler_bands) vs Blue (Cricket Helmet / wicket_grill)
+      if (window.__vb && window.__vb.startMatch) {
+        const configs = [
+          { id: 'p1', name: 'Home Bot', team: 'home', variant: 'masculine', cameraMode: 'chase', type: 'ai', difficulty: 'hard', aggressiveness: 0.95, primaryColor: 0xD90429, headwear: 'wrestler_bands' },
+          { id: 'p2', name: 'Away Bot', team: 'away', variant: 'masculine', cameraMode: 'chase', type: 'ai', difficulty: 'hard', aggressiveness: 0.95, primaryColor: 0x1D4ED8, headwear: 'wicket_grill' }
+        ];
+        window.__vb.startMatch(configs, { ball: 'medium', duration: 300, arena: 'court' });
+        if (window.__vb.skipFlyover) window.__vb.skipFlyover();
 
-      if (window.__vb.athletes) {
-        if (window.__vb.athletes[0]?.setHeadwear) window.__vb.athletes[0].setHeadwear('wrestler_bands');
-        if (window.__vb.athletes[1]?.setHeadwear) window.__vb.athletes[1].setHeadwear('wicket_grill');
+        if (window.__vb.athletes) {
+          if (window.__vb.athletes[0]?.setHeadwear) window.__vb.athletes[0].setHeadwear('wrestler_bands');
+          if (window.__vb.athletes[1]?.setHeadwear) window.__vb.athletes[1].setHeadwear('wicket_grill');
+        }
+
+        if (window.__vb.matchState) {
+          window.__vb.matchState.countdownTicksRemaining = Math.round(14.40 * 60);
+          window.__vb.matchState.isCountingDown = true;
+        }
+        if (window.__vb.scoreboards?.group) window.__vb.scoreboards.group.visible = true;
+        if (window.__vb.hustleBoards?.group) window.__vb.hustleBoards.group.visible = true;
       }
 
-      if (window.__vb.matchState) {
-        window.__vb.matchState.countdownTicksRemaining = Math.round(14.40 * 60);
-        window.__vb.matchState.isCountingDown = true;
+      // 2-second render warmup to compile all shaders
+      await new Promise(r => setTimeout(r, 2000));
+
+      // Halt the real-time requestAnimationFrame Loop: deterministic frame stepping takes over!
+      if (window.__vb?.loop) {
+        window.__vb.loop.stop();
       }
-      if (window.__vb.scoreboards?.group) window.__vb.scoreboards.group.visible = true;
-      if (window.__vb.hustleBoards?.group) window.__vb.hustleBoards.group.visible = true;
-    }
 
-    // 2-second render warmup to compile all shaders
-    await new Promise(r => setTimeout(r, 2000));
+      // Run 80+ Unscripted Match Harvest & Highlight Miner before starting trailer playback!
+      let harvestReport = null;
+      if (window.__vb?.trailerDirector?.runHarvest) {
+        harvestReport = window.__vb.trailerDirector.runHarvest();
+      }
 
-    // Halt the real-time requestAnimationFrame Loop: deterministic frame stepping takes over!
-    if (window.__vb?.loop) {
-      window.__vb.loop.stop();
-    }
+      // Start TrailerDirector at t=0
+      if (window.__vb?.trailerDirector) {
+        window.__vb.trailerDirector.start(0);
+      }
 
-    // Start TrailerDirector at t=0
-    if (window.__vb?.trailerDirector) {
-      window.__vb.trailerDirector.start(0);
-    }
+      return { activeRenderer, harvestReport };
+    }, FRAME_SERVER_PORT);
 
-    return { activeRenderer };
-  }, FRAME_SERVER_PORT);
-
-  console.log(`[capture] Active WebGL Renderer: ${setupInfo.activeRenderer}`);
-  console.log('[capture] Real-time loop halted. Beginning deterministic frame-by-frame stepping...');
-
-  // 6. Deterministic Frame-Stepping Loop (5,028 frames @ 60.00 FPS = exactly 83.800 seconds)
-  const TOTAL_FRAMES = 5028; // 83.800s * 60 FPS
-  console.log(`[capture] Stepping & piping ${TOTAL_FRAMES} frames (83.800s footage @ 60 FPS)...`);
-
-  const tStart = Date.now();
-  await page.evaluate(async ({ totalFrames, framePort }) => {
-    const canvas = document.getElementById('viewport');
-    const dt = 1 / 60;
-
-    for (let frame = 0; frame < totalFrames; frame++) {
-      // 1. Step simulation, physics, and directorial camera by exactly 1/60s
-      window.__vb.stepDeterministicFrame(dt);
-
-      // 2. Export canvas to high-quality JPEG blob (0.94 quality)
-      const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.94));
-
-      // 3. Pipe binary frame over HTTP directly into FFmpeg stdin
-      await fetch(`http://127.0.0.1:${framePort}/frame`, {
-        method: 'POST',
-        body: blob
-      });
-
-      // Periodic progress reporting
-      if (frame > 0 && frame % 300 === 0) {
-        console.log(`[in-page] Stepped ${frame}/${totalFrames} frames (${(frame / 60).toFixed(1)}s / 83.8s)`);
+    console.log(`[capture] Active WebGL Renderer: ${setupInfo.activeRenderer}`);
+    if (setupInfo.harvestReport) {
+      const hr = setupInfo.harvestReport;
+      console.log(
+        `[capture] Unscripted Harvest Complete: ${hr.gamesSimulated} games (${hr.totalSimTicks} ticks) in ${hr.elapsedSec}s | ` +
+        `North Goals: ${hr.northGoalsCount}, South Goals: ${hr.southGoalsCount}, Real Hits: ${hr.totalHitsCount}, ` +
+        `Aerial Spikes: ${hr.spikeEventsCount}, Dive/Slide Ticks: ${hr.diveEventsCount}, Wall Caroms: ${hr.wallCaromsCount}`
+      );
+      const maxStepOverall = Math.max(...hr.scheduleSummary.map((s) => s.maxBallStep));
+      const totalRunAway = hr.scheduleSummary.reduce((acc, s) => acc + s.runningAwayTicks, 0);
+      console.log(`[capture] Schedule Audit (${hr.scheduleCount} cuts): Max single-tick ball step = ${maxStepOverall.toFixed(3)}m (0 respawns verified!) | Total running-away ticks = ${totalRunAway}`);
+      console.table(hr.scheduleSummary);
+      if (process.argv.includes('--harvest-only')) {
+        receiver.server.close();
+        await browser.close();
+        await viteServer.close();
+        process.exit(0);
       }
     }
+    console.log('[capture] Real-time loop halted. Beginning deterministic frame-by-frame stepping...');
 
-    // Notify receiver that all frames have completed
-    await fetch(`http://127.0.0.1:${framePort}/done`, { method: 'POST' });
-  }, { totalFrames: TOTAL_FRAMES, framePort: FRAME_SERVER_PORT });
+    // 6. Deterministic Frame-Stepping Loop (5,028 frames @ 60.00 FPS = exactly 83.800 seconds)
+    const TOTAL_FRAMES = 5028; // 83.800s * 60 FPS
+    console.log(`[capture] Stepping & piping ${TOTAL_FRAMES} frames (83.800s footage @ 60 FPS)...`);
 
-  const captureElapsedSec = ((Date.now() - tStart) / 1000).toFixed(1);
-  console.log(`[capture] Frame stepping complete in ${captureElapsedSec}s (avg ${(TOTAL_FRAMES / captureElapsedSec).toFixed(1)} FPS encoding speed).`);
+    const tStart = Date.now();
+    await page.evaluate(async ({ totalFrames, framePort }) => {
+      const canvas = document.getElementById('viewport');
+      const dt = 1 / 60;
 
-  // Wait for FFmpeg process to close
-  await receiver.waitForDone();
-  receiver.server.close();
+      for (let frame = 0; frame < totalFrames; frame++) {
+        // 1. Step simulation, physics, and directorial camera by exactly 1/60s
+        window.__vb.stepDeterministicFrame(dt);
 
-  const rawSizeMb = (fs.statSync(RAW_MP4).size / (1024 * 1024)).toFixed(2);
-  console.log(`[capture] Deterministic footage stream created: ${RAW_MP4} (${rawSizeMb} MB)`);
+        // 2. Export canvas to high-quality JPEG blob (0.94 quality)
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.94));
 
-  // Close browser and Vite
-  await browser.close();
-  await viteServer.close();
+        // 3. Pipe binary frame over HTTP directly into FFmpeg stdin
+        await fetch(`http://127.0.0.1:${framePort}/frame`, {
+          method: 'POST',
+          body: blob
+        });
+
+        // Periodic progress reporting
+        if (frame > 0 && frame % 300 === 0) {
+          console.log(`[in-page] Stepped ${frame}/${totalFrames} frames (${(frame / 60).toFixed(1)}s / 83.8s)`);
+        }
+      }
+
+      // Notify receiver that all frames have completed
+      await fetch(`http://127.0.0.1:${framePort}/done`, { method: 'POST' });
+    }, { totalFrames: TOTAL_FRAMES, framePort: FRAME_SERVER_PORT });
+
+    const captureElapsedSec = ((Date.now() - tStart) / 1000).toFixed(1);
+    console.log(`[capture] Frame stepping complete in ${captureElapsedSec}s (avg ${(TOTAL_FRAMES / captureElapsedSec).toFixed(1)} FPS encoding speed).`);
+
+    // Wait for FFmpeg process to close
+    await receiver.waitForDone();
+    receiver.server.close();
+
+    const rawSizeMb = (fs.statSync(RAW_MP4).size / (1024 * 1024)).toFixed(2);
+    console.log(`[capture] Deterministic footage stream created: ${RAW_MP4} (${rawSizeMb} MB)`);
+
+    // Close browser and Vite
+    await browser.close();
+    await viteServer.close();
+  } else {
+    console.log(`[capture] --composite-only mode: Using existing ${RAW_MP4}`);
+  }
 
   // 7. Post-Processing & Deliverable Assembly via FFmpeg
   console.log('\n=== ASSEMBLING FINAL BROADCAST DELIVERABLES (FFMPEG) ===');
-  console.log('[capture] Compositing footage (83.800s, 5028 frames) + galaxy title card (10.700s, 642 frames) with Neon Velocity (94.500s total)...');
+  console.log(`[capture] Compositing footage (83.800s, 5028 frames) + ${ALL_TRAILER_OVERLAYS.length} Brand-Guide Overlays + galaxy title card (10.700s, 642 frames) with Neon Velocity (94.500s total)...`);
 
-  // Filter Graph:
-  // [0:v] Deterministic footage (83.8s, 5028 frames): smooth 2.0s fade in from black, 0.8s fade out to black from 83.0s to 83.8s
-  // [1:v] Galaxy title card (10.7s, 642 frames): 0.8s fade in from black
-  // [v0][v1] Concat -> exactly 94.500s video stream (5,670 frames @ 60.0000 FPS CFR)
-  // [2:a] Audio: Neon Velocity with -2.5 dB ducking during gameplay action (44.2s to 78.4s), padded to 94.500s
+  // Build Overlay Filter Chain (6 Phase-1 Brand Cards + 7 Phase 2-4 Impact Words)
+  const captionInputs = [];
+  const captionFilterSteps = [];
+  const skipBaseFade = process.argv.includes('--from-faded-master');
+  const baseV0Filter = skipBaseFade
+    ? '[0:v]trim=duration=83.8,fps=60,setpts=PTS-STARTPTS[vbase0]'
+    : '[0:v]trim=duration=83.8,fade=t=in:st=0:d=2.0,fade=t=out:st=83.0:d=0.8,fps=60,setpts=PTS-STARTPTS[vbase0]';
+
+  ALL_TRAILER_OVERLAYS.forEach((cap, idx) => {
+    const inputIdx = 3 + idx;
+    const capPath = path.join(CAPTIONS_DIR, cap.file);
+    const streamDur = (cap.endSec + 0.25).toFixed(2);
+    captionInputs.push('-loop', '1', '-t', streamDur, '-r', '60', '-i', capPath);
+    const fadeInDur = (cap.fadeInSec ?? 0.35).toFixed(2);
+    const fadeOutDur = (cap.fadeOutSec ?? 0.35).toFixed(2);
+    const fadeOutStart = Math.max(cap.startSec, cap.endSec - (cap.fadeOutSec ?? 0.35)).toFixed(2);
+    captionFilterSteps.push(
+      `[${inputIdx}:v]format=rgba,fade=t=in:st=${cap.startSec.toFixed(2)}:d=${fadeInDur}:alpha=1,fade=t=out:st=${fadeOutStart}:d=${fadeOutDur}:alpha=1[cap${idx}]`
+    );
+    const prevLabel = idx === 0 ? 'vbase0' : `vcap${idx - 1}`;
+    const nextLabel = idx === ALL_TRAILER_OVERLAYS.length - 1 ? 'v0' : `vcap${idx}`;
+    captionFilterSteps.push(
+      `[${prevLabel}][cap${idx}]overlay=0:0:eof_action=pass:enable='between(t,${cap.startSec.toFixed(2)},${cap.endSec.toFixed(2)})'[${nextLabel}]`
+    );
+  });
+
   const filterGraph = [
-    '[0:v]trim=duration=83.8,fade=t=in:st=0:d=2.0,fade=t=out:st=83.0:d=0.8,fps=60,setpts=PTS-STARTPTS[v0]',
+    baseV0Filter,
+    ...captionFilterSteps,
     '[1:v]trim=duration=10.7,fade=t=in:st=0:d=0.8,fps=60,setpts=PTS-STARTPTS[v1]',
     '[v0][v1]concat=n=2:v=1:a=0,trim=duration=94.5,fps=60,setpts=PTS-STARTPTS[vout]',
     '[2:a]volume=enable=\'between(t,44.2,78.4)\':volume=0.75:eval=frame,apad=whole_dur=94.5,atrim=duration=94.5[aout]'
@@ -304,6 +361,7 @@ async function runCapture() {
     '-i', RAW_MP4,
     '-loop', '1', '-t', '12.0', '-r', '60', '-i', TITLE_CARD,
     '-i', MUSIC_PATH,
+    ...captionInputs,
     '-filter_complex', filterGraph,
     '-map', '[vout]',
     '-map', '[aout]',
@@ -321,9 +379,6 @@ async function runCapture() {
   const masterSizeMb = (fs.statSync(MASTER_MP4).size / (1024 * 1024)).toFixed(2);
   console.log(`[capture] Master MP4 created: ${MASTER_MP4} (${masterSizeMb} MB)`);
 
-  // Mirror to debut MP4 path for compatibility
-  fs.copyFileSync(MASTER_MP4, DEBUT_MP4);
-
   // B. Social Web Cut (<25 MB for Twitter / Discord)
   console.log('\n[capture] Encoding Deliverable 2: Social Web Cut (<25 MB)...');
   const socialArgs = [
@@ -332,6 +387,8 @@ async function runCapture() {
     '-c:v', 'libx264',
     '-preset', 'slow',
     '-crf', '24.5',
+    '-maxrate', '1900k',
+    '-bufsize', '3800k',
     '-pix_fmt', 'yuv420p',
     '-c:a', 'aac',
     '-b:a', '192k',
@@ -341,41 +398,39 @@ async function runCapture() {
   const socialSizeMb = (fs.statSync(SOCIAL_MP4).size / (1024 * 1024)).toFixed(2);
   console.log(`[capture] Social Web MP4 created: ${SOCIAL_MP4} (${socialSizeMb} MB)`);
 
+  // Only clean up intermediate raw footage file if explicitly requested
+  if (process.argv.includes('--cleanup-raw') && fs.existsSync(RAW_MP4)) {
+    fs.unlinkSync(RAW_MP4);
+  }
+
   // C. Milestone Verification Stills
   console.log('\n[capture] Extracting milestone verification stills from Master MP4...');
   const milestoneDir = path.join(OUT_DIR, 'milestone_frames');
   fs.mkdirSync(milestoneDir, { recursive: true });
-  const brainMilestoneDir = 'C:\\Users\\portt\\.gemini\\antigravity\\brain\\b374f0c0-8568-40f2-8627-bfed559fd017\\milestone_frames';
+  const brainMilestoneDir = 'C:\\Users\\portt\\.gemini\\antigravity\\brain\\5620eac9-cfe9-40c7-8710-7fadbd85d66d\\milestone_frames';
   fs.mkdirSync(brainMilestoneDir, { recursive: true });
 
   const milestones = [
-    { name: '00_phase1_red_football_helmet_portrait.png', time: '00:00:01.800' },
-    { name: '01_phase1_blue_cricket_helmet_portrait.png', time: '00:00:05.200' },
-    { name: '01_phase1_torus_arch_reveal.png', time: '00:00:05.200' },
-    { name: '02_phase1_ball_rollout_banked_wall.png', time: '00:00:09.500' },
-    { name: '03_phase2_kickoff_serve.png', time: '00:00:15.000' },
-    { name: '04_phase2_rally_defending_dig.png', time: '00:00:17.600' },
-    { name: '05_phase2_goal_1_broadcast_score.png', time: '00:00:21.500' },
-    { name: '06_phase3_goal_2_sky_cam_spike.png', time: '00:00:32.500' },
-    { name: '07_phase3_goal_3_banked_wall_carom.png', time: '00:00:45.200' },
-    { name: '08_phase3_goal_4_turf_dive_strike.png', time: '00:00:53.500' },
-    { name: '09_phase3_goal_5_through_hoop_reverse.png', time: '00:01:03.800' },
-    { name: '10_phase4_celestial_ascension.png', time: '00:01:13.500' },
-    { name: '11_phase5_galaxy_title_card.png', time: '00:01:29.000' },
-    // Dedicated hoop crossing frames for visual verification of authentic Torus scoring
-    { name: 'goal_1_torus_crossing.png', time: '00:00:20.800' },
-    { name: 'goal_2_torus_crossing.png', time: '00:00:31.650' },
-    { name: 'goal_3_torus_crossing.png', time: '00:00:44.650' },
-    { name: 'goal_4_torus_crossing.png', time: '00:00:52.650' },
-    { name: 'goal_5_torus_crossing.png', time: '00:01:02.950' },
-    { name: 'goal_6_torus_crossing.png', time: '00:01:12.650' },
-    // Compatibility mirrors for earlier milestone sets
-    { name: '02_phase1_stream_ramps_reveal.png', time: '00:00:09.500' },
-    { name: '03_phase1_turf_level_sideline.png', time: '00:00:09.500' },
-    { name: '07_phase2_continuous_rally_action.png', time: '00:00:17.600' },
-    { name: '11_phase4_climax_torus_goal.png', time: '00:01:13.500' },
-    { name: '12_phase4_celestial_ascension.png', time: '00:01:21.000' },
-    { name: '13_phase5_galaxy_title_card.png', time: '00:01:29.000' },
+    { name: '01_phase1_north_torus_cathedral_arch.png', time: '00:00:01.800' },
+    { name: '02_phase1_red_contender_portrait.png', time: '00:00:06.200' },
+    { name: '03_phase1_blue_contender_portrait.png', time: '00:00:09.000' },
+    { name: '04_phase1_stream_heads_ramps_glide.png', time: '00:00:14.000' },
+    { name: '05_phase1_turf_level_sideline_glide.png', time: '00:00:21.500' },
+    { name: '06_phase1_stadium_boom_arc.png', time: '00:00:30.000' },
+    { name: '07_phase1_low_predrop_tension_push.png', time: '00:00:40.000' },
+    { name: '08_phase2_drop_attack_sprint.png', time: '00:00:44.600' },
+    { name: '09_phase2_low_turf_diving_save.png', time: '00:00:46.500' },
+    { name: '10_phase2_vertical_aerial_spike.png', time: '00:00:48.300' },
+    { name: '11_phase2_banked_wall_carom.png', time: '00:00:50.200' },
+    { name: '12_phase2_goal_1_south_torus_crossing.png', time: '00:00:51.850' },
+    { name: '13_phase2_goal_2_north_torus_crossing.png', time: '00:00:55.450' },
+    { name: '14_phase2_goal_3_south_torus_crossing.png', time: '00:00:59.050' },
+    { name: '15_phase3_goal_4_north_torus_blitz.png', time: '00:01:05.350' },
+    { name: '16_phase3_goal_5_south_torus_blitz.png', time: '00:01:09.850' },
+    { name: '17_phase3_apex_micro_cut_frenzy.png', time: '00:01:14.500' },
+    { name: '18_phase4_climax_goal_6_north_torus.png', time: '00:01:17.150' },
+    { name: '19_phase4_celestial_ascension_arc.png', time: '00:01:22.000' },
+    { name: '20_phase5_galaxy_title_card.png', time: '00:01:29.000' },
   ];
 
   for (const m of milestones) {
