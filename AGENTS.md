@@ -20,7 +20,7 @@ This document provides mandatory operational context, architectural invariants, 
 
 ## 2. THE SPORT DOCTRINE
 
-1. **Simulation First**: Valleyball Versus is strictly a physical simulation. It does not compromise its physics to chase arcade shortcuts. Pure Sim (`assistRadius: 0.0`, `aimMagnetism: 0.0`) is the default out-of-the-box experience.
+1. **Simulation First**: Valleyball Versus is strictly a physical simulation. It does not compromise its physics to chase arcade shortcuts. **Standard** (`assistRadius: 0.45`, `assistWindowTicks: 6`, `aimMagnetism: 0.0`) is the default out-of-the-box experience: a swing timed within 6 ticks of the sweet spot also connects with a ball up to 0.45 m from the striking limb, so a near miss is not silently ignored. There is still no aim magnetism. **Pure Sim** (`assistRadius: 0.0`, `aimMagnetism: 0.0`) is the hardcore option for players who want the challenge: the ball is struck only on real limb contact. Each player picks a preset on the player setup screen.
 2. **No Out-of-Bounds**: The court is enclosed by continuous perimeter glass. The ball is **always live**. There are no throw-ins or sideline stops.
 3. **No Referee Whistles**: Play flows continuously. Player collisions are resolved physically through Rapier rigid-body impulses.
 4. **Positioning Over Aim Assist**: Physical strike exit angles depend on where the athlete makes physical contact with the ball. The **Cut mechanic** (`KeyV` / `RB`) provides the plant-and-redirect agility to position behind the ball.
