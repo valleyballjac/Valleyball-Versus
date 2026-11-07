@@ -1592,6 +1592,7 @@ const DEFAULTS = {
     mode: 'chase',
     // Splitscreen mode: side-by-side vertical viewports for local multiplayer matches
     splitscreen: true,
+    forceQuadSplitscreen: false,
     fov: 52,
     // Where the arm sits in the clear. currentDistance always converges here.
     radius: 8.0,

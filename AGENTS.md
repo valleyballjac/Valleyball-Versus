@@ -92,9 +92,10 @@ Every AI model working on this project must respect these laws. Code that violat
 
 ## 6. ASSET & URL CONVENTIONS
 
-Valleyball uses a dual-deployment pipeline:
+Valleyball ships the same bundle three ways:
 - GitHub Pages is served from base `/Valleyball-Versus/`.
 - itch.io is served from relative base `./`.
+- The Windows desktop app (`electron/`) is built from relative base `./` into `dist-desktop/` and served from a private `app://` protocol, because Chromium's `fetch()` cannot read `file://`.
 
 **Rule**: **NEVER hardcode asset paths like `/models/arena.glb` or `/textures/ball.png`.**
 Always wrap asset paths in `assetUrl(path)` from `src/config/tuning.js`:
@@ -137,7 +138,18 @@ npm run deploy
 
 # Package self-contained zip for itch.io
 npm run package:itch
+
+# Desktop app: Electron over the Vite dev server (reuses one already on 5173)
+npm run desktop:dev
+
+# Desktop app: build the bundle and run it unpackaged (add -- --windowed)
+npm run desktop
+
+# Desktop app: Windows installer and portable exe in release/desktop/
+npm run desktop:dist
 ```
+
+The desktop exe accepts `--windowed` (default is borderless fullscreen; F11 toggles) and `--uncapped` (vsync off, for benchmarking only). Rendering already runs at the display's refresh rate without it.
 
 ---
 

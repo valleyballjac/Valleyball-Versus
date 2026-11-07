@@ -723,11 +723,12 @@ function applyViewportSize() {
   const isSharedCam = humanSlots.length > 0 && humanSlots.every(
     (s) => playerCameras[s]?.mode === 'broadcast' || playerCameras[s]?.mode === 'sports',
   );
-  const isSplitscreen = (gameState === 'match') && !!TUNING.camera.splitscreen && humanSlots.length >= 2 && !isSharedCam;
+  const isSplitscreen = (gameState === 'match') && !!TUNING.camera.splitscreen && (humanSlots.length >= 2 || (athletes.length >= 2 && !!TUNING.camera.forceQuadSplitscreen)) && !isSharedCam;
 
   // Broadcast and Sports cameras are full-screen only: if in individual splitscreen, revert them to chase.
   if (isSplitscreen) {
-    for (const s of humanSlots) {
+    const slotsToCheck = humanSlots.length > 0 ? humanSlots : [0, 1, 2, 3];
+    for (const s of slotsToCheck) {
       if (playerCameras[s] && (playerCameras[s].mode === 'sports' || playerCameras[s].mode === 'broadcast')) {
         playerCameras[s].setMode('chase');
         syncPlayerCameraMode(s, 'chase');
@@ -735,7 +736,7 @@ function applyViewportSize() {
     }
   }
 
-  const isQuadSplit = isSplitscreen && humanSlots.length > 2;
+  const isQuadSplit = isSplitscreen && (humanSlots.length > 2 || (athletes.length >= 4 && !!TUNING.camera.forceQuadSplitscreen));
   const aspect = isQuadSplit
     ? (width / 2) / (height / 2)
     : (isSplitscreen ? (width / 2) / height : width / height);
@@ -2428,7 +2429,7 @@ function render(alpha) {
   const isSharedCam = humanSlots.length > 0 && humanSlots.every(
     (s) => playerCameras[s]?.mode === 'broadcast' || playerCameras[s]?.mode === 'sports',
   );
-  const isSplitscreen = (gameState === 'match') && !!TUNING.camera.splitscreen && humanSlots.length >= 2 && !isSharedCam && !isVictoryActive;
+  const isSplitscreen = (gameState === 'match') && !!TUNING.camera.splitscreen && (humanSlots.length >= 2 || (athletes.length >= 2 && !!TUNING.camera.forceQuadSplitscreen)) && !isSharedCam && !isVictoryActive;
   const dividerEl = document.getElementById('splitscreen-divider');
   if (dividerEl) {
     dividerEl.style.display = isSplitscreen ? 'block' : 'none';
@@ -2449,7 +2450,7 @@ function render(alpha) {
     cinematicCamera.camera.updateProjectionMatrix();
     renderer.setViewport(0, 0, width, height);
     renderer.render(scene, cinematicCamera.camera);
-  } else if (isSplitscreen && humanSlots.length > 2) {
+  } else if (isSplitscreen && (humanSlots.length > 2 || (athletes.length >= 4 && !!TUNING.camera.forceQuadSplitscreen))) {
     // 4-Way Quad Splitscreen (2x2 Grid: Top-Left P1, Top-Right P2, Bottom-Left P3, Bottom-Right P4)
     const halfW = Math.floor(width / 2);
     const halfH = Math.floor(height / 2);
@@ -3068,7 +3069,7 @@ function handleStartMatch(configs, matchRulesOrBall = {}) {
     }
 
     // Decided fresh every match: fullscreen for <= 1 human, splitscreen for 2+ humans.
-    TUNING.camera.splitscreen = humanCount >= 2;
+    TUNING.camera.splitscreen = (humanCount >= 2) || !!TUNING.camera.forceQuadSplitscreen;
   }
 
   // Honor shared fullscreen Broadcast / Sports if chosen by any human player in multiplayer
@@ -3782,6 +3783,13 @@ async function boot() {
 
   window.__vb.setSplitscreen = (enabled) => {
     TUNING.camera.splitscreen = !!enabled;
+    applyViewportSize();
+    if (guiInstance) guiInstance.controllersRecursive().forEach((c) => c.updateDisplay());
+  };
+
+  window.__vb.setForceQuadSplitscreen = (enabled) => {
+    TUNING.camera.splitscreen = true;
+    TUNING.camera.forceQuadSplitscreen = !!enabled;
     applyViewportSize();
     if (guiInstance) guiInstance.controllersRecursive().forEach((c) => c.updateDisplay());
   };

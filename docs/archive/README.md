@@ -15,6 +15,7 @@ Nothing here describes the current game. For that, see [AGENTS.md](../../AGENTS.
 | `motor-authority-review.md` | Walk floor and braking review |
 | `BRACE_GATE.md` | Agile brace gate and its open items |
 | `HERMES_HANDOVER_2026-10-30.md` | Bot facing, bumper swap and explainer pipeline handover |
+| `ELECTRON_DESKTOP_HANDOFF_2026-11-07.md` | Plan for the Electron desktop build. Implemented in `electron/`, which differs where the plan was wrong: vsync stays on, the bundle is served over `app://` rather than `file://`, and there is no `in-process-gpu` |
 
 ## Code preserved in git tags
 

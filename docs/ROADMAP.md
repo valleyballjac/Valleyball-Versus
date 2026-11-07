@@ -15,6 +15,14 @@ Brings full 1v1 and 2v2 team gameplay, per-controller lobby navigation, right-al
 
 Expected to be 1v1 this year, so it does not depend on 2v2. `?fixture=` (`src/features/match/matchFixture.js`, `npm run fixture`) already plays one fully specified 1v1 match.
 
+The Windows desktop build (`npm run desktop:dist`, see AGENTS.md) is the tournament runtime. On Jac's laptop it renders on the discrete GPU at the panel's native 165 Hz and keeps rendering when unfocused. Still to do before the event:
+
+- [ ] Play-test with four controllers on a hub, including after clicking onto another monitor.
+- [ ] Bundle the Orbitron font. `index.html` loads it from Google Fonts, so an offline machine falls back to a system font.
+- [ ] Decide whether the title screen needs a Quit item. `window.desktopAPI.quit()` exists; today Alt+F4 is the only exit in fullscreen.
+- [ ] The exe is unsigned, so Windows SmartScreen warns on first run. Fine for the event machine; needs a code-signing certificate before a public download.
+- [ ] Steam: `steamworks.js` and an App ID, once there is a Steam page.
+
 ## v0.4.0: 2v2 (Shipped)
 
 Already in place: team scoring, four `TUNING.players` configs, four input slots, the controller assignment screen and four stream heads.
