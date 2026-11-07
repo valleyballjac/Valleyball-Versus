@@ -42,12 +42,20 @@ let cachedCollisionMeshes = null;
 const DT = 1 / 60;
 const MOTOR_RADIUS = 0.5;
 const MOTOR_MASS = 2.618;   // 4/3 * π * 0.5³ * density 2.0
-const MAX_SPEED = 5.0;      // m/s horizontal sprint cap (aligned with TUNING.blend2d.sprintSpeed)
-const MOTOR_FORCE = 35.0;   // Tuned to reach MAX_SPEED in ~1s on flat ground
+const MAX_SPEED = 5.85;     // m/s horizontal sprint cap (aligned with measured motor.js flat sprint ~5.8-6.04 m/s)
+const RUN_SPEED = 4.5;      // m/s non-sprint run cap (aligned with TUNING.blend2d.runSpeed)
+const MOTOR_FORCE = 38.0;   // Tuned to reach MAX_SPEED smoothly on flat ground
 const BRAKE_DECEL = 12.0;   // m/s² braking deceleration
 const JUMP_IMPULSE = 7.0;
 const JUMP_COOLDOWN = 90;   // ticks
 const AIR_CONTROL = 0.15;
+
+// Collision groups matching src/sim/physics.js:
+// motor x ball = NO (motor sphere ignores the ball; torso/limb proxy touches it)
+const ENV_GROUPS = (0x0001 << 16) | 0x001F;
+const RAGDOLL_GROUPS = (0x0002 << 16) | 0x0011;
+const MOTOR_GROUPS = (0x0008 << 16) | 0x0009;
+const BALL_GROUPS = (0x0010 << 16) | 0x0017;
 
 const BALL_RADIUS = 0.50;   // Medium ball
 const BALL_DENSITY = 0.0042; // g/cm³; converted to kg/m³ (* 1000) when passed to Rapier
@@ -138,7 +146,7 @@ function createInputSlot() {
   return {
     moveX: 0, moveZ: 0,
     moveWorld: new THREE.Vector3(),
-    sprintHeld: false, slideHeld: false,
+    sprintHeld: false, slideHeld: false, braceHeld: false,
     jumpQueued: false, diveQueued: false,
     cutQueued: false,
     volleyQueued: false, spikeQueued: false,
@@ -154,7 +162,7 @@ function createInputSlot() {
 function clearSlot(slot) {
   slot.moveX = 0; slot.moveZ = 0;
   slot.moveWorld.set(0, 0, 0);
-  slot.sprintHeld = false; slot.slideHeld = false;
+  slot.sprintHeld = false; slot.slideHeld = false; slot.braceHeld = false;
   slot.jumpQueued = false; slot.diveQueued = false;
   slot.cutQueued = false;
   slot.volleyQueued = false; slot.spikeQueued = false;
@@ -165,10 +173,17 @@ function clearSlot(slot) {
 /**
  * Create a mock athlete that matches the interface the bot perception reads.
  */
-function createMockAthlete(motorBody, id = 'p1', team = 'home') {
+function createMockAthlete(motorBody, id = 'p1', team = 'home', assistPreset = 'standard') {
+  const preset = TUNING.strike?.assistPresets?.[assistPreset] || TUNING.strike?.assistPresets?.standard || {
+    id: 'standard',
+    assistRadius: 0.45,
+    assistWindowTicks: 6,
+    aimMagnetism: 0.0,
+  };
   return {
     id,
     team,
+    isEnabled: true,
     motor: {
       body: motorBody,
       grounded: true,
@@ -177,9 +192,28 @@ function createMockAthlete(motorBody, id = 'p1', team = 'home') {
       weight: 1.0,
     },
     animTarget: {
-      yaw: 0,
+      yaw: team === 'home' ? Math.PI : 0,
     },
-    strikeState: null,
+    actionState: {
+      slideTime: 0,
+      slideNeedsRelease: false,
+      slideLowSpeedTicks: 0,
+      braceMix: 0,
+      divePending: false,
+      lastDiveTick: -Infinity,
+      diveStunUntil: -Infinity,
+      lastCutTick: -Infinity,
+      lastInterceptDiveTick: -Infinity,
+      interceptDiveContactTick: -Infinity,
+    },
+    strikeState: {
+      assistPreset: preset.id,
+      assistRadius: preset.assistRadius,
+      assistWindowTicks: preset.assistWindowTicks,
+      aimMagnetism: preset.aimMagnetism,
+      lastEastKind: 0,
+    },
+    _knockdownUntil: -Infinity,
   };
 }
 
@@ -223,6 +257,7 @@ export function createHeadlessMatch(paramsA, paramsB, opts = {}) {
       } else if (m.name.includes('Goal')) {
         desc.setFriction(0.3).setRestitution(0.8);
       }
+      desc.setCollisionGroups(ENV_GROUPS);
       world.createCollider(desc, groundBody);
     }
   } else {
@@ -230,7 +265,8 @@ export function createHeadlessMatch(paramsA, paramsB, opts = {}) {
       RAPIER.ColliderDesc.cuboid(ARENA_HALF_X, 0.5, ARENA_HALF_Z)
         .setTranslation(0, -0.5, 0)
         .setFriction(1.0)
-        .setRestitution(0.0),
+        .setRestitution(0.0)
+        .setCollisionGroups(ENV_GROUPS),
       groundBody,
     );
     // Court perimeter barriers fallback
@@ -238,33 +274,40 @@ export function createHeadlessMatch(paramsA, paramsB, opts = {}) {
       RAPIER.ColliderDesc.cuboid(0.5, 12.0, COURT_WALL_Z)
         .setTranslation(-COURT_WALL_X, 10.0, 0)
         .setRestitution(0.6)
-        .setFriction(0.2),
+        .setFriction(0.2)
+        .setCollisionGroups(ENV_GROUPS),
       groundBody,
     );
     world.createCollider(
       RAPIER.ColliderDesc.cuboid(0.5, 12.0, COURT_WALL_Z)
         .setTranslation(COURT_WALL_X, 10.0, 0)
         .setRestitution(0.6)
-        .setFriction(0.2),
+        .setFriction(0.2)
+        .setCollisionGroups(ENV_GROUPS),
       groundBody,
     );
     world.createCollider(
       RAPIER.ColliderDesc.cuboid(COURT_WALL_X, 12.0, 0.5)
         .setTranslation(0, 10.0, -COURT_WALL_Z)
         .setRestitution(0.6)
-        .setFriction(0.2),
+        .setFriction(0.2)
+        .setCollisionGroups(ENV_GROUPS),
       groundBody,
     );
     world.createCollider(
       RAPIER.ColliderDesc.cuboid(COURT_WALL_X, 12.0, 0.5)
         .setTranslation(0, 10.0, COURT_WALL_Z)
         .setRestitution(0.6)
-        .setFriction(0.2),
+        .setFriction(0.2)
+        .setCollisionGroups(ENV_GROUPS),
       groundBody,
     );
   }
 
   // ═══ MOTOR SPHERES ═══
+  // Matching src/sim/physics.js: the 0.50m motor sphere uses MOTOR_GROUPS (ignores ball),
+  // while a concentric 0.18m core proxy uses RAGDOLL_GROUPS so body-ball contact only occurs
+  // at true ragdoll width (0.18m) without ever protruding below the rolling 0.50m sphere.
   const spawnYA = getCourtFloorY(-3.0, 20) + MOTOR_RADIUS + 0.3;
   const motorBodyA = world.createRigidBody(
     RAPIER.RigidBodyDesc.dynamic()
@@ -275,7 +318,16 @@ export function createHeadlessMatch(paramsA, paramsB, opts = {}) {
     RAPIER.ColliderDesc.ball(MOTOR_RADIUS)
       .setDensity(2.0)
       .setFriction(1.0)
-      .setRestitution(0.0),
+      .setRestitution(0.0)
+      .setCollisionGroups(MOTOR_GROUPS),
+    motorBodyA,
+  );
+  world.createCollider(
+    RAPIER.ColliderDesc.ball(0.18)
+      .setDensity(0.0)
+      .setFriction(0.2)
+      .setRestitution(0.15)
+      .setCollisionGroups(RAGDOLL_GROUPS),
     motorBodyA,
   );
 
@@ -289,7 +341,16 @@ export function createHeadlessMatch(paramsA, paramsB, opts = {}) {
     RAPIER.ColliderDesc.ball(MOTOR_RADIUS)
       .setDensity(2.0)
       .setFriction(1.0)
-      .setRestitution(0.0),
+      .setRestitution(0.0)
+      .setCollisionGroups(MOTOR_GROUPS),
+    motorBodyB,
+  );
+  world.createCollider(
+    RAPIER.ColliderDesc.ball(0.18)
+      .setDensity(0.0)
+      .setFriction(0.2)
+      .setRestitution(0.15)
+      .setCollisionGroups(RAGDOLL_GROUPS),
     motorBodyB,
   );
 
@@ -319,13 +380,15 @@ export function createHeadlessMatch(paramsA, paramsB, opts = {}) {
     RAPIER.ColliderDesc.ball(ballRadius)
       .setDensity(ballDensity * 1000) // LESSON 12: g/cm³ -> kg/m³ (2.199 kg regulation mass)
       .setFriction(ballCfg.friction || 0.8)
-      .setRestitution(ballRestitution),
+      .setRestitution(ballRestitution)
+      .setCollisionGroups(BALL_GROUPS),
     ballBody,
   );
 
   // ═══ MOCK ATHLETES ═══
-  const athleteA = createMockAthlete(motorBodyA, 'p1', 'home');
-  const athleteB = createMockAthlete(motorBodyB, 'p2', 'away');
+  const assistPreset = opts.assistPreset || 'standard';
+  const athleteA = createMockAthlete(motorBodyA, 'p1', 'home', assistPreset);
+  const athleteB = createMockAthlete(motorBodyB, 'p2', 'away', assistPreset);
 
   // ═══ INPUT SLOTS ═══
   const slotA = createInputSlot();
@@ -425,6 +488,9 @@ export function createHeadlessMatch(paramsA, paramsB, opts = {}) {
     whiffs: { home: 0, away: 0 },
     dives: { home: 0, away: 0 },
     divingHits: { home: 0, away: 0 },
+    defensiveBlocks: { home: 0, away: 0 },
+    slides: { home: 0, away: 0 },
+    slideTackles: { home: 0, away: 0 },
     tick: 0,
     maxTicks: matchTicks,
     telemetry,
@@ -437,18 +503,108 @@ export function createHeadlessMatch(paramsA, paramsB, opts = {}) {
 }
 
 /**
- * Apply simplified motor forces from an input slot to a motor body.
+ * Apply simplified motor forces, slide mechanics, and braceMix easing.
  */
-function applyMotorForces(body, slot, grounded, dt) {
+function applyMotorForces(match, body, slot, athlete, side, dt) {
+  const grounded = athlete.motor.grounded;
+  const as = athlete.actionState;
+
+  // Recover tracker weight after knockdown / dive stun
+  if (match.tick < athlete._knockdownUntil) {
+    athlete.tracker.weight = 0.15;
+  } else if (athlete.tracker.weight < 1.0) {
+    athlete.tracker.weight = Math.min(1.0, athlete.tracker.weight + 0.85 * dt);
+  }
+
+  // Ease braceMix (Block pose share, zero movement penalty)
+  const braceEase = 1 - Math.exp(-(TUNING.action?.poseEase ?? 10.0) * dt);
+  as.braceMix += ((slot.braceHeld ? 1.0 : 0.0) - as.braceMix) * braceEase;
+
+  // Slide mechanics (matching src/mechanics/actions.js)
+  if (!slot.slideHeld) as.slideNeedsRelease = false;
+  if (slot.jumpQueued && as.slideTime > 0) {
+    // Jump-cancel out of a slide: returns to feet carrying all built momentum without jumping
+    as.slideTime = 0;
+    as.slideNeedsRelease = true;
+    slot.jumpQueued = false;
+  }
+
+  const vel0 = body.linvel();
+  const speedNow = Math.hypot(vel0.x, vel0.z);
+  const minSlideSpeed = TUNING.action?.minSlideSpeed ?? 4.0;
+  const minSlideTicks = TUNING.action?.minSlideTicks ?? 15;
+
+  const startingSlide =
+    as.slideTime === 0 &&
+    !as.slideNeedsRelease &&
+    slot.slideHeld &&
+    grounded &&
+    speedNow > minSlideSpeed;
+
+  if (startingSlide) {
+    as.slideTime = 1;
+    match.slides[side] = (match.slides[side] || 0) + 1;
+  } else if (as.slideTime > 0) {
+    as.slideTime += 1;
+  }
+
+  if (as.slideTime > 0) {
+    const committed = as.slideTime <= minSlideTicks;
+    if (!committed && !slot.slideHeld) {
+      as.slideTime = 0;
+      as.slideLowSpeedTicks = 0;
+    } else if (slot.slideHeld && speedNow < (TUNING.action?.knockdownSpeed ?? 0.6)) {
+      as.slideLowSpeedTicks = (as.slideLowSpeedTicks || 0) + 1;
+      if (as.slideLowSpeedTicks >= (TUNING.action?.slideGraceTicks ?? 15)) {
+        as.slideTime = 0;
+        as.slideNeedsRelease = true;
+        as.slideLowSpeedTicks = 0;
+        athlete._knockdownUntil = match.tick + 55;
+      }
+    } else if (speedNow < (TUNING.action?.stopSpeed ?? 0.2)) {
+      as.slideTime = 0;
+      as.slideNeedsRelease = true;
+      as.slideLowSpeedTicks = 0;
+    } else {
+      as.slideLowSpeedTicks = 0;
+    }
+  }
+
+  const sliding = as.slideTime > 0;
+  as.sliding = sliding;
+  const driveScale = sliding ? 0.0 : (athlete.tracker.weight * athlete.tracker.weight);
   const move = slot.moveWorld;
   const hasMoveInput = move.x * move.x + move.z * move.z > 0.001;
   const airMul = grounded ? 1.0 : AIR_CONTROL;
 
-  if (hasMoveInput) {
+  if (sliding && grounded) {
+    // While sliding: steering is committed; downhill slopes accelerate past flat sprint cap
+    if (vel0.y < -0.15 && speedNow > 0.5) {
+      const downhillBoost = Math.min(9.5, Math.abs(vel0.y) * 3.8);
+      const nx = vel0.x / speedNow;
+      const nz = vel0.z / speedNow;
+      body.applyImpulse({ x: nx * downhillBoost * dt, y: 0, z: nz * downhillBoost * dt }, true);
+    } else if (speedNow > 0.1) {
+      const flatSlideDecel = 1.6 * dt;
+      const scale = Math.max(0, 1.0 - flatSlideDecel / speedNow);
+      const m = body.mass();
+      body.applyImpulse({ x: vel0.x * (scale - 1.0) * m, y: 0, z: vel0.z * (scale - 1.0) * m }, true);
+    }
+    const velS = body.linvel();
+    const hSpeedS = Math.hypot(velS.x, velS.z);
+    if (hSpeedS > 7.8) {
+      const scale = 7.8 / hSpeedS;
+      const m = body.mass();
+      body.applyImpulse({ x: velS.x * (scale - 1.0) * m, y: 0, z: velS.z * (scale - 1.0) * m }, true);
+    }
+    return;
+  }
+
+  if (hasMoveInput && driveScale > 0.05) {
     const len = Math.sqrt(move.x * move.x + move.z * move.z);
     const nx = move.x / len;
     const nz = move.z / len;
-    const force = MOTOR_FORCE * airMul;
+    const force = MOTOR_FORCE * airMul * driveScale;
 
     body.applyImpulse({ x: nx * force * dt, y: 0, z: nz * force * dt }, true);
   } else if (grounded) {
@@ -462,8 +618,8 @@ function applyMotorForces(body, slot, grounded, dt) {
     }
   }
 
-  // Speed cap with sprint governor (sprint = 6 m/s, jog = 4 m/s)
-  const maxSpeed = slot.sprintHeld ? MAX_SPEED : 4.0;
+  // Speed cap with sprint governor
+  const maxSpeed = slot.sprintHeld ? MAX_SPEED : RUN_SPEED;
   const vel = body.linvel();
   const hSpeed = Math.sqrt(vel.x * vel.x + vel.z * vel.z);
   if (hSpeed > maxSpeed) {
@@ -473,35 +629,52 @@ function applyMotorForces(body, slot, grounded, dt) {
 }
 
 /**
- * Latch a strike press and start the animation windup timer.
+ * Latch a strike press and start the animation windup timer (matching `src/mechanics/strikes.js:eastKind`).
  */
-function queueStrikeIfPressed(match, strikeState, slot, motorBody) {
+function queueStrikeIfPressed(match, strikeState, slot, motorBody, athlete) {
   const pressed = slot.volleyQueued || slot.spikeQueued;
   if (!pressed) return;
 
   const since = match.tick - strikeState.pressTick;
-  if (since < 20) return; // press cooldown
+  if (since < (TUNING.strike?.pressCooldownTicks ?? 20)) return; // press cooldown
 
   const mPos = motorBody.translation();
   const bPos = match.ballBody.translation();
-  const relY = bPos.y - (mPos.y + 0.45); // match real game pelvis height ~0.95m
+  const distXZ = Math.hypot(bPos.x - mPos.x, bPos.z - mPos.z);
+  const contextRadius = TUNING.strike?.contextRadius ?? 4.0;
+  const relY = bPos.y - (mPos.y + 0.467); // match real game pelvis height ~0.967m
 
   let kind = 'volley';
-  let sweetTick = 20;
-  let windowOpen = 12;
-  let windowClose = 30;
+  let sweetTick = TUNING.strike?.volley?.sweetTick ?? 15;
+  let windowOpen = TUNING.strike?.volley?.windowOpen ?? 12;
+  let windowClose = TUNING.strike?.volley?.windowClose ?? 30;
 
   if (slot.spikeQueued) {
     kind = 'spike';
-    sweetTick = 42;
-    windowOpen = 30;
-    windowClose = 54;
-  } else if (relY < -0.10) {
-    // East button contextual kick for low balls
-    kind = 'kick';
-    sweetTick = 14;
-    windowOpen = 8;
-    windowClose = 17;
+    sweetTick = TUNING.strike?.spike?.sweetTick ?? 42;
+    windowOpen = TUNING.strike?.spike?.windowOpen ?? 30;
+    windowClose = TUNING.strike?.spike?.windowClose ?? 54;
+  } else {
+    // Exact `eastKind()` parity (`src/mechanics/strikes.js:439-463`)
+    let eastCode = 1; // KIND_VOLLEY
+    if (distXZ <= contextRadius) {
+      const kickBelowHips = TUNING.strike?.kickBelowHips ?? -0.10;
+      const kickHysteresis = TUNING.strike?.kickHysteresis ?? 0.05;
+      const lastEast = athlete?.strikeState?.lastEastKind ?? 0;
+      const inBand = Math.abs(relY - kickBelowHips) <= kickHysteresis;
+      if (inBand && lastEast !== 0) {
+        eastCode = lastEast;
+      } else {
+        eastCode = relY < kickBelowHips ? 3 : 1;
+      }
+    }
+    if (athlete?.strikeState) athlete.strikeState.lastEastKind = eastCode;
+    if (eastCode === 3) {
+      kind = 'kick';
+      sweetTick = TUNING.strike?.kick?.sweetTick ?? 8;
+      windowOpen = TUNING.strike?.kick?.windowOpen ?? 8;
+      windowClose = TUNING.strike?.kick?.windowClose ?? 17;
+    }
   }
 
   strikeState.pendingKind = kind;
@@ -518,53 +691,61 @@ function queueStrikeIfPressed(match, strikeState, slot, motorBody) {
 }
 
 /**
- * Resolve active physical strikes inside their timing window.
+ * Resolve active physical strikes inside their timing window matching `src/mechanics/strikes.js`
+ * (`ball.radius + 0.08 + assistRadius` strictly within `±assistWindowTicks` around `sweetTick`).
  */
-function resolveStrikes(match, strikeState, motorBody, side) {
-  if (strikeState.pressTick < 0) return;
-  if (strikeState.resolvedTick === strikeState.pressTick) return;
+function resolveStrikes(match, strikeState, motorBody, athlete, side) {
+  if (strikeState.pressTick < 0) return false;
+  if (strikeState.resolvedTick === strikeState.pressTick) return false;
 
   const elapsed = match.tick - strikeState.pressTick;
   if (elapsed >= strikeState.windowOpen && elapsed <= strikeState.windowClose) {
     const mPos = motorBody.translation();
     const bPos = match.ballBody.translation();
-    const limbY = strikeState.pendingKind === 'kick' ? (mPos.y + 0.2) : (strikeState.pendingKind === 'spike' ? (mPos.y + 1.4) : (mPos.y + 1.0));
-    const dx = bPos.x - mPos.x;
-    const dy = bPos.y - limbY;
-    const dz = bPos.z - mPos.z;
-    const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    const kind = strikeState.pendingKind;
+    const yaw = strikeState.aimYaw;
+    const dirX = Math.sin(yaw);
+    const dirZ = Math.cos(yaw);
 
-    // Physical strike reach: modeled on animation limb extension toward sweetTick
-    const swingProgress = elapsed < strikeState.sweetTick
-      ? Math.max(0.25, (elapsed - strikeState.windowOpen) / Math.max(1, strikeState.sweetTick - strikeState.windowOpen))
-      : 1.0;
-    const reach = (0.95 * swingProgress) + match.ballObj.radius + (0.45 * swingProgress);
+    // Real-ragdoll measured limb offsets (`probe_whiff_and_hoop` on Rapier); sliding halves reach via `strikePart` blend
+    const slideDilution = (athlete?.actionState?.slideTime > 0) ? 0.5 : 1.0;
+    const baseLimbForward = kind === 'spike' ? 0.90 : (kind === 'kick' ? 0.34 : 0.48);
+    const limbForward = baseLimbForward * slideDilution;
+    const limbX = mPos.x + dirX * limbForward;
+    const limbZ = mPos.z + dirZ * limbForward;
+    const limbY = kind === 'kick' ? (mPos.y - 0.16) : (kind === 'spike' ? (mPos.y + 0.82) : (mPos.y + 0.58));
+
+    const dist = Math.hypot(bPos.x - limbX, bPos.y - limbY, bPos.z - limbZ);
+
+    const assistRadius = athlete?.strikeState?.assistRadius ?? 0.45;
+    const assistWindowTicks = athlete?.strikeState?.assistWindowTicks ?? 6;
+    const inAssistSweetBand = Math.abs(elapsed - strikeState.sweetTick) <= assistWindowTicks;
+    const activeAssist = inAssistSweetBand ? assistRadius : 0.0;
+    const reach = (match.ballObj.radius + 0.08 + activeAssist) * slideDilution;
     if (dist <= reach) {
       strikeState.resolvedTick = strikeState.pressTick;
-      const strikeCfg = STRIKE[strikeState.pendingKind] || STRIKE.volley;
+      const strikeCfg = STRIKE[kind] || STRIKE.volley;
       const elevRad = (strikeCfg.elevDeg * Math.PI) / 180;
       const err = Math.abs(elapsed - strikeState.sweetTick);
-      const q = err <= 4 ? 1.0 : (err >= 12 ? 0.35 : 1.0 - ((err - 4) / 8) * 0.65);
+      const q = err <= 5 ? 1.0 : (err >= 12 ? 0.35 : 1.0 - ((err - 5) / 7) * 0.65);
 
       const speed = strikeCfg.speed * q;
       const hSpeed = speed * Math.cos(elevRad);
       const vSpeed = speed * Math.sin(elevRad);
+      const bMass = match.ballBody.mass();
 
-      const yaw = strikeState.aimYaw;
-      const dirX = Math.sin(yaw);
-      const dirZ = Math.cos(yaw);
-
-      match.ballBody.setLinvel({
-        x: dirX * hSpeed,
-        y: vSpeed,
-        z: dirZ * hSpeed,
+      // Match `src/mechanics/strikes.js:808` verbatim: additive impulse on `ballBody` (obeys LAW 1)!
+      match.ballBody.applyImpulse({
+        x: dirX * hSpeed * bMass,
+        y: vSpeed * bMass,
+        z: dirZ * hSpeed * bMass,
       }, true);
 
       // Record hit event on match for fitness tracker
       if (!match.lastHits) match.lastHits = [];
       match.lastHits.push({
         side,
-        kind: strikeState.pendingKind,
+        kind,
         quality: q,
         tick: match.tick,
         dirX, dirZ,
@@ -576,7 +757,7 @@ function resolveStrikes(match, strikeState, motorBody, side) {
           match.telemetry,
           match.tick,
           side,
-          strikeState.pendingKind,
+          kind,
           side === 'home' ? match.botA.difficulty : match.botB.difficulty,
           bPos.x, bPos.y, bPos.z,
           dirX, dirZ, q,
@@ -585,12 +766,11 @@ function resolveStrikes(match, strikeState, motorBody, side) {
       }
 
       // Track diving hits if athlete dove recently
-      const athlete = side === 'home' ? match.athleteA : match.athleteB;
       if (athlete._lastDiveTick && (match.tick - athlete._lastDiveTick) <= 50) {
         if (!match.divingHits) match.divingHits = { home: 0, away: 0 };
         match.divingHits[side]++;
       }
-      return;
+      return true;
     }
   }
 
@@ -600,11 +780,6 @@ function resolveStrikes(match, strikeState, motorBody, side) {
     match.whiffs[side]++;
     strikeState.resolvedTick = strikeState.pressTick;
     if (match.telemetry) {
-      // Zero-alloc: reuse the cached per-tick ball position (match.ballPrev,
-      // updated by checkScoring after every physics step) instead of a
-      // telemetry-only Rapier translation() wrapper inside the fixed tick.
-      // The cached position is the ball at the end of the previous step
-      // (resolveStrikes runs pre-step), one tick old: fine for diagnostics.
       recordWhiff(
         match.telemetry,
         match.tick,
@@ -613,6 +788,98 @@ function resolveStrikes(match, strikeState, motorBody, side) {
         match.ballPrev.x, match.ballPrev.y, match.ballPrev.z,
       );
     }
+  }
+  return false;
+}
+
+/**
+ * Resolve active Block (braceHeld) redirect matching resolveBraceRedirect in src/mechanics/strikes.js.
+ */
+function resolveHeadlessBraceRedirect(match, strikeState, slot, athlete, motorBody, side) {
+  const braceMix = athlete.actionState?.braceMix ?? 0;
+  if (braceMix <= 0.2) return false;
+  if (match.ballObj.lastBraceRedirectTick === match.tick) return false;
+  // Minimum 15-tick cooldown per athlete so one block doesn't re-trigger on consecutive frames
+  if (athlete._lastBraceContactTick && (match.tick - athlete._lastBraceContactTick) < 15) return false;
+
+  const mPos = motorBody.translation();
+  const bPos = match.ballBody.translation();
+  const yaw = athlete.animTarget?.yaw ?? 0;
+  const blockX = mPos.x + Math.sin(yaw) * 0.34;
+  const blockY = mPos.y + 0.85;
+  const blockZ = mPos.z + Math.cos(yaw) * 0.34;
+
+  const dist = Math.hypot(bPos.x - blockX, bPos.y - blockY, bPos.z - blockZ);
+  if (dist > 0.42 + match.ballObj.radius) return false;
+
+  const vel = match.ballBody.linvel();
+  const inbound = Math.hypot(vel.x, vel.y, vel.z);
+  const b = TUNING.action || {};
+  const minSpeed = b.braceMinRedirectSpeed ?? 1.5;
+  if (inbound < minSpeed) return false;
+
+  const outbound = Math.min(inbound, b.braceMaxRedirectSpeed ?? 22.0) * (b.braceRedirectScale ?? 0.95);
+  const elevRad = ((b.braceRedirectUpDeg ?? 25.0) * Math.PI) / 180;
+  const horiz = Math.cos(elevRad);
+  const dirX = Math.sin(yaw) * horiz;
+  const dirY = Math.sin(elevRad);
+  const dirZ = Math.cos(yaw) * horiz;
+
+  const bMass = match.ballBody.mass();
+  match.ballBody.applyImpulse({
+    x: (dirX * outbound - vel.x) * bMass,
+    y: (dirY * outbound - vel.y) * bMass,
+    z: (dirZ * outbound - vel.z) * bMass,
+  }, true);
+
+  match.ballObj.lastBraceRedirectTick = match.tick;
+  athlete._lastBraceContactTick = match.tick;
+  match.defensiveBlocks[side] = (match.defensiveBlocks[side] || 0) + 1;
+
+  if (athlete._lastDiveTick && (match.tick - athlete._lastDiveTick) <= 50) {
+    match.divingHits[side] = (match.divingHits[side] || 0) + 1;
+  }
+  return true;
+}
+
+/**
+ * Resolve physical Slide-Tackle knockdowns between athletes matching resolveAthleteCollision.
+ */
+function resolveHeadlessSlideTackles(match) {
+  const { athleteA, athleteB, motorBodyA, motorBodyB, tick } = match;
+  const p1 = motorBodyA.translation();
+  const p2 = motorBodyB.translation();
+  if (Math.abs(p1.y - p2.y) > 1.4) return;
+  const distXZ = Math.hypot(p2.x - p1.x, p2.z - p1.z);
+  if (distXZ > 1.08) return;
+
+  const slidingA = athleteA.actionState.slideTime > 0;
+  const slidingB = athleteB.actionState.slideTime > 0;
+  if (!slidingA && !slidingB) return;
+
+  const lastTackle = match._lastTackleTick ?? -999;
+  if (tick - lastTackle <= (TUNING.action?.slideTackleCooldownTicks ?? 15)) return;
+
+  const v1 = motorBodyA.linvel();
+  const v2 = motorBodyB.linvel();
+  const speed1 = Math.hypot(v1.x, v1.z);
+  const speed2 = Math.hypot(v2.x, v2.z);
+  const minTackleSpeed = TUNING.action?.slideTackleMinSpeed ?? 5.5;
+
+  if (slidingA && !slidingB && speed1 > minTackleSpeed) {
+    match._lastTackleTick = tick;
+    athleteB._knockdownUntil = tick + 70;
+    athleteB.tracker.weight = 0.12;
+    motorBodyB.applyImpulse({ x: v1.x * 0.45, y: 0, z: v1.z * 0.45 }, true);
+    motorBodyA.applyImpulse({ x: -v1.x * 0.12, y: 0, z: -v1.z * 0.12 }, true);
+    match.slideTackles.home = (match.slideTackles.home || 0) + 1;
+  } else if (slidingB && !slidingA && speed2 > minTackleSpeed) {
+    match._lastTackleTick = tick;
+    athleteA._knockdownUntil = tick + 70;
+    athleteA.tracker.weight = 0.12;
+    motorBodyA.applyImpulse({ x: v2.x * 0.45, y: 0, z: v2.z * 0.45 }, true);
+    motorBodyB.applyImpulse({ x: -v2.x * 0.12, y: 0, z: -v2.z * 0.12 }, true);
+    match.slideTackles.away = (match.slideTackles.away || 0) + 1;
   }
 }
 
@@ -718,9 +985,15 @@ function updateGrounded(athlete, motorBody) {
 }
 
 /**
- * Update facing yaw from velocity direction.
+ * Update facing yaw from explicit aimYaw or velocity direction.
  */
-function updateFacing(athlete, motorBody) {
+function updateFacing(athlete, motorBody, slot) {
+  if (slot && slot.hasAim) {
+    const curr = athlete.animTarget.yaw || 0;
+    const diff = Math.atan2(Math.sin(slot.aimYaw - curr), Math.cos(slot.aimYaw - curr));
+    athlete.animTarget.yaw = Math.atan2(Math.sin(curr + diff * 0.22), Math.cos(curr + diff * 0.22));
+    return;
+  }
   const vel = motorBody.linvel();
   const hSpeed = Math.sqrt(vel.x * vel.x + vel.z * vel.z);
   if (hSpeed > 0.5) {
@@ -758,12 +1031,13 @@ export function stepHeadlessMatch(match) {
   updateBot(botA, athleteA, athleteB, balls, matchState, slotA, match.tick, DT);
   updateBot(botB, athleteB, athleteA, balls, matchState, slotB, match.tick, DT);
 
-  // ═══ MOTOR FORCES ═══
-  applyMotorForces(match.motorBodyA, slotA, athleteA.motor.grounded, DT);
-  applyMotorForces(match.motorBodyB, slotB, athleteB.motor.grounded, DT);
+  // ═══ MOTOR FORCES, SLIDE & BRACE MIX ═══
+  applyMotorForces(match, match.motorBodyA, slotA, athleteA, 'home', DT);
+  applyMotorForces(match, match.motorBodyB, slotB, athleteB, 'away', DT);
+  resolveHeadlessSlideTackles(match);
 
   // ═══ CUTS (Stage 3 Athletic Redirects) ═══
-  if (slotA.cutQueued && athleteA.motor.grounded) {
+  if (slotA.cutQueued && athleteA.motor.grounded && athleteA.actionState.slideTime === 0) {
     if (!match.cuts) match.cuts = { home: 0, away: 0 };
     match.cuts.home++;
     const dirX = slotA.moveWorld ? slotA.moveWorld.x : 0;
@@ -777,7 +1051,7 @@ export function stepHeadlessMatch(match) {
       z: -lv.z * mass * 0.95 + (dirZ / len) * 4.5,
     }, true);
   }
-  if (slotB.cutQueued && athleteB.motor.grounded) {
+  if (slotB.cutQueued && athleteB.motor.grounded && athleteB.actionState.slideTime === 0) {
     if (!match.cuts) match.cuts = { home: 0, away: 0 };
     match.cuts.away++;
     const dirX = slotB.moveWorld ? slotB.moveWorld.x : 0;
@@ -804,19 +1078,23 @@ export function stepHeadlessMatch(match) {
     match.jumpState.lastJumpTickB = match.tick;
   }
 
-  // ═══ DIVES ═══
+  // ═══ DIVES (Standard & Brace-Dive Intercept GF-2.1) ═══
   if (slotA.diveQueued && athleteA.motor.grounded) {
     if (!match.dives) match.dives = { home: 0, away: 0 };
     match.dives.home++;
     const dirX = slotA.moveWorld ? slotA.moveWorld.x : 0;
     const dirZ = slotA.moveWorld ? slotA.moveWorld.z : 0;
     const len = Math.hypot(dirX, dirZ) || 1.0;
+    const fwdImp = slotA.braceHeld ? (TUNING.action?.interceptDiveForwardImpulse ?? 6.0) : 4.8;
+    const upImp = slotA.braceHeld ? (TUNING.action?.interceptDiveUpImpulse ?? 2.8) : 3.8;
     match.motorBodyA.applyImpulse({
-      x: (dirX / len) * 4.8,
-      y: 3.8,
-      z: (dirZ / len) * 4.8,
+      x: (dirX / len) * fwdImp,
+      y: upImp,
+      z: (dirZ / len) * fwdImp,
     }, true);
     athleteA._lastDiveTick = match.tick;
+    athleteA.actionState.lastDiveTick = match.tick;
+    athleteA._knockdownUntil = match.tick + 55;
   }
   if (slotB.diveQueued && athleteB.motor.grounded) {
     if (!match.dives) match.dives = { home: 0, away: 0 };
@@ -824,20 +1102,27 @@ export function stepHeadlessMatch(match) {
     const dirX = slotB.moveWorld ? slotB.moveWorld.x : 0;
     const dirZ = slotB.moveWorld ? slotB.moveWorld.z : 0;
     const len = Math.hypot(dirX, dirZ) || 1.0;
+    const fwdImp = slotB.braceHeld ? (TUNING.action?.interceptDiveForwardImpulse ?? 6.0) : 4.8;
+    const upImp = slotB.braceHeld ? (TUNING.action?.interceptDiveUpImpulse ?? 2.8) : 3.8;
     match.motorBodyB.applyImpulse({
-      x: (dirX / len) * 4.8,
-      y: 3.8,
-      z: (dirZ / len) * 4.8,
+      x: (dirX / len) * fwdImp,
+      y: upImp,
+      z: (dirZ / len) * fwdImp,
     }, true);
     athleteB._lastDiveTick = match.tick;
+    athleteB.actionState.lastDiveTick = match.tick;
+    athleteB._knockdownUntil = match.tick + 55;
   }
 
-  // ═══ STRIKES ═══
-  queueStrikeIfPressed(match, match.strikeA, slotA, match.motorBodyA);
-  queueStrikeIfPressed(match, match.strikeB, slotB, match.motorBodyB);
+  // ═══ STRIKES & ACTIVE BLOCK (BRACE) REDIRECTS ═══
+  queueStrikeIfPressed(match, match.strikeA, slotA, match.motorBodyA, athleteA);
+  queueStrikeIfPressed(match, match.strikeB, slotB, match.motorBodyB, athleteB);
 
-  resolveStrikes(match, match.strikeA, match.motorBodyA, 'home');
-  resolveStrikes(match, match.strikeB, match.motorBodyB, 'away');
+  const struckA = resolveStrikes(match, match.strikeA, match.motorBodyA, athleteA, 'home');
+  const struckB = resolveStrikes(match, match.strikeB, match.motorBodyB, athleteB, 'away');
+
+  if (!struckA) resolveHeadlessBraceRedirect(match, match.strikeA, slotA, athleteA, match.motorBodyA, 'home');
+  if (!struckB) resolveHeadlessBraceRedirect(match, match.strikeB, slotB, athleteB, match.motorBodyB, 'away');
 
   // ═══ PHYSICS STEP ═══
   match.world.step();
@@ -845,8 +1130,8 @@ export function stepHeadlessMatch(match) {
   // ═══ POST-STEP ═══
   updateGrounded(athleteA, match.motorBodyA);
   updateGrounded(athleteB, match.motorBodyB);
-  updateFacing(athleteA, match.motorBodyA);
-  updateFacing(athleteB, match.motorBodyB);
+  updateFacing(athleteA, match.motorBodyA, slotA);
+  updateFacing(athleteB, match.motorBodyB, slotB);
 
   checkScoring(match);
   checkBallRespawn(match);

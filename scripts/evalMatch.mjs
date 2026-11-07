@@ -34,6 +34,7 @@ function parseArgs(args) {
     matches: 1,
     sport: false,
     ball: 'medium',
+    assist: 'standard',
     aggA: 0.60,
     aggB: 0.60,
   };
@@ -49,6 +50,7 @@ function parseArgs(args) {
       case '--matches': opts.matches = parseInt(val, 10); i++; break;
       case '--sport': opts.sport = true; break;
       case '--ball': opts.ball = val; i++; break;
+      case '--assist': opts.assist = val; i++; break;
       case '--aggA': opts.aggA = parseFloat(val); i++; break;
       case '--aggB': opts.aggB = parseFloat(val); i++; break;
     }
@@ -81,6 +83,7 @@ async function runEval() {
     strikesLanded: 0,
     spikes: 0,
     volleys: 0,
+    kicks: 0,
     sweetSpotHits: 0,
     whiffs: 0,
     onTarget: 0,
@@ -88,6 +91,8 @@ async function runEval() {
     divingHits: 0,
     cuts: 0,
     hoopBlocks: 0,
+    slides: 0,
+    slideTackles: 0,
     oppCircle: 0,
     ownCircle: 0,
     defBlocks: 0,
@@ -100,6 +105,7 @@ async function runEval() {
     strikesLanded: 0,
     spikes: 0,
     volleys: 0,
+    kicks: 0,
     sweetSpotHits: 0,
     whiffs: 0,
     onTarget: 0,
@@ -107,6 +113,8 @@ async function runEval() {
     divingHits: 0,
     cuts: 0,
     hoopBlocks: 0,
+    slides: 0,
+    slideTackles: 0,
     oppCircle: 0,
     ownCircle: 0,
     defBlocks: 0,
@@ -124,6 +132,7 @@ async function runEval() {
       seedA: matchSeed,
       seedB: matchSeed + 1,
       ballType: opts.ball,
+      assistPreset: opts.assist,
       homeDiff: opts.homeDiff,
       awayDiff: opts.awayDiff,
       aggressivenessA: opts.aggA,
@@ -146,9 +155,11 @@ async function runEval() {
       if (hit.side === 'home') {
         if (hit.kind === 'spike') homeTotals.spikes++;
         else if (hit.kind === 'volley') homeTotals.volleys++;
+        else if (hit.kind === 'kick') homeTotals.kicks++;
       } else {
         if (hit.kind === 'spike') awayTotals.spikes++;
         else if (hit.kind === 'volley') awayTotals.volleys++;
+        else if (hit.kind === 'kick') awayTotals.kicks++;
       }
     }
 
@@ -172,6 +183,9 @@ async function runEval() {
     homeTotals.divingHits += resHome.breakdown.divingHits || 0;
     homeTotals.cuts += resHome.breakdown.cutsAttempted || 0;
     homeTotals.hoopBlocks += resHome.breakdown.hoopBlocks || 0;
+    homeTotals.defBlocks += resHome.breakdown.defensiveBlocks || 0;
+    homeTotals.slides += resHome.breakdown.slidesAttempted || 0;
+    homeTotals.slideTackles += resHome.breakdown.slideTackles || 0;
     homeTotals.oppCircle += resHome.breakdown.oppCircleTouches || 0;
     homeTotals.ownCircle += resHome.breakdown.ownCircleTouches || 0;
     homeTotals.fitness += resHome.fitness;
@@ -185,6 +199,9 @@ async function runEval() {
     awayTotals.divingHits += resAway.breakdown.divingHits || 0;
     awayTotals.cuts += resAway.breakdown.cutsAttempted || 0;
     awayTotals.hoopBlocks += resAway.breakdown.hoopBlocks || 0;
+    awayTotals.defBlocks += resAway.breakdown.defensiveBlocks || 0;
+    awayTotals.slides += resAway.breakdown.slidesAttempted || 0;
+    awayTotals.slideTackles += resAway.breakdown.slideTackles || 0;
     awayTotals.oppCircle += resAway.breakdown.oppCircleTouches || 0;
     awayTotals.ownCircle += resAway.breakdown.ownCircleTouches || 0;
     awayTotals.fitness += resAway.fitness;
@@ -227,6 +244,7 @@ async function runEval() {
   console.log(`│ Strikes Landed (Total)              │ ${String(avg(homeTotals.strikesLanded)).padStart(12)} │ ${String(avg(awayTotals.strikesLanded)).padStart(12)} │`);
   console.log(`│   └─ Aerial Spikes                  │ ${String(avg(homeTotals.spikes)).padStart(12)} │ ${String(avg(awayTotals.spikes)).padStart(12)} │`);
   console.log(`│   └─ Volleys                        │ ${String(avg(homeTotals.volleys)).padStart(12)} │ ${String(avg(awayTotals.volleys)).padStart(12)} │`);
+  console.log(`│   └─ Kicks                          │ ${String(avg(homeTotals.kicks)).padStart(12)} │ ${String(avg(awayTotals.kicks)).padStart(12)} │`);
   console.log(`│ Whiffs (Missed Swings)              │ ${String(avg(homeTotals.whiffs)).padStart(12)} │ ${String(avg(awayTotals.whiffs)).padStart(12)} │`);
   const homeAcc = formatPercent(homeTotals.strikesLanded, homeTotals.strikesLanded + homeTotals.whiffs);
   const awayAcc = formatPercent(awayTotals.strikesLanded, awayTotals.strikesLanded + awayTotals.whiffs);
@@ -237,13 +255,16 @@ async function runEval() {
   console.log(`│ Sweet Spot Conversion %             │ ${homeSweetPct.padStart(12)} │ ${awaySweetPct.padStart(12)} │`);
   console.log(`│ On-Target Shots                     │ ${String(avg(homeTotals.onTarget)).padStart(12)} │ ${String(avg(awayTotals.onTarget)).padStart(12)} │`);
   console.log('├─────────────────────────────────────┼──────────────┼──────────────┤');
+  console.log(`│ Defensive Blocks (Brace Redirects)  │ ${String(avg(homeTotals.defBlocks)).padStart(12)} │ ${String(avg(awayTotals.defBlocks)).padStart(12)} │`);
+  console.log(`│ Hoop Aperture Blocks (Rim Swats)    │ ${String(avg(homeTotals.hoopBlocks)).padStart(12)} │ ${String(avg(awayTotals.hoopBlocks)).padStart(12)} │`);
+  console.log(`│ Slides Executed (Surf/Block/Strike) │ ${String(avg(homeTotals.slides)).padStart(12)} │ ${String(avg(awayTotals.slides)).padStart(12)} │`);
+  console.log(`│ Slide Tackles (Knockdowns)          │ ${String(avg(homeTotals.slideTackles)).padStart(12)} │ ${String(avg(awayTotals.slideTackles)).padStart(12)} │`);
+  console.log(`│ Athletic Cuts Executed              │ ${String(avg(homeTotals.cuts)).padStart(12)} │ ${String(avg(awayTotals.cuts)).padStart(12)} │`);
   console.log(`│ Ground Dives Attempted              │ ${String(avg(homeTotals.dives)).padStart(12)} │ ${String(avg(awayTotals.dives)).padStart(12)} │`);
   console.log(`│ Diving Hits (Saves)                 │ ${String(avg(homeTotals.divingHits)).padStart(12)} │ ${String(avg(awayTotals.divingHits)).padStart(12)} │`);
   const homeDiveEff = formatPercent(homeTotals.divingHits, homeTotals.dives);
   const awayDiveEff = formatPercent(awayTotals.divingHits, awayTotals.dives);
   console.log(`│ Diving Save Efficiency %            │ ${homeDiveEff.padStart(12)} │ ${awayDiveEff.padStart(12)} │`);
-  console.log(`│ Athletic Cuts Executed              │ ${String(avg(homeTotals.cuts)).padStart(12)} │ ${String(avg(awayTotals.cuts)).padStart(12)} │`);
-  console.log(`│ Hoop Aperture Blocks (Rim Defense)  │ ${String(avg(homeTotals.hoopBlocks)).padStart(12)} │ ${String(avg(awayTotals.hoopBlocks)).padStart(12)} │`);
   console.log('├─────────────────────────────────────┼──────────────┼──────────────┤');
   console.log(`│ Opp Circle Touches (Attack Threat)  │ ${String(avg(homeTotals.oppCircle)).padStart(12)} │ ${String(avg(awayTotals.oppCircle)).padStart(12)} │`);
   console.log(`│ Own Circle Touches (Defensive Hold) │ ${String(avg(homeTotals.ownCircle)).padStart(12)} │ ${String(avg(awayTotals.ownCircle)).padStart(12)} │`);

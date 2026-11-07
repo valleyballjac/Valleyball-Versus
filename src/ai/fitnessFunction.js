@@ -25,6 +25,8 @@ export function createFitnessAccumulator(side) {
     divesAttempted: 0,
     cutsAttempted: 0,
     hoopBlocks: 0,
+    slidesAttempted: 0,
+    slideTackles: 0,
     oppCircleTouches: 0,
     ownCircleTouches: 0,
     whiffs: 0,
@@ -90,12 +92,6 @@ export function accumulateTick(acc, match) {
     acc.ticksFacingPlay++;
   }
 
-  // Defensive blocking tracking: ball was heading to our goal and was intercepted
-  const ballHeadingToOurGoal = (defendZ < 0) ? (ballVel.z < -3.0) : (ballVel.z > 3.0);
-  if (ballHeadingToOurGoal && distance < 2.5) {
-    acc.defensiveBlocks++;
-  }
-
   // Strike attempts
   if (slot.volleyQueued || slot.spikeQueued) {
     acc.strikeAttempts++;
@@ -116,6 +112,15 @@ export function accumulateTick(acc, match) {
   }
   if (match.ownCircleTouches) {
     acc.ownCircleTouches = match.ownCircleTouches[acc.side] || 0;
+  }
+  if (match.defensiveBlocks) {
+    acc.defensiveBlocks = match.defensiveBlocks[acc.side] || 0;
+  }
+  if (match.slides) {
+    acc.slidesAttempted = match.slides[acc.side] || 0;
+  }
+  if (match.slideTackles) {
+    acc.slideTackles = match.slideTackles[acc.side] || 0;
   }
 
   // Cuts and hoop blocks from bot stats
@@ -214,6 +219,9 @@ export function computeFitness(acc, matchState) {
       divesAttempted: acc.divesAttempted,
       cutsAttempted: acc.cutsAttempted,
       hoopBlocks: acc.hoopBlocks,
+      defensiveBlocks: acc.defensiveBlocks,
+      slidesAttempted: acc.slidesAttempted,
+      slideTackles: acc.slideTackles,
       oppCircleTouches: acc.oppCircleTouches,
       ownCircleTouches: acc.ownCircleTouches,
       whiffs: acc.whiffs,

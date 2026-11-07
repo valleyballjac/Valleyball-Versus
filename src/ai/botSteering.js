@@ -110,23 +110,41 @@ export function steerToward(inputSlot, currentPos, targetPos, options = {}) {
 
     // Target terminal velocity in m/s (sprint: ~6.0 m/s, run: ~4.2 m/s)
     const topMps = sprint ? 6.0 : 4.2;
-    const desiredSpeedMps = speedScale * topMps;
+    let desiredSpeedMps = speedScale * topMps;
+    if (arrive && distance < arriveRadius * 1.6 && minDrive <= 0) {
+        // Kinematic stopping envelope (a_decel ≈ 8.5 m/s^2) so the motor sphere brakes before overshooting
+        const brakeEnvelopeMps = Math.sqrt(2.0 * 8.5 * Math.max(0, distance - 0.12));
+        desiredSpeedMps = Math.min(desiredSpeedMps, brakeEnvelopeMps);
+    }
     _scratchVDesired.copy(scratchDir).multiplyScalar(desiredSpeedMps);
 
-    // ═══ REYNOLDS VELOCITY-SPACE STEERING ═══
+    // ═══ REYNOLDS VELOCITY-SPACE STEERING & KINEMATIC BRAKE ═══
     // F_steer = v_desired - v_current.
-    // When the rolling sphere is sliding sideways or fast in the wrong direction,
-    // apply counter-torque to kill unwanted drift and snap onto the target trajectory.
+    // When the rolling sphere is closing on an arrive target faster than its stopping envelope,
+    // release the stick so the motor's ground brake (brakeTorque / BRAKE_DECEL) engages cleanly!
     if (currentVel) {
         const vx = currentVel.x;
         const vz = currentVel.z;
+        const vToward = vx * dirX + vz * dirZ;
+        const vLatX = vx - vToward * dirX;
+        const vLatZ = vz - vToward * dirZ;
+        const vLat = Math.hypot(vLatX, vLatZ);
+
+        if (arrive && minDrive <= 0 && distance < arriveRadius * 1.4 && vToward > desiredSpeedMps + 0.35 && vLat < 1.15) {
+            inputSlot.moveWorld.set(0, 0, 0);
+            inputSlot.moveX = 0;
+            inputSlot.moveZ = 0;
+            inputSlot.sprintHeld = false;
+            return;
+        }
+
         const currentSpeedSq = vx * vx + vz * vz;
         if (currentSpeedSq > 0.04) {
             const deltaVx = _scratchVDesired.x - vx;
             const deltaVz = _scratchVDesired.z - vz;
 
-            // Blend desired direction with counter-steering damping force (damping gain = 0.40)
-            const kDamp = 0.40;
+            // Blend desired direction with counter-steering damping force (damping gain = 0.45)
+            const kDamp = 0.45;
             _scratchFSteer.set(
                 _scratchVDesired.x + deltaVx * kDamp,
                 0,
@@ -270,39 +288,38 @@ export function steerGoalAlignedApproach(inputSlot, selfPos, selfVel, ballPos, a
 
     // CASE 3: Inside runway corridor behind ball.
     // When far, sprint to close the distance.
-    // When close (within 2.5m), decelerate into the 1.15m stand-off striking pocket
-    // without ramming the ball with rolling sphere momentum!
+    // When close (within 1.8m), step into the real-ragdoll limb-reach pocket
+    // (~0.48m forward hand/foot reach vs 0.16m torso radius) so hands/feet sweep through the ball center!
     const distToBall = Math.hypot(ballPos.x - selfPos.x, ballPos.z - selfPos.z);
-    if (distToBall < 2.5) {
-        // Paced approach: target the hitting pocket 1.15m behind the ball along the shot line
-        // (outside the 0.95m physical contact boundary of athlete sphere + ball)
-        const pocketDist = 1.15;
+    const ballRadius = options.ballRadius ?? 0.50;
+    const pocketDist = options.pocketDist ?? (0.30 + ballRadius * 0.55);
+    if (distToBall < 1.8) {
         _scratchApproachTarget.set(
             ballPos.x - _scratchShotDir.x * pocketDist,
             0,
             ballPos.z - _scratchShotDir.z * pocketDist
         );
         steerToward(inputSlot, selfPos, _scratchApproachTarget, {
-            sprint: false,
+            sprint: distToBall > 1.05,
             arrive: true,
-            arriveRadius: 0.7,
-            maxSpeed: (options.maxSpeed ?? 1.0) * 0.70,
-            minDrive: 0.0,
+            arriveRadius: 0.34,
+            maxSpeed: (options.maxSpeed ?? 1.0) * 0.92,
+            minDrive: distToBall > pocketDist + 0.18 ? 0.55 : 0.0,
             aimYaw,
             currentVel: selfVel,
         });
     } else {
-        // Fast approach: close corridor targeting 1.20m pocket
+        // Fast approach: close corridor targeting anatomical pocket
         _scratchApproachTarget.set(
-            ballPos.x - _scratchShotDir.x * 1.20,
+            ballPos.x - _scratchShotDir.x * (pocketDist + 0.08),
             0,
-            ballPos.z - _scratchShotDir.z * 1.20
+            ballPos.z - _scratchShotDir.z * (pocketDist + 0.08)
         );
         steerToward(inputSlot, selfPos, _scratchApproachTarget, {
             sprint: options.sprint ?? true,
             arrive: false,
             maxSpeed: options.maxSpeed ?? 1.0,
-            minDrive: 0.85,
+            minDrive: 0.88,
             currentVel: selfVel,
         });
     }

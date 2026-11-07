@@ -159,6 +159,7 @@ export function createPerception() {
             nextBouncePos: new THREE.Vector3(),
             hasBounce: false,
             ticksToNextBounce: 0,
+            canReachBeforeBounceSelf: true,
         },
         threat: 0,
         opportunity: 0
@@ -178,6 +179,36 @@ export function projectBallPosition(ballPos, ballVel, ticks, gravityY, outVec = 
     outVec.y += ballVel.y * time + 0.5 * gravityY * time * time;
     outVec.z += ballVel.z * time;
     return outVec;
+}
+
+/**
+ * Zero-allocation interpolation of the terrain-bounced trajectory buffer at an exact tick horizon.
+ */
+export function sampleTrajectoryAtTick(trajectory, tickOffset, outPos = _vec1, outVel = null) {
+    const samples = trajectory?.samples;
+    if (!samples || samples.length === 0) {
+        outPos.set(0, 0, 0);
+        if (outVel) outVel.set(0, 0, 0);
+        return outPos;
+    }
+    const clampedTicks = Math.max(0, Math.min((TRAJECTORY_SAMPLES_COUNT - 1) * TRAJECTORY_STEP_TICKS, tickOffset));
+    const exactIdx = clampedTicks / TRAJECTORY_STEP_TICKS;
+    const idx0 = Math.floor(exactIdx);
+    const idx1 = Math.min(TRAJECTORY_SAMPLES_COUNT - 1, idx0 + 1);
+    const alpha = exactIdx - idx0;
+
+    const s0 = samples[idx0];
+    const s1 = samples[idx1];
+    outPos.x = s0.pos.x + (s1.pos.x - s0.pos.x) * alpha;
+    outPos.y = s0.pos.y + (s1.pos.y - s0.pos.y) * alpha;
+    outPos.z = s0.pos.z + (s1.pos.z - s0.pos.z) * alpha;
+
+    if (outVel) {
+        outVel.x = s0.vel.x + (s1.vel.x - s0.vel.x) * alpha;
+        outVel.y = s0.vel.y + (s1.vel.y - s0.vel.y) * alpha;
+        outVel.z = s0.vel.z + (s1.vel.z - s0.vel.z) * alpha;
+    }
+    return outPos;
 }
 
 const _simPos = new THREE.Vector3();
@@ -335,10 +366,18 @@ export function evaluateOpponentContest(selfPos, selfVel, oppPos, oppVel, defend
         const sampleRelY = sample.pos.y - sampleFloorY;
         const isReachableHeight = sampleRelY >= 0.1 && sampleRelY <= 3.4;
 
-        // Self reachability
+        // Self reachability (account for strike control pocket radius ~0.65m and velocity toward node)
         if (isReachableHeight && earliestSelfTick === Infinity) {
-            const distSelf = Math.hypot(sample.pos.x - selfPos.x, sample.pos.z - selfPos.z);
-            const timeToReachSelf = 0.12 + distSelf / selfSpeed;
+            const dxSelf = sample.pos.x - selfPos.x;
+            const dzSelf = sample.pos.z - selfPos.z;
+            const distSelf = Math.hypot(dxSelf, dzSelf);
+            const effDistSelf = Math.max(0, distSelf - 0.65);
+            const vTowardSelf = (selfVel && distSelf > 0.05)
+                ? (dxSelf * selfVel.x + dzSelf * selfVel.z) / distSelf
+                : 0;
+            const effSpeedSelf = Math.max(2.6, Math.min(5.6, selfSpeed + vTowardSelf * 0.25));
+            const reactSelf = effDistSelf <= 0.15 ? 0.0 : Math.min(0.06, effDistSelf * 0.04);
+            const timeToReachSelf = reactSelf + effDistSelf / effSpeedSelf;
             if (timeToReachSelf <= t) {
                 earliestSelfTick = sample.tick;
                 selfNodeIdx = i;
@@ -347,8 +386,16 @@ export function evaluateOpponentContest(selfPos, selfVel, oppPos, oppVel, defend
 
         // Opponent reachability
         if (hasOpponent && isReachableHeight && earliestOppTick === Infinity) {
-            const distOpp = Math.hypot(sample.pos.x - oppPos.x, sample.pos.z - oppPos.z);
-            const timeToReachOpp = 0.12 + distOpp / oppSpeed;
+            const dxOpp = sample.pos.x - oppPos.x;
+            const dzOpp = sample.pos.z - oppPos.z;
+            const distOpp = Math.hypot(dxOpp, dzOpp);
+            const effDistOpp = Math.max(0, distOpp - 0.65);
+            const vTowardOpp = (oppVel && distOpp > 0.05)
+                ? (dxOpp * oppVel.x + dzOpp * oppVel.z) / distOpp
+                : 0;
+            const effSpeedOpp = Math.max(2.6, Math.min(5.6, oppSpeed + vTowardOpp * 0.25));
+            const reactOpp = effDistOpp <= 0.15 ? 0.0 : Math.min(0.06, effDistOpp * 0.04);
+            const timeToReachOpp = reactOpp + effDistOpp / effSpeedOpp;
             if (timeToReachOpp <= t) {
                 earliestOppTick = sample.tick;
                 oppNodeIdx = i;
@@ -371,6 +418,7 @@ export function evaluateOpponentContest(selfPos, selfVel, oppPos, oppVel, defend
 
     trajectory.earliestInterceptTickSelf = earliestSelfTick;
     trajectory.earliestInterceptPosSelf.copy(trajectory.samples[selfNodeIdx].pos);
+    trajectory.canReachBeforeBounceSelf = !trajectory.hasBounce || (earliestSelfTick <= trajectory.ticksToNextBounce + 3);
 
     trajectory.earliestInterceptTickOpp = earliestOppTick;
     trajectory.earliestInterceptPosOpp.copy(trajectory.samples[oppNodeIdx].pos);
@@ -634,8 +682,13 @@ export function buildPerception(ownAthlete, opponentAthlete, activeBalls, matchS
         const signZ = isAttackNorth ? -1 : 1; // positive direction towards attack goal
         const signedDist = signZ * (ballZ - selfZ);
         perception.goalSide.signedDistBehindBall = signedDist;
-        const isLateral = Math.abs(selfX - ballX) >= 0.9;
-        perception.goalSide.isGoalSide = signedDist >= -0.4 || isLateral;
+        const distBallToAttackZ = Math.abs(ballZ - perception.hoops.attackGoalPos.z);
+        const isFlankCrossSide = distBallToAttackZ <= 15.0 &&
+            Math.abs(ballX) >= 3.5 &&
+            Math.abs(selfX) >= Math.abs(ballX) - 0.35 &&
+            (selfX * ballX) > 0 &&
+            signedDist >= -2.4;
+        perception.goalSide.isGoalSide = signedDist >= -0.25 || isFlankCrossSide;
 
         // Facing vs Defending Goal Angle Check
         const yawToDefend = Math.atan2(toDefX, toDefZ);
