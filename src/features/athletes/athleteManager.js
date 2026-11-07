@@ -1,5 +1,61 @@
 import { TUNING } from '../../config/tuning.js';
 import { createAthlete } from '../../sim/athlete.js';
+import { resetStrikeState } from '../../mechanics/strikes.js';
+
+/**
+ * Computes stream-head spawn positions, athlete facing yaws, and camera azimuths
+ * so every athlete spawns on the stream head OPPOSITE their active target goal,
+ * facing inward toward the valley court and their target goal.
+ */
+export function computeStreamHeadSpawns({
+  configs = [],
+  athleteCount = 2,
+  targetGoal = 'N',
+  streamHeads = TUNING.match?.streamHeads,
+  randomFn = Math.random,
+} = {}) {
+  const heads = streamHeads || {
+    sw: { x: -12.78, y: 8.24, z: 39.96 },
+    se: { x: 12.78, y: 8.24, z: 39.96 },
+    nw: { x: -12.78, y: 8.24, z: -39.96 },
+    ne: { x: 12.78, y: 8.24, z: -39.96 },
+  };
+  // Preserve exact PRNG draw order (south draw first, north draw second) for deterministic ?fixture= runs
+  const southPrimaryWest = randomFn() < 0.5;
+  const northPrimaryWest = randomFn() < 0.5;
+  const southOrder = southPrimaryWest ? [heads.sw, heads.se] : [heads.se, heads.sw];
+  const northOrder = northPrimaryWest ? [heads.nw, heads.ne] : [heads.ne, heads.nw];
+  let southUsed = 0;
+  let northUsed = 0;
+
+  const spawns = [];
+  for (let i = 0; i < athleteCount; i++) {
+    const team = configs?.[i]?.team || (i % 2 === 0 ? 'home' : 'away');
+    const attacksNorth = team === 'home' ? targetGoal === 'N' : targetGoal === 'S';
+    if (attacksNorth) {
+      const head = southOrder[southUsed % southOrder.length];
+      southUsed += 1;
+      spawns.push({
+        pos: { x: head.x, y: head.y + 0.1, z: head.z },
+        facingYaw: Math.PI,
+        cameraAzimuth: 0,
+        targetGoal: 'N',
+        side: 'south',
+      });
+    } else {
+      const head = northOrder[northUsed % northOrder.length];
+      northUsed += 1;
+      spawns.push({
+        pos: { x: head.x, y: head.y + 0.1, z: head.z },
+        facingYaw: 0,
+        cameraAzimuth: Math.PI,
+        targetGoal: 'S',
+        side: 'north',
+      });
+    }
+  }
+  return spawns;
+}
 
 /**
  * Manages the collection of active athletes, team assignments,
@@ -119,32 +175,27 @@ class AthleteManager {
   }
 
   /**
-   * Teleports athletes to designated stream head spawns for match kickoff.
+   * Teleports athletes to designated stream head spawns opposite their target goal.
    * Follows Rulebook Section 3.2.
    *
    * @param {'match' | 'practice'} mode
+   * @param {string} targetGoal 'N' | 'S'
+   * @param {function} randomFn
    */
-  teleportToMatchSpawns(mode = 'match') {
-    const heads = TUNING.match?.streamHeads || {
-      sw: { x: -8.0, y: 0.0, z: -25.0 },
-      se: { x: 8.0, y: 0.0, z: -25.0 },
-      nw: { x: -8.0, y: 0.0, z: 25.0 },
-      ne: { x: 8.0, y: 0.0, z: 25.0 },
-    };
-
-    if (this.activeCount >= 4) {
-      // 2v2 Match: SW & SE for Home (yaw 0), NW & NE for Away (yaw Math.PI)
-      if (this.athletes[0]) this.athletes[0].teleportTo({ x: heads.sw.x, y: heads.sw.y + 7.5, z: heads.sw.z }, 0);
-      if (this.athletes[1]) this.athletes[1].teleportTo({ x: heads.se.x, y: heads.se.y + 7.5, z: heads.se.z }, 0);
-      if (this.athletes[2]) this.athletes[2].teleportTo({ x: heads.nw.x, y: heads.nw.y + 7.5, z: heads.nw.z }, Math.PI);
-      if (this.athletes[3]) this.athletes[3].teleportTo({ x: heads.ne.x, y: heads.ne.y + 7.5, z: heads.ne.z }, Math.PI);
-    } else {
-      // 1v1 Match: SW for Home, NE for Away
-      const p1Head = heads.sw;
-      const p2Head = heads.ne;
-      if (this.athletes[0]) this.athletes[0].teleportTo({ x: p1Head.x, y: p1Head.y + 7.5, z: p1Head.z }, 0);
-      if (this.athletes[1]) this.athletes[1].teleportTo({ x: p2Head.x, y: p2Head.y + 7.5, z: p2Head.z }, Math.PI);
+  teleportToMatchSpawns(mode = 'match', targetGoal = 'N', randomFn = () => 0) {
+    const configs = this.athletes.map((a) => ({ team: a?.team }));
+    const spawns = computeStreamHeadSpawns({
+      configs,
+      athleteCount: Math.min(this.activeCount, this.athletes.length),
+      targetGoal,
+      randomFn,
+    });
+    for (let i = 0; i < spawns.length; i++) {
+      if (this.athletes[i]) {
+        this.athletes[i].teleportTo(spawns[i].pos, spawns[i].facingYaw);
+      }
     }
+    return spawns;
   }
 
   /**
@@ -163,48 +214,51 @@ class AthleteManager {
 
   /**
    * Stages athletes grounded at floor level on court for lobby preview.
+   * Each character starts at a stratified random frame of the idle loop so
+   * multiple preview athletes never sway in lockstep.
    *
    * @param {'practice' | 'match' | 'match2v2'} mode
    */
   stageForLobby(mode = 'match') {
+    const randIdlePhase = (slot, total) => ((slot + 0.15 + Math.random() * 0.70) / total) % 1;
     if (mode === 'practice') {
       this.ensureRoster(1);
       if (this.athletes[0]) {
         this.athletes[0].setEnabled(true);
-        this.athletes[0].teleportTo({ x: 1.45, y: 0.50, z: 0.2 }, -Math.PI * 0.35);
+        this.athletes[0].teleportTo({ x: 0.45, y: 0.50, z: 0.35 }, -Math.PI * 0.18, Math.random());
       }
       for (let i = 1; i < this.athletes.length; i++) {
         this.athletes[i].setEnabled(false);
       }
     } else if (mode === 'match2v2') {
       this.ensureRoster(4);
-      // 2 Home athletes on Left (-X), 2 Away athletes on Right (+X)
+      // Staged in the open center preview window: Team 1 (0, 2) on Left-Center, Team 2 (1, 3) on Right-Center
       if (this.athletes[0]) {
         this.athletes[0].setEnabled(true);
-        this.athletes[0].teleportTo({ x: -4.2, y: 0.50, z: -1.2 }, Math.PI * 0.35);
-      }
-      if (this.athletes[1]) {
-        this.athletes[1].setEnabled(true);
-        this.athletes[1].teleportTo({ x: -2.8, y: 0.50, z: 1.2 }, Math.PI * 0.45);
+        this.athletes[0].teleportTo({ x: -0.84, y: 0.50, z: 0.20 }, Math.PI * 0.20, randIdlePhase(0, 4));
       }
       if (this.athletes[2]) {
         this.athletes[2].setEnabled(true);
-        this.athletes[2].teleportTo({ x: 4.2, y: 0.50, z: -1.2 }, -Math.PI * 0.35);
-      }
-      if (this.athletes[3]) {
-        this.athletes[3].setEnabled(true);
-        this.athletes[3].teleportTo({ x: 2.8, y: 0.50, z: 1.2 }, -Math.PI * 0.45);
-      }
-    } else {
-      // Standard 1v1 match setup
-      this.ensureRoster(2);
-      if (this.athletes[0]) {
-        this.athletes[0].setEnabled(true);
-        this.athletes[0].teleportTo({ x: -3.2, y: 0.50, z: 0.0 }, Math.PI * 0.40);
+        this.athletes[2].teleportTo({ x: -0.30, y: 0.50, z: -0.48 }, Math.PI * 0.16, randIdlePhase(1, 4));
       }
       if (this.athletes[1]) {
         this.athletes[1].setEnabled(true);
-        this.athletes[1].teleportTo({ x: 3.2, y: 0.50, z: 0.0 }, -Math.PI * 0.40);
+        this.athletes[1].teleportTo({ x: 0.30, y: 0.50, z: -0.48 }, -Math.PI * 0.16, randIdlePhase(2, 4));
+      }
+      if (this.athletes[3]) {
+        this.athletes[3].setEnabled(true);
+        this.athletes[3].teleportTo({ x: 0.84, y: 0.50, z: 0.20 }, -Math.PI * 0.20, randIdlePhase(3, 4));
+      }
+    } else {
+      // Standard 1v1 match setup framed inside the open center preview window
+      this.ensureRoster(2);
+      if (this.athletes[0]) {
+        this.athletes[0].setEnabled(true);
+        this.athletes[0].teleportTo({ x: -0.95, y: 0.50, z: 0.15 }, Math.PI * 0.22, randIdlePhase(0, 2));
+      }
+      if (this.athletes[1]) {
+        this.athletes[1].setEnabled(true);
+        this.athletes[1].teleportTo({ x: 0.95, y: 0.50, z: 0.15 }, -Math.PI * 0.22, randIdlePhase(1, 2));
       }
       for (let i = 2; i < this.athletes.length; i++) {
         this.athletes[i].setEnabled(false);
@@ -216,17 +270,18 @@ class AthleteManager {
    * Resets all athletes to default Title ambient positions.
    */
   stageForTitle() {
+    const randIdlePhase = (slot, total) => ((slot + 0.15 + Math.random() * 0.70) / total) % 1;
     const heads = TUNING.match?.streamHeads || {
       sw: { x: -8.0, y: 0.0, z: -25.0 },
       ne: { x: 8.0, y: 0.0, z: 25.0 },
     };
     if (this.athletes[0]) {
       this.athletes[0].setEnabled(true);
-      this.athletes[0].teleportTo(heads.sw, 0);
+      this.athletes[0].teleportTo(heads.sw, 0, randIdlePhase(0, 2));
     }
     if (this.athletes[1]) {
       this.athletes[1].setEnabled(true);
-      this.athletes[1].teleportTo(heads.ne, Math.PI);
+      this.athletes[1].teleportTo(heads.ne, Math.PI, randIdlePhase(1, 2));
     }
     for (let i = 2; i < this.athletes.length; i++) {
       this.athletes[i].setEnabled(false);
@@ -284,13 +339,31 @@ class AthleteManager {
   }
 
   /**
-   * Resets strike and whiff stats for all athletes.
+   * Resets strike, action, and knockdown state for all athletes on kickoff/rematch.
    */
   resetStats() {
     for (const a of this.athletes) {
       if (a.strikeState) {
+        resetStrikeState(a.strikeState);
         a.strikeState.resolvedCount = 0;
         a.strikeState.whiffCount = 0;
+      }
+      if (a.actionState) {
+        a.actionState.slideTime = 0;
+        a.actionState.divePending = false;
+        a.actionState.diveStunUntil = -Infinity;
+        a.actionState.cleatAnchorUntil = -Infinity;
+        a.actionState.braceMix = 0;
+      }
+      if (a.tracker) {
+        a.tracker.weight = TUNING.tracking.startWeight;
+        a.tracker.knockdownQueued = false;
+        a.tracker.knockdownTone = 0;
+        a.tracker.muscleTone = 0;
+        a.tracker.offMount = 0;
+      }
+      if (a.impactEvents) {
+        a.impactEvents.length = 0;
       }
     }
   }

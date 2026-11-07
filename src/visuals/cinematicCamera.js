@@ -39,6 +39,10 @@ export class CinematicCamera {
     this.mode = 'setup';
     this.elapsedTime = 0;
     this.isComplete = false;
+    this._pos.set(0, 1.45, 5.6);
+    this._target.set(0, 1.15, 0);
+    this.camera.position.copy(this._pos);
+    this.camera.lookAt(this._target);
   }
 
   startKickoffRitual(duration = 4.0) {
@@ -94,10 +98,10 @@ export class CinematicCamera {
       this.camera.lookAt(this._target);
 
     } else if (this.mode === 'setup') {
-      // 'setup' — Wide staging framing both athletes on court at center circle flanking the menu
-      const breatheX = Math.sin(this.elapsedTime * 0.4) * 0.1;
-      const breatheY = Math.cos(this.elapsedTime * 0.6) * 0.04;
-      this._pos.set(breatheX, 1.35 + breatheY, 5.2);
+      // 'setup' — Center stage framing all staged athletes inside the open 3D preview window
+      const breatheX = Math.sin(this.elapsedTime * 0.4) * 0.08;
+      const breatheY = Math.cos(this.elapsedTime * 0.6) * 0.03;
+      this._pos.set(breatheX, 1.45 + breatheY, 5.6);
       this._target.set(0, 1.15, 0);
 
       this.camera.position.lerp(this._pos, 1 - Math.exp(-6.0 * delta));

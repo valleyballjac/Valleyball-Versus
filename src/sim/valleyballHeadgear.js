@@ -1092,6 +1092,7 @@ function toColors(palette) {
 
 function finish(group, itemId, palette, options) {
   group.userData.headgearId = itemId;
+  group.userData.athleteId = options.athleteId || null;
   group.userData.palette = { ...palette };
   const cast = options.castShadow !== false;
   group.traverse((o) => { if (o.isMesh && o.name !== 'league-mark' && !o.name.startsWith('mark-')) o.castShadow = cast; });

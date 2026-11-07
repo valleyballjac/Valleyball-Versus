@@ -48,7 +48,7 @@ Athletes spawn 7.5 m above the stream heads in `TUNING.match.streamHeads`:
 * **Home Team (South Half, +Z)**: `sw (-12.78, 8.24, 39.96)` and `se (12.78, 8.24, 39.96)`, facing North ($\text{yaw} = 0$)
 * **Away Team (North Half, -Z)**: `nw (-12.78, 8.24, -39.96)` and `ne (12.78, 8.24, -39.96)`, facing South ($\text{yaw} = \pi$)
 * **1v1**: each athlete takes a random head on its own side.
-* **2v2 (v0.4, not built yet)**: P1 and P3 take both South heads; P2 and P4 take both North heads.
+* **2v2 (v0.4.0)**: P1 and P3 take both South heads; P2 and P4 take both North heads.
 
 ### Ball Stream Drop Spawns
 Rather than spawning flat on the floor, balls are dropped from the elevated stream heads or high-elevation center drops:

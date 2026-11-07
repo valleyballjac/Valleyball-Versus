@@ -17,6 +17,7 @@ import {
   recolorHeadgear as recolorFromBuilders,
   resolveHeadwearPalette as resolveFromBuilders,
 } from '../src/sim/cosmeticsBuilders.js';
+import { setAthleteHeadwear, updateAthletePalette } from '../src/sim/ragdoll.js';
 
 test('re-exports from cosmeticsBuilders.js', () => {
   assert.equal(typeof resolveFromBuilders, 'function');
@@ -234,4 +235,50 @@ test('buildHeadwear passes dynamic options through makeRosterBuilder', () => {
   assert.equal(piece.userData.palette.secondary, 0xffffff); // away
   assert.equal(piece.userData.palette.neutral, 0xd0d5dd);
   assert.equal(piece.userData.palette.accent, 0x0f172a); // away trim
+});
+
+test('updateAthletePalette preserves Gridiron Horns chalk-white helmet shell instead of overwriting with team base color', () => {
+  const headSolid = new THREE.Group();
+  const headwearSlot = new THREE.Group();
+  headwearSlot.name = 'headwearSlot';
+  headSolid.add(headwearSlot);
+
+  const state = {
+    team: 'home',
+    variant: 'masculine',
+    primaryColor: 0xd90429,
+    rig: new Map([
+      ['head', { key: 'head', radius: 0.125, solidMesh: headSolid, headwearSlot }],
+    ]),
+  };
+
+  const piece = setAthleteHeadwear(state, 'wrestler_bands', {
+    team: 'home',
+    primaryColor: 0xd90429,
+  });
+  assert.ok(piece, 'Gridiron Horns mounted');
+
+  // Trigger updateAthletePalette (called by setTeamAndVariant / refreshVisuals in menus)
+  updateAthletePalette(state, {
+    team: 'home',
+    variant: 'masculine',
+    primaryColor: 0xd90429,
+  });
+
+  const accentHexes = [];
+  const primaryHexes = [];
+  piece.traverse((o) => {
+    if (!o.isMesh || !o.material?.userData?.colorRole) return;
+    if (o.material.userData.colorRole === 'accent') accentHexes.push(o.material.color.getHex());
+    if (o.material.userData.colorRole === 'primary') primaryHexes.push(o.material.color.getHex());
+  });
+
+  assert.ok(accentHexes.length > 0, 'Gridiron Horns has accent-role shell/face-guard meshes');
+  assert.ok(primaryHexes.length > 0, 'Gridiron Horns has primary-role horns/stripes meshes');
+  for (const hex of accentHexes) {
+    assert.equal(hex, 0xf1f5f9, `Gridiron Horns shell/face-guard must stay chalk white (0xf1f5f9), got 0x${hex.toString(16)}`);
+  }
+  for (const hex of primaryHexes) {
+    assert.equal(hex, 0xd90429, `Gridiron Horns horns/stripes must match team primary (0xd90429), got 0x${hex.toString(16)}`);
+  }
 });

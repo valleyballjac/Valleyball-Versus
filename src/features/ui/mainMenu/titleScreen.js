@@ -1,7 +1,5 @@
 import { createBrandBall } from '../../../visuals/brandBall.js';
 import { state } from './state.js';
-import { showToast } from './toast.js';
-import { soundManager } from '../../../audio/soundManager.js';
 
 /**
  * Main Menu Title Screen
@@ -13,43 +11,46 @@ export function buildTitleScreen(rootEl, navActions = {}) {
     position: absolute;
     inset: 0;
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
+    align-items: center;
     justify-content: space-between;
-    padding: 48px 64px;
-    background: radial-gradient(circle at 35% 45%, rgba(6, 10, 16, 0.2) 0%, rgba(4, 7, 12, 0.85) 100%);
+    padding: clamp(32px, 5vh, 56px) clamp(44px, 5.5vw, 84px);
+    box-sizing: border-box;
+    background: radial-gradient(circle at 50% 45%, rgba(6, 10, 16, 0.18) 0%, rgba(4, 7, 12, 0.85) 100%);
     pointer-events: auto;
     transition: opacity 0.3s ease;
   `;
 
-  // Top Header (Brand Lockup: 3D Globe Ball + Rainbow VALLEYBALL + Outlined VERSUS)
+  // Left Brand Lockup: 3D Globe Ball + Rainbow VALLEYBALL + Outlined VERSUS v0.4.0
   const header = document.createElement('div');
   header.style.cssText = `
-    margin-top: 8px;
     display: flex;
     flex-direction: column;
     align-items: center;
+    justify-content: center;
     width: fit-content;
     user-select: none;
+    padding: 24px 16px;
   `;
 
   // 3D Spinning Globe Ball
   const ballContainer = document.createElement('div');
   ballContainer.id = 'title-brand-ball-container';
   ballContainer.style.cssText = `
-    width: 140px;
-    height: 140px;
+    width: 176px;
+    height: 176px;
     display: flex;
     align-items: center;
     justify-content: center;
-    margin-bottom: 2px;
+    margin-bottom: 12px;
     position: relative;
   `;
-  state.titleBrandBall = createBrandBall(ballContainer, { size: 140, speed: 0.35, tilt: 0.25 });
+  state.titleBrandBall = createBrandBall(ballContainer, { size: 176, speed: 0.35, tilt: 0.25 });
 
   const title = document.createElement('h1');
   title.textContent = 'VALLEYBALL';
   title.style.cssText = `
-    font-size: 52px;
+    font-size: clamp(46px, 4.2vw, 62px);
     font-weight: 900;
     letter-spacing: 0.14em;
     margin: 0;
@@ -66,7 +67,7 @@ export function buildTitleScreen(rootEl, navActions = {}) {
     display: flex;
     align-items: center;
     gap: 12px;
-    margin-top: 6px;
+    margin-top: 10px;
   `;
 
   const tag = document.createElement('div');
@@ -84,7 +85,7 @@ export function buildTitleScreen(rootEl, navActions = {}) {
   `;
 
   const versionBadge = document.createElement('div');
-  versionBadge.textContent = 'v0.3.7';
+  versionBadge.textContent = 'v0.4.0';
   versionBadge.style.cssText = `
     font-size: 11px;
     font-weight: 800;
@@ -104,9 +105,16 @@ export function buildTitleScreen(rootEl, navActions = {}) {
   header.appendChild(title);
   header.appendChild(tagRow);
 
-  // Menu Options (Bottom Left)
+  // Menu Options (Right Side, Balanced & Symmetrical)
   const menuList = document.createElement('div');
-  menuList.style.cssText = 'display: flex; flex-direction: column; gap: 14px; width: 360px; margin-bottom: 24px;';
+  menuList.style.cssText = `
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: stretch;
+    gap: 12px;
+    width: clamp(340px, 28vw, 385px);
+  `;
 
   const btnPractice = createMenuButton('PRACTICE SANDBOX', 'rgba(255, 255, 255, 0.12)', () => {
     navActions.onPractice?.();
@@ -129,17 +137,14 @@ export function buildTitleScreen(rootEl, navActions = {}) {
     }
   };
 
-  // 2v2 Versus Item (Locked Preview: Coming In V0.4.0!)
-  const btnMatch2v2 = createMenuButton('PLAY MATCH (2v2 VERSUS)', 'rgba(245, 158, 11, 0.06)', () => {
-    showToast('2v2 Versus is currently in development. Coming in v0.4.0!', 'warning', 3500);
-    soundManager?.playTone?.(480, 0.08, 'sine', 0.16);
+  // 2v2 Versus Item (4 Athletes)
+  const btnMatch2v2 = createMenuButton('PLAY MATCH (2v2 VERSUS)', 'rgba(0, 229, 255, 0.14)', () => {
+    navActions.onPlayMatch2v2?.();
   });
   btnMatch2v2.id = 'btn-play-match-2v2';
-  btnMatch2v2.style.opacity = '0.65';
-  btnMatch2v2.style.cursor = 'not-allowed';
   btnMatch2v2.innerHTML = `
-    <span style="display:flex;align-items:center;gap:8px;">🔒 PLAY MATCH (2v2 VERSUS)</span>
-    <span class="contextual-btn-badge" style="background:#f59e0b;color:#000;border:none;font-weight:900;">COMING IN V0.4.0!</span>
+    <span style="display:flex;align-items:center;gap:8px;">PLAY MATCH (2v2 VERSUS)</span>
+    <span class="contextual-btn-badge" style="background:rgba(0,229,255,0.2);color:#00e5ff;border:1px solid rgba(0,229,255,0.5);font-weight:900;">4 ATHLETES</span>
   `;
 
   const btnSettings = createMenuButton('SETTINGS', 'rgba(255, 255, 255, 0.08)', () => {
@@ -188,7 +193,7 @@ export function buildTitleScreen(rootEl, navActions = {}) {
     btnValleyballVS,
     btnValleyballOrg,
   ];
-  state.titleFocusIndex = 0;
+  state.titleFocusIndex = 1;
   state.titleButtons.forEach((btn, idx) => {
     btn.onmouseenter = () => {
       state.titleFocusIndex = idx;
@@ -196,6 +201,35 @@ export function buildTitleScreen(rootEl, navActions = {}) {
     };
   });
   updateTitleFocusUI();
+
+  const promptBar = document.createElement('div');
+  promptBar.id = 'title-controller-prompt';
+  promptBar.style.cssText = `
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 8px 14px;
+    margin-top: 4px;
+    background: rgba(11, 17, 26, 0.78);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 8px;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    color: #cbd5e1;
+    width: 100%;
+    box-sizing: border-box;
+    user-select: none;
+  `;
+  promptBar.innerHTML = `
+    <span>🎮 ANY CONTROLLER</span>
+    <span style="color:#475569;">&middot;</span>
+    <span><b style="color:#ffffff;">↕</b> NAVIGATE</span>
+    <span style="color:#475569;">&middot;</span>
+    <span><b style="color:#00e5ff;">A / START / ENTER</b> SELECT</span>
+  `;
+  menuList.appendChild(promptBar);
 
   titleScreenEl.appendChild(header);
   titleScreenEl.appendChild(menuList);
@@ -211,7 +245,7 @@ export function updateTitleFocusUI() {
     const isPlayMatch = btn.id === 'btn-play-match';
     if (idx === state.titleFocusIndex) {
       btn.classList.add('rainbow-focused');
-      btn.style.transform = 'translateX(12px) scale(1.025)';
+      btn.style.transform = 'translateX(-10px) scale(1.02)';
       try { btn.focus(); } catch (_) {}
     } else {
       btn.classList.remove('rainbow-focused');
@@ -227,8 +261,8 @@ export function createMenuButton(text, bg, onClick) {
   const btn = document.createElement('button');
   btn.textContent = text;
   btn.style.cssText = `
-    padding: 16px 24px;
-    font-size: 15px;
+    padding: 15px 22px;
+    font-size: 14px;
     font-weight: 800;
     font-family: inherit;
     letter-spacing: 0.1em;
@@ -242,7 +276,7 @@ export function createMenuButton(text, bg, onClick) {
     transition: all 0.15s ease;
   `;
   btn.onmouseenter = () => {
-    btn.style.transform = 'translateX(8px)';
+    btn.style.transform = 'translateX(-8px)';
     btn.style.borderColor = '#ffffff';
     btn.style.boxShadow = '0 6px 20px rgba(255, 255, 255, 0.2)';
   };

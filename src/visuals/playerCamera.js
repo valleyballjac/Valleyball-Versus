@@ -99,6 +99,10 @@ export class PlayerCamera {
     this._smoothedBallLookTarget = new THREE.Vector3();
     this._ballLookInit = false;
 
+    // Tactical look-at smoother
+    this._smoothedTacticalLookTarget = new THREE.Vector3();
+    this._tacticalLookInit = false;
+
     // Callback invoked when camera mode changes: (newMode, prevMode, playerIndex)
     this.onModeChange = null;
   }
@@ -110,6 +114,12 @@ export class PlayerCamera {
     this._smoothedTargetInit = false;
     this._broadcastLookInit = false;
     this._ballLookInit = false;
+    this._tacticalLookInit = false;
+    if (this.mode === 'firstPerson') {
+      this.pitch = 0.06;
+    } else if (this.pitch < 0.12) {
+      this.pitch = 0.35;
+    }
     resetSportsCamera();
   }
 
@@ -243,6 +253,11 @@ export class PlayerCamera {
     if (modes.includes(newMode)) {
       const prevMode = this.mode;
       this.mode = newMode;
+      if (newMode === 'firstPerson' && prevMode !== 'firstPerson') {
+        this.pitch = 0.06;
+      } else if (prevMode === 'firstPerson' && newMode !== 'firstPerson') {
+        this.pitch = 0.35;
+      }
       if (newMode === 'firstPerson' || newMode === 'chase' || newMode === 'thirdPerson' || newMode === 'ball') {
         this._lastPlayerMode = newMode;
       }
@@ -391,9 +406,9 @@ export class PlayerCamera {
       }
 
       const cosP = Math.cos(this.pitch);
-      const fwdX = Math.sin(this.azimuth) * cosP;
+      const fwdX = -Math.sin(this.azimuth) * cosP;
       const fwdY = -Math.sin(this.pitch);
-      const fwdZ = Math.cos(this.azimuth) * cosP;
+      const fwdZ = -Math.cos(this.azimuth) * cosP;
 
       const fOffset = fp.forwardOffset ?? 0.12;
       this.camera.position.set(
@@ -434,10 +449,14 @@ export class PlayerCamera {
       const clampedZ = Math.min(tv.maxZ, Math.max(tv.minZ, leadZ + this.manualPitchOffset));
 
       this._desiredPos.set(tv.sideX, tv.heightY, clampedZ);
-      this.camera.position.lerp(
-        this._desiredPos,
-        1 - Math.exp(-tv.smoothEase * frameDelta),
-      );
+      if (!this._broadcastLookInit) {
+        this.camera.position.copy(this._desiredPos);
+      } else {
+        this.camera.position.lerp(
+          this._desiredPos,
+          1 - Math.exp(-tv.smoothEase * frameDelta),
+        );
+      }
 
       this._target.copy(focusTarget);
       if (ballPos) {
@@ -472,22 +491,41 @@ export class PlayerCamera {
       const lookX = inputSlot ? inputSlot.lookX : 0;
       const lookY = inputSlot ? inputSlot.lookY : 0;
       const mouse = mouseDeltas;
-      this.manualAzimuthOffset -= (lookX * tuning.orbitSpeed * frameDelta + mouse.dx / tuning.mousePixelsPerRadian) * 4.0;
-      this.manualPitchOffset += (lookY * tuning.orbitSpeed * frameDelta + mouse.dy / tuning.mousePixelsPerRadian) * 4.0;
+      this.manualAzimuthOffset += (lookX * tuning.orbitSpeed * frameDelta + mouse.dx / tuning.mousePixelsPerRadian) * 4.0;
+      this.manualPitchOffset -= (lookY * tuning.orbitSpeed * frameDelta + mouse.dy / tuning.mousePixelsPerRadian) * 4.0;
       this.manualAzimuthOffset *= Math.exp(-4.0 * frameDelta);
       this.manualPitchOffset *= Math.exp(-4.0 * frameDelta);
 
-      this._desiredPos.set(p.x * 0.4 + this.manualAzimuthOffset, p.y - tuning.targetHeight + top.heightY, p.z + top.distanceZ + this.manualPitchOffset);
-      this.camera.position.lerp(
-        this._desiredPos,
-        1 - Math.exp(-top.smoothEase * frameDelta),
+      const hoopNorthZ = TUNING.match?.hoopNorthZ ?? -40.0;
+      const hoopSouthZ = TUNING.match?.hoopSouthZ ?? 40.0;
+      const goalZ = attackingGoal?.z ?? (this.playerIndex === 0 ? hoopNorthZ : hoopSouthZ);
+      const attackDirZ = goalZ < 0 ? -1 : 1;
+      const screenRightX = -attackDirZ;
+      const backDist = Math.abs(top.distanceZ ?? 16.0);
+      const aheadDist = Math.abs(top.lookAheadZ ?? 8.0);
+      const desiredZ = Math.max(-58, Math.min(58, p.z - attackDirZ * backDist + attackDirZ * this.manualPitchOffset));
+
+      this._desiredPos.set(
+        p.x * 0.4 + screenRightX * this.manualAzimuthOffset,
+        p.y - tuning.targetHeight + top.heightY,
+        desiredZ,
+      );
+      this._target.set(
+        p.x + screenRightX * this.manualAzimuthOffset * 0.5,
+        1.0,
+        p.z + attackDirZ * (aheadDist + this.manualPitchOffset * 0.5),
       );
 
-      this._target.copy(p);
-      this._target.x += this.manualAzimuthOffset * 0.5;
-      this._target.z += top.lookAheadZ + this.manualPitchOffset * 0.5;
-      this._target.y = 1.0;
-      this.camera.lookAt(this._target);
+      if (!this._tacticalLookInit) {
+        this.camera.position.copy(this._desiredPos);
+        this._smoothedTacticalLookTarget.copy(this._target);
+        this._tacticalLookInit = true;
+      } else {
+        const easeAlpha = 1 - Math.exp(-top.smoothEase * frameDelta);
+        this.camera.position.lerp(this._desiredPos, easeAlpha);
+        this._smoothedTacticalLookTarget.lerp(this._target, easeAlpha);
+      }
+      this.camera.lookAt(this._smoothedTacticalLookTarget);
       this._applyCameraEffects(tuning, frameDelta);
       return;
     }

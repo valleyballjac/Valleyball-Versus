@@ -752,7 +752,7 @@ export function resolveStrikeContact(state, ball, rigKey, force, tick, isAssist 
   // ONE IMPULSE PER STRIKE. A two-hand volley reports two contacts on the same
   // tick and a spike often reports hand and forearm together; without this the
   // ball would take the impulse once per limb and leave at double speed.
-  if (state.lastResolvedStrikeTick === state.lastStrikeTick) return false;
+  if (state.lastResolvedStrikeTick === state.lastStrikeTick || ball.lastStrikeContactTick === tick) return false;
 
   const q = quality(Math.abs(elapsed - row.sweetTick));
 
@@ -808,7 +808,7 @@ export function resolveStrikeContact(state, ball, rigKey, force, tick, isAssist 
   ball.body.applyImpulse(_impulse, true);
 
   state.lastResolvedStrikeTick = state.lastStrikeTick;
-  state.lastContactTick = tick;
+  state.lastContactTick = ball.lastStrikeContactTick = tick;
   state.lastContactQuality = q;
   state.lastContactKey = rigKey;
   state.lastContactForce = force;

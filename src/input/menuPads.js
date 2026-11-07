@@ -56,10 +56,19 @@ export function createMenuPadTracker() {
   const held = new Map();
   const pressed = new Map();
   return {
-    /** Forget every pad; each pad's next sample seeds instead of firing. */
+    /** Forget every pad; seed current physical state so held buttons don't refire while fast taps aren't swallowed. */
     reset() {
       held.clear();
       pressed.clear();
+      if (typeof navigator !== 'undefined' && typeof navigator.getGamepads === 'function') {
+        const raw = navigator.getGamepads() || [];
+        for (let i = 0; i < raw.length; i++) {
+          const pad = raw[i];
+          if (pad && pad.connected !== false) {
+            held.set(pad.index, heldMask(pad));
+          }
+        }
+      }
     },
     /** Samples every connected pad exactly once for this poll. */
     update(pads) {

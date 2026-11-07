@@ -1286,7 +1286,7 @@ const DEFAULTS = {
     // clamp — not the gain — was the binding constraint. 0.06 sweeps the
     // measured maximum to 24 degrees. It is still a clamp, so LAW L3 holds:
     // the impulse can only ever reduce the error, never add energy.
-    maxAngularImpulse: 0.06,
+    maxAngularImpulse: 0.06, angularPerInertia: true, angularRefInertia: 0.0793, buzzFilter: true,
     // Leg form recovery: spherical hip joints twist on slides. Boost angular torque
     // on thighs when upright so legs snap cleanly forward.
     thighTwistRecovery: {

@@ -37,6 +37,7 @@ import {
   buildControllerAssignmentScreen,
   showControllerAssignment,
   hideControllerAssignment,
+  getControllerAssignmentMode,
 } from './controllerAssignment.js';
 import {
   buildTitleScreen,
@@ -70,12 +71,15 @@ import {
   getColumnsBoxEl,
   getCol1HeaderLabelEl,
   getCol2El,
+  getCol3El,
+  getCol4El,
   getPlayerReadyButtons,
   getMatchBallHeaderTitleEl,
   getMatchBallHeaderDescEl,
   setCurrentBallOptions,
   setSelectedMatchBall,
   setCurrentSetupMode,
+  setMatchFormat,
   setSetupPage,
   setMatchRulesFocusRow,
   setFocusedColumn,
@@ -145,22 +149,36 @@ export function initMainMenu(cbs = {}) {
   buildMainMenuSettingsModal(rootEl, getPlayerConfigs(), callbacks);
   buildFlyoverOverlay(rootEl, callbacks.onSkipFlyover);
 
+  const openMatchControllerAssignment = (preserveExisting = false, initialMode = null) => {
+    const playerSetupEl = getPlayerSetupEl();
+    if (playerSetupEl && playerSetupEl.style.display === 'flex') {
+      playerSetupEl.style.display = 'none';
+      if (callbacks.onExitSetup) callbacks.onExitSetup();
+    }
+    if (state.titleScreenEl) state.titleScreenEl.style.display = 'none';
+    rootEl.style.pointerEvents = 'auto';
+    const targetMode = initialMode || (preserveExisting ? getControllerAssignmentMode() : '1v1');
+    showControllerAssignment(targetMode, {
+      onProceed: (data) => showPlayerSetup('match', data),
+      onBack: () => showTitleScreen(),
+    }, { preserveExisting });
+    startMenuGamepadPolling();
+  };
+
   // Build Screens
   buildControllerAssignmentScreen(rootEl, {
-    onProceed: () => showPlayerSetup('match'),
+    onProceed: (data) => showPlayerSetup('match', data),
     onBack: () => showTitleScreen(),
   });
-  buildPlayerSetupScreen(rootEl, callbacks, { showTitleScreen, hidePlayerSetup });
+  buildPlayerSetupScreen(rootEl, callbacks, {
+    showTitleScreen,
+    hidePlayerSetup,
+    showControllerAssignment: () => openMatchControllerAssignment(true),
+  });
   buildTitleScreen(rootEl, {
     onPractice: () => showPlayerSetup('practice'),
-    onPlayMatch: () => showControllerAssignment('1v1', {
-      onProceed: (data) => showPlayerSetup('match', data),
-      onBack: () => showTitleScreen(),
-    }),
-    onPlayMatch2v2: () => showControllerAssignment('2v2', {
-      onProceed: (data) => showPlayerSetup('match', data),
-      onBack: () => showTitleScreen(),
-    }),
+    onPlayMatch: () => openMatchControllerAssignment(false, '1v1'),
+    onPlayMatch2v2: () => openMatchControllerAssignment(false, '2v2'),
     onSettings: () => showMainMenuSettingsModal(),
     onHowToPlay: () => showHowToPlayModal(),
   });
@@ -205,7 +223,14 @@ export function showPlayerSetup(mode = 'match', options = {}) {
   if (!rootEl) return;
   hideControllerAssignment();
   state.titleBrandBall?.stop();
-  setCurrentSetupMode(mode);
+  const normalizedMode = mode === 'match2v2' ? 'match' : mode;
+  setCurrentSetupMode(normalizedMode);
+  const fmt = normalizedMode === 'match'
+    ? (mode === 'match2v2' ? '2v2' : (options?.mode || getControllerAssignmentMode() || '1v1'))
+    : '1v1';
+  setMatchFormat(fmt);
+  const is2v2 = normalizedMode === 'match' && fmt === '2v2';
+  mode = normalizedMode;
   rootEl.style.pointerEvents = 'auto';
   if (state.titleScreenEl) state.titleScreenEl.style.display = 'none';
   const playerSetupEl = getPlayerSetupEl();
@@ -221,6 +246,8 @@ export function showPlayerSetup(mode = 'match', options = {}) {
   const columnsBoxEl = getColumnsBoxEl();
   const col1HeaderLabelEl = getCol1HeaderLabelEl();
   const col2El = getCol2El();
+  const col3El = getCol3El();
+  const col4El = getCol4El();
   const playerReadyButtons = getPlayerReadyButtons();
   const matchBallHeaderTitleEl = getMatchBallHeaderTitleEl();
   const matchBallHeaderDescEl = getMatchBallHeaderDescEl();
@@ -228,17 +255,18 @@ export function showPlayerSetup(mode = 'match', options = {}) {
   let curBallOpts = MATCH_BALL_OPTIONS;
   if (mode === 'practice') {
     if (playerSetupEl) {
-      playerSetupEl.style.alignItems = 'flex-start';
-      playerSetupEl.style.justifyContent = 'center';
-      playerSetupEl.style.paddingLeft = '50px';
-      playerSetupEl.style.background = 'radial-gradient(circle at 25% 50%, rgba(6, 10, 16, 0.25) 0%, rgba(4, 7, 12, 0.5) 100%)';
+      playerSetupEl.style.alignItems = 'center';
+      playerSetupEl.style.justifyContent = 'flex-end';
+      playerSetupEl.style.paddingLeft = '18px';
+      playerSetupEl.style.background = 'linear-gradient(180deg, rgba(4, 7, 12, 0.0) 0%, rgba(4, 7, 12, 0.06) 55%, rgba(4, 7, 12, 0.52) 100%)';
     }
     if (playerSetupContainerEl) {
-      playerSetupContainerEl.style.maxWidth = '520px';
+      playerSetupContainerEl.style.maxWidth = '1860px';
       playerSetupContainerEl.style.width = '100%';
-      playerSetupContainerEl.style.margin = '0';
-      playerSetupContainerEl.style.boxShadow = '0 16px 48px rgba(0, 0, 0, 0.9), 0 0 30px rgba(16, 185, 129, 0.18)';
-      playerSetupContainerEl.style.border = '1px solid rgba(16, 185, 129, 0.35)';
+      playerSetupContainerEl.style.margin = '0 auto';
+      playerSetupContainerEl.style.boxShadow = 'none';
+      playerSetupContainerEl.style.border = 'none';
+      playerSetupContainerEl.style.background = 'transparent';
     }
     if (matchBallCardsRowEl) {
       matchBallCardsRowEl.style.gridTemplateColumns = 'repeat(2, 1fr)';
@@ -251,10 +279,11 @@ export function showPlayerSetup(mode = 'match', options = {}) {
       lobbyBadgeEl.style.borderColor = 'rgba(16, 185, 129, 0.5)';
       lobbyBadgeEl.style.color = '#34d399';
     }
-    if (columnsBoxEl) columnsBoxEl.style.gridTemplateColumns = '1fr';
     if (col1HeaderLabelEl) col1HeaderLabelEl.textContent = 'SOLO ATHLETE';
     if (col2El) col2El.style.display = 'none';
-    if (playerReadyButtons[0]) playerReadyButtons[0].style.display = 'none';
+    if (col3El) col3El.style.display = 'none';
+    if (col4El) col4El.style.display = 'none';
+    playerReadyButtons.forEach((b) => { if (b) b.style.display = 'none'; });
     if (matchBallHeaderTitleEl) matchBallHeaderTitleEl.textContent = 'PRACTICE BALL';
     if (matchBallHeaderDescEl) matchBallHeaderDescEl.textContent = 'Choose multi-ball sandbox or single ball drill (LB / RB to cycle)';
     curBallOpts = PRACTICE_BALL_OPTIONS;
@@ -263,34 +292,42 @@ export function showPlayerSetup(mode = 'match', options = {}) {
   } else {
     if (playerSetupEl) {
       playerSetupEl.style.alignItems = 'center';
-      playerSetupEl.style.justifyContent = 'center';
-      playerSetupEl.style.paddingLeft = '16px';
-      playerSetupEl.style.background = 'radial-gradient(circle at center, rgba(6, 10, 16, 0.1) 0%, rgba(4, 7, 12, 0.45) 100%)';
+      playerSetupEl.style.justifyContent = 'flex-end';
+      playerSetupEl.style.paddingLeft = '18px';
+      playerSetupEl.style.background = 'linear-gradient(180deg, rgba(4, 7, 12, 0.0) 0%, rgba(4, 7, 12, 0.06) 55%, rgba(4, 7, 12, 0.52) 100%)';
     }
     if (playerSetupContainerEl) {
-      playerSetupContainerEl.style.maxWidth = '860px';
-      playerSetupContainerEl.style.width = '95%';
+      playerSetupContainerEl.style.maxWidth = '1860px';
+      playerSetupContainerEl.style.width = '100%';
       playerSetupContainerEl.style.margin = '0 auto';
-      playerSetupContainerEl.style.boxShadow = '0 16px 48px rgba(0, 0, 0, 0.8), 0 0 24px rgba(255, 255, 255, 0.1)';
-      playerSetupContainerEl.style.border = '1px solid rgba(255, 255, 255, 0.2)';
+      playerSetupContainerEl.style.boxShadow = 'none';
+      playerSetupContainerEl.style.border = 'none';
+      playerSetupContainerEl.style.background = 'transparent';
     }
     if (matchBallCardsRowEl) {
       matchBallCardsRowEl.style.gridTemplateColumns = 'repeat(4, 1fr)';
     }
-    if (lobbyTitleEl) lobbyTitleEl.textContent = 'MATCH LOBBY / SETUP';
-    if (lobbySubtitleEl) lobbySubtitleEl.textContent = 'Configure Team and Character Options for both athletes';
+    if (lobbyTitleEl) lobbyTitleEl.textContent = is2v2 ? '2v2 TEAM LOBBY / SETUP' : 'MATCH LOBBY / SETUP';
+    if (lobbySubtitleEl) {
+      lobbySubtitleEl.textContent = is2v2
+        ? 'Team 1 (P1 & P3) vs Team 2 (P2 & P4) — Collective team kits & individual athlete loadouts'
+        : 'Team 1 (P1) vs Team 2 (P2) — Collective team kits & individual athlete loadouts';
+    }
     if (lobbyBadgeEl) {
-      lobbyBadgeEl.textContent = '1v1 VERSUS · 5:00 DURATION';
+      lobbyBadgeEl.textContent = is2v2 ? '2v2 (4 ATHLETES) · 5:00 DURATION' : '1v1 VERSUS · 5:00 DURATION';
       lobbyBadgeEl.style.background = 'rgba(255, 255, 255, 0.08)';
       lobbyBadgeEl.style.borderColor = 'rgba(255, 255, 255, 0.35)';
       lobbyBadgeEl.style.color = '#ffffff';
       lobbyBadgeEl.style.boxShadow = '0 0 12px rgba(255, 255, 255, 0.2), 0 0 20px rgba(0, 229, 255, 0.15)';
     }
-    if (columnsBoxEl) columnsBoxEl.style.gridTemplateColumns = '1fr 1fr';
     if (col1HeaderLabelEl) col1HeaderLabelEl.textContent = 'PLAYER 1';
     if (col2El) col2El.style.display = 'flex';
+    if (col3El) col3El.style.display = is2v2 ? 'flex' : 'none';
+    if (col4El) col4El.style.display = is2v2 ? 'flex' : 'none';
     if (playerReadyButtons[0]) playerReadyButtons[0].style.display = 'block';
     if (playerReadyButtons[1]) playerReadyButtons[1].style.display = 'block';
+    if (playerReadyButtons[2]) playerReadyButtons[2].style.display = is2v2 ? 'block' : 'none';
+    if (playerReadyButtons[3]) playerReadyButtons[3].style.display = is2v2 ? 'block' : 'none';
     if (matchBallHeaderTitleEl) matchBallHeaderTitleEl.textContent = 'MATCH BALL';
     if (matchBallHeaderDescEl) matchBallHeaderDescEl.textContent = 'Select regulation ball or randomize (Gamepad LB / RB to cycle)';
     curBallOpts = MATCH_BALL_OPTIONS;
@@ -301,7 +338,7 @@ export function showPlayerSetup(mode = 'match', options = {}) {
   renderMatchBallCards(curBallOpts);
 
   if (callbacks.onEnterSetup) {
-    callbacks.onEnterSetup(mode);
+    callbacks.onEnterSetup(is2v2 ? 'match2v2' : mode);
   }
 
   cancelMatchCountdown();
@@ -316,13 +353,17 @@ export function showPlayerSetup(mode = 'match', options = {}) {
     applyControllerAssignments(null, 'practice');
   }
 
-  // A solo lobby's shared cursor starts on the human's column (P2 when the human plays Team 2).
+  // Shared cursor starts on the first human player's column.
   const cfgs = getPlayerConfigs();
-  setFocusedColumn(mode === 'match' && cfgs[0].type !== 'human' && cfgs[1].type === 'human' ? 1 : 0);
+  const activeCount = is2v2 ? 4 : 2;
+  const firstHuman = cfgs.slice(0, activeCount).findIndex((c) => c.type === 'human');
+  setFocusedColumn(mode === 'match' && firstHuman >= 0 ? firstHuman : 0);
 
   const focusRows = getPlayerFocusRow();
-  focusRows[0] = (mode === 'practice') ? 1 : 0;
-  focusRows[1] = 0;
+  focusRows[0] = (mode === 'practice') ? 1 : 2;
+  focusRows[1] = 2;
+  focusRows[2] = 2;
+  focusRows[3] = 2;
 
   if (window._updateSetupPage) window._updateSetupPage();
   updateReadyUI();
@@ -343,6 +384,7 @@ export function hidePlayerSetup() {
 export function hideMainMenu() {
   stopSetupGamepadPolling();
   state.titleBrandBall?.stop();
+  hideControllerAssignment();
   hideHowToPlayModal();
   hideMainMenuSettingsModal();
   if (rootEl) rootEl.style.pointerEvents = 'none';
@@ -358,6 +400,7 @@ export function isMainMenuActive() {
   const playerSetupEl = getPlayerSetupEl();
   return (
     state.titleScreenEl?.style.display === 'flex' ||
+    state.controllerAssignmentEl?.style.display === 'flex' ||
     playerSetupEl?.style.display === 'flex'
   );
 }

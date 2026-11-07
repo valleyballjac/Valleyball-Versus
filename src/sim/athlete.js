@@ -40,7 +40,9 @@ import { soundManager } from '../audio/soundManager.js';
 
 const _mount = new THREE.Matrix4();
 const _limpVel = new THREE.Vector3();
+const _sepImpulse = { x: 0, y: 0, z: 0 };
 const groupByKey = new Map(BONE_MAP.map((entry) => [entry.key, entry.group]));
+const _skeletonBindCache = new WeakMap();
 
 function smoothstep01(t) {
   const x = Math.min(1, Math.max(0, t));
@@ -108,6 +110,7 @@ export function createAthlete({
   let lastResistanceScale = 1;
   let knockdownRequested = false;
   let respawnRequested = false;
+  let offMountStuckTicks = 0;
 
   // 3. Ragdoll & Visuals
   const impactByHandle = new Map();
@@ -115,25 +118,30 @@ export function createAthlete({
   let ragdoll = null;
   let animTarget = null;
 
-  const bindLocals = characterSkeleton
-    ? characterSkeleton.bones.map((bone) => ({
+  if (characterSkeleton && !_skeletonBindCache.has(characterSkeleton)) {
+    _skeletonBindCache.set(
+      characterSkeleton,
+      characterSkeleton.bones.map((bone) => ({
         bone,
         position: bone.position.clone(),
         quaternion: bone.quaternion.clone(),
         scale: bone.scale.clone(),
-      }))
-    : [];
+      })),
+    );
+  }
+  const bindLocals = characterSkeleton ? (_skeletonBindCache.get(characterSkeleton) || []) : [];
 
   function restoreBindPose() {
     for (const entry of bindLocals) {
       entry.bone.position.copy(entry.position);
       entry.bone.quaternion.copy(entry.quaternion);
       entry.bone.scale.copy(entry.scale);
+      entry.bone.updateMatrix();
     }
     if (characterRoot) characterRoot.updateMatrixWorld(true);
   }
 
-  function buildMountedRagdoll(targetYaw) {
+  function buildMountedRagdoll(targetYaw, idlePhase = 0) {
     if (ragdoll) {
       destroyRagdoll(ragdoll);
       disposeRagdollVisuals(ragdoll.group);
@@ -173,6 +181,10 @@ export function createAthlete({
     animTarget.yaw = targetYaw;
     animTarget.targetYaw = targetYaw;
     animTarget.momentumYaw = targetYaw;
+    if (idlePhase > 0 && animTarget.nodes?.idle?.action) {
+      const idleDur = animTarget.nodes.idle.duration || 1;
+      animTarget.nodes.idle.action.time = (((idlePhase % 1) + 1) % 1) * idleDur;
+    }
 
     const initialGrounded = motor.grounded && motor.body.translation().y <= 1.5;
     if (!initialGrounded) {
@@ -330,7 +342,7 @@ export function createAthlete({
       athlete.refreshVisuals();
     },
 
-    teleportTo(pos, yaw = 0) {
+    teleportTo(pos, yaw = 0, idlePhase = 0) {
       currentSpawn.x = pos.x;
       currentSpawn.y = pos.y;
       currentSpawn.z = pos.z;
@@ -341,7 +353,7 @@ export function createAthlete({
       motor.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
       motor.interpolated.reset(new THREE.Vector3(pos.x, pos.y, pos.z));
 
-      buildMountedRagdoll(yaw);
+      buildMountedRagdoll(yaw, idlePhase);
     },
 
     /**
@@ -369,12 +381,31 @@ export function createAthlete({
         buildMountedRagdoll(animTarget ? animTarget.yaw : (currentSpawn.yaw || 0));
       }
 
-      // Out-of-bounds watchdog
-      const motorY = motor.body.translation().y;
+      // Out-of-bounds & unrecoverable off-mount watchdog
+      const mPos = motor.body.translation();
+      const motorY = mPos.y;
       const pelvis = ragdoll && ragdoll.rig.get('pelvis');
-      const pelvisY = pelvis ? pelvis.body.translation().y : Infinity;
-      if (motorY < arenaPreset.killPlaneY || pelvisY < arenaPreset.killPlaneY) {
+      const pPos = pelvis ? pelvis.body.translation() : null;
+      const pelvisY = pPos ? pPos.y : Infinity;
+      const motorFinite = Number.isFinite(mPos.x + mPos.y + mPos.z);
+      const pelvisFinite = !pPos || Number.isFinite(pPos.x + pPos.y + pPos.z);
+      if (!motorFinite || motorY < arenaPreset.killPlaneY || pelvisY < arenaPreset.killPlaneY) {
+        offMountStuckTicks = 0;
         athlete.teleportTo(currentSpawn, currentSpawn.yaw || 0);
+      } else if (pPos && (!pelvisFinite || pelvisY > 45)) {
+        offMountStuckTicks = 0;
+        buildMountedRagdoll(animTarget ? animTarget.yaw : (currentSpawn.yaw || 0));
+      } else if (pPos && tracker.offMount > 0.85) {
+        const pVel = pelvis.body.linvel();
+        if (Math.abs(pVel.y) < 1.2) {
+          offMountStuckTicks += 1;
+          if (offMountStuckTicks > 100) {
+            offMountStuckTicks = 0;
+            buildMountedRagdoll(animTarget ? animTarget.yaw : (currentSpawn.yaw || 0));
+          }
+        }
+      } else {
+        offMountStuckTicks = 0;
       }
 
       // Mount recovery
@@ -524,6 +555,44 @@ export function createAthlete({
             quality: strikeState.lastContactQuality,
             launchSpeed: strikeState.lastLaunchSpeed,
           };
+        }
+      }
+
+      // Soft ground-plane motor-to-motor anti-stacking across multi-athlete modes (2-4 players)
+      if (athlete.isEnabled && motor?.body && allAthletes && allAthletes.length > 1) {
+        const p1 = motor.body.translation();
+        const v1 = motor.body.linvel();
+        const sliding1 = actionState.slideTime > 0;
+        for (let j = athleteIndex + 1; j < allAthletes.length; j++) {
+          const other = allAthletes[j];
+          if (!other || !other.isEnabled || !other.motor?.body) continue;
+          const p2 = other.motor.body.translation();
+          if (Math.abs(p2.y - p1.y) > 1.6) continue;
+          const dx = p2.x - p1.x;
+          const dz = p2.z - p1.z;
+          const dist = Math.hypot(dx, dz);
+          const minSep = (sliding1 || (other.actionState && other.actionState.slideTime > 0)) ? 0.55 : 0.90;
+          if (dist >= minSep) continue;
+          let nx, nz;
+          if (dist > 1e-4) {
+            nx = dx / dist;
+            nz = dz / dist;
+          } else {
+            const angle = athleteIndex * 1.57079632679 + j * 0.78539816339;
+            nx = Math.cos(angle);
+            nz = Math.sin(angle);
+          }
+          const v2 = other.motor.body.linvel();
+          const vRel = (v1.x - v2.x) * nx + (v1.z - v2.z) * nz;
+          const imp = Math.min(2.2, (minSep - dist) * 32.0 * dt + Math.max(0, vRel) * 0.45);
+          if (imp > 1e-4) {
+            _sepImpulse.x = -nx * imp;
+            _sepImpulse.z = -nz * imp;
+            motor.body.applyImpulse(_sepImpulse, true);
+            _sepImpulse.x = nx * imp;
+            _sepImpulse.z = nz * imp;
+            other.motor.body.applyImpulse(_sepImpulse, true);
+          }
         }
       }
 

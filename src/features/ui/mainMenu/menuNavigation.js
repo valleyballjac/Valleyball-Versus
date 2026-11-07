@@ -1,6 +1,11 @@
 import { soundManager } from '../../../audio/soundManager.js';
 import { state } from './state.js';
-import { getControllerAssignments, getAssignedSlotForPad, getMatchSlotForKeyset } from '../../../input/inputRouter.js';
+import {
+  getControllerAssignments,
+  getAssignedSlotForPad,
+  getExplicitDeviceMappings,
+  getMatchSlotForKeyset,
+} from '../../../input/inputRouter.js';
 import { createMenuPadTracker, MENU_PAD } from '../../../input/menuPads.js';
 import { hideMainMenuSettingsModal, getMainMenuSettingsModalEl } from './settingsModal.js';
 import { hideHowToPlayModal, getControlsModalEl } from './howToPlayModal.js';
@@ -47,8 +52,8 @@ export function moveScreen1Row(col, delta) {
   let cur = navCallbacks.playerSetup.playerFocusRow[col];
   const isAi = navCallbacks.playerSetup.playerConfigs?.[col]?.type === 'ai';
   let next = cur + delta;
-  if (cur === 0 && delta > 0 && !isAi) next = 2;
-  if (cur === 2 && delta < 0 && !isAi) next = 0;
+  if (cur === 2 && delta > 0 && !isAi) next = 4;
+  if (cur === 4 && delta < 0 && !isAi) next = 2;
   next = Math.max(0, Math.min(8, next));
   navCallbacks.playerSetup.playerFocusRow[col] = next;
   navCallbacks.playerSetup.updateFocusUI();
@@ -63,11 +68,34 @@ const LOBBY_KEYS = {
   ArrowUp: [1, 'up'], ArrowDown: [1, 'down'], ArrowLeft: [1, 'left'], ArrowRight: [1, 'right'],
 };
 
+function activeMatchSlotCount() {
+  return navCallbacks.playerSetup?.getActiveMatchPlayerCount?.() || 2;
+}
+
 function soloHumanSlot() {
-  const cfgs = navCallbacks.playerSetup.playerConfigs;
-  if (cfgs[0]?.type === 'human') return 0;
-  if (cfgs[1]?.type === 'human') return 1;
-  return navCallbacks.playerSetup.focusedColumn;
+  const ps = navCallbacks.playerSetup;
+  const cfgs = ps.playerConfigs;
+  const n = activeMatchSlotCount();
+  if (cfgs[ps.focusedColumn]?.type === 'human' && ps.focusedColumn < n) return ps.focusedColumn;
+  for (let i = 0; i < n; i++) {
+    if (cfgs[i]?.type === 'human') return i;
+  }
+  return ps.focusedColumn;
+}
+
+function resolvePadOwnerSlot(padIndex) {
+  const assigned = getAssignedSlotForPad(padIndex);
+  const n = activeMatchSlotCount();
+  if (assigned >= 0 && assigned < n) return assigned;
+  // If a human slot was left on default Keyboard while a pad was picked up mid-lobby,
+  // let that unassigned pad drive the keyboard-mapped human slot rather than feeling dead.
+  const mappings = getExplicitDeviceMappings();
+  if (mappings) {
+    for (let i = 0; i < n; i++) {
+      if (mappings[i] && mappings[i].type !== 'gamepad') return i;
+    }
+  }
+  return -1;
 }
 
 /** Versus lobbies only let a device ready its own player; ownerSlot -1 means any. */
@@ -79,10 +107,22 @@ function toggleReadyFrom(ownerSlot, target) {
   navCallbacks.playerSetup.togglePlayerReady(target);
 }
 
-function toggleFocusedColumn() {
-  navCallbacks.playerSetup.focusedColumn = 1 - navCallbacks.playerSetup.focusedColumn;
+function toggleFocusedColumn(dir = 1, ownerSlot = -1) {
+  const ps = navCallbacks.playerSetup;
+  const n = activeMatchSlotCount();
+  const baseOrder = n >= 4 ? [0, 2, 1, 3] : [0, 1];
+  const order = ownerSlot >= 0
+    ? baseOrder.filter((s) => s === ownerSlot || ps.playerConfigs?.[s]?.type === 'ai')
+    : baseOrder;
+  if (order.length <= 1) {
+    soundManager.playTone(220, 0.1, 'sawtooth', 0.15);
+    return ownerSlot >= 0 ? ownerSlot : ps.focusedColumn;
+  }
+  const curIdx = Math.max(0, order.indexOf(ps.focusedColumn));
+  ps.focusedColumn = order[(curIdx + dir + order.length) % order.length];
   soundManager.playTone(440, 0.06, 'sine', 0.2);
-  navCallbacks.playerSetup.updateFocusUI();
+  ps.updateFocusUI();
+  return ps.focusedColumn;
 }
 
 /** Screen 1 (players): one navigation step in column `col`. Returns true if an option changed. */
@@ -119,41 +159,86 @@ function screen1Action(col, action) {
   return false;
 }
 
-/** Screen 2 (match rules): one shared cursor for every device. */
+/** Screen 2 (match rules): shared rule cursor + instant per-player Ready via X / Start / A. */
 function rulesAction(action, ownerSlot) {
   const ps = navCallbacks.playerSetup;
   const row = ps.matchRulesFocusRow;
+  const n = activeMatchSlotCount();
+  const is2v2 = n === 4;
+  const maxActionCol = is2v2 ? 5 : 3;
+  const startBtnCol = is2v2 ? 3 : 2;
+  const selfSlot = ownerSlot >= 0 ? ownerSlot : soloHumanSlot();
+  const resetHumanReady = () => {
+    for (let i = 0; i < n; i++) {
+      if (ps.playerConfigs?.[i]?.type === 'human') ps.playerReadyState[i] = false;
+    }
+  };
+  const isAllAI = () => {
+    for (let i = 0; i < n; i++) {
+      if (ps.playerConfigs?.[i]?.type !== 'ai') return false;
+    }
+    return true;
+  };
   if (action === 'up' || action === 'down') {
     ps.matchRulesFocusRow = Math.max(0, Math.min(3, row + (action === 'up' ? -1 : 1)));
     ps.updateFocusUI();
+    soundManager.playTone(520, 0.035, 'sine', 0.12);
   } else if (action === 'left' || action === 'right') {
     const dir = action === 'left' ? -1 : 1;
     if (row === 0) ps.cycleMatchBall(dir);
     else if (row === 1) ps.cycleMatchDuration(dir);
     else if (row === 2) ps.cycleArena(dir);
     else {
-      ps.matchRulesActionCol = Math.max(0, Math.min(3, (ps.matchRulesActionCol ?? 2) + dir));
+      ps.matchRulesActionCol = Math.max(0, Math.min(maxActionCol, (ps.matchRulesActionCol ?? startBtnCol) + dir));
       ps.updateFocusUI();
-      soundManager.playTone(400, 0.04, 'sine', 0.15);
     }
+    soundManager.playTone(440, 0.04, 'sine', 0.15);
   } else if (action === 'act') {
     if (ps.matchCountdownActive) ps.launchMatchNow();
     else if (row === 0) ps.cycleMatchBall(1);
     else if (row === 1) ps.cycleMatchDuration(1);
     else if (row === 2) ps.cycleArena(1);
     else {
-      const col = ps.matchRulesActionCol ?? 2;
-      if (col === 0) ps.btnBack?.click();
-      else if (col === 1) toggleReadyFrom(ownerSlot, 0);
-      else if (col === 2) {
-        if (!ps.btnStartMatch?.disabled) ps.btnStartMatch?.click();
-      } else toggleReadyFrom(ownerSlot, 1);
+      const col = ps.matchRulesActionCol ?? startBtnCol;
+      if (col === 0) {
+        ps.btnBack?.click();
+      } else if (ownerSlot >= 0) {
+        // Assigned pad on the Ready/Start bar: launch if all ready, else toggle own Ready slot
+        if (!ps.btnStartMatch?.disabled && col === startBtnCol) ps.btnStartMatch?.click();
+        else toggleReadyFrom(ownerSlot, ownerSlot);
+      } else if (!is2v2 && col === 1) {
+        toggleReadyFrom(-1, 0);
+      } else if (!is2v2 && col === 3) {
+        toggleReadyFrom(-1, 1);
+      } else if (is2v2 && col === 1) {
+        toggleReadyFrom(-1, 0);
+      } else if (is2v2 && col === 2) {
+        toggleReadyFrom(-1, 2);
+      } else if (is2v2 && col === 4) {
+        toggleReadyFrom(-1, 1);
+      } else if (is2v2 && col === 5) {
+        toggleReadyFrom(-1, 3);
+      } else if (!ps.btnStartMatch?.disabled) {
+        ps.btnStartMatch?.click();
+      } else {
+        toggleReadyFrom(-1, selfSlot);
+      }
+    }
+  } else if (action === 'ready') {
+    if (ps.matchCountdownActive) {
+      ps.cancelMatchCountdown();
+      resetHumanReady();
+      soundManager.playTone(330, 0.12, 'sine', 0.2);
+      ps.updateReadyUI();
+    } else if (isAllAI()) {
+      ps.btnStartMatch?.click();
+    } else {
+      toggleReadyFrom(ownerSlot, selfSlot);
     }
   } else if (action === 'back') {
     if (ps.matchCountdownActive) {
       ps.cancelMatchCountdown();
-      ps.playerReadyState[0] = false;
-      ps.playerReadyState[1] = false;
+      resetHumanReady();
       soundManager.playTone(330, 0.12, 'sine', 0.2);
       ps.updateReadyUI();
     } else {
@@ -164,7 +249,7 @@ function rulesAction(action, ownerSlot) {
   } else if (action === 'start') {
     if (ps.matchCountdownActive) ps.launchMatchNow();
     else if (!ps.btnStartMatch?.disabled) ps.btnStartMatch?.click();
-    else toggleReadyFrom(ownerSlot, ownerSlot >= 0 ? ownerSlot : soloHumanSlot());
+    else toggleReadyFrom(ownerSlot, selfSlot);
   }
 }
 
@@ -401,12 +486,21 @@ export function startMenuGamepadPolling() {
     // IJKL player's, wherever they were assigned. Otherwise every key drives the shared
     // cursor and Tab switches columns.
     const versus = navCallbacks.playerSetup.isVersusLobby();
-    const keyOwner = (keyset) => (versus ? getMatchSlotForKeyset(keyset) : -1);
+    const keyOwner = (keyset) => {
+      const slot = getMatchSlotForKeyset(keyset);
+      if (slot >= 0) return slot;
+      return versus ? -1 : -1;
+    };
 
     if (navCallbacks.playerSetup.setupPage === 2) {
       if (e.code === 'Escape') {
         e.preventDefault();
         rulesAction('back', -1);
+        return;
+      }
+      if (e.code === 'KeyX' || e.code === 'KeyR') {
+        e.preventDefault();
+        rulesAction('ready', keyOwner(0));
         return;
       }
       const nav = LOBBY_KEYS[e.code];
@@ -418,26 +512,42 @@ export function startMenuGamepadPolling() {
 
     if (e.code === 'Escape') {
       e.preventDefault();
-      navCallbacks.showTitleScreen?.();
+      if (navCallbacks.playerSetup.btnBack) navCallbacks.playerSetup.btnBack.click();
+      else navCallbacks.showTitleScreen?.();
+      return;
+    }
+
+    if (e.code === 'KeyY') {
+      e.preventDefault();
+      navCallbacks.playerSetup.toggleLobbySlotHumanAi?.(navCallbacks.playerSetup.focusedColumn);
+      soundManager.playTone(540, 0.05, 'sine', 0.18);
       return;
     }
 
     if (e.code === 'Tab') {
       e.preventDefault();
       if (versus) soundManager.playTone(220, 0.1, 'sawtooth', 0.15);
-      else toggleFocusedColumn();
+      else toggleFocusedColumn(e.shiftKey ? -1 : 1, keyOwner(0));
       return;
     }
 
     const nav = LOBBY_KEYS[e.code];
     if (!nav) return;
     e.preventDefault();
-    screen1Action(versus ? keyOwner(nav[0]) : navCallbacks.playerSetup.focusedColumn, nav[1]);
+    const focusedCfg = navCallbacks.playerSetup.playerConfigs?.[navCallbacks.playerSetup.focusedColumn];
+    const owner = keyOwner(nav[0]);
+    const otherOwner = keyOwner(nav[0] === 0 ? 1 : 0);
+    const hasTwoKeysets = owner >= 0 && otherOwner >= 0 && owner !== otherOwner;
+    const col = hasTwoKeysets
+      ? (nav[0] === 0 && focusedCfg?.type === 'ai' ? navCallbacks.playerSetup.focusedColumn : owner)
+      : (versus ? (owner >= 0 ? owner : 0) : (focusedCfg?.type === 'ai' || owner < 0 ? navCallbacks.playerSetup.focusedColumn : owner));
+    screen1Action(col, nav[1]);
   };
   window.addEventListener('keydown', onMenuKeyDown);
 
   // Seeds from what is held right now, so a press that opened this screen never fires here.
   menuPads.reset();
+  const padTargetSlot = {};
 
   state.gamepadPollHandle = setInterval(() => {
     if (!state.rootEl || state.rootEl.style.display === 'none') return;
@@ -620,15 +730,37 @@ export function startMenuGamepadPolling() {
     }
 
     // --- MATCH MODE (SCREEN 1: PLAYERS, SCREEN 2: MATCH RULES) ---
-    // Versus: each pad drives only the player it was assigned to; bench pads sit out.
-    // Otherwise (one human or spectating) every pad drives the shared cursor.
-    const versus = navCallbacks.playerSetup.isVersusLobby();
-    const page = navCallbacks.playerSetup.setupPage;
+    // Each assigned gamepad drives its own player card independently (and can cycle onto AI slots via LB/RB).
+    // Any unassigned gamepad pressing Y (or A/Start when another pad is already assigned) joins an open AI slot directly.
+    const ps = navCallbacks.playerSetup;
+    const n = activeMatchSlotCount();
+    const versus = ps.isVersusLobby();
+    const page = ps.setupPage;
     for (const pad of pads) {
       const e = menuPads.pressed(pad);
       if (!e) continue;
-      const ownerSlot = versus ? getAssignedSlotForPad(pad.index) : -1;
-      if (versus && ownerSlot < 0) continue;
+      let assignedSlot = getAssignedSlotForPad(pad.index);
+      if (assignedSlot >= n) assignedSlot = -1;
+      const mappings = getExplicitDeviceMappings();
+      const hasAssignedGamepad = Boolean(mappings && mappings.slice(0, n).some((m) => m && m.type === 'gamepad'));
+      const hasOpenAiSlot = Boolean(ps.playerConfigs && ps.playerConfigs.slice(0, n).some((c) => c?.type === 'ai'));
+
+      // Direct Lobby Join: an unassigned controller pressing Y (or A/Start when another pad is already mapped)
+      // immediately claims the next open AI slot without backing out to Controller Assignment.
+      if (assignedSlot < 0 && hasOpenAiSlot && ((e & MENU_PAD.y) || (hasAssignedGamepad && (e & (MENU_PAD.a | MENU_PAD.start))))) {
+        const claimed = ps.claimLobbySlotForPad ? ps.claimLobbySlotForPad(pad.index, pad.id) : -1;
+        if (claimed >= 0) {
+          padTargetSlot[pad.index] = claimed;
+          soundManager.playTone(660, 0.06, 'sine', 0.22);
+          triggerMenuHaptics(pad, 45, 0.35, 0.15);
+          continue;
+        }
+      }
+
+      const ownerSlot = resolvePadOwnerSlot(pad.index);
+      if (versus && ownerSlot < 0 && assignedSlot < 0) {
+        if (hasAssignedGamepad) continue;
+      }
 
       if (page === 2) {
         if (e & MENU_PAD.up) rulesAction('up', ownerSlot);
@@ -636,10 +768,48 @@ export function startMenuGamepadPolling() {
         if (e & (MENU_PAD.left | MENU_PAD.lb)) rulesAction('left', ownerSlot);
         else if (e & (MENU_PAD.right | MENU_PAD.rb)) rulesAction('right', ownerSlot);
         if (e & MENU_PAD.a) rulesAction('act', ownerSlot);
+        if (e & MENU_PAD.x) rulesAction('ready', ownerSlot);
         if (e & (MENU_PAD.b | MENU_PAD.back)) rulesAction('back', ownerSlot);
         else if (e & MENU_PAD.start) rulesAction('start', ownerSlot);
       } else {
-        const col = versus ? ownerSlot : navCallbacks.playerSetup.focusedColumn;
+        // Resolve this controller's independent target column on Page 1
+        let col = ownerSlot >= 0 ? (padTargetSlot[pad.index] ?? ownerSlot) : ps.focusedColumn;
+        if (ownerSlot >= 0 && col !== ownerSlot && ps.playerConfigs?.[col]?.type !== 'ai') {
+          col = ownerSlot;
+          padTargetSlot[pad.index] = ownerSlot;
+        }
+
+        if (e & (MENU_PAD.lb | MENU_PAD.rb)) {
+          const dir = (e & MENU_PAD.lb) ? -1 : 1;
+          if (ownerSlot >= 0) {
+            const baseOrder = n >= 4 ? [0, 2, 1, 3] : [0, 1];
+            const allowed = baseOrder.filter((s) => s === ownerSlot || ps.playerConfigs?.[s]?.type === 'ai');
+            if (allowed.length <= 1) {
+              soundManager.playTone(220, 0.1, 'sawtooth', 0.15);
+            } else {
+              const curIdx = Math.max(0, allowed.indexOf(col));
+              col = allowed[(curIdx + dir + allowed.length) % allowed.length];
+              padTargetSlot[pad.index] = col;
+              ps.focusedColumn = col;
+              ps.updateFocusUI();
+              soundManager.playTone(440, 0.06, 'sine', 0.2);
+              triggerMenuHaptics(pad, 40, 0.3, 0.15);
+            }
+          } else {
+            col = toggleFocusedColumn(dir, -1);
+            triggerMenuHaptics(pad, 40, 0.3, 0.15);
+          }
+        }
+
+        if (e & MENU_PAD.y) {
+          if (ps.toggleLobbySlotHumanAi) {
+            ps.toggleLobbySlotHumanAi(col, pad.index, pad.id);
+            const newOwner = resolvePadOwnerSlot(pad.index);
+            padTargetSlot[pad.index] = newOwner >= 0 ? newOwner : col;
+            soundManager.playTone(540, 0.05, 'sine', 0.18);
+            triggerMenuHaptics(pad, 35, 0.25, 0.1);
+          }
+        }
         if (e & MENU_PAD.up) {
           screen1Action(col, 'up');
           triggerMenuHaptics(pad, 25, 0.15, 0.05);
@@ -659,18 +829,9 @@ export function startMenuGamepadPolling() {
         if (e & MENU_PAD.left) step('left');
         if (e & MENU_PAD.right) step('right');
         if (e & MENU_PAD.a) step('act');
-        if (e & (MENU_PAD.lb | MENU_PAD.rb)) {
-          // Switching columns is how a solo player sets up the AI; versus columns are locked.
-          if (versus) {
-            soundManager.playTone(220, 0.1, 'sawtooth', 0.15);
-          } else {
-            toggleFocusedColumn();
-            triggerMenuHaptics(pad, 40, 0.3, 0.15);
-          }
-        }
         if (e & (MENU_PAD.b | MENU_PAD.back)) {
-          if (navCallbacks.playerSetup.btnBack) {
-            navCallbacks.playerSetup.btnBack.click();
+          if (ps.btnBack) {
+            ps.btnBack.click();
           } else {
             navCallbacks.showTitleScreen?.();
           }
@@ -678,7 +839,7 @@ export function startMenuGamepadPolling() {
           triggerMenuHaptics(pad, 30, 0.2, 0.05);
           return;
         } else if (e & MENU_PAD.start) {
-          navCallbacks.playerSetup.setupPage = 2;
+          ps.setupPage = 2;
           window._updateSetupPage();
           soundManager.playTone(660, 0.05, 'sine', 0.2);
           triggerMenuHaptics(pad, 35, 0.25, 0.1);
@@ -686,7 +847,7 @@ export function startMenuGamepadPolling() {
       }
 
       // A page change or a launch belongs to the next poll.
-      if (navCallbacks.playerSetup.setupPage !== page || navCallbacks.playerSetup.playerSetupEl.style.display !== 'flex') return;
+      if (ps.setupPage !== page || ps.playerSetupEl.style.display !== 'flex') return;
     }
   }, 50);
 

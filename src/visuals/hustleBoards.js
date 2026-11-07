@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { TUNING } from '../config/tuning.js';
 import { displayCoordinator } from './displayCoordinator.js';
+import { buildMatchStatsReport } from '../features/match/matchManager.js';
 
 /**
  * THE FOUR IN-ARENA HUSTLE BOARDS — diegetic stadium video screens.
@@ -193,6 +194,15 @@ export function updateHustleBoards(
   const practiceColor = p1CustomColor != null ? '#' + p1CustomColor.toString(16).padStart(6, '0') : getTeamHex(p1Team);
 
   const isMatch = !!(matchProbe && matchProbe.mode === 'match');
+  const matchReport = isMatch
+    ? buildMatchStatsReport({
+        match: matchProbe,
+        athletes: athletes || [],
+        athleteMatchStats: athleteMatchStats || [],
+        playerConfigs: TUNING.players || [],
+        activeCount: athletes ? athletes.length : 2,
+      })
+    : null;
 
   // Assign materials to meshes based on mode
   if (isPracticeActive) {
@@ -237,33 +247,29 @@ export function updateHustleBoards(
       dives,
       divingHits,
       touches,
+      players: [],
       flashing,
       phase,
     };
     outlineColorHome = practiceColor;
-  } else if (isMatch) {
-    const athlete0 = athletes ? athletes[0] : null;
-    const a0Strike = athlete0?.getStrikeStats() || {};
-    const matchStats0 = (athleteMatchStats && athleteMatchStats[0]) || {};
-    const hits0 = a0Strike.hits || 0;
-    const whiffs0 = a0Strike.whiffs || 0;
-    const attempts0 = hits0 + whiffs0;
-    const accuracy0 = attempts0 > 0 ? Math.round((hits0 / attempts0) * 100) : 0;
-    const goals0 = matchProbe.scoreHome || 0;
+  } else if (isMatch && matchReport) {
+    const homeTeam = matchReport.teams.home;
+    const homeRoster = homeTeam.players.map((p) => p.shortLabel).join(' & ') || 'P1';
 
     dataHome = {
       mode: 'match',
-      titleBadge: 'HOME ATHLETE TELEMETRY',
-      badgeText: 'HOME ATHLETE',
-      goals: goals0,
-      accuracy: accuracy0,
-      hits: hits0,
-      whiffs: whiffs0,
-      sweetSpots: matchStats0.sweetSpotHits || 0,
-      spikes: matchStats0.spikes || 0,
-      dives: matchStats0.dives || 0,
-      divingHits: matchStats0.divingHits || 0,
-      touches: matchStats0.totalTouches || 0,
+      titleBadge: 'HOME TEAM TELEMETRY',
+      badgeText: `HOME TEAM (${homeRoster})`,
+      goals: homeTeam.goals || 0,
+      accuracy: homeTeam.accuracy || 0,
+      hits: homeTeam.hits || 0,
+      whiffs: homeTeam.whiffs || 0,
+      sweetSpots: homeTeam.sweetSpotHits || 0,
+      spikes: homeTeam.spikes || 0,
+      dives: homeTeam.dives || 0,
+      divingHits: homeTeam.divingHits || 0,
+      touches: homeTeam.totalTouches || 0,
+      players: homeTeam.players,
       flashing,
       phase,
     };
@@ -282,13 +288,15 @@ export function updateHustleBoards(
       dives: 0,
       divingHits: 0,
       touches: 0,
+      players: [],
       flashing: false,
       phase: 0,
     };
     outlineColorHome = homeColor;
   }
 
-  const keyHome = `home|${dataHome.mode}|${outlineColorHome}|${dataHome.goals}|${dataHome.hits}|${dataHome.whiffs}|${dataHome.sweetSpots}|${dataHome.spikes}|${dataHome.dives}|${dataHome.divingHits}|${dataHome.touches}|${dataHome.badgeText}`;
+  const homePlayersSig = (dataHome.players || []).map((p) => `${p.shortLabel}:${p.goals}:${p.hits}:${p.whiffs}:${p.totalTouches}`).join(',');
+  const keyHome = `home|${dataHome.mode}|${outlineColorHome}|${dataHome.goals}|${dataHome.hits}|${dataHome.whiffs}|${dataHome.sweetSpots}|${dataHome.spikes}|${dataHome.dives}|${dataHome.divingHits}|${dataHome.touches}|${dataHome.badgeText}|${homePlayersSig}`;
   handle.channels.home.pendingData = dataHome;
   handle.channels.home.pendingOutlineColor = outlineColorHome;
   handle.channels.home.pendingKey = keyHome;
@@ -299,29 +307,24 @@ export function updateHustleBoards(
   // 2. Prepare data for away channel (only needed in Match mode or Standby)
   if (isMatch || (!isPracticeActive && !isMatch)) {
     let dataAway, outlineColorAway;
-    if (isMatch) {
-      const athlete1 = athletes ? athletes[1] : null;
-      const a1Strike = athlete1?.getStrikeStats() || {};
-      const matchStats1 = (athleteMatchStats && athleteMatchStats[1]) || {};
-      const hits1 = a1Strike.hits || 0;
-      const whiffs1 = a1Strike.whiffs || 0;
-      const attempts1 = hits1 + whiffs1;
-      const accuracy1 = attempts1 > 0 ? Math.round((hits1 / attempts1) * 100) : 0;
-      const goals1 = matchProbe.scoreAway || 0;
+    if (isMatch && matchReport) {
+      const awayTeam = matchReport.teams.away;
+      const awayRoster = awayTeam.players.map((p) => p.shortLabel).join(' & ') || 'P2';
 
       dataAway = {
         mode: 'match',
-        titleBadge: 'AWAY ATHLETE TELEMETRY',
-        badgeText: 'AWAY ATHLETE',
-        goals: goals1,
-        accuracy: accuracy1,
-        hits: hits1,
-        whiffs: whiffs1,
-        sweetSpots: matchStats1.sweetSpotHits || 0,
-        spikes: matchStats1.spikes || 0,
-        dives: matchStats1.dives || 0,
-        divingHits: matchStats1.divingHits || 0,
-        touches: matchStats1.totalTouches || 0,
+        titleBadge: 'AWAY TEAM TELEMETRY',
+        badgeText: `AWAY TEAM (${awayRoster})`,
+        goals: awayTeam.goals || 0,
+        accuracy: awayTeam.accuracy || 0,
+        hits: awayTeam.hits || 0,
+        whiffs: awayTeam.whiffs || 0,
+        sweetSpots: awayTeam.sweetSpotHits || 0,
+        spikes: awayTeam.spikes || 0,
+        dives: awayTeam.dives || 0,
+        divingHits: awayTeam.divingHits || 0,
+        touches: awayTeam.totalTouches || 0,
+        players: awayTeam.players,
         flashing,
         phase,
       };
@@ -340,13 +343,15 @@ export function updateHustleBoards(
         dives: 0,
         divingHits: 0,
         touches: 0,
+        players: [],
         flashing: false,
         phase: 0,
       };
       outlineColorAway = awayColor;
     }
 
-    const keyAway = `away|${dataAway.mode}|${outlineColorAway}|${dataAway.goals}|${dataAway.hits}|${dataAway.whiffs}|${dataAway.sweetSpots}|${dataAway.spikes}|${dataAway.dives}|${dataAway.divingHits}|${dataAway.touches}|${dataAway.badgeText}`;
+    const awayPlayersSig = (dataAway.players || []).map((p) => `${p.shortLabel}:${p.goals}:${p.hits}:${p.whiffs}:${p.totalTouches}`).join(',');
+    const keyAway = `away|${dataAway.mode}|${outlineColorAway}|${dataAway.goals}|${dataAway.hits}|${dataAway.whiffs}|${dataAway.sweetSpots}|${dataAway.spikes}|${dataAway.dives}|${dataAway.divingHits}|${dataAway.touches}|${dataAway.badgeText}|${awayPlayersSig}`;
     handle.channels.away.pendingData = dataAway;
     handle.channels.away.pendingOutlineColor = outlineColorAway;
     handle.channels.away.pendingKey = keyAway;
@@ -529,14 +534,16 @@ function drawHustleBoard(ctx, W, H, data, outlineColor) {
 
   // ACTIVE TELEMETRY: 7 MAXIMIZED VERTICAL ROWS (Organized in Clear Rainbow Order)
   const startY = Math.round(124 * scale);
+  const players = Array.isArray(data.players) ? data.players : [];
+  const fmtPlayers = (fn) => (players.length > 0 ? players.map((p) => `${p.shortLabel}: ${fn(p)}`).join(' · ') : '');
   const items = [
-    { label: 'GOALS SCORED', num: `${data.goals}`, color: '#f43f5e' }, // Fiery Red
-    { label: 'STRIKE ACCURACY', num: `${data.accuracy}%`, color: '#f97316' }, // Vibrant Orange
-    { label: 'SWEET-SPOT HITS', num: `★ ${data.sweetSpots}`, color: '#fbbf24' }, // Amber Yellow
-    { label: 'POWER SPIKES', num: `${data.spikes}`, color: '#10b981' }, // Emerald Green
-    { label: 'GROUND DIVES', num: `${data.dives}`, color: '#38bdf8' }, // Cyber Cyan
-    { label: 'DIVING HITS', num: `${data.divingHits}`, color: '#3b82f6' }, // Royal Dark Blue
-    { label: 'TOUCHES', num: `${data.touches}`, color: '#a855f7' }, // Neon Purple
+    { label: 'GOALS SCORED', num: `${data.goals}`, sub: fmtPlayers((p) => p.goals ?? 0), color: '#f43f5e' }, // Fiery Red
+    { label: 'STRIKE ACCURACY', num: `${data.accuracy}%`, sub: fmtPlayers((p) => `${p.accuracy ?? 0}%`), color: '#f97316' }, // Vibrant Orange
+    { label: 'SWEET-SPOT HITS', num: `★ ${data.sweetSpots}`, sub: fmtPlayers((p) => p.sweetSpotHits ?? 0), color: '#fbbf24' }, // Amber Yellow
+    { label: 'POWER SPIKES', num: `${data.spikes}`, sub: fmtPlayers((p) => p.spikes ?? 0), color: '#10b981' }, // Emerald Green
+    { label: 'GROUND DIVES', num: `${data.dives}`, sub: fmtPlayers((p) => p.dives ?? 0), color: '#38bdf8' }, // Cyber Cyan
+    { label: 'DIVING HITS', num: `${data.divingHits}`, sub: fmtPlayers((p) => p.divingHits ?? 0), color: '#3b82f6' }, // Royal Dark Blue
+    { label: 'TOUCHES', num: `${data.touches}`, sub: fmtPlayers((p) => p.totalTouches ?? 0), color: '#a855f7' }, // Neon Purple
   ];
   const rowH = (H - startY - Math.round(14 * scale)) / items.length;
 
@@ -556,16 +563,24 @@ function drawHustleBoard(ctx, W, H, data, outlineColor) {
     // Left: Streamlined bold Stat Name with crisp high-contrast offset shadow
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.font = `900 ${Math.round(32 * scale)}px ${ATHLETIC_FONT}`;
+    ctx.font = `900 ${Math.round(30 * scale)}px ${ATHLETIC_FONT}`;
     ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
     ctx.fillText(item.label, 36, yCenter + 2);
     ctx.fillStyle = item.color;
     ctx.fillText(item.label, 34, yCenter);
 
-    // Right: Streamlined bold glowing Stat Number with crisp high-contrast offset shadow
+    // Center-Right: Individual player breakdown (e.g., P1: 2 · P3: 1)
+    if (item.sub) {
+      ctx.textAlign = 'right';
+      ctx.font = `800 ${Math.round(21 * scale)}px ${ATHLETIC_FONT}`;
+      ctx.fillStyle = 'rgba(148, 163, 184, 0.92)';
+      ctx.fillText(item.sub, W - Math.round(190 * scale), yCenter);
+    }
+
+    // Far-Right: Collective Team Total with crisp high-contrast offset shadow
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
-    ctx.font = `900 ${Math.round(48 * scale)}px ${ATHLETIC_FONT}`;
+    ctx.font = `900 ${Math.round(46 * scale)}px ${ATHLETIC_FONT}`;
     ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
     ctx.fillText(item.num, W - 32, yCenter + 2);
     ctx.fillStyle = item.color;

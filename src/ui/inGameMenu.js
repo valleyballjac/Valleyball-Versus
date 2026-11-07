@@ -28,8 +28,8 @@ let callbacks = {
 
 let hustleBoardSection = null;
 let finishPracticeBtn = null;
-let p1CamBox = null;
-let p2CamBox = null;
+const camBoxes = [null, null, null, null];
+const camSelObjs = [null, null, null, null];
 
 let dprRowEl = null;
 let dprButtons = [];
@@ -50,9 +50,8 @@ let muteBtnEl = null;
 let vibrationRowEl = null;
 let vibrationButtons = [];
 let vibrationOptions = [];
-let p1CamSelObj = null;
-let p2CamSelObj = null;
 let resumeBtnEl = null;
+let rematchBtnEl = null;
 let mainMenuBtnEl = null;
 
 let inGameFocusIndex = 0;
@@ -134,7 +133,7 @@ export function initInGameMenu({
       <span style="font-size: 12px; font-weight: 900; letter-spacing: 0.22em; color: #000000; -webkit-text-stroke: 1px #ffffff; text-stroke: 1px #ffffff;">VERSUS</span>
       <span style="color: rgba(255,255,255,0.3); font-size: 14px;">/</span>
       <span style="color: #ffffff; font-size: 15px; font-weight: 800;">SETTINGS</span>
-      <span style="font-size: 10px; font-weight: 800; color: #00e5ff; background: rgba(0, 229, 255, 0.12); border: 1px solid rgba(0, 229, 255, 0.35); padding: 2px 6px; border-radius: 4px; margin-left: 2px;">v0.3.7</span>
+      <span style="font-size: 10px; font-weight: 800; color: #00e5ff; background: rgba(0, 229, 255, 0.12); border: 1px solid rgba(0, 229, 255, 0.35); padding: 2px 6px; border-radius: 4px; margin-left: 2px;">v0.4.0</span>
     </div>
     <div style="font-size: 11px; color: #fbbf24; margin-top: 2px;">
       ⚡ Play clock continues running in real time
@@ -542,35 +541,69 @@ export function initInGameMenu({
   vibrationRowEl = vibrationRow;
   container.appendChild(vibrationRow);
 
-  // 4. Camera Modes Section
+  // 4. Camera Modes Section (grouped by Team 1 [P1, P3] and Team 2 [P2, P4])
   container.appendChild(createSectionHeading('CAMERAS'));
   const camGrid = document.createElement('div');
+  camGrid.id = 'ingame-cam-grid';
   camGrid.style.cssText = 'display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;';
+
+  const team1CamGroup = document.createElement('div');
+  team1CamGroup.id = 'ingame-cam-team-1';
+  team1CamGroup.style.cssText = 'display: flex; flex-direction: column; gap: 8px;';
+
+  const team2CamGroup = document.createElement('div');
+  team2CamGroup.id = 'ingame-cam-team-2';
+  team2CamGroup.style.cssText = 'display: flex; flex-direction: column; gap: 8px;';
 
   // Titles and options are filled per open by refreshCameraRows().
   function createCamSelector(playerIndex) {
     const box = document.createElement('div');
-    box.style.cssText = 'background: rgba(255, 255, 255, 0.04); padding: 10px 14px; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.1);';
+    box.style.cssText = 'background: rgba(255, 255, 255, 0.04); padding: 8px 10px; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.1);';
     const t = document.createElement('div');
-    t.style.cssText = 'font-size: 11px; font-weight: 700; color: #94a3b8; margin-bottom: 6px;';
+    t.style.cssText = 'font-size: 10.5px; font-weight: 800; color: #cbd5e1; margin-bottom: 6px; letter-spacing: 0.04em;';
+
+    const controlRow = document.createElement('div');
+    controlRow.style.cssText = 'display: flex; gap: 5px; align-items: center;';
+
+    const prevBtn = document.createElement('button');
+    prevBtn.type = 'button';
+    prevBtn.textContent = '<';
+    prevBtn.style.cssText = 'padding: 5px 8px; font-family: inherit; font-size: 11px; font-weight: 900; background: rgba(255,255,255,0.08); color: #ffffff; border: 1px solid rgba(120, 170, 210, 0.35); border-radius: 4px; cursor: pointer;';
+
     const sel = document.createElement('select');
-    sel.style.cssText = 'width: 100%; padding: 6px 8px; font-family: inherit; font-size: 12px; background: #0f172a; color: #f8fafc; border: 1px solid rgba(120, 170, 210, 0.3); border-radius: 4px; cursor: pointer;';
+    sel.style.cssText = 'flex: 1; min-width: 0; padding: 5px 6px; font-family: inherit; font-size: 11.5px; font-weight: 700; background: #0f172a; color: #f8fafc; border: 1px solid rgba(120, 170, 210, 0.3); border-radius: 4px; cursor: pointer;';
     sel.onchange = () => applyCameraChoice(playerIndex, sel.value);
+
+    const nextBtn = document.createElement('button');
+    nextBtn.type = 'button';
+    nextBtn.textContent = '>';
+    nextBtn.style.cssText = 'padding: 5px 8px; font-family: inherit; font-size: 11px; font-weight: 900; background: rgba(255,255,255,0.08); color: #ffffff; border: 1px solid rgba(120, 170, 210, 0.35); border-radius: 4px; cursor: pointer;';
+
+    prevBtn.onclick = () => cycleCam(playerIndex, sel, -1);
+    nextBtn.onclick = () => cycleCam(playerIndex, sel, 1);
+
+    controlRow.appendChild(prevBtn);
+    controlRow.appendChild(sel);
+    controlRow.appendChild(nextBtn);
+
     box.appendChild(t);
-    box.appendChild(sel);
+    box.appendChild(controlRow);
     return { box, select: sel, title: t };
   }
 
-  const p1CamSel = createCamSelector(0);
-  const p2CamSel = createCamSelector(1);
-  p1CamSelObj = p1CamSel;
-  p2CamSelObj = p2CamSel;
-  p1CamBox = p1CamSel.box;
-  p1CamBox.id = 'ingame-p1-cam-box';
-  p2CamBox = p2CamSel.box;
-  p2CamBox.id = 'ingame-p2-cam-box';
-  camGrid.appendChild(p1CamSel.box);
-  camGrid.appendChild(p2CamSel.box);
+  for (let i = 0; i < 4; i++) {
+    const camSel = createCamSelector(i);
+    camSelObjs[i] = camSel;
+    camBoxes[i] = camSel.box;
+    camBoxes[i].id = `ingame-p${i + 1}-cam-box`;
+    if (i === 0 || i === 2) {
+      team1CamGroup.appendChild(camSel.box);
+    } else {
+      team2CamGroup.appendChild(camSel.box);
+    }
+  }
+  camGrid.appendChild(team1CamGroup);
+  camGrid.appendChild(team2CamGroup);
   container.appendChild(camGrid);
 
   // 4. Action Buttons
@@ -635,9 +668,50 @@ export function initInGameMenu({
     if (callbacks.onMainMenu) callbacks.onMainMenu();
   };
 
+  const rematchBtn = document.createElement('button');
+  rematchBtnEl = rematchBtn;
+  rematchBtn.id = 'btn-ingame-rematch';
+  rematchBtn.textContent = 'RESTART MATCH';
+  rematchBtn.style.cssText = `
+    flex: 1;
+    padding: 12px;
+    font-size: 14px;
+    font-weight: 800;
+    font-family: inherit;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #00e5ff;
+    background: rgba(0, 229, 255, 0.10);
+    border: 1px solid rgba(0, 229, 255, 0.40);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  `;
+  rematchBtn.onmouseenter = () => { rematchBtn.style.background = 'rgba(0, 229, 255, 0.20)'; };
+  rematchBtn.onmouseleave = () => { rematchBtn.style.background = 'rgba(0, 229, 255, 0.10)'; };
+  rematchBtn.onclick = () => {
+    hideInGameMenu();
+    if (callbacks.onRematch) callbacks.onRematch();
+  };
+
   actionsBox.appendChild(resumeBtn);
+  actionsBox.appendChild(rematchBtn);
   actionsBox.appendChild(mainMenuBtn);
   container.appendChild(actionsBox);
+
+  const legendFooter = document.createElement('div');
+  legendFooter.style.cssText = `
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(255, 255, 255, 0.10);
+    font-size: 10.5px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    color: #94a3b8;
+    text-align: center;
+  `;
+  legendFooter.innerHTML = '🎮 <b style="color:#ffffff;">↕</b> NAVIGATE &middot; <b style="color:#ffffff;">◀ ▶ / A</b> CHANGE &middot; <b style="color:#00e5ff;">B / START / ESC</b> RESUME';
+  container.appendChild(legendFooter);
 
   menuOverlayEl.appendChild(container);
   document.body.appendChild(menuOverlayEl);
@@ -646,11 +720,11 @@ export function initInGameMenu({
 
 const CAMERA_MODES = ['chase', 'thirdPerson', 'firstPerson', 'tactical', 'broadcast'];
 const CAMERA_LABELS = {
-  chase: '3RD PERSON CHASE',
-  thirdPerson: '3RD PERSON (BALL TRACK)',
-  firstPerson: '1ST PERSON (EYE-LEVEL)',
-  tactical: 'TACTICAL OVERHEAD',
-  broadcast: 'BROADCAST CAM [FULLSCREEN]',
+  chase: 'CHASE CAM',
+  thirdPerson: 'BALL TRACK',
+  firstPerson: '1ST PERSON',
+  tactical: 'TACTICAL',
+  broadcast: 'BROADCAST [SHARED]',
 };
 
 /**
@@ -660,7 +734,7 @@ const CAMERA_LABELS = {
  */
 function refreshCameraRows() {
   const rows = callbacks.getCameraRows ? callbacks.getCameraRows() : [];
-  [p1CamSelObj, p2CamSelObj].forEach((obj, i) => {
+  camSelObjs.forEach((obj, i) => {
     if (!obj) return;
     const row = rows[i];
     obj.box.style.display = row && row.visible ? 'block' : 'none';
@@ -676,6 +750,16 @@ function refreshCameraRows() {
     }
     obj.select.value = row.mode;
   });
+  const t1Group = document.getElementById('ingame-cam-team-1');
+  const t2Group = document.getElementById('ingame-cam-team-2');
+  const camGrid = document.getElementById('ingame-cam-grid');
+  const t1Vis = Boolean((rows[0] && rows[0].visible) || (rows[2] && rows[2].visible));
+  const t2Vis = Boolean((rows[1] && rows[1].visible) || (rows[3] && rows[3].visible));
+  if (t1Group) t1Group.style.display = t1Vis ? 'flex' : 'none';
+  if (t2Group) t2Group.style.display = t2Vis ? 'flex' : 'none';
+  if (camGrid) {
+    camGrid.style.gridTemplateColumns = (t1Vis && t2Vis) ? '1fr 1fr' : '1fr';
+  }
 }
 
 function applyCameraChoice(playerIdx, mode) {
@@ -813,100 +897,56 @@ function getActiveInGameRows() {
       onAction: () => toggleVibration(),
     });
   }
-  if (p1CamBox && p1CamBox.style.display !== 'none') {
-    rows.push({
-      el: p1CamBox,
-      onLeft: () => cycleCam(0, p1CamSelObj?.select, -1),
-      onRight: () => cycleCam(0, p1CamSelObj?.select, 1),
-      onAction: () => cycleCam(0, p1CamSelObj?.select, 1),
-    });
+  for (const i of [0, 2, 1, 3]) {
+    const box = camBoxes[i];
+    const selObj = camSelObjs[i];
+    if (box && box.style.display !== 'none') {
+      rows.push({
+        el: box,
+        onLeft: () => cycleCam(i, selObj?.select, -1),
+        onRight: () => cycleCam(i, selObj?.select, 1),
+        onAction: () => cycleCam(i, selObj?.select, 1),
+      });
+    }
   }
-  if (p2CamBox && p2CamBox.style.display !== 'none') {
-    rows.push({
-      el: p2CamBox,
-      onLeft: () => cycleCam(1, p2CamSelObj?.select, -1),
-      onRight: () => cycleCam(1, p2CamSelObj?.select, 1),
-      onAction: () => cycleCam(1, p2CamSelObj?.select, 1),
-    });
-  }
-  if (resumeBtnEl) {
-    rows.push({
-      el: resumeBtnEl,
-      isButton: true,
-      onAction: () => resumeBtnEl.click(),
-      onLeft: () => {
-        if (mainMenuBtnEl) {
-          const mIdx = rows.findIndex((r) => r.el === mainMenuBtnEl);
-          if (mIdx !== -1) {
-            inGameFocusIndex = mIdx;
-            updateInGameFocusUI();
-            soundManager.playTone(400, 0.04, 'sine', 0.15);
-          }
-        }
-      },
-      onRight: () => {
-        if (mainMenuBtnEl) {
-          const mIdx = rows.findIndex((r) => r.el === mainMenuBtnEl);
-          if (mIdx !== -1) {
-            inGameFocusIndex = mIdx;
-            updateInGameFocusUI();
-            soundManager.playTone(400, 0.04, 'sine', 0.15);
-          }
-        }
-      },
-      onUp: () => {
-        const rIdx = rows.findIndex((r) => r.el === resumeBtnEl);
-        if (rIdx > 0) {
-          inGameFocusIndex = rIdx - 1;
+  const actionBtns = [
+    resumeBtnEl,
+    (!isPractice && rematchBtnEl && rematchBtnEl.style.display !== 'none') ? rematchBtnEl : null,
+    mainMenuBtnEl,
+  ].filter(Boolean);
+
+  if (actionBtns.length > 0) {
+    const firstActionRowIdx = rows.length;
+    actionBtns.forEach((btn, idx) => {
+      rows.push({
+        el: btn,
+        isButton: true,
+        onAction: () => btn.click(),
+        onLeft: () => {
+          const prevOffset = (idx - 1 + actionBtns.length) % actionBtns.length;
+          inGameFocusIndex = firstActionRowIdx + prevOffset;
           updateInGameFocusUI();
           soundManager.playTone(400, 0.04, 'sine', 0.15);
-        }
-      },
-      onDown: () => {
-        inGameFocusIndex = 0;
-        updateInGameFocusUI();
-        soundManager.playTone(400, 0.04, 'sine', 0.15);
-      },
-    });
-  }
-  if (mainMenuBtnEl) {
-    rows.push({
-      el: mainMenuBtnEl,
-      isButton: true,
-      onAction: () => mainMenuBtnEl.click(),
-      onLeft: () => {
-        if (resumeBtnEl) {
-          const rIdx = rows.findIndex((r) => r.el === resumeBtnEl);
-          if (rIdx !== -1) {
-            inGameFocusIndex = rIdx;
-            updateInGameFocusUI();
-            soundManager.playTone(400, 0.04, 'sine', 0.15);
-          }
-        }
-      },
-      onRight: () => {
-        if (resumeBtnEl) {
-          const rIdx = rows.findIndex((r) => r.el === resumeBtnEl);
-          if (rIdx !== -1) {
-            inGameFocusIndex = rIdx;
-            updateInGameFocusUI();
-            soundManager.playTone(400, 0.04, 'sine', 0.15);
-          }
-        }
-      },
-      onUp: () => {
-        const rIdx = rows.findIndex((r) => r.el === resumeBtnEl);
-        if (rIdx > 0) {
-          inGameFocusIndex = rIdx - 1;
+        },
+        onRight: () => {
+          const nextOffset = (idx + 1) % actionBtns.length;
+          inGameFocusIndex = firstActionRowIdx + nextOffset;
           updateInGameFocusUI();
           soundManager.playTone(400, 0.04, 'sine', 0.15);
-        }
-      },
-      onDown: () => {
-        inGameFocusIndex = 0;
-        updateInGameFocusUI();
-        soundManager.playTone(400, 0.04, 'sine', 0.15);
-      },
+        },
+        onUp: () => {
+          if (firstActionRowIdx > 0) {
+            inGameFocusIndex = firstActionRowIdx - 1;
+            updateInGameFocusUI();
+            soundManager.playTone(400, 0.04, 'sine', 0.15);
+          }
+        },
+        onDown: () => {
+          inGameFocusIndex = 0;
+          updateInGameFocusUI();
+          soundManager.playTone(400, 0.04, 'sine', 0.15);
+        },
+      });
     });
   }
   return rows;
@@ -952,7 +992,7 @@ function updateInGameFocusUI() {
         row.el.scrollIntoView({ block: 'nearest', behavior: 'auto' });
       } else {
         row.el.style.outline = 'none';
-        row.el.style.background = (row.el === p1CamBox || row.el === p2CamBox) ? 'rgba(255, 255, 255, 0.04)' : 'transparent';
+        row.el.style.background = camBoxes.includes(row.el) ? 'rgba(255, 255, 255, 0.04)' : 'transparent';
         row.el.style.boxShadow = 'none';
       }
     }
@@ -1146,9 +1186,11 @@ export function showInGameMenu() {
       `;
     }
     if (finishPracticeBtn) finishPracticeBtn.style.display = 'block';
+    if (rematchBtnEl) rematchBtnEl.style.display = 'none';
   } else {
     if (hustleBoardSection) hustleBoardSection.style.display = 'none';
     if (finishPracticeBtn) finishPracticeBtn.style.display = 'none';
+    if (rematchBtnEl) rematchBtnEl.style.display = 'block';
   }
 
   if (window.__vb?.matchState) {
@@ -1173,7 +1215,7 @@ export function hideInGameMenu() {
       r.el.style.boxShadow = '';
     } else {
       r.el.style.outline = 'none';
-      r.el.style.background = (r.el === p1CamBox || r.el === p2CamBox) ? 'rgba(255, 255, 255, 0.04)' : 'transparent';
+      r.el.style.background = camBoxes.includes(r.el) ? 'rgba(255, 255, 255, 0.04)' : 'transparent';
       r.el.style.boxShadow = 'none';
     }
   });

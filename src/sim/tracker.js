@@ -41,6 +41,8 @@ const _relVel = new THREE.Vector3();
 const _bodyQuatInverse = new THREE.Quaternion();
 const _errorQuat = new THREE.Quaternion();
 const _axis = new THREE.Vector3();
+const _axisLocal = new THREE.Vector3();
+const _frameInv = new THREE.Quaternion();
 const _bodyQuat = new THREE.Quaternion();
 const _preLinvel = new THREE.Vector3();
 const _preAngvel = new THREE.Vector3();
@@ -60,6 +62,7 @@ export function createTracker() {
     muscleTone: 0,
     /** Debug readouts, written here and read by the HUD. Never fed back in. */
     mountDistance: 0,
+    offMount: 0,
     warnedMount: false,
     /** Last impact, for the HUD. Tick-stamped so it fades on sim time, not
      *  wall time — a wall-clock timer here would desync the anchored capture. */
@@ -142,7 +145,7 @@ export function applyImpacts(tracker, events, tick, dt) {
     const excess = Math.max(0, event.force - TUNING.impact.forceThreshold);
     if (excess <= 0) continue;
 
-    const multiplier = TUNING.impact.multiplier[event.group];
+    const multiplier = TUNING.impact.multiplier[event.group] ?? 1.0;
     tracker.weight -= excess * TUNING.impact.scale * multiplier * dt;
 
     if (excess > tracker.lastImpactExcess || tick - tracker.lastImpactTick > TUNING.impact.hudHoldTicks) {
@@ -213,14 +216,14 @@ export function applyImpacts(tracker, events, tick, dt) {
  * @param {object} motor READ ONLY
  * @param {object} animTarget READ ONLY, for standUpNeed
  */
-function applyArmDamping(rig, motor, animTarget) {
+function applyArmDamping(rig, motor, animTarget, offMount = 0) {
   const fade = Math.max(1e-3, TUNING.ragdoll.armDampingFadeSpeed);
   const v = motor.body.linvel();
   // Two ways to not be standing still: moving, or on the floor. A downed
   // athlete's arms should flop, and a get-up is a slow move the speed gate
   // would not catch, so the recovery signal takes the damping off as well.
   const moving = Math.min(1, Math.hypot(v.x, v.z) / fade);
-  const down = animTarget ? animTarget.standUpNeed : 0;
+  const down = Math.max(animTarget ? animTarget.standUpNeed : 0, offMount);
   const still = (1 - moving) * (1 - down);
 
   for (const key of ARM_CHAIN_DAMPED) {
@@ -244,6 +247,20 @@ function applyArmDamping(rig, motor, animTarget) {
   }
 }
 
+export function computeOffMount(rig, motor) {
+  if (!rig || !motor) return 0;
+  const pelvis = rig.get('pelvis');
+  if (!pelvis) return 0;
+  const p = pelvis.body.translation();
+  const s = motor.body.translation();
+  if (!Number.isFinite(p.x + p.y + p.z + s.x + s.y + s.z)) return 1;
+  const horizExcess = Math.max(0, Math.hypot(p.x - s.x, p.z - s.z) - 0.85);
+  const dy = p.y - s.y;
+  const vertExcess = Math.max(0, dy - 1.15, -0.85 - dy);
+  const t = Math.min(1, Math.max(0, Math.hypot(horizExcess, vertExcess)));
+  return t * t * (3 - 2 * t);
+}
+
 export function applyTracking(tracker, rig, animTarget, motor, dt, tumbling = false) {
   // Consume the knockdown first, so a press and its effect land on the same
   // tick regardless of when in the frame the key was struck.
@@ -259,19 +276,25 @@ export function applyTracking(tracker, rig, animTarget, motor, dt, tumbling = fa
     tracker.muscleTone = tracker.knockdownTone;
   }
 
-  if (rig && motor) applyArmDamping(rig, motor, animTarget);
-  if (rig && animTarget) applyGains(tracker, rig, animTarget, motor, dt);
+  const offMount = computeOffMount(rig, motor);
+  tracker.offMount = offMount;
+  if (offMount > 0.5) {
+    tracker.weight = Math.max(0, tracker.weight - (offMount - 0.5) * 5.0 * dt);
+  }
+
+  if (rig && motor) applyArmDamping(rig, motor, animTarget, offMount);
+  if (rig && animTarget) applyGains(tracker, rig, animTarget, motor, dt, offMount);
 
   // Auto-recovery. A pure ramp: no threshold, no "is the character upright yet"
   // test, no state to leave. The stumble is what the physics does while this
   // number is climbing through the middle of its range.
-  if (!tumbling) {
+  if (!tumbling && offMount < 0.25) {
     tracker.weight = Math.min(1, Math.max(0, tracker.weight + TUNING.tracking.recoverPerSecond * dt));
   }
 }
 
 
-function applyGains(tracker, rig, animTarget, motor, dt) {
+function applyGains(tracker, rig, animTarget, motor, dt, offMount = 0) {
   const weight = tracker.weight;
 
   // Mount guard: how far the pelvis has drifted from the sphere it is riding.
@@ -330,7 +353,7 @@ function applyGains(tracker, rig, animTarget, motor, dt) {
   // MUSCLE TONE floors the DAMPING and nothing else. Once the weight recovers
   // past the tone this is just `weight` again, so it needs no decay of its own
   // — it stops mattering the moment the character is stiffer than the floor.
-  const kdScale = Math.max(weight, tracker.muscleTone);
+  const kdScale = Math.max(weight, tracker.muscleTone) * (1 - offMount);
 
   for (const [key, item] of rig) {
     const target = animTarget.targets.get(key);
@@ -482,11 +505,38 @@ function applyGains(tracker, rig, animTarget, motor, dt) {
         }
       }
 
+      // THE ANGULAR SPRING AND CAP ARE SCALED BY ROTATIONAL INERTIA ALONG THE
+      // ROTATION AXIS (normalized to the pelvis reference inertia, 0.0793 kg·m²),
+      // mirroring the linear `* mass` scaling above. Without this, light/narrow
+      // bodies (head, arms, hands, legs) receive 20x-100x higher angular
+      // acceleration for the same orientation error and buzz 2-7° every 2-3 ticks.
+      let inertiaScale = 1;
+      if (
+        TUNING.tracking.angularPerInertia &&
+        typeof body.principalInertia === 'function' &&
+        typeof body.principalInertiaLocalFrame === 'function'
+      ) {
+        const pI = body.principalInertia();
+        const fr = body.principalInertiaLocalFrame();
+        _axisLocal.copy(_axis).applyQuaternion(_bodyQuatInverse);
+        _frameInv.set(fr.x, fr.y, fr.z, fr.w).invert();
+        _axisLocal.applyQuaternion(_frameInv);
+        const Iaxis =
+          pI.x * _axisLocal.x * _axisLocal.x +
+          pI.y * _axisLocal.y * _axisLocal.y +
+          pI.z * _axisLocal.z * _axisLocal.z;
+        const refInertia = TUNING.tracking.angularRefInertia || 0.0793;
+        if (Number.isFinite(Iaxis) && Iaxis > 0 && refInertia > 0) {
+          inertiaScale = Iaxis / refInertia;
+        }
+      }
+
       _impulseVec
         .copy(_axis)
-        .multiplyScalar(angle * angKp * kpScale * groupScale * dt);
+        .multiplyScalar(angle * angKp * inertiaScale * kpScale * groupScale * dt);
 
-      if (_impulseVec.lengthSq() > maxAngular * maxAngular) _impulseVec.setLength(maxAngular);
+      const capNow = maxAngular * inertiaScale;
+      if (_impulseVec.lengthSq() > capNow * capNow) _impulseVec.setLength(capNow);
 
       _impulse.x = _impulseVec.x;
       _impulse.y = _impulseVec.y;

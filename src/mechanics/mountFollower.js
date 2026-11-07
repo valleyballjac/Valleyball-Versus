@@ -176,14 +176,15 @@ export function runMountFollower({ state, motor, ragdoll, animTarget, tracker, t
       const pelvis = pelvisItem.body.translation();
       const sphere = motor.body.translation();
 
+      const separation = Math.hypot(pelvis.x - sphere.x, pelvis.z - sphere.z);
+
       // DETACHED: the character has lost its footing. One condition, evaluated
       // every step, with no edge to catch and no second mode. During healthy
       // play the weight sits at 1 and this is never true.
       const detached =
         tracker.weight < TUNING.impact.mountRecoverBelow &&
-        animTarget.pelvisDownness > MOUNT_FOLLOW_STAND_NEED;
-
-      const separation = Math.hypot(pelvis.x - sphere.x, pelvis.z - sphere.z);
+        (animTarget.pelvisDownness > MOUNT_FOLLOW_STAND_NEED ||
+          (separation > 1.2 && Number.isFinite(pelvisFloorY) && (pelvis.y - pelvisFloorY) < 1.35));
 
       if (detached && separation > TUNING.impact.mountSnapEpsilon) {
         if (!Number.isFinite(pelvisFloorY)) {

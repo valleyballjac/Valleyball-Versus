@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { TUNING } from '../config/tuning.js';
 import { Interpolated } from '../core/Interpolated.js';
-import { buildHeadwear } from './cosmeticsBuilders.js';
+import { buildHeadwear, recolorHeadgear } from './cosmeticsBuilders.js';
+import { accentFor } from './valleyballHeadgear.js';
 import { resolveHeadwearSpec } from '../config/cosmetics.js';
 
 /**
@@ -49,17 +50,6 @@ const _quat = new THREE.Quaternion();
  * @returns {THREE.Group}
  */
 /**
- * Lightens an 0xRRGGBB integer toward white by `amount`. Zero allocation; used
- * to derive an in-family accent trim tone for headwear from the team primary.
- */
-function lightenHex(hex, amount = 0.3) {
-  const r = Math.min(255, Math.round(((hex >> 16) & 0xff) + (255 - ((hex >> 16) & 0xff)) * amount));
-  const g = Math.min(255, Math.round(((hex >> 8) & 0xff) + (255 - ((hex >> 8) & 0xff)) * amount));
-  const b = Math.min(255, Math.round((hex & 0xff) + (255 - (hex & 0xff)) * amount));
-  return (r << 16) | (g << 8) | b;
-}
-
-/**
  * Visual palette and styling for the Capsule Athlete.
  */
 function getAthleteColors(options = null) {
@@ -84,10 +74,11 @@ function getAthleteColors(options = null) {
   const jointGrey = options?.jointColor ?? defaultJoint;
 
   const parseColor = (c) => (typeof c === 'string' ? parseInt(c.replace('#', '0x'), 16) : c);
+  const primaryHex = parseColor(primary);
 
   return {
-    primary: parseColor(primary),
-    accent: lightenHex(parseColor(primary)),
+    primary: primaryHex,
+    accent: accentFor(primaryHex, isHome),
     bodyGrey: parseColor(bodyGrey),
     jointGrey: parseColor(jointGrey),
     roughness: p.roughness ?? 0.82,
@@ -393,6 +384,16 @@ export function createRagdollVisuals(rig, options = null) {
 
     item.mesh = bodyGroup;
     item.interpolated = new Interpolated(bodyGroup);
+    item.buzzFilter = {
+      head: 0,
+      px: new Float64Array(4).fill(translation.x),
+      py: new Float64Array(4).fill(translation.y),
+      pz: new Float64Array(4).fill(translation.z),
+      qx: new Float64Array(4).fill(rotation.x),
+      qy: new Float64Array(4).fill(rotation.y),
+      qz: new Float64Array(4).fill(rotation.z),
+      qw: new Float64Array(4).fill(rotation.w),
+    };
 
     group.add(bodyGroup);
   }
@@ -505,14 +506,84 @@ export function saveRagdollPrevious(state) {
   for (const item of state.rig.values()) item.interpolated.savePrevious();
 }
 
-/** Writes the stepped body transforms into curr. Physics is already advanced. */
+const BUZZ_W0 = 1 / 6;
+const BUZZ_W1 = 2 / 6;
+const BUZZ_W2 = 2 / 6;
+const BUZZ_W3 = 1 / 6;
+
+/**
+ * Writes the stepped body transforms into curr through the 4-tick [1, 2, 2, 1]/6
+ * render-side buzz filter (zeros at 2-tick head/leg and 3-tick arm oscillation
+ * periods). Physics is already advanced; filtered values live strictly on
+ * Interpolated and never feed back into simulation bodies (LAW 5).
+ */
 export function snapshotRagdoll(state) {
   if (!state) return;
+  const filterOn = TUNING.tracking?.buzzFilter !== false;
   for (const item of state.rig.values()) {
     const translation = item.body.translation();
     const rotation = item.body.rotation();
-    item.interpolated.currPos.set(translation.x, translation.y, translation.z);
-    item.interpolated.currQuat.set(rotation.x, rotation.y, rotation.z, rotation.w);
+    const bf = item.buzzFilter;
+    if (!filterOn || !bf) {
+      item.interpolated.currPos.set(translation.x, translation.y, translation.z);
+      item.interpolated.currQuat.set(rotation.x, rotation.y, rotation.z, rotation.w);
+      continue;
+    }
+
+    const h = bf.head;
+    bf.px[h] = translation.x;
+    bf.py[h] = translation.y;
+    bf.pz[h] = translation.z;
+    bf.qx[h] = rotation.x;
+    bf.qy[h] = rotation.y;
+    bf.qz[h] = rotation.z;
+    bf.qw[h] = rotation.w;
+    const nextHead = (h + 1) & 3;
+    bf.head = nextHead;
+
+    const i0 = nextHead;          // t - 3
+    const i1 = (nextHead + 1) & 3; // t - 2
+    const i2 = (nextHead + 2) & 3; // t - 1
+    const i3 = h;                  // t (newest)
+
+    item.interpolated.currPos.set(
+      BUZZ_W0 * bf.px[i0] + BUZZ_W1 * bf.px[i1] + BUZZ_W2 * bf.px[i2] + BUZZ_W3 * bf.px[i3],
+      BUZZ_W0 * bf.py[i0] + BUZZ_W1 * bf.py[i1] + BUZZ_W2 * bf.py[i2] + BUZZ_W3 * bf.py[i3],
+      BUZZ_W0 * bf.pz[i0] + BUZZ_W1 * bf.pz[i1] + BUZZ_W2 * bf.pz[i2] + BUZZ_W3 * bf.pz[i3],
+    );
+
+    const rx = bf.qx[i3];
+    const ry = bf.qy[i3];
+    const rz = bf.qz[i3];
+    const rw = bf.qw[i3];
+    let qx = BUZZ_W3 * rx;
+    let qy = BUZZ_W3 * ry;
+    let qz = BUZZ_W3 * rz;
+    let qw = BUZZ_W3 * rw;
+
+    const d0 = bf.qx[i0] * rx + bf.qy[i0] * ry + bf.qz[i0] * rz + bf.qw[i0] * rw;
+    const s0 = d0 < 0 ? -BUZZ_W0 : BUZZ_W0;
+    qx += s0 * bf.qx[i0];
+    qy += s0 * bf.qy[i0];
+    qz += s0 * bf.qz[i0];
+    qw += s0 * bf.qw[i0];
+
+    const d1 = bf.qx[i1] * rx + bf.qy[i1] * ry + bf.qz[i1] * rz + bf.qw[i1] * rw;
+    const s1 = d1 < 0 ? -BUZZ_W1 : BUZZ_W1;
+    qx += s1 * bf.qx[i1];
+    qy += s1 * bf.qy[i1];
+    qz += s1 * bf.qz[i1];
+    qw += s1 * bf.qw[i1];
+
+    const d2 = bf.qx[i2] * rx + bf.qy[i2] * ry + bf.qz[i2] * rz + bf.qw[i2] * rw;
+    const s2 = d2 < 0 ? -BUZZ_W2 : BUZZ_W2;
+    qx += s2 * bf.qx[i2];
+    qy += s2 * bf.qy[i2];
+    qz += s2 * bf.qz[i2];
+    qw += s2 * bf.qw[i2];
+
+    const inv = 1 / (Math.hypot(qx, qy, qz, qw) || 1);
+    item.interpolated.currQuat.set(qx * inv, qy * inv, qz * inv, qw * inv);
   }
 }
 
@@ -780,6 +851,13 @@ export function updateAthletePalette(state, options = null) {
   for (const item of state.rig.values()) {
     if (!item.solidMesh) continue;
     item.solidMesh.traverse((child) => {
+      // Do not overwrite modular headwear materials with generic capsule colors;
+      // headwear pieces are recolored below via recolorHeadgear() using their authored palette rules.
+      let p = child;
+      while (p && p !== item.solidMesh) {
+        if (p.name === 'headwearSlot') return;
+        p = p.parent;
+      }
       if (child.isMesh && child.material && child.material.userData && child.material.userData.colorRole) {
         const role = child.material.userData.colorRole;
         if (role === 'primary') {
@@ -802,6 +880,17 @@ export function updateAthletePalette(state, options = null) {
         }
       }
     });
+  }
+  const head = state.rig.get('head');
+  const slot = head?.headwearSlot ?? head?.solidMesh?.getObjectByName('headwearSlot') ?? null;
+  if (slot) {
+    for (const piece of slot.children) {
+      recolorHeadgear(piece, {
+        athleteId: piece.userData?.athleteId || undefined,
+        primaryColor: colors.primary,
+        jointColor: colors.jointGrey,
+      });
+    }
   }
 }
 

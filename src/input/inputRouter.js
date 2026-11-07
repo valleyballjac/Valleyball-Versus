@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { TUNING } from '../config/tuning.js';
-import { showToast } from '../ui/mainMenu.js';
+import { showToast, isMainMenuActive } from '../ui/mainMenu.js';
 import { isInGameMenuOpen } from '../ui/inGameMenu.js';
+import { isVictoryScreenVisible } from '../ui/victoryScreen.js';
 
 /**
  * Input Router for Valleyball Versus.
@@ -62,8 +63,8 @@ const KEYBOARD_NAMES = { kb1: 'Keyboard 1 (WASD)', kb2: 'Secondary Keyboard (IJK
 
 // Device routing, resolved once per sample by resolveDeviceRouting().
 const keysetSlot = [0, 1];
-const slotKeyset = [0, 1];
-const slotPads = [null, null];
+const slotKeyset = [0, 1, 0, 1];
+const slotPads = [null, null, null, null];
 let arrowLookSlot = -1;
 
 const GAMEPAD_BUTTONS = {
@@ -117,10 +118,10 @@ export function createInputSlot() {
 
 // Presentation-only snapshots. Never consumed by gameplay action readers.
 export const CONTROL_BITS = Object.freeze({ move: 1, look: 2, sprint: 4, slide: 8, jump: 16, dive: 32, cut: 64, volley: 128, spike: 256, reset: 512, brace: 1024 });
-const uiSlots = [0, 1].map((i) => ({ human: false, available: true, device: 'keyboard', keyset: i, standard: true, held: 0, pulse: 0, padIndex: -1, previousPadHeld: 0, initialized: false }));
+const uiSlots = [0, 1, 2, 3].map((i) => ({ human: false, available: true, device: 'keyboard', keyset: i % 2, standard: true, held: 0, pulse: 0, padIndex: -1, previousPadHeld: 0, initialized: false }));
 const UI_ACTIONS = CONTROL_BITS.move | CONTROL_BITS.look | CONTROL_BITS.sprint | CONTROL_BITS.slide | CONTROL_BITS.jump | CONTROL_BITS.dive | CONTROL_BITS.cut | CONTROL_BITS.volley | CONTROL_BITS.spike | CONTROL_BITS.brace;
-const uiKeyboardEdges = [0, 0];
-const uiMouseHeld = [0, 0];
+const uiKeyboardEdges = [0, 0, 0, 0];
+const uiMouseHeld = [0, 0, 0, 0];
 export function getControlsSnapshot() { return uiSlots; }
 
 function anyHeld(codes) {
@@ -284,10 +285,53 @@ function isTextEntry(target) {
 }
 
 let currentBotSlots = [];
+let gameplayInputActive = false;
+
+function isUiBlockingGameplayInput() {
+  return !gameplayInputActive || isInGameMenuOpen() || isMainMenuActive() || isVictoryScreenVisible();
+}
+
+export function clearGameplayInputQueues() {
+  for (let i = 0; i < slots.length; i++) {
+    const slot = slots[i];
+    slot.moveX = 0;
+    slot.moveZ = 0;
+    slot.sprintHeld = false;
+    slot.slideHeld = false;
+    slot.braceHeld = false;
+    slot.jumpQueued = false;
+    slot.diveQueued = false;
+    slot.cutQueued = false;
+    slot.volleyQueued = false;
+    slot.spikeQueued = false;
+    slot.ballResetQueued = false;
+    slot.lookX = 0;
+    slot.lookY = 0;
+    slot.hasAim = false;
+    slot.aimYaw = 0;
+    slot.moveWorld.set(0, 0, 0);
+  }
+  accumDX = 0;
+  accumDY = 0;
+  _mouseDX = 0;
+  _mouseDY = 0;
+  cameraCyclePlayerQueued.fill(0);
+  cameraCycleArenaQueued.fill(0);
+  menuToggleQueued = false;
+  heldKeys.clear();
+  uiKeyboardEdges.fill(0);
+  uiMouseHeld.fill(0);
+  for (let i = 0; i < uiSlots.length; i++) {
+    uiSlots[i].held = uiSlots[i].pulse = 0;
+  }
+  for (let i = 0; i < 4; i++) {
+    latchPadPrev(i);
+  }
+}
 
 function onKeyDown(event) {
   if (isTextEntry(event.target)) return;
-  if (isInGameMenuOpen()) return;
+  if (isUiBlockingGameplayInput()) return;
   const newlyHeld = !heldKeys.has(event.code) && !event.repeat;
   heldKeys.add(event.code);
   if (newlyHeld) {
@@ -552,7 +596,7 @@ export function assignDefaultDeviceForSlot(slotIndex) {
 /** Player slot a gamepad is assigned to for the next match, or -1 if it is on the bench. */
 export function getAssignedSlotForPad(padIndex) {
   if (!explicitDeviceMappings) return -1;
-  for (let s = 0; s < 2; s++) {
+  for (let s = 0; s < 4; s++) {
     const m = explicitDeviceMappings[s];
     if (m && m.type === 'gamepad' && m.padIndex === padIndex) return s;
   }
@@ -565,7 +609,7 @@ export function getAssignedSlotForPad(padIndex) {
  */
 export function getMatchSlotForKeyset(keyset) {
   if (explicitDeviceMappings) {
-    for (let s = 0; s < 2; s++) {
+    for (let s = 0; s < 4; s++) {
       const m = explicitDeviceMappings[s];
       if (m && m.type === 'keyboard' && (m.keyId === 'kb2' ? 1 : 0) === keyset) return s;
     }
@@ -577,6 +621,24 @@ export function clearDeviceMappingForSlot(slotIndex) {
   if (explicitDeviceMappings) {
     delete explicitDeviceMappings[slotIndex];
   }
+}
+
+export function assignPadToSlot(slotIndex, padIndex, padId = '') {
+  if (!explicitDeviceMappings) {
+    explicitDeviceMappings = {};
+  }
+  for (let s = 0; s < 4; s++) {
+    const m = explicitDeviceMappings[s];
+    if (m && m.type === 'gamepad' && m.padIndex === padIndex) {
+      delete explicitDeviceMappings[s];
+    }
+  }
+  explicitDeviceMappings[slotIndex] = {
+    type: 'gamepad',
+    padIndex,
+    name: `Gamepad ${padIndex + 1}`,
+    id: padId || `Gamepad ${padIndex + 1}`,
+  };
 }
 
 /**
@@ -604,30 +666,41 @@ export function getControllerAssignments(athleteCount = 2, mode = 'match') {
     return {
       p1: pads.length > 0 ? `Gamepad 1 (${pads[0].id.slice(0, 16)}...) + Keyboard WASD` : 'Keyboard WASD',
       p2: null,
+      p3: null,
+      p4: null,
     };
   }
 
+  const formatPadSlot = (idx, fallback) =>
+    pads[idx] ? `Gamepad ${pads[idx].index + 1} (${pads[idx].id.slice(0, 14)}...)` : fallback;
+
   if (pads.length >= 2) {
     return {
-      p1: `Gamepad 1 (${pads[0].id.slice(0, 14)}...) [WASD]`,
-      p2: `Gamepad 2 (${pads[1].id.slice(0, 14)}...) [IJKL]`,
+      p1: `${formatPadSlot(0, 'Keyboard WASD')} [WASD]`,
+      p2: `${formatPadSlot(1, 'Secondary Keyboard (IJKL)')} [IJKL]`,
+      p3: formatPadSlot(2, 'AI Bot'),
+      p4: formatPadSlot(3, 'AI Bot'),
     };
   }
 
   if (pads.length === 1) {
     return {
-      p1: `Gamepad 1 (${pads[0].id.slice(0, 14)}...) [WASD]`,
+      p1: `${formatPadSlot(0, 'Keyboard WASD')} [WASD]`,
       p2: 'Secondary Keyboard (IJKL)',
+      p3: 'AI Bot',
+      p4: 'AI Bot',
     };
   }
 
   return {
     p1: 'Keyboard WASD',
     p2: 'Secondary Keyboard (IJKL)',
+    p3: 'AI Bot',
+    p4: 'AI Bot',
   };
 }
 
-const lastGoodYaw = [0, 0];
+const lastGoodYaw = [0, 0, 0, 0];
 
 function getCamVectors(cam, slotIdx = 0) {
   if (!cam) return { yaw: lastGoodYaw[slotIdx] || 0, forward: new THREE.Vector3(0, 0, 1), right: new THREE.Vector3(1, 0, 0), valid: false };
@@ -652,10 +725,11 @@ function getCamVectors(cam, slotIdx = 0) {
  * @param {'practice' | 'match'} mode
  * @param {number[]} botSlots  slot indices controlled by bots (skip device polling)
  */
-export function sampleAllInputs(cameras, athleteCount = 2, mode = 'match', botSlots = []) {
+export function sampleAllInputs(cameras, athleteCount = 2, mode = 'match', botSlots = [], isGameplayActive = true) {
   currentBotSlots = botSlots;
+  gameplayInputActive = Boolean(isGameplayActive);
 
-  if (isInGameMenuOpen()) {
+  if (isUiBlockingGameplayInput()) {
     for (let i = 0; i < athleteCount; i++) {
       if (!botSlots.includes(i)) {
         const slot = slots[i];
@@ -663,6 +737,13 @@ export function sampleAllInputs(cameras, athleteCount = 2, mode = 'match', botSl
         slot.moveZ = 0;
         slot.sprintHeld = false;
         slot.slideHeld = false;
+        slot.braceHeld = false;
+        slot.jumpQueued = false;
+        slot.diveQueued = false;
+        slot.cutQueued = false;
+        slot.volleyQueued = false;
+        slot.spikeQueued = false;
+        slot.ballResetQueued = false;
         slot.lookX = 0;
         slot.lookY = 0;
         slot.hasAim = false;
@@ -676,16 +757,18 @@ export function sampleAllInputs(cameras, athleteCount = 2, mode = 'match', botSl
     _mouseDY = 0;
     cameraCyclePlayerQueued.fill(0);
     cameraCycleArenaQueued.fill(0);
+    menuToggleQueued = false;
     heldKeys.clear();
     uiKeyboardEdges.fill(0);
     uiMouseHeld.fill(0);
     for (let i = 0; i < uiSlots.length; i++) {
       uiSlots[i].held = uiSlots[i].pulse = 0;
     }
-    // The menu owns the pads: treat every button as held, so whatever closes it
-    // (A on Resume, B, Start) must be released before it acts in play.
-    latchPadPrev(0);
-    latchPadPrev(1);
+    // The menu/flyover owns the pads: treat every button as held, so whatever closes
+    // or skips it must be released before it acts in play.
+    for (let i = 0; i < 4; i++) {
+      latchPadPrev(i);
+    }
     return;
   }
 
@@ -698,20 +781,23 @@ export function sampleAllInputs(cameras, athleteCount = 2, mode = 'match', botSl
   // Resolve camera(s)
   const isCamArray = Array.isArray(cameras);
   const p1Cam = isCamArray ? (cameras[0]?.camera || cameras[0]) : (cameras?.camera || cameras);
-  const p2Cam = isCamArray ? (cameras[1]?.camera || cameras[1] || p1Cam) : p1Cam;
-
-  const cam1Data = getCamVectors(p1Cam, 0);
-  const cam2Data = getCamVectors(p2Cam, 1);
+  const camDatas = [0, 1, 2, 3].map((idx) => {
+    const rawCam = isCamArray ? (cameras[idx]?.camera || cameras[idx] || p1Cam) : p1Cam;
+    return getCamVectors(rawCam, idx);
+  });
 
   const pads = getConnectedGamepads();
   resolveDeviceRouting(pads, athleteCount, mode, botSlots);
 
-  for (let i = 0; i < 2; i++) {
+  const maxSlots = Math.min(4, Math.max(2, athleteCount));
+  for (let i = 0; i < maxSlots; i++) {
     if (i >= athleteCount || botSlots.includes(i)) continue;
-    sampleHumanSlot(i, slotPads[i], i === 0 ? cam1Data : cam2Data, mode);
+    sampleHumanSlot(i, slotPads[i], camDatas[i] || camDatas[0], mode);
   }
-  updateUiSlot(0, slotPads[0], mode === 'practice' ? 1 : athleteCount, botSlots, mode);
-  updateUiSlot(1, slotPads[1], mode === 'practice' ? 1 : athleteCount, botSlots, mode);
+  const activeCount = mode === 'practice' ? 1 : athleteCount;
+  for (let i = 0; i < 4; i++) {
+    updateUiSlot(i, slotPads[i], activeCount, botSlots, mode);
+  }
 }
 
 function latchPadPrev(slotIdx) {
@@ -734,15 +820,15 @@ function findPad(pads, padIndex) {
 function resolveDeviceRouting(pads, athleteCount, mode, botSlots) {
   keysetSlot[0] = 0;
   keysetSlot[1] = 1;
-  slotKeyset[0] = 0;
-  slotKeyset[1] = 1;
-  slotPads[0] = null;
-  slotPads[1] = null;
+  for (let s = 0; s < 4; s++) {
+    slotKeyset[s] = s % 2;
+    slotPads[s] = null;
+  }
 
   if (mode === 'practice' || athleteCount === 1) {
     if (!botSlots.includes(0)) slotPads[0] = pads[0] || null;
   } else if (explicitDeviceMappings) {
-    for (let s = 0; s < 2; s++) {
+    for (let s = 0; s < 4; s++) {
       const m = explicitDeviceMappings[s];
       if (!m) continue;
       if (m.type === 'gamepad' && typeof m.padIndex === 'number') {
@@ -756,8 +842,9 @@ function resolveDeviceRouting(pads, athleteCount, mode, botSlots) {
   } else {
     // Route gamepads to humans in order
     let padIdx = 0;
-    if (!botSlots.includes(0) && padIdx < pads.length) slotPads[0] = pads[padIdx++];
-    if (!botSlots.includes(1) && padIdx < pads.length) slotPads[1] = pads[padIdx++];
+    for (let s = 0; s < Math.min(4, athleteCount); s++) {
+      if (!botSlots.includes(s) && padIdx < pads.length) slotPads[s] = pads[padIdx++];
+    }
   }
 
   // Arrow-key look goes to a pad-less IJKL player; otherwise to a pad-less WASD player.
@@ -993,7 +1080,7 @@ export function triggerHaptic(slotIndex = 0, { weakMagnitude = 0.3, strongMagnit
   if (TUNING.input && TUNING.input.vibrationEnabled === false) return;
   const pads = getConnectedGamepads();
   if (!pads || pads.length === 0) return;
-  const pad = pads[slotIndex] || (slotIndex === 0 ? pads[0] : null);
+  const pad = slotPads[slotIndex] || pads[slotIndex] || (slotIndex === 0 ? pads[0] : null);
   if (!pad || !pad.vibrationActuator) return;
 
   try {

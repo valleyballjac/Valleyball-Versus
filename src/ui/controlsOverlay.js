@@ -13,7 +13,7 @@ const keys = [
 ];
 const padLabels = ['LS', 'RS', 'LT', 'RT', 'A', 'X', 'RB', 'B', 'Y', 'LB', 'Back'];
 const padIndices = ['Axis 0/1', 'Axis 2/3', 'Btn 6', 'Btn 7', 'Btn 0', 'Btn 2', 'Btn 5', 'Btn 1', 'Btn 3', 'Btn 4', 'Btn 8'];
-const slots = [null, null];
+const slots = [null, null, null, null];
 let root = null;
 let enabled = TUNING.controlsHud.userEnabled;
 let visible = false;
@@ -41,12 +41,15 @@ export function initControlsOverlay() {
   if (root) return;
   root = document.getElementById('controls-overlay');
   if (!root) return;
-  for (let i = 0; i < slots.length; i++) {
+  for (const i of [0, 2, 1, 3]) {
+    const teamNum = (i === 0 || i === 2) ? 1 : 2;
     const panel = document.createElement('div');
     panel.className = 'controls-strip';
+    panel.dataset.team = String(teamNum);
+    panel.dataset.slot = String(i);
     const title = document.createElement('div');
     title.className = 'controls-strip-title';
-    title.textContent = `P${i + 1}`;
+    title.textContent = `T${teamNum} · P${i + 1}`;
     const device = document.createElement('span');
     title.appendChild(device);
     panel.appendChild(title);

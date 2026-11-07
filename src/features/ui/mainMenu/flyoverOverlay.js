@@ -2,7 +2,7 @@
  * Pre-Match Cutscene Overlay: Matchup presentation banner with skippable prompt.
  */
 let flyoverOverlayEl = null;
-let flyoverTimerEl = null;
+let flyoverArenaTagEl = null;
 let flyoverMatchupEl = null;
 let onSkipCallback = null;
 let rootContainer = null;
@@ -29,9 +29,9 @@ export function buildFlyoverOverlay(rootEl, onSkipFlyover) {
   const topBox = document.createElement('div');
   topBox.style.cssText = 'display: flex; flex-direction: column; align-items: center; text-align: center;';
 
-  const arenaTag = document.createElement('div');
-  arenaTag.textContent = 'VALLEY BASIN ARENA · 1v1 MATCH';
-  arenaTag.style.cssText = 'font-size: 13px; font-weight: 700; letter-spacing: 0.2em; color: #94a3b8; margin-bottom: 4px;';
+  flyoverArenaTagEl = document.createElement('div');
+  flyoverArenaTagEl.textContent = 'VALLEY BASIN ARENA · 1v1 MATCH';
+  flyoverArenaTagEl.style.cssText = 'font-size: 13px; font-weight: 700; letter-spacing: 0.2em; color: #94a3b8; margin-bottom: 4px;';
 
   flyoverMatchupEl = document.createElement('div');
   flyoverMatchupEl.style.cssText = `
@@ -43,7 +43,7 @@ export function buildFlyoverOverlay(rootEl, onSkipFlyover) {
   `;
   flyoverMatchupEl.innerHTML = '<span style="color: #d90429;">RED</span> <span style="color: #64748b; font-size: 24px;">VS</span> <span style="color: #1d4ed8;">BLUE</span>';
 
-  topBox.appendChild(arenaTag);
+  topBox.appendChild(flyoverArenaTagEl);
   topBox.appendChild(flyoverMatchupEl);
 
   // Bottom Skip Prompt
@@ -56,7 +56,7 @@ export function buildFlyoverOverlay(rootEl, onSkipFlyover) {
 
   const skipBtn = document.createElement('button');
   skipBtn.id = 'btn-skip-flyover';
-  skipBtn.innerHTML = 'SKIP INTRO [SPACE / A] <span style="margin-left: 4px;">⏭</span>';
+  skipBtn.innerHTML = 'SKIP INTRO [A / START / SPACE / CLICK] <span style="margin-left: 4px;">⏭</span>';
   skipBtn.style.cssText = `
     pointer-events: auto;
     padding: 10px 18px;
@@ -93,12 +93,19 @@ export function showFlyoverOverlay(
   p2Name = 'AWAY',
   p1Color = '#ff4d6d',
   p2Color = '#60a5fa',
+  options = {},
 ) {
   if (!flyoverOverlayEl) return;
   if (rootContainer) rootContainer.style.pointerEvents = 'auto';
   flyoverOverlayEl.style.display = 'flex';
+  const is2v2 = !!options?.is2v2;
+  const t1Roster = options?.team1Roster || (is2v2 ? 'TEAM 1 (P1 & P3)' : 'TEAM 1 (P1)');
+  const t2Roster = options?.team2Roster || (is2v2 ? 'TEAM 2 (P2 & P4)' : 'TEAM 2 (P2)');
+  if (flyoverArenaTagEl) {
+    flyoverArenaTagEl.textContent = `VALLEY BASIN ARENA · ${is2v2 ? '2v2 TEAM MATCH' : '1v1 MATCH'}`;
+  }
   if (flyoverMatchupEl) {
-    flyoverMatchupEl.innerHTML = `<span style="color: ${p1Color};">${p1Name}</span> <span style="color: #64748b; font-size: 24px;">VS</span> <span style="color: ${p2Color};">${p2Name}</span>`;
+    flyoverMatchupEl.innerHTML = `<span style="color: ${p1Color};">${p1Name} <small style="font-size: 16px; opacity: 0.85;">[${t1Roster}]</small></span> <span style="color: #64748b; font-size: 24px;">VS</span> <span style="color: ${p2Color};">${p2Name} <small style="font-size: 16px; opacity: 0.85;">[${t2Roster}]</small></span>`;
   }
 }
 

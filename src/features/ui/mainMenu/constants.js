@@ -27,11 +27,11 @@ export function getColorName(color) {
 export const PHYSIQUE_OPTIONS = ['classic', 'masculine', 'feminine'];
 
 export const CAMERA_OPTIONS = [
-  { id: 'chase', label: '3RD PERSON CHASE (DEFAULT)' },
-  { id: 'thirdPerson', label: '3RD PERSON (BALL TRACK)' },
-  { id: 'firstPerson', label: '1ST PERSON (EYE-LEVEL)' },
-  { id: 'tactical', label: 'TACTICAL OVERHEAD' },
-  { id: 'broadcast', label: 'SIDELINE BROADCAST [FULLSCREEN]' },
+  { id: 'chase', label: 'CHASE CAM', fullLabel: '3RD PERSON CHASE (DEFAULT)' },
+  { id: 'thirdPerson', label: 'BALL TRACK', fullLabel: '3RD PERSON (BALL TRACK)' },
+  { id: 'firstPerson', label: '1ST PERSON', fullLabel: '1ST PERSON (EYE-LEVEL)' },
+  { id: 'tactical', label: 'TACTICAL', fullLabel: 'TACTICAL OVERHEAD' },
+  { id: 'broadcast', label: 'BROADCAST [SHARED]', fullLabel: 'SIDELINE BROADCAST [FULLSCREEN]' },
 ];
 
 export const MATCH_BALL_OPTIONS = [
@@ -63,7 +63,7 @@ export const BALL_OPTIONS = MATCH_BALL_OPTIONS;
 export const HEADWEAR_OPTIONS = Object.freeze(SERIES_1_PLAYTEST_CYCLE.map((e) => Object.freeze({ id: e.id, label: e.label })));
 
 export const ASSIST_OPTIONS = [
-  { id: 'standard', label: 'STANDARD [DEFAULT]', desc: 'v0.2.2 baseline · 0.45m hit forgiveness' },
+  { id: 'standard', label: 'STANDARD', desc: 'v0.2.2 baseline · 0.45m hit forgiveness' },
   { id: 'pureSim', label: 'PURE SIM', desc: 'True physics · 0% forgiveness' },
   { id: 'casual', label: 'CASUAL', desc: '0.65m reach + 360° right-stick aim steering' },
 ];

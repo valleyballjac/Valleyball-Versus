@@ -1,5 +1,7 @@
 import { TUNING } from '../config/tuning.js';
 import { getColorName } from './mainMenu.js';
+import { createMenuPadTracker, MENU_PAD } from '../input/menuPads.js';
+import { buildMatchStatsReport } from '../features/match/matchManager.js';
 
 /**
  * Arcade Victory Screen overlay for Valleyball Versus Match Mode.
@@ -10,14 +12,13 @@ let titleElement = null;
 let scoreElement = null;
 let subtitleElement = null;
 let statsContainer = null;
-let rematchBtn = null;
 let isVisible = false;
 
 let activeVictoryButtons = [];
 let victoryFocusIndex = 0;
 let victoryPollHandle = null;
-let victoryPrevPad = { left: false, right: false, up: false, down: false, a: false, start: false };
 let victoryOpenTimestamp = 0;
+const victoryPads = createMenuPadTracker();
 
 let bannerElement = null;
 let btnRowElement = null;
@@ -49,13 +50,13 @@ export function initVictoryScreen({ onRematch, onPracticeMode, onMainMenu }) {
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding: 32px 48px;
+    padding: 26px 36px;
     background: rgba(14, 20, 30, 0.95);
     border: 2px solid rgba(120, 170, 210, 0.35);
     border-radius: 14px;
     box-shadow: 0 12px 40px rgba(0, 0, 0, 0.7);
-    max-width: 520px;
-    width: 90%;
+    max-width: 780px;
+    width: 92%;
     text-align: center;
   `;
 
@@ -122,6 +123,7 @@ export function initVictoryScreen({ onRematch, onPracticeMode, onMainMenu }) {
   `;
 
   statsContainer = document.createElement('div');
+  statsContainer.id = 'victory-stats-box';
   statsContainer.style.cssText = `
     width: 100%;
     margin-bottom: 24px;
@@ -146,35 +148,78 @@ export function initVictoryScreen({ onRematch, onPracticeMode, onMainMenu }) {
   container.appendChild(subtitleElement);
   container.appendChild(statsContainer);
   container.appendChild(btnRowElement);
+
+  const legendEl = document.createElement('div');
+  legendEl.style.cssText = `
+    margin-top: 14px;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    color: #94a3b8;
+  `;
+  legendEl.innerHTML = '🎮 <b style="color:#ffffff;">◀ ▶</b> SELECT &middot; <b style="color:#00e5ff;">A / START / ENTER</b> CONFIRM';
+  container.appendChild(legendEl);
+
   overlayElement.appendChild(container);
   document.body.appendChild(overlayElement);
 }
 
-export function showVictoryScreen(match, p1Stats = { hits: 0, whiffs: 0, accuracy: 0 }, p2Stats = { hits: 0, whiffs: 0, accuracy: 0 }) {
+export function showVictoryScreen(
+  match,
+  p1Stats = { hits: 0, whiffs: 0, accuracy: 0 },
+  p2Stats = { hits: 0, whiffs: 0, accuracy: 0 },
+  statsReport = null,
+) {
   if (!overlayElement) return;
   isVisible = true;
   overlayElement.style.display = 'flex';
 
+  const isArrayCall = Array.isArray(p1Stats);
+  const resolvedStatsArray = isArrayCall ? p1Stats : (window.__vb?.athleteMatchStats || [p1Stats, p2Stats]);
+  const resolvedAthletes = Array.isArray(p2Stats)
+    ? p2Stats
+    : (window.__vb?.athletes || [
+        { getStrikeStats: () => ({ hits: p1Stats.hits || 0, whiffs: p1Stats.whiffs || 0, accuracy: p1Stats.accuracy || 0 }) },
+        { getStrikeStats: () => ({ hits: p2Stats.hits || 0, whiffs: p2Stats.whiffs || 0, accuracy: p2Stats.accuracy || 0 }) },
+      ]);
+  const enabledCount = resolvedAthletes.filter((a) => a && a.isEnabled !== false).length;
+
+  const report = statsReport || buildMatchStatsReport({
+    match,
+    athletes: resolvedAthletes,
+    athleteMatchStats: resolvedStatsArray,
+    playerConfigs: (typeof window !== 'undefined' && window.__vb?.getPlayerConfigs?.()) || TUNING.players || [],
+    activeCount: enabledCount >= 4 ? 4 : 2,
+  });
+
+  const is2v2 = (report.activeCount || 2) >= 4;
   const homeWon = match.scoreHome > match.scoreAway;
   const awayWon = match.scoreAway > match.scoreHome;
 
   const homeHex = '#' + (TUNING.athlete?.palette?.homePrimary ?? 0xd90429).toString(16).padStart(6, '0');
   const awayHex = '#' + (TUNING.athlete?.palette?.awayPrimary ?? 0x1d4ed8).toString(16).padStart(6, '0');
-  const p1IsHome = TUNING.players?.[0]?.team === 'home';
-  const p1Color = p1IsHome ? homeHex : awayHex;
-  const p2Color = p1IsHome ? awayHex : homeHex;
-  const p1ColorName = getColorName(p1Color).toUpperCase();
-  const p2ColorName = getColorName(p2Color).toUpperCase();
-  const p1Label = p1IsHome ? `PLAYER 1 (${p1ColorName} / HOME)` : `PLAYER 1 (${p1ColorName} / AWAY)`;
-  const p2Label = p1IsHome ? `PLAYER 2 (${p2ColorName} / AWAY)` : `PLAYER 2 (${p2ColorName} / HOME)`;
+  const p1IsHome = (report.players?.[0]?.team || TUNING.players?.[0]?.team || 'home') === 'home';
+  const team1SideKey = p1IsHome ? 'home' : 'away';
+  const team2SideKey = p1IsHome ? 'away' : 'home';
+  const team1Color = p1IsHome ? homeHex : awayHex;
+  const team2Color = p1IsHome ? awayHex : homeHex;
+  const team1ColorName = getColorName(team1Color).toUpperCase();
+  const team2ColorName = getColorName(team2Color).toUpperCase();
+
+  const team1Roster = is2v2 ? 'TEAM 1 · P1 & P3' : 'TEAM 1 · P1';
+  const team2Roster = is2v2 ? 'TEAM 2 · P2 & P4' : 'TEAM 2 · P2';
+  const team1Header = `${team1Roster} (${team1ColorName} / ${p1IsHome ? 'HOME' : 'AWAY'})`;
+  const team2Header = `${team2Roster} (${team2ColorName} / ${p1IsHome ? 'AWAY' : 'HOME'})`;
 
   if (homeWon) {
     const winnerColorName = getColorName(homeHex).toUpperCase();
-    titleElement.textContent = `${winnerColorName} (${p1IsHome ? 'PLAYER 1' : 'PLAYER 2'}) WINS!`;
+    const winnerTeamLabel = p1IsHome ? team1Roster : team2Roster;
+    titleElement.textContent = `${winnerColorName} (${winnerTeamLabel}) WINS!`;
     titleElement.style.color = homeHex;
   } else if (awayWon) {
     const winnerColorName = getColorName(awayHex).toUpperCase();
-    titleElement.textContent = `${winnerColorName} (${p1IsHome ? 'PLAYER 2' : 'PLAYER 1'}) WINS!`;
+    const winnerTeamLabel = p1IsHome ? team2Roster : team1Roster;
+    titleElement.textContent = `${winnerColorName} (${winnerTeamLabel}) WINS!`;
     titleElement.style.color = awayHex;
   } else {
     titleElement.textContent = 'MATCH DRAW!';
@@ -188,90 +233,70 @@ export function showVictoryScreen(match, p1Stats = { hits: 0, whiffs: 0, accurac
   `;
 
   const totalGoals = match.goals || (match.scoreHome + match.scoreAway);
-  subtitleElement.textContent = `${totalGoals} Total Goal${totalGoals === 1 ? '' : 's'} · 5:00 Match Duration`;
+  const durSecs = TUNING.match?.durationSeconds || 300;
+  const durMin = Math.floor(durSecs / 60);
+  const durRem = String(durSecs % 60).padStart(2, '0');
+  subtitleElement.textContent = `${is2v2 ? '2v2 Team Match' : '1v1 Match'} · ${totalGoals} Total Goal${totalGoals === 1 ? '' : 's'} · ${durMin}:${durRem} Duration`;
 
-  // Render Extended Stats Grid
-  const p1Goals = p1IsHome ? match.scoreHome : match.scoreAway;
-  const p2Goals = p1IsHome ? match.scoreAway : match.scoreHome;
+  const t1Totals = report.teams?.[team1SideKey] || {};
+  const t2Totals = report.teams?.[team2SideKey] || {};
+  const t1Players = (report.players || []).filter((p) => p.team === team1SideKey);
+  const t2Players = (report.players || []).filter((p) => p.team === team2SideKey);
+  if (t1Players.length === 0) t1Players.push({ shortLabel: 'P1', ...p1Stats });
+  if (t2Players.length === 0) t2Players.push({ shortLabel: 'P2', ...p2Stats });
 
-  const p1H = p1Stats.hits || 0;
-  const p1W = p1Stats.whiffs || 0;
-  const p1A = p1Stats.accuracy !== undefined ? p1Stats.accuracy : (p1H + p1W > 0 ? Math.round((p1H / (p1H + p1W)) * 100) : 0);
-  const p1Touches = p1Stats.totalTouches ?? (p1H + p1W);
-  const p1Sweet = p1Stats.sweetSpotHits ?? 0;
-  const p1Spikes = p1Stats.spikes ?? 0;
-  const p1Dives = p1Stats.dives ?? 0;
-  const p1DivingHits = p1Stats.divingHits ?? 0;
-  const p1Def = p1Stats.ownCircleTouches ?? 0;
-  const p1Att = p1Stats.oppCircleTouches ?? 0;
+  const renderSideCols = (teamTotalVal, playerVals, alignRight = false, accentColor = '#e2e8f0') => {
+    const subColCount = 1 + playerVals.length;
+    const playerTextColor = `color-mix(in srgb, ${accentColor} 24%, #e2e8f0)`;
+    const cells = alignRight
+      ? [
+          ...playerVals.map((v) => `<span style="color: #cbd5e1; color: ${playerTextColor}; font-size: 11px; font-weight: 700; text-align: right;">${v}</span>`),
+          `<span style="color: ${accentColor}; font-size: 12px; font-weight: 900; text-align: right; background: rgba(255,255,255,0.04); padding: 1px 6px; border-radius: 4px;">${teamTotalVal}</span>`,
+        ]
+      : [
+          `<span style="color: ${accentColor}; font-size: 12px; font-weight: 900; text-align: left; background: rgba(255,255,255,0.04); padding: 1px 6px; border-radius: 4px;">${teamTotalVal}</span>`,
+          ...playerVals.map((v) => `<span style="color: #cbd5e1; color: ${playerTextColor}; font-size: 11px; font-weight: 700; text-align: left;">${v}</span>`),
+        ];
+    return `<div style="display: grid; grid-template-columns: repeat(${subColCount}, 1fr); gap: 6px; align-items: center;">${cells.join('')}</div>`;
+  };
 
-  const p2H = p2Stats.hits || 0;
-  const p2W = p2Stats.whiffs || 0;
-  const p2A = p2Stats.accuracy !== undefined ? p2Stats.accuracy : (p2H + p2W > 0 ? Math.round((p2H / (p2H + p2W)) * 100) : 0);
-  const p2Touches = p2Stats.totalTouches ?? (p2H + p2W);
-  const p2Sweet = p2Stats.sweetSpotHits ?? 0;
-  const p2Spikes = p2Stats.spikes ?? 0;
-  const p2Dives = p2Stats.dives ?? 0;
-  const p2DivingHits = p2Stats.divingHits ?? 0;
-  const p2Def = p2Stats.ownCircleTouches ?? 0;
-  const p2Att = p2Stats.oppCircleTouches ?? 0;
+  const renderStatRow = (label, accentColor, t1Total, t1PlayerMapper, t2PlayerMapper, t2Total) => `
+    <div style="display: grid; grid-template-columns: 1fr 150px 1fr; gap: 10px; padding: 4px 0; border-top: 1px solid rgba(255,255,255,0.06); align-items: center;">
+      ${renderSideCols(t1Total, t1Players.map(t1PlayerMapper), false, accentColor)}
+      <span style="color: #94a3b8; color: color-mix(in srgb, ${accentColor} 38%, #94a3b8); text-align: center; font-size: 10px; font-weight: 800; letter-spacing: 0.06em;">${label}</span>
+      ${renderSideCols(t2Total, t2Players.map(t2PlayerMapper), true, accentColor)}
+    </div>
+  `;
+
+  const t1SubHeaders = renderSideCols('TEAM', t1Players.map((p) => p.shortLabel || `P${(p.slotIndex ?? 0) + 1}`), false, team1Color);
+  const t2SubHeaders = renderSideCols('TEAM', t2Players.map((p) => p.shortLabel || `P${(p.slotIndex ?? 1) + 1}`), true, team2Color);
+
+  const t1TeamGoals = p1IsHome ? (match.scoreHome || 0) : (match.scoreAway || 0);
+  const t2TeamGoals = p1IsHome ? (match.scoreAway || 0) : (match.scoreHome || 0);
 
   statsContainer.innerHTML = `
-    <div style="display: grid; grid-template-columns: 1fr 140px 1fr; gap: 8px; align-items: center; margin-bottom: 8px; font-weight: 800; font-size: 11px; letter-spacing: 0.08em;">
-      <span style="color: ${p1Color}; text-align: left;">${p1Label}</span>
-      <span style="color: #64748b; text-align: center;">MATCH STATS</span>
-      <span style="color: ${p2Color}; text-align: right;">${p2Label}</span>
+    <div style="display: grid; grid-template-columns: 1fr 150px 1fr; gap: 10px; align-items: center; margin-bottom: 4px; font-weight: 900; font-size: 11px; letter-spacing: 0.08em;">
+      <span style="color: ${team1Color}; text-align: left;">${team1Header}</span>
+      <span style="color: #64748b; text-align: center;">TEAM &amp; PLAYER STATS</span>
+      <span style="color: ${team2Color}; text-align: right;">${team2Header}</span>
     </div>
-    <div style="display: grid; grid-template-columns: 1fr 140px 1fr; gap: 8px; padding: 4px 0; border-top: 1px solid rgba(255,255,255,0.06); font-weight: 700;">
-      <span style="color: #ef4444; text-align: left; font-size: 13px;">${p1Goals}</span>
-      <span style="color: #94a3b8; text-align: center; font-size: 11px;">GOALS</span>
-      <span style="color: #ef4444; text-align: right; font-size: 13px;">${p2Goals}</span>
+    <div style="display: grid; grid-template-columns: 1fr 150px 1fr; gap: 10px; align-items: center; padding-bottom: 6px; margin-bottom: 2px; border-bottom: 1px solid rgba(120,170,210,0.25); font-size: 10px; letter-spacing: 0.08em;">
+      ${t1SubHeaders}
+      <span style="color: #475569; text-align: center; font-weight: 800;">METRIC</span>
+      ${t2SubHeaders}
     </div>
-    <div style="display: grid; grid-template-columns: 1fr 140px 1fr; gap: 8px; padding: 4px 0; border-top: 1px solid rgba(255,255,255,0.06); font-weight: 700;">
-      <span style="color: #f43f5e; text-align: left;">${p1Spikes}</span>
-      <span style="color: #94a3b8; text-align: center; font-size: 11px;">POWER SPIKES</span>
-      <span style="color: #f43f5e; text-align: right;">${p2Spikes}</span>
-    </div>
-    <div style="display: grid; grid-template-columns: 1fr 140px 1fr; gap: 8px; padding: 4px 0; border-top: 1px solid rgba(255,255,255,0.06); font-weight: 700;">
-      <span style="color: #fb923c; text-align: left;">${p1Att}</span>
-      <span style="color: #94a3b8; text-align: center; font-size: 11px;">OPP CIRCLE (ATTACK)</span>
-      <span style="color: #fb923c; text-align: right;">${p2Att}</span>
-    </div>
-    <div style="display: grid; grid-template-columns: 1fr 140px 1fr; gap: 8px; padding: 4px 0; border-top: 1px solid rgba(255,255,255,0.06); font-weight: 700;">
-      <span style="color: #ffd60a; text-align: left;">★ ${p1Sweet}</span>
-      <span style="color: #94a3b8; text-align: center; font-size: 11px;">SWEET SPOT HITS</span>
-      <span style="color: #ffd60a; text-align: right;">★ ${p2Sweet}</span>
-    </div>
-    <div style="display: grid; grid-template-columns: 1fr 140px 1fr; gap: 8px; padding: 4px 0; border-top: 1px solid rgba(255,255,255,0.06); font-weight: 700;">
-      <span style="color: #22c55e; text-align: left;">${p1H} <span style="color: #94a3b8; font-size: 10px;">(${p1W} w)</span></span>
-      <span style="color: #94a3b8; text-align: center; font-size: 11px;">STRIKES (HITS/WHIFFS)</span>
-      <span style="color: #22c55e; text-align: right;">${p2H} <span style="color: #94a3b8; font-size: 10px;">(${p2W} w)</span></span>
-    </div>
-    <div style="display: grid; grid-template-columns: 1fr 140px 1fr; gap: 8px; padding: 4px 0; border-top: 1px solid rgba(255,255,255,0.06); font-weight: 700;">
-      <span style="color: #10b981; text-align: left;">${p1Def}</span>
-      <span style="color: #94a3b8; text-align: center; font-size: 11px;">OWN CIRCLE (DEFENSE)</span>
-      <span style="color: #10b981; text-align: right;">${p2Def}</span>
-    </div>
-    <div style="display: grid; grid-template-columns: 1fr 140px 1fr; gap: 8px; padding: 4px 0; border-top: 1px solid rgba(255,255,255,0.06); font-weight: 700;">
-      <span style="color: #38bdf8; text-align: left;">${p1A}%</span>
-      <span style="color: #94a3b8; text-align: center; font-size: 11px;">STRIKE ACCURACY</span>
-      <span style="color: #38bdf8; text-align: right;">${p2A}%</span>
-    </div>
-    <div style="display: grid; grid-template-columns: 1fr 140px 1fr; gap: 8px; padding: 4px 0; border-top: 1px solid rgba(255,255,255,0.06); font-weight: 700;">
-      <span style="color: #2563eb; text-align: left;">${p1Touches}</span>
-      <span style="color: #94a3b8; text-align: center; font-size: 11px;">TOUCHES</span>
-      <span style="color: #2563eb; text-align: right;">${p2Touches}</span>
-    </div>
-    <div style="display: grid; grid-template-columns: 1fr 140px 1fr; gap: 8px; padding: 4px 0; border-top: 1px solid rgba(255,255,255,0.06); font-weight: 700;">
-      <span style="color: #8b5cf6; text-align: left;">${p1Dives}</span>
-      <span style="color: #94a3b8; text-align: center; font-size: 11px;">GROUND DIVES</span>
-      <span style="color: #8b5cf6; text-align: right;">${p2Dives}</span>
-    </div>
-    <div style="display: grid; grid-template-columns: 1fr 140px 1fr; gap: 8px; padding: 4px 0; border-top: 1px solid rgba(255,255,255,0.06); font-weight: 700;">
-      <span style="color: #ec4899; text-align: left;">${p1DivingHits}</span>
-      <span style="color: #94a3b8; text-align: center; font-size: 11px;">DIVING HITS / SAVES</span>
-      <span style="color: #ec4899; text-align: right;">${p2DivingHits}</span>
-    </div>
+    ${renderStatRow('GOALS', '#ff2e55', t1TeamGoals, (p) => p.goals ?? 0, (p) => p.goals ?? 0, t2TeamGoals)}
+    ${is2v2 ? renderStatRow('ASSISTS', '#ff5733', t1Totals.assists ?? 0, (p) => p.assists ?? 0, (p) => p.assists ?? 0, t2Totals.assists ?? 0) : ''}
+    ${renderStatRow('POWER SPIKES', '#ff7f24', t1Totals.spikes ?? 0, (p) => p.spikes ?? 0, (p) => p.spikes ?? 0, t2Totals.spikes ?? 0)}
+    ${renderStatRow('OPP CIRCLE (ATK)', '#ffaa1d', t1Totals.oppCircleTouches ?? 0, (p) => p.oppCircleTouches ?? 0, (p) => p.oppCircleTouches ?? 0, t2Totals.oppCircleTouches ?? 0)}
+    ${renderStatRow('SWEET SPOT HITS', '#ffd60a', `★ ${t1Totals.sweetSpotHits ?? 0}`, (p) => `★ ${p.sweetSpotHits ?? 0}`, (p) => `★ ${p.sweetSpotHits ?? 0}`, `★ ${t2Totals.sweetSpotHits ?? 0}`)}
+    ${renderStatRow('STRIKES (H/W)', '#a3e635', `${t1Totals.hits ?? 0}/${t1Totals.whiffs ?? 0}`, (p) => `${p.hits ?? 0}/${p.whiffs ?? 0}`, (p) => `${p.hits ?? 0}/${p.whiffs ?? 0}`, `${t2Totals.hits ?? 0}/${t2Totals.whiffs ?? 0}`)}
+    ${renderStatRow('STRIKE ACCURACY', '#22c55e', `${t1Totals.accuracy ?? 0}%`, (p) => `${p.accuracy ?? 0}%`, (p) => `${p.accuracy ?? 0}%`, `${t2Totals.accuracy ?? 0}%`)}
+    ${renderStatRow('DEFENSIVE BLOCKS', '#14b8a6', t1Totals.defensiveBlocks ?? 0, (p) => p.defensiveBlocks ?? 0, (p) => p.defensiveBlocks ?? 0, t2Totals.defensiveBlocks ?? 0)}
+    ${renderStatRow('OWN CIRCLE (DEF)', '#06b6d4', t1Totals.ownCircleTouches ?? 0, (p) => p.ownCircleTouches ?? 0, (p) => p.ownCircleTouches ?? 0, t2Totals.ownCircleTouches ?? 0)}
+    ${renderStatRow('TOUCHES', '#3b82f6', t1Totals.totalTouches ?? 0, (p) => p.totalTouches ?? 0, (p) => p.totalTouches ?? 0, t2Totals.totalTouches ?? 0)}
+    ${renderStatRow('GROUND DIVES', '#8b5cf6', t1Totals.dives ?? 0, (p) => p.dives ?? 0, (p) => p.dives ?? 0, t2Totals.dives ?? 0)}
+    ${renderStatRow('DIVING SAVES', '#ec4899', t1Totals.divingHits ?? 0, (p) => p.divingHits ?? 0, (p) => p.divingHits ?? 0, t2Totals.divingHits ?? 0)}
   `;
   bannerElement.textContent = 'FULL TIME';
   bannerElement.style.color = '#7d97ad';
@@ -582,7 +607,7 @@ function startVictoryGamepadPolling(buttons) {
   window.addEventListener('keydown', onKeyDown);
 
   victoryOpenTimestamp = Date.now();
-  const perPadStates = new Map();
+  victoryPads.reset();
 
   victoryPollHandle = setInterval(() => {
     if (!isVisible || !overlayElement || overlayElement.style.display !== 'flex') {
@@ -597,72 +622,26 @@ function startVictoryGamepadPolling(buttons) {
       if (raw[i] && raw[i].connected) pads.push(raw[i]);
     }
 
-    const isLocked = Date.now() - victoryOpenTimestamp < 750;
+    victoryPads.update(pads);
+    if (Date.now() - victoryOpenTimestamp < 750) return;
 
     for (const pad of pads) {
       if (!pad) continue;
-      const padIdx = pad.index ?? 0;
-      let p = perPadStates.get(padIdx);
-      if (!p) {
-        p = {
-          left: (pad.buttons[14]?.pressed || (pad.axes[0] && pad.axes[0] < -0.5)) || false,
-          right: (pad.buttons[15]?.pressed || (pad.axes[0] && pad.axes[0] > 0.5)) || false,
-          up: (pad.buttons[12]?.pressed || (pad.axes[1] && pad.axes[1] < -0.5)) || false,
-          down: (pad.buttons[13]?.pressed || (pad.axes[1] && pad.axes[1] > 0.5)) || false,
-          a: pad.buttons[0]?.pressed || false,
-          start: pad.buttons[9]?.pressed || false,
-          axisCenteredX: Math.abs(pad.axes[0] || 0) < 0.2,
-          axisCenteredY: Math.abs(pad.axes[1] || 0) < 0.2,
-        };
-        perPadStates.set(padIdx, p);
+      const e = victoryPads.pressed(pad);
+      if (!e) continue;
+
+      if (e & (MENU_PAD.left | MENU_PAD.up)) {
+        victoryFocusIndex = (victoryFocusIndex - 1 + activeVictoryButtons.length) % activeVictoryButtons.length;
+        updateVictoryFocusUI();
       }
-
-      const axisX = pad.axes[0] || 0;
-      const axisY = pad.axes[1] || 0;
-      const centeredX = Math.abs(axisX) < 0.2;
-      const centeredY = Math.abs(axisY) < 0.2;
-
-      const dpadLeft = pad.buttons[14]?.pressed || false;
-      const dpadRight = pad.buttons[15]?.pressed || false;
-      const dpadUp = pad.buttons[12]?.pressed || false;
-      const dpadDown = pad.buttons[13]?.pressed || false;
-
-      const stickLeft = axisX < -0.5 && p.axisCenteredX;
-      const stickRight = axisX > 0.5 && p.axisCenteredX;
-      const stickUp = axisY < -0.5 && p.axisCenteredY;
-      const stickDown = axisY > 0.5 && p.axisCenteredY;
-
-      const left = dpadLeft || stickLeft;
-      const right = dpadRight || stickRight;
-      const up = dpadUp || stickUp;
-      const down = dpadDown || stickDown;
-      const btnA = pad.buttons[0]?.pressed || false;
-      const btnStart = pad.buttons[9]?.pressed || false;
-
-      if (!isLocked) {
-        if ((left && !p.left) || (up && !p.up)) {
-          victoryFocusIndex = (victoryFocusIndex - 1 + activeVictoryButtons.length) % activeVictoryButtons.length;
-          updateVictoryFocusUI();
-        }
-        if ((right && !p.right) || (down && !p.down)) {
-          victoryFocusIndex = (victoryFocusIndex + 1) % activeVictoryButtons.length;
-          updateVictoryFocusUI();
-        }
-        if ((btnA && !p.a) || (btnStart && !p.start)) {
-          activeVictoryButtons[victoryFocusIndex]?.click();
-        }
+      if (e & (MENU_PAD.right | MENU_PAD.down)) {
+        victoryFocusIndex = (victoryFocusIndex + 1) % activeVictoryButtons.length;
+        updateVictoryFocusUI();
       }
-
-      p.left = left;
-      p.right = right;
-      p.up = up;
-      p.down = down;
-      p.a = btnA;
-      p.start = btnStart;
-      if (centeredX) p.axisCenteredX = true;
-      if (Math.abs(axisX) > 0.5) p.axisCenteredX = false;
-      if (centeredY) p.axisCenteredY = true;
-      if (Math.abs(axisY) > 0.5) p.axisCenteredY = false;
+      if (e & (MENU_PAD.a | MENU_PAD.start)) {
+        activeVictoryButtons[victoryFocusIndex]?.click();
+        return;
+      }
     }
   }, 50);
 

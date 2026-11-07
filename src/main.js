@@ -40,14 +40,21 @@ import {
 } from './sim/ragdoll.js';
 import { applyClampedLinearDamping } from './sim/damping.js';
 import { createAthlete } from './sim/athlete.js';
-import { athleteManager } from './features/athletes/athleteManager.js';
-import { matchManager } from './features/match/matchManager.js';
+import { athleteManager, computeStreamHeadSpawns } from './features/athletes/athleteManager.js';
+import { resolveAthleteCollision } from './features/athletes/athleteCollisions.js';
+import {
+  matchManager,
+  createPlayerMatchStats,
+  resetPlayerMatchStats,
+  buildMatchStatsReport,
+} from './features/match/matchManager.js';
 import {
   readFixtureFromSearch, fixtureMatchSetup, createFixtureRandom, fixtureBotSeed, resultSide, buildMatchResult,
 } from './features/match/matchFixture.js';
 import {
   initInputRouter,
   sampleAllInputs,
+  clearGameplayInputQueues,
   getControlsSnapshot,
   getInputSlot,
   consumeAthleteJump,
@@ -74,6 +81,7 @@ import { PlayerCamera } from './visuals/playerCamera.js';
 import { CinematicCamera } from './visuals/cinematicCamera.js';
 import { createTurfParticleSystem, getPitchSurfaceColor } from './visuals/turfParticles.js';
 import { createGoalCelebrationSystem } from './visuals/goalCelebration.js';
+import { createGoalIndicators } from './visuals/goalIndicators.js';
 import { initVictoryScreen, showVictoryScreen, hideVictoryScreen, showPracticeSummary, isVictoryScreenVisible } from './ui/victoryScreen.js';
 import { initControlsOverlay, updateControlsOverlay, setControlsOverlayEnabled, hideControlsOverlay } from './ui/controlsOverlay.js';
 import { initCountdownOverlay, updateCountdownOverlay, resetCountdownOverlay } from './ui/countdownOverlay.js';
@@ -95,7 +103,7 @@ import {
 import { createMountFollowerState, runMountFollower } from './mechanics/mountFollower.js';
 import { createActionState, runActions } from './mechanics/actions.js';
 import {
-  createStrikeState, resetStrikeState, runStrikes, resolveStrikeContact, resolveBraceRedirect, strikeProbe,
+  createStrikeState, runStrikes, resolveStrikeContact, resolveBraceRedirect, strikeProbe,
   checkStrikeAssist, KIND_NAME,
 } from './mechanics/strikes.js';
 import { createMatchState, updateScoring, matchProbe } from './mechanics/scoring.js';
@@ -455,6 +463,8 @@ scene.add(new THREE.AmbientLight(0x8fb4d6, 0.45));
 const playerCameras = [
   new PlayerCamera(0, TUNING.players[0]?.cameraMode || 'chase'),
   new PlayerCamera(1, TUNING.players[1]?.cameraMode || 'chase'),
+  new PlayerCamera(2, TUNING.players[2]?.cameraMode || 'chase'),
+  new PlayerCamera(3, TUNING.players[3]?.cameraMode || 'chase'),
 ];
 
 const CAMERA_MODE_DISPLAY_NAMES = {
@@ -556,6 +566,7 @@ playerCameras.forEach((pc) => {
 
 const turfParticles = createTurfParticleSystem(scene);
 const goalCelebration = createGoalCelebrationSystem(scene);
+const goalIndicators = createGoalIndicators(scene);
 
 const _pitchRayOrigin = { x: 0, y: 0, z: 0 };
 const _pitchRayDown = { x: 0, y: -1, z: 0 };
@@ -596,29 +607,77 @@ const _camOffset = new THREE.Vector3();
 const _camDir = new THREE.Vector3();
 const _camDesired = new THREE.Vector3();
 
+function getActiveHumanSlots() {
+  if (gameState === 'practice') return [0];
+  const humanSlots = [];
+  for (let i = 0; i < athletes.length; i++) {
+    if (athletes[i]?.isEnabled && !activeBotSlots.includes(i)) humanSlots.push(i);
+  }
+  return humanSlots;
+}
+
+function ensureAthletesRegistered(count, configs) {
+  athletes = athleteManager.ensureRoster(count, configs);
+  for (const a of athletes) {
+    if (a?.motor?.interpolated && !loop.interpolated.includes(a.motor.interpolated)) {
+      loop.register(a.motor.interpolated);
+    }
+  }
+  return athletes;
+}
+
+function syncPlayerCameraMode(playerIndex, mode) {
+  const p = TUNING.players[playerIndex];
+  if (p) p.cameraMode = mode;
+  if (playerIndex === 0) TUNING.camera.mode = mode;
+}
+
+function leaveSharedCameraForOtherSlot(changedPlayerIndex) {
+  if (!TUNING.camera.splitscreen) return;
+  for (let otherIdx = 0; otherIdx < playerCameras.length; otherIdx++) {
+    if (otherIdx === changedPlayerIndex) continue;
+    const otherCam = playerCameras[otherIdx];
+    if (otherCam && (otherCam.mode === 'broadcast' || otherCam.mode === 'sports')) {
+      const fallback = otherCam._lastPlayerMode || 'chase';
+      otherCam.setMode(fallback, true);
+      syncPlayerCameraMode(otherIdx, otherCam.mode);
+    }
+  }
+}
+
 function cycleCameraMode(playerIndex = 0) {
   const pc = playerCameras[playerIndex] || playerCameras[0];
-  const isSplitscreen = (gameState === 'match') && !!TUNING.camera.splitscreen && athletes.length >= 2;
+  const isSplitscreen = (gameState === 'match') && !!TUNING.camera.splitscreen && getActiveHumanSlots().length >= 2;
   const mode = pc.cycleMode(isSplitscreen);
-  if (TUNING.players[playerIndex]) TUNING.players[playerIndex].cameraMode = mode;
-  if (playerIndex === 0) TUNING.camera.mode = mode;
+  syncPlayerCameraMode(playerIndex, mode);
+  if (mode !== 'broadcast' && mode !== 'sports') leaveSharedCameraForOtherSlot(playerIndex);
   applyViewportSize();
 }
 
 function cyclePlayerCameraView(playerIndex = 0, delta = 1) {
   const pc = playerCameras[playerIndex] || playerCameras[0];
   const mode = pc.cyclePlayerView(delta);
-  if (TUNING.players[playerIndex]) TUNING.players[playerIndex].cameraMode = mode;
-  if (playerIndex === 0) TUNING.camera.mode = mode;
+  syncPlayerCameraMode(playerIndex, mode);
+  leaveSharedCameraForOtherSlot(playerIndex);
   applyViewportSize();
 }
 
 function cycleArenaCameraView(playerIndex = 0, delta = 1) {
   const pc = playerCameras[playerIndex] || playerCameras[0];
-  const isSplitscreen = (gameState === 'match') && !!TUNING.camera.splitscreen && athletes.length >= 2;
+  const humanSlots = getActiveHumanSlots();
+  const wasShared = humanSlots.length > 0 && humanSlots.every((s) => playerCameras[s]?.mode === 'broadcast');
+  const isSplitscreen = (gameState === 'match') && !!TUNING.camera.splitscreen && humanSlots.length >= 2 && !wasShared;
   const mode = pc.cycleArenaView(delta, isSplitscreen);
-  if (TUNING.players[playerIndex]) TUNING.players[playerIndex].cameraMode = mode;
-  if (playerIndex === 0) TUNING.camera.mode = mode;
+  syncPlayerCameraMode(playerIndex, mode);
+  if (mode === 'broadcast' && TUNING.camera.splitscreen) {
+    for (const s of humanSlots) {
+      if (s === playerIndex) continue;
+      playerCameras[s]?.setMode('broadcast', false);
+      syncPlayerCameraMode(s, 'broadcast');
+    }
+  } else if (mode !== 'broadcast' && mode !== 'sports') {
+    leaveSharedCameraForOtherSlot(playerIndex);
+  }
   applyViewportSize();
 }
 
@@ -660,31 +719,31 @@ function applyViewportSize() {
   spectatorCamera.aspect = width / height;
   spectatorCamera.updateProjectionMatrix();
 
-  const p1CamMode = playerCameras[0]?.mode;
-  const p2CamMode = playerCameras[1]?.mode;
-  const isSharedCam = (p1CamMode === 'broadcast' && p2CamMode === 'broadcast') ||
-                      (p1CamMode === 'sports' && p2CamMode === 'sports');
-  const isSplitscreen = (gameState === 'match') && !!TUNING.camera.splitscreen && athletes.length >= 2 && !isSharedCam;
+  const humanSlots = getActiveHumanSlots();
+  const isSharedCam = humanSlots.length > 0 && humanSlots.every(
+    (s) => playerCameras[s]?.mode === 'broadcast' || playerCameras[s]?.mode === 'sports',
+  );
+  const isSplitscreen = (gameState === 'match') && !!TUNING.camera.splitscreen && humanSlots.length >= 2 && !isSharedCam;
 
   // Broadcast and Sports cameras are full-screen only: if in individual splitscreen, revert them to chase.
-  // setMode (not a bare assignment) so the camera notice tells the player what they actually got.
   if (isSplitscreen) {
-    if (playerCameras[0] && (playerCameras[0].mode === 'sports' || playerCameras[0].mode === 'broadcast')) {
-      playerCameras[0].setMode('chase');
-      if (TUNING.players[0]) TUNING.players[0].cameraMode = 'chase';
-    }
-    if (playerCameras[1] && (playerCameras[1].mode === 'sports' || playerCameras[1].mode === 'broadcast')) {
-      playerCameras[1].setMode('chase');
-      if (TUNING.players[1]) TUNING.players[1].cameraMode = 'chase';
+    for (const s of humanSlots) {
+      if (playerCameras[s] && (playerCameras[s].mode === 'sports' || playerCameras[s].mode === 'broadcast')) {
+        playerCameras[s].setMode('chase');
+        syncPlayerCameraMode(s, 'chase');
+      }
     }
   }
 
-  const aspect = isSplitscreen ? (width / 2) / height : width / height;
+  const isQuadSplit = isSplitscreen && humanSlots.length > 2;
+  const aspect = isQuadSplit
+    ? (width / 2) / (height / 2)
+    : (isSplitscreen ? (width / 2) / height : width / height);
 
-  playerCameras[0].camera.aspect = aspect;
-  playerCameras[0].camera.updateProjectionMatrix();
-  playerCameras[1].camera.aspect = aspect;
-  playerCameras[1].camera.updateProjectionMatrix();
+  for (const pc of playerCameras) {
+    pc.camera.aspect = aspect;
+    pc.camera.updateProjectionMatrix();
+  }
 }
 
 function applyShadowSettings() {
@@ -946,10 +1005,7 @@ const headwearControls = { p1: 'manager_cap', p2: 'manager_cap' };
 let botControllers = [];
 /** Which input slot indices are bot-controlled (passed to sampleAllInputs). */
 let activeBotSlots = [];
-const athleteMatchStats = [
-  { totalTouches: 0, sweetSpotHits: 0, spikes: 0, dives: 0, divingHits: 0, defensiveBlocks: 0, ownCircleTouches: 0, oppCircleTouches: 0 },
-  { totalTouches: 0, sweetSpotHits: 0, spikes: 0, dives: 0, divingHits: 0, defensiveBlocks: 0, ownCircleTouches: 0, oppCircleTouches: 0 },
-];
+const athleteMatchStats = [0, 1, 2, 3].map((i) => createPlayerMatchStats(i));
 /**
  * THE FIXTURE MATCH (?fixture=, see features/match/matchFixture.js). Set by
  * startFixtureMatch, cleared once its result is reported, so a rematch or a
@@ -1388,6 +1444,7 @@ function drainImpacts(tick, dt) {
         // on this same contact, so a swing and a block never double-apply. When a
         // redirect lands inside the intercept-dive window it marks that dive as
         // "connected", so the whiff recovery in actions.js is skipped.
+        const athleteIdx = athletes.indexOf(athleteHit);
         if (!didStrike) {
           const braceMix = athleteHit.actionState ? athleteHit.actionState.braceMix : 0;
           if (braceMix > 0.2) {
@@ -1398,6 +1455,11 @@ function drainImpacts(tick, dt) {
                   tick - as.lastInterceptDiveTick <= TUNING.action.interceptDiveWindowTicks) {
                 as.interceptDiveContactTick = as.lastInterceptDiveTick;
               }
+              if (athleteIdx >= 0 && gameState === 'match' && athleteMatchStats[athleteIdx]) {
+                athleteMatchStats[athleteIdx].defensiveBlocks++;
+              } else if (athleteIdx === 0 && gameState === 'practice') {
+                practiceStats.defensiveBlocks++;
+              }
             }
           }
         }
@@ -1405,7 +1467,6 @@ function drainImpacts(tick, dt) {
         const ballPos = hitBall.body.translation();
 
         // Track live match & practice statistics
-        const athleteIdx = athletes.indexOf(athleteHit);
         if (athleteIdx >= 0) {
           // Touch cooldown: only allow a touch to register once every 0.25 seconds (15 ticks at 60Hz)
           const touchCooldownTicks = Math.round(0.25 * TUNING.loop.fixedHz);
@@ -1414,12 +1475,20 @@ function drainImpacts(tick, dt) {
 
           if (isNewTouch) {
             athleteHit._lastTouchTick = tick;
+            const teamId = TUNING.players[athleteIdx]?.team || (athleteIdx % 2 === 0 ? 'home' : 'away');
+            if (!hitBall._lastTouchByTeam) hitBall._lastTouchByTeam = { home: null, away: null };
+            if (!hitBall._prevTouchByTeam) hitBall._prevTouchByTeam = { home: null, away: null };
+            if (hitBall._lastTouchByTeam[teamId] !== null && hitBall._lastTouchByTeam[teamId] !== athleteIdx) {
+              hitBall._prevTouchByTeam[teamId] = hitBall._lastTouchByTeam[teamId];
+            }
+            hitBall._lastTouchByTeam[teamId] = athleteIdx;
+
             if (athleteMatchStats[athleteIdx] && gameState === 'match') {
               athleteMatchStats[athleteIdx].totalTouches++;
 
               const distToSouthCircle = Math.hypot(ballPos.x, ballPos.z - 40.0);
               const distToNorthCircle = Math.hypot(ballPos.x, ballPos.z - (-40.0));
-              const isHome = (TUNING.players[athleteIdx]?.team || (athleteIdx === 0 ? 'home' : 'away')) === 'home';
+              const isHome = teamId === 'home';
               const homeAttacksNorth = matchState?.targetGoal === 'N';
               const athleteAttacksNorth = isHome ? homeAttacksNorth : !homeAttacksNorth;
               const inAttackingCircle = athleteAttacksNorth ? (distToNorthCircle <= 11.5) : (distToSouthCircle <= 11.5);
@@ -1573,7 +1642,15 @@ function drainImpacts(tick, dt) {
       if (h2) { athlete2 = a; hit2 = h2; }
     }
     if (athlete1 && athlete2 && athlete1 !== athlete2) {
-      handleAthleteCollision(athlete1, athlete2, hit1, hit2, totalForce, tick);
+      resolveAthleteCollision({
+        a1: athlete1,
+        a2: athlete2,
+        hit1,
+        hit2,
+        tick,
+        athletes,
+        playerCameras,
+      });
     }
 
     // Body impacts (athlete vs world or athlete vs athlete)
@@ -1591,212 +1668,6 @@ function drainImpacts(tick, dt) {
   for (const a of athletes) {
     applyImpacts(a.tracker, a.impactEvents, tick, dt);
     a.impactEvents.length = 0;
-  }
-}
-
-/**
- * Handles physical reactions and slide-tackle knockdowns when two athletes collide.
- *
- * GROUND-PLANE PHYSICS ONLY:
- * All impulses are strictly horizontal (y = 0.0) so athletes stay grounded on the pitch
- * rather than launching or bouncing into the air.
- */
-function handleAthleteCollision(a1, a2, hit1, hit2, totalForce, tick) {
-  if (!a1 || !a2 || !a1.motor?.body || !a2.motor?.body) return;
-
-  const idx1 = athletes.indexOf(a1);
-  const idx2 = athletes.indexOf(a2);
-
-  const isA1Sliding = a1.actionState && a1.actionState.slideTime > 0;
-  const isA2Sliding = a2.actionState && a2.actionState.slideTime > 0;
-
-  // 1. SLIDE TACKLE: Slider sweeps victim's lower limbs along the turf; victim trips and collapses
-  if (isA1Sliding && !isA2Sliding) {
-    const speed1 = horizontalSpeed(a1.motor);
-    if (speed1 > TUNING.action.slideTackleMinSpeed && (tick - (a1._lastTackleTick || 0)) > TUNING.action.slideTackleCooldownTicks) {
-      a1._lastTackleTick = tick;
-      // Complete limp collapse on the turf
-      queueKnockdown(a2.tracker, 0.0);
-      const v1 = a1.motor.body.linvel();
-
-      // Victim swept along the turf (y = 0.0, no vertical catapult)
-      a2.motor.body.applyImpulse({ x: v1.x * 0.45, y: 0.0, z: v1.z * 0.45 }, true);
-
-      // Physically kick the victim's hit leg forward in the ragdoll solver
-      const victimLimbKey = (hit2 && !hit2.isMotor && hit2.key) || 'shinL';
-      const victimLimbGroup = (hit2 && !hit2.isMotor && hit2.group) || 'legs';
-      if (a2.impactEvents) {
-        a2.impactEvents.push({ key: victimLimbKey, group: victimLimbGroup, force: 16.0 });
-      }
-
-      // Slider retains forward momentum and cuts through along the turf (y = 0.0)
-      a1.motor.body.applyImpulse({ x: -v1.x * 0.12, y: 0.0, z: -v1.z * 0.12 }, true);
-
-      const p1 = a1.motor.body.translation();
-      const p2 = a2.motor.body.translation();
-      const midPos = { x: (p1.x + p2.x) * 0.5, y: (p1.y + p2.y) * 0.5, z: (p1.z + p2.z) * 0.5 };
-      soundManager.playAthleteAction('slide', midPos);
-      soundManager.playBodyCollision(1.0, midPos);
-      for (const pc of playerCameras) pc.addTrauma(0.22);
-      if (idx1 >= 0) {
-        triggerHaptic(idx1, {
-          weakMagnitude: TUNING.input?.haptics?.tackleWeak ?? 0.35,
-          strongMagnitude: TUNING.input?.haptics?.tackleStrong ?? 0.15,
-          duration: TUNING.input?.haptics?.tackleDuration ?? 80,
-        });
-      }
-      if (idx2 >= 0) {
-        triggerHaptic(idx2, {
-          weakMagnitude: TUNING.input?.haptics?.tackleWeak ?? 0.35,
-          strongMagnitude: TUNING.input?.haptics?.tackleStrong ?? 0.15,
-          duration: TUNING.input?.haptics?.tackleDuration ?? 80,
-        });
-      }
-      return;
-    }
-  } else if (isA2Sliding && !isA1Sliding) {
-    const speed2 = horizontalSpeed(a2.motor);
-    if (speed2 > TUNING.action.slideTackleMinSpeed && (tick - (a2._lastTackleTick || 0)) > TUNING.action.slideTackleCooldownTicks) {
-      a2._lastTackleTick = tick;
-      // Complete limp collapse on the turf
-      queueKnockdown(a1.tracker, 0.0);
-      const v2 = a2.motor.body.linvel();
-
-      // Victim swept along the turf (y = 0.0, no vertical catapult)
-      a1.motor.body.applyImpulse({ x: v2.x * 0.45, y: 0.0, z: v2.z * 0.45 }, true);
-
-      // Physically kick the victim's hit leg forward in the ragdoll solver
-      const victimLimbKey = (hit1 && !hit1.isMotor && hit1.key) || 'shinL';
-      const victimLimbGroup = (hit1 && !hit1.isMotor && hit1.group) || 'legs';
-      if (a1.impactEvents) {
-        a1.impactEvents.push({ key: victimLimbKey, group: victimLimbGroup, force: 16.0 });
-      }
-
-      // Slider retains forward momentum and cuts through along the turf (y = 0.0)
-      a2.motor.body.applyImpulse({ x: -v2.x * 0.12, y: 0.0, z: -v2.z * 0.12 }, true);
-
-      const p1 = a1.motor.body.translation();
-      const p2 = a2.motor.body.translation();
-      const midPos = { x: (p1.x + p2.x) * 0.5, y: (p1.y + p2.y) * 0.5, z: (p1.z + p2.z) * 0.5 };
-      soundManager.playAthleteAction('slide', midPos);
-      soundManager.playBodyCollision(1.0, midPos);
-      for (const pc of playerCameras) pc.addTrauma(0.22);
-      if (idx1 >= 0) {
-        triggerHaptic(idx1, {
-          weakMagnitude: TUNING.input?.haptics?.tackleWeak ?? 0.35,
-          strongMagnitude: TUNING.input?.haptics?.tackleStrong ?? 0.15,
-          duration: TUNING.input?.haptics?.tackleDuration ?? 80,
-        });
-      }
-      if (idx2 >= 0) {
-        triggerHaptic(idx2, {
-          weakMagnitude: TUNING.input?.haptics?.tackleWeak ?? 0.35,
-          strongMagnitude: TUNING.input?.haptics?.tackleStrong ?? 0.15,
-          duration: TUNING.input?.haptics?.tackleDuration ?? 80,
-        });
-      }
-      return;
-    }
-  } else if (isA1Sliding && isA2Sliding) {
-    // Both sliding: head-on clash on the turf
-    if ((tick - (a1._lastTackleTick || 0)) > TUNING.action.slideTackleCooldownTicks) {
-      a1._lastTackleTick = tick;
-      a2._lastTackleTick = tick;
-      queueKnockdown(a1.tracker, 0.0);
-      queueKnockdown(a2.tracker, 0.0);
-      const v1 = a1.motor.body.linvel();
-      const v2 = a2.motor.body.linvel();
-      // Ground-plane mutual absorption (y = 0.0, no airborne launch)
-      a1.motor.body.applyImpulse({ x: -v1.x * 0.6, y: 0.0, z: -v1.z * 0.6 }, true);
-      a2.motor.body.applyImpulse({ x: -v2.x * 0.6, y: 0.0, z: -v2.z * 0.6 }, true);
-
-      const p1 = a1.motor.body.translation();
-      const p2 = a2.motor.body.translation();
-      const midPos = { x: (p1.x + p2.x) * 0.5, y: (p1.y + p2.y) * 0.5, z: (p1.z + p2.z) * 0.5 };
-      soundManager.playBodyCollision(1.0, midPos);
-      for (const pc of playerCameras) pc.addTrauma(0.26);
-      if (idx1 >= 0) {
-        triggerHaptic(idx1, {
-          weakMagnitude: (TUNING.input?.haptics?.tackleWeak ?? 0.35) * 1.1,
-          strongMagnitude: (TUNING.input?.haptics?.tackleStrong ?? 0.15) * 1.2,
-          duration: 90,
-        });
-      }
-      if (idx2 >= 0) {
-        triggerHaptic(idx2, {
-          weakMagnitude: (TUNING.input?.haptics?.tackleWeak ?? 0.35) * 1.1,
-          strongMagnitude: (TUNING.input?.haptics?.tackleStrong ?? 0.15) * 1.2,
-          duration: 90,
-        });
-      }
-      return;
-    }
-  }
-
-  // 2. ATHLETE JOSTLING / BODY BUMPS (When non-sliding athletes bump or run into each other)
-  if ((tick - (a1._lastCollideTick || 0)) > 6) {
-    a1._lastCollideTick = tick;
-    a2._lastCollideTick = tick;
-
-    const p1 = a1.motor.body.translation();
-    const p2 = a2.motor.body.translation();
-    let dx = p2.x - p1.x;
-    let dz = p2.z - p1.z;
-    let dist = Math.hypot(dx, dz);
-    if (dist < 1e-4) {
-      dx = 0;
-      dz = 1;
-      dist = 1;
-    }
-    const nx = dx / dist;
-    const nz = dz / dist;
-
-    const v1 = a1.motor.body.linvel();
-    const v2 = a2.motor.body.linvel();
-    // Relative velocity along collision normal (positive = approaching each other)
-    const vRel = (v1.x - v2.x) * nx + (v1.z - v2.z) * nz;
-
-    // Ground-plane soft separation: zero vertical impulse (y = 0.0)
-    // Non-penetration push only if approaching or overlapping motor spheres (diameter = 1.0m)
-    const approachImpulse = Math.max(0, vRel) * 2.8;
-    const overlap = Math.max(0, 1.05 - dist);
-    const overlapImpulse = overlap * 4.5;
-    const impulseMag = Math.min(5.0, approachImpulse + overlapImpulse);
-
-    if (impulseMag > 0.05) {
-      if (impulseMag > 1.2) {
-        for (const pc of playerCameras) pc.addTrauma(Math.min(0.14, impulseMag * 0.035));
-        if (idx1 >= 0) {
-          triggerHaptic(idx1, {
-            weakMagnitude: TUNING.input?.haptics?.collisionWeak ?? 0.25,
-            strongMagnitude: TUNING.input?.haptics?.collisionStrong ?? 0.10,
-            duration: TUNING.input?.haptics?.collisionDuration ?? 60,
-          });
-        }
-        if (idx2 >= 0) {
-          triggerHaptic(idx2, {
-            weakMagnitude: TUNING.input?.haptics?.collisionWeak ?? 0.25,
-            strongMagnitude: TUNING.input?.haptics?.collisionStrong ?? 0.10,
-            duration: TUNING.input?.haptics?.collisionDuration ?? 60,
-          });
-        }
-      }
-      // Pure ground plane impulse: NEVER launch athletes into the air (y = 0.0)
-      a1.motor.body.applyImpulse({ x: -nx * impulseMag, y: 0.0, z: -nz * impulseMag }, true);
-      a2.motor.body.applyImpulse({ x: nx * impulseMag, y: 0.0, z: nz * impulseMag }, true);
-
-      // Stagger ragdoll limbs / chest with realistic physical force
-      const k1 = (hit1 && !hit1.isMotor && hit1.key) || 'chest';
-      const g1 = (hit1 && !hit1.isMotor && hit1.group) || 'torso';
-      const k2 = (hit2 && !hit2.isMotor && hit2.key) || 'chest';
-      const g2 = (hit2 && !hit2.isMotor && hit2.group) || 'torso';
-
-      if (a1.impactEvents) a1.impactEvents.push({ key: k1, group: g1, force: impulseMag * 3.5 });
-      if (a2.impactEvents) a2.impactEvents.push({ key: k2, group: g2, force: impulseMag * 3.5 });
-
-      const midPos = { x: (p1.x + p2.x) * 0.5, y: (p1.y + p2.y) * 0.5, z: (p1.z + p2.z) * 0.5 };
-      soundManager.playBodyCollision(Math.max(0.2, Math.min(1.0, vRel / 4.0)), midPos);
-    }
   }
 }
 
@@ -1980,10 +1851,10 @@ function fixedUpdate(dt, tick) {
   // ─── AI BOT DECISION & SYNTHETIC INPUT EXECUTION ───
   for (const bc of botControllers) {
     const botAthlete = athletes[bc.slotIndex];
-    const opponentIdx = bc.slotIndex === 0 ? 1 : 0;
+    const opponentIdx = bc.slotIndex % 2 === 0 ? 1 : 0;
     const opponent = athletes[opponentIdx] || null;
     const botSlot = getInputSlot(bc.slotIndex);
-    updateBot(bc, botAthlete, opponent, balls, matchState, botSlot, tick, dt);
+    updateBot(bc, botAthlete, opponent, balls, matchState, botSlot, tick, dt, athletes);
   }
 
   // 3 to 10 — ATHLETE PRE-PHYSICS MECHANICS (Drive, Jump, Slide, Dive, Strikes, Ghost, Tracking)
@@ -1992,14 +1863,14 @@ function fixedUpdate(dt, tick) {
   const isBallHeld = (gameState === 'match' && isCountingDown) || (gameState === 'flyover');
   const hoopNorthZ = TUNING.match?.hoopNorthZ ?? -40.0;
   const hoopSouthZ = TUNING.match?.hoopSouthZ ?? 40.0;
-  const p1IsHome = (TUNING.players?.[0]?.team || 'home') === 'home';
-  const p1AttacksNorth = p1IsHome ? (matchState?.targetGoal === 'N') : (matchState?.targetGoal === 'S');
-  const targetGoalZ_P1 = p1AttacksNorth ? hoopNorthZ : hoopSouthZ;
-  const targetGoalZ_P2 = p1AttacksNorth ? hoopSouthZ : hoopNorthZ;
 
   for (let i = 0; i < athletes.length; i++) {
     if (gameState === 'practice' && i > 0) continue;
     const athlete = athletes[i];
+    if (!athlete?.isEnabled) continue;
+    const athTeam = athlete.team || TUNING.players?.[i]?.team || (i % 2 === 0 ? 'home' : 'away');
+    const athAttacksNorth = (athTeam === 'home') ? (matchState?.targetGoal === 'N') : (matchState?.targetGoal === 'S');
+    const athTargetGoalZ = athAttacksNorth ? hoopNorthZ : hoopSouthZ;
     let inputSnapshot = getInputSlot(i);
     let jumpQueued = consumeAthleteJump(i);
     let diveQueued = consumeAthleteDive(i);
@@ -2035,7 +1906,7 @@ function fixedUpdate(dt, tick) {
       spikeQueued,
       balls,
       arenaPreset,
-      targetGoalZ: (i === 0 ? targetGoalZ_P1 : targetGoalZ_P2),
+      targetGoalZ: athTargetGoalZ,
       facingFollowsCamera:
         !isAthleteHeld && !activeBotSlots.includes(i) && (playerCameras[i]?.mode === 'chase' || playerCameras[i]?.mode === 'ball' || playerCameras[i]?.mode === 'thirdPerson' || playerCameras[i]?.mode === 'firstPerson'),
     });
@@ -2255,6 +2126,21 @@ function fixedUpdate(dt, tick) {
       goalCelebration.triggerGoal(lastGoal.scoredFor, hoopPos, { y: lastGoal.y, z: lastGoal.z });
       if (gameState === 'practice') {
         practiceStats.goals++;
+      } else if (gameState === 'match') {
+        const scoringBall = balls[0];
+        const scoredTeam = lastGoal.scoredFor;
+        if (scoringBall?._lastTouchByTeam) {
+          const scorerIdx = scoringBall._lastTouchByTeam[scoredTeam];
+          const assistIdx = scoringBall._prevTouchByTeam?.[scoredTeam];
+          if (scorerIdx !== null && scorerIdx !== undefined && athleteMatchStats[scorerIdx]) {
+            athleteMatchStats[scorerIdx].goals = (athleteMatchStats[scorerIdx].goals || 0) + 1;
+          }
+          if (assistIdx !== null && assistIdx !== undefined && assistIdx !== scorerIdx && athleteMatchStats[assistIdx]) {
+            athleteMatchStats[assistIdx].assists = (athleteMatchStats[assistIdx].assists || 0) + 1;
+          }
+          scoringBall._lastTouchByTeam = { home: null, away: null };
+          scoringBall._prevTouchByTeam = { home: null, away: null };
+        }
       }
     }
     if (gameState === 'match') {
@@ -2262,8 +2148,18 @@ function fixedUpdate(dt, tick) {
         hideControlsOverlay();
         matchState._buzzerPlayed = true;
         soundManager.playSample('arena_buzzer', 0.95, 1.0, null, soundManager.uiGain);
-        const p1Strike = athletes[0]?.getStrikeStats() || { hits: 0, whiffs: 0, accuracy: 0 };
-        const p2Strike = athletes[1]?.getStrikeStats() || { hits: 0, whiffs: 0, accuracy: 0 };
+        const slotStats = athletes.map((ath, idx) => ({
+          ...(ath?.getStrikeStats() || { hits: 0, whiffs: 0, accuracy: 0 }),
+          ...(athleteMatchStats[idx] || {}),
+        }));
+        const statsReport = buildMatchStatsReport({
+          match: matchProbe(matchState),
+          athletes,
+          athleteMatchStats,
+          playerConfigs: lastMatchConfigs || TUNING.players,
+          activeCount: athletes.length,
+        });
+        window.__vb.lastMatchStatsReport = statsReport;
 
         // Post-match victory presentation camera & ceremony
         const homeScore = matchState.scoreHome || 0;
@@ -2277,12 +2173,13 @@ function fixedUpdate(dt, tick) {
         setTimeout(() => {
           showVictoryScreen(
             matchProbe(matchState),
-            { ...p1Strike, ...athleteMatchStats[0] },
-            { ...p2Strike, ...athleteMatchStats[1] },
+            slotStats[0],
+            slotStats[1],
+            statsReport,
           );
         }, 1200);
 
-        reportMatchResult(tick, [{ ...p1Strike, ...athleteMatchStats[0] }, { ...p2Strike, ...athleteMatchStats[1] }]);
+        reportMatchResult(tick, slotStats, statsReport);
       }
     }
   }
@@ -2293,7 +2190,7 @@ function fixedUpdate(dt, tick) {
 
   // 13 — POST-PHYSICS (Snapshots, strike assist, and player combat)
   for (let i = 0; i < athletes.length; i++) {
-    if (gameState === 'practice' && i > 0) continue;
+    if ((gameState === 'practice' && i > 0) || !athletes[i]?.isEnabled) continue;
     try {
       const assistEvent = athletes[i].postPhysicsUpdate(tick, dt, balls, athletes, i);
       if (assistEvent) {
@@ -2360,7 +2257,7 @@ function updateCameras() {
   const activeBall = ball || (balls && balls[0]) || null;
 
   // Check per-player camera cycle triggers (Dual-axis D-pad & keys)
-  for (let i = 0; i < 2; i++) {
+  for (let i = 0; i < athletes.length; i++) {
     const pDelta = consumeCameraCyclePlayer(i);
     if (pDelta !== 0) {
       cyclePlayerCameraView(i, pDelta);
@@ -2374,46 +2271,30 @@ function updateCameras() {
   const hoopCenterY = TUNING.match?.hoopCenterY ?? 10.0;
   const hoopNorthZ = TUNING.match?.hoopNorthZ ?? -40.0;
   const hoopSouthZ = TUNING.match?.hoopSouthZ ?? 40.0;
-  const p1IsHome = (TUNING.players?.[0]?.team || 'home') === 'home';
-  const p1AttacksNorth = p1IsHome ? (matchState?.targetGoal === 'N') : (matchState?.targetGoal === 'S');
-  const targetGoalZ_P1 = p1AttacksNorth ? hoopNorthZ : hoopSouthZ;
-  const targetGoalZ_P2 = p1AttacksNorth ? hoopSouthZ : hoopNorthZ;
-  const p1Goal = { x: 0, y: hoopCenterY, z: targetGoalZ_P1 };
-  const p2Goal = { x: 0, y: hoopCenterY, z: targetGoalZ_P2 };
 
   // Mouse look follows the WASD keyset, which may be assigned to either player
   const mouseSlot = getMouseSlot();
 
-  // Update P1 camera
-  if (athletes[0]) {
-    playerCameras[0].update({
-      athlete: athletes[0],
+  for (let i = 0; i < athletes.length; i++) {
+    const athlete = athletes[i];
+    if (!athlete?.isEnabled || !playerCameras[i]) continue;
+    const athTeam = athlete.team || TUNING.players?.[i]?.team || (i % 2 === 0 ? 'home' : 'away');
+    const athAttacksNorth = (athTeam === 'home') ? (matchState?.targetGoal === 'N') : (matchState?.targetGoal === 'S');
+    const athGoal = { x: 0, y: hoopCenterY, z: athAttacksNorth ? hoopNorthZ : hoopSouthZ };
+    playerCameras[i].update({
+      athlete,
       activeBall,
-      inputSlot: getInputSlot(0),
-      mouseDeltas: mouseSlot === 0 ? getMouseDeltas() : NO_MOUSE_DELTAS,
+      inputSlot: getInputSlot(i),
+      mouseDeltas: mouseSlot === i ? getMouseDeltas() : NO_MOUSE_DELTAS,
       world,
       frameDelta,
       allAthletes: athletes,
-      attackingGoal: p1Goal,
+      attackingGoal: athGoal,
     });
   }
 
-  // Update P2 camera
-  if (athletes[1]) {
-    playerCameras[1].update({
-      athlete: athletes[1],
-      activeBall,
-      inputSlot: getInputSlot(1),
-      mouseDeltas: mouseSlot === 1 ? getMouseDeltas() : NO_MOUSE_DELTAS,
-      world,
-      frameDelta,
-      allAthletes: athletes,
-      attackingGoal: p2Goal,
-    });
-  }
-
-  // Update spectator sports camera for AI vs AI match
-  if (activeBotSlots.length >= 2) {
+  // Update spectator sports camera when no humans are playing
+  if (getActiveHumanSlots().length === 0) {
     updateSportsCamera(spectatorCamera, athletes, activeBall, frameDelta);
   }
 }
@@ -2435,8 +2316,8 @@ function render(alpha) {
 
   for (let i = 0; i < athletes.length; i++) {
     const athlete = athletes[i];
-    if (gameState === 'practice' && i > 0) {
-      if (athlete.ragdoll?.group) athlete.ragdoll.group.visible = false;
+    if ((gameState === 'practice' && i > 0) || !athlete?.isEnabled) {
+      if (athlete?.ragdoll?.group) athlete.ragdoll.group.visible = false;
       continue;
     }
     athlete.renderPose(alpha);
@@ -2480,7 +2361,7 @@ function render(alpha) {
     const pads = (navigator.getGamepads ? navigator.getGamepads() : []) || [];
     flyoverPads.update(pads);
     for (const pad of pads) {
-      if (pad && (flyoverPads.pressed(pad) & MENU_PAD.a)) {
+      if (pad && (flyoverPads.pressed(pad) & (MENU_PAD.a | MENU_PAD.start))) {
         skipFlyover();
         break;
       }
@@ -2543,15 +2424,20 @@ function render(alpha) {
     updateInGameMenuBanner(match);
   }
 
-  const p1CamMode = playerCameras[0]?.mode;
-  const p2CamMode = playerCameras[1]?.mode;
-  const isSharedCam = (p1CamMode === 'broadcast' && p2CamMode === 'broadcast') ||
-                      (p1CamMode === 'sports' && p2CamMode === 'sports');
-  const isSplitscreen = (gameState === 'match') && !!TUNING.camera.splitscreen && athletes.length >= 2 && !isSharedCam && !isVictoryActive;
+  const humanSlots = getActiveHumanSlots();
+  const isSharedCam = humanSlots.length > 0 && humanSlots.every(
+    (s) => playerCameras[s]?.mode === 'broadcast' || playerCameras[s]?.mode === 'sports',
+  );
+  const isSplitscreen = (gameState === 'match') && !!TUNING.camera.splitscreen && humanSlots.length >= 2 && !isSharedCam && !isVictoryActive;
   const dividerEl = document.getElementById('splitscreen-divider');
   if (dividerEl) {
     dividerEl.style.display = isSplitscreen ? 'block' : 'none';
   }
+  goalIndicators.update({
+    gameState,
+    matchState,
+    tick: loop.tick,
+  });
   const width = window.innerWidth;
   const height = window.innerHeight;
 
@@ -2563,40 +2449,60 @@ function render(alpha) {
     cinematicCamera.camera.updateProjectionMatrix();
     renderer.setViewport(0, 0, width, height);
     renderer.render(scene, cinematicCamera.camera);
+  } else if (isSplitscreen && humanSlots.length > 2) {
+    // 4-Way Quad Splitscreen (2x2 Grid: Top-Left P1, Top-Right P2, Bottom-Left P3, Bottom-Right P4)
+    const halfW = Math.floor(width / 2);
+    const halfH = Math.floor(height / 2);
+    const quads = [
+      { slot: 0, x: 0, y: halfH, w: halfW, h: height - halfH },
+      { slot: 1, x: halfW, y: halfH, w: width - halfW, h: height - halfH },
+      { slot: 2, x: 0, y: 0, w: halfW, h: halfH },
+      { slot: 3, x: halfW, y: 0, w: width - halfW, h: halfH },
+    ];
+    renderer.setScissorTest(true);
+    for (const q of quads) {
+      const pc = playerCameras[q.slot] || playerCameras[0];
+      for (let i = 0; i < athletes.length; i++) {
+        athletes[i]?.setHeadVisible?.(i === q.slot ? pc.mode !== 'firstPerson' : true);
+      }
+      pc.camera.aspect = q.w / Math.max(1, q.h);
+      pc.camera.updateProjectionMatrix();
+      renderer.setViewport(q.x, q.y, q.w, q.h);
+      renderer.setScissor(q.x, q.y, q.w, q.h);
+      renderer.render(scene, pc.camera);
+    }
+    for (let i = 0; i < athletes.length; i++) athletes[i]?.setHeadVisible?.(true);
+    renderer.setScissorTest(false);
+    renderer.setViewport(0, 0, width, height);
   } else if (isSplitscreen) {
     const halfW = Math.floor(width / 2);
+    const leftSlot = humanSlots[0] ?? 0;
+    const rightSlot = humanSlots[1] ?? 1;
 
     renderer.setScissorTest(true);
 
-    // Left Viewport (Player 1)
-    if (athletes[0]?.setHeadVisible) {
-      athletes[0].setHeadVisible(playerCameras[0].mode !== 'firstPerson');
+    // Left Viewport
+    for (let i = 0; i < athletes.length; i++) {
+      athletes[i]?.setHeadVisible?.(i === leftSlot ? playerCameras[leftSlot].mode !== 'firstPerson' : true);
     }
-    if (athletes[1]?.setHeadVisible) {
-      athletes[1].setHeadVisible(true);
-    }
-    playerCameras[0].camera.aspect = halfW / height;
-    playerCameras[0].camera.updateProjectionMatrix();
+    playerCameras[leftSlot].camera.aspect = halfW / height;
+    playerCameras[leftSlot].camera.updateProjectionMatrix();
     renderer.setViewport(0, 0, halfW, height);
     renderer.setScissor(0, 0, halfW, height);
-    renderer.render(scene, playerCameras[0].camera);
+    renderer.render(scene, playerCameras[leftSlot].camera);
 
-    // Right Viewport (Player 2)
-    if (athletes[0]?.setHeadVisible) {
-      athletes[0].setHeadVisible(true);
+    // Right Viewport
+    for (let i = 0; i < athletes.length; i++) {
+      athletes[i]?.setHeadVisible?.(i === rightSlot ? playerCameras[rightSlot].mode !== 'firstPerson' : true);
     }
-    if (athletes[1]?.setHeadVisible) {
-      athletes[1].setHeadVisible(playerCameras[1].mode !== 'firstPerson');
-    }
-    playerCameras[1].camera.aspect = (width - halfW) / height;
-    playerCameras[1].camera.updateProjectionMatrix();
+    playerCameras[rightSlot].camera.aspect = (width - halfW) / height;
+    playerCameras[rightSlot].camera.updateProjectionMatrix();
     renderer.setViewport(halfW, 0, width - halfW, height);
     renderer.setScissor(halfW, 0, width - halfW, height);
-    renderer.render(scene, playerCameras[1].camera);
+    renderer.render(scene, playerCameras[rightSlot].camera);
 
     // Restore head visibility after viewports
-    if (athletes[0]?.setHeadVisible) athletes[0].setHeadVisible(true);
-    if (athletes[1]?.setHeadVisible) athletes[1].setHeadVisible(true);
+    for (let i = 0; i < athletes.length; i++) athletes[i]?.setHeadVisible?.(true);
 
     renderer.setScissorTest(false);
     renderer.setViewport(0, 0, width, height);
@@ -2604,15 +2510,14 @@ function render(alpha) {
     // Single Viewport (Practice, 1 human vs AI, AI vs AI spectator, or shared camera)
     let activeRenderCamera = playerCameras[0].camera;
     let activeAthleteSlot = 0;
-    if (activeBotSlots.length >= 2) {
-      // AI vs AI spectator broadcast camera
+    if (humanSlots.length === 0) {
+      // All-AI spectator broadcast camera
       activeRenderCamera = spectatorCamera;
       activeAthleteSlot = -1;
-    } else if (activeBotSlots.length === 1 && athletes.length >= 2) {
+    } else if (humanSlots.length === 1) {
       // Single human vs AI: ensure the camera renders the human player's viewport
-      const humanSlot = activeBotSlots.includes(0) ? 1 : 0;
-      activeRenderCamera = playerCameras[humanSlot].camera;
-      activeAthleteSlot = humanSlot;
+      activeAthleteSlot = humanSlots[0];
+      activeRenderCamera = playerCameras[activeAthleteSlot].camera;
     }
 
     const isFp = activeAthleteSlot >= 0 && playerCameras[activeAthleteSlot]?.mode === 'firstPerson';
@@ -2945,11 +2850,41 @@ async function loadActionClips() {
   );
 }
 
+function spawnMatchAthletesAndCameras(configs, targetGoal = 'N', randomFn = Math.random) {
+  if (athletes.length < 2) return;
+  const count = Math.min(athletes.length, Math.max(2, configs?.length || 2));
+  const spawns = computeStreamHeadSpawns({
+    configs: configs || TUNING.players,
+    athleteCount: count,
+    targetGoal,
+    randomFn,
+  });
+  for (let i = 0; i < count; i++) {
+    athletes[i].teleportTo(spawns[i].pos, spawns[i].facingYaw);
+    if (playerCameras[i]) {
+      playerCameras[i].azimuth = spawns[i].cameraAzimuth;
+      playerCameras[i].manualAzimuthOffset = 0;
+      playerCameras[i].manualPitchOffset = 0;
+      playerCameras[i].manualIdleTimer = 0;
+      playerCameras[i].resetSmoothing();
+    }
+  }
+}
+
 function handleRematch() {
   if (!matchState) return;
-  // 1. Reset match clock, countdown, and score
+  clearGameplayInputQueues();
+
+  // 1. Reset match clock, target goal, countdown, celebration, and score
   matchState.scoreHome = 0;
   matchState.scoreAway = 0;
+  matchState.targetGoal = 'N';
+  matchState.celebrationTicks = 0;
+  matchState.lastScoredFor = null;
+  matchState.lastGoalId = null;
+  if (matchState.ballTrackers && typeof matchState.ballTrackers.clear === 'function') {
+    matchState.ballTrackers.clear();
+  }
   matchState.ticksRemaining = TUNING.match.durationSeconds * TUNING.loop.fixedHz;
   matchState.countdownTicksRemaining = TUNING.match.countdownSeconds * TUNING.loop.fixedHz;
   matchState.isCountingDown = true;
@@ -2957,44 +2892,14 @@ function handleRematch() {
   matchState._buzzerPlayed = false;
   matchState.events.length = 0;
 
-  // Reset athlete strike stats and extended match stats
-  for (const a of athletes) {
-    if (a.strikeState) {
-      a.strikeState.resolvedCount = 0;
-      a.strikeState.whiffCount = 0;
-    }
-  }
-  for (const s of athleteMatchStats) {
-    s.totalTouches = 0;
-    s.sweetSpotHits = 0;
-    s.spikes = 0;
-    s.dives = 0;
-    s.divingHits = 0;
-    s.defensiveBlocks = 0;
-    s.ownCircleTouches = 0;
-    s.oppCircleTouches = 0;
-  }
+  // Reset athlete strike/action/tracker stats, particles, celebrations, and extended match stats
+  athleteManager.resetStats();
+  turfParticles.reset();
+  goalCelebration.reset();
+  athleteMatchStats.forEach((s, idx) => resetPlayerMatchStats(s, idx));
 
-  // 2. Re-randomize stream heads matching assigned teams (Home -> South, Away -> North)
-  if (athletes.length >= 2) {
-    const southHead = Math.random() < 0.5 ? TUNING.match.streamHeads.sw : TUNING.match.streamHeads.se;
-    const northHead = Math.random() < 0.5 ? TUNING.match.streamHeads.nw : TUNING.match.streamHeads.ne;
-    const p1IsHome = TUNING.players?.[0]?.team === 'home';
-    const p1Head = p1IsHome ? southHead : northHead;
-    const p2Head = p1IsHome ? northHead : southHead;
-
-    athletes[0].teleportTo({ x: p1Head.x, y: p1Head.y + 7.5, z: p1Head.z }, p1Head.yaw);
-    athletes[1].teleportTo({ x: p2Head.x, y: p2Head.y + 7.5, z: p2Head.z }, p2Head.yaw);
-
-    playerCameras[0].azimuth = p1Head.yaw;
-    playerCameras[1].azimuth = p2Head.yaw;
-    playerCameras[0].manualAzimuthOffset = 0;
-    playerCameras[0].manualPitchOffset = 0;
-    playerCameras[1].manualAzimuthOffset = 0;
-    playerCameras[1].manualPitchOffset = 0;
-    playerCameras[0].resetSmoothing();
-    playerCameras[1].resetSmoothing();
-  }
+  // 2. Spawn athletes on the stream heads opposite their target goals
+  spawnMatchAthletesAndCameras(lastMatchConfigs || TUNING.players, matchState.targetGoal, Math.random);
 
   // 3. Ensure match ball is refreshed (respecting random or specific selection)
   setActiveMatchBall(currentMatchBallType);
@@ -3005,16 +2910,22 @@ function handleRematch() {
     if (matchState) matchState.preMatchSpawnPos = balls[0]._preMatchSpawnPos;
   }
 
+  if (scoreboards) {
+    updateScoreboards(scoreboards, matchProbe(matchState));
+  }
   resetCountdownOverlay();
   hideVictoryScreen();
   hideInGameMenu();
   victoryCameraActive = false;
   cinematicCamera.startKickoffRitual(TUNING.match.countdownSeconds || 4.0);
+  applyViewportSize();
+  updateCameras();
   console.log('[match] rematch started with kickoff ritual!');
 }
 
 function skipFlyover() {
   if (gameState !== 'flyover') return;
+  clearGameplayInputQueues();
   gameState = 'match';
   fixtureFlyoverEndTick = -1;
   hideFlyoverOverlay();
@@ -3027,9 +2938,9 @@ function skipFlyover() {
   // Standoff kickoff ritual framing athletes taking positions
   cinematicCamera.startKickoffRitual(TUNING.match.countdownSeconds || 4.0);
 
-  playerCameras[0].resetSmoothing();
-  playerCameras[1].resetSmoothing();
+  for (const pc of playerCameras) pc.resetSmoothing();
   applyViewportSize();
+  updateCameras();
   console.log('[flyover] skipped -> kickoff ritual started');
 }
 
@@ -3067,7 +2978,7 @@ function startFixtureMatch(fixture) {
  * @param {number} tick the tick the match ended on
  * @param {object[]} slotStats strike and match stats, by athlete slot
  */
-function reportMatchResult(tick, slotStats) {
+function reportMatchResult(tick, slotStats, statsReport = null) {
   const sides = { home: null, away: null };
   for (let i = 0; i < 2; i++) {
     const config = lastMatchConfigs?.[i];
@@ -3083,6 +2994,7 @@ function reportMatchResult(tick, slotStats) {
     durationSeconds: TUNING.match.durationSeconds,
     endedTick: tick,
   });
+  if (statsReport) result.statsReport = statsReport;
   activeFixture = null;
   fixtureRandom = null;
 
@@ -3120,6 +3032,7 @@ function handleStartMatch(configs, matchRulesOrBall = {}) {
   }
 
   hideMainMenu();
+  clearGameplayInputQueues();
   lastMatchConfigs = configs;
   // Only startFixtureMatch passes its fixture. Any other start (the lobby, a
   // fixture abandoned to the menu and replayed) is not that fixture's match.
@@ -3128,41 +3041,61 @@ function handleStartMatch(configs, matchRulesOrBall = {}) {
     fixtureRandom = null;
   }
 
-  for (const s of athleteMatchStats) {
-    s.totalTouches = 0;
-    s.sweetSpotHits = 0;
-    s.spikes = 0;
-    s.dives = 0;
-    s.divingHits = 0;
-    s.defensiveBlocks = 0;
-    s.ownCircleTouches = 0;
-    s.oppCircleTouches = 0;
+  athleteMatchStats.forEach((s, idx) => resetPlayerMatchStats(s, idx));
+
+  // 0. AI BOT & SPLITSCREEN TOPOLOGY SETUP (resolved BEFORE setting camera modes)
+  const matchCount = (configs && configs.length >= 4) ? 4 : 2;
+  ensureAthletesRegistered(matchCount, configs);
+  botControllers = [];
+  activeBotSlots = [];
+  if (athletes.length > 0 && configs && configs.length > 0) {
+    let humanCount = 0;
+    for (let i = 0; i < athletes.length; i++) {
+      const pConfig = configs[i];
+      if (pConfig && pConfig.type === 'ai') {
+        const bot = createBotController({
+          difficulty: pConfig.difficulty || 'medium',
+          slotIndex: i,
+          aggressiveness: pConfig.aggressiveness ?? 0.60,
+          seed: activeFixture ? fixtureBotSeed(activeFixture, i) : loop.tick + 42 + i,
+        });
+        botControllers.push(bot);
+        activeBotSlots.push(i);
+        console.log(`[ai] P${i + 1} bot created — difficulty: ${pConfig.difficulty}, aggressiveness: ${(pConfig.aggressiveness ?? 0.60).toFixed(2)}`);
+      } else {
+        humanCount++;
+      }
+    }
+
+    // Decided fresh every match: fullscreen for <= 1 human, splitscreen for 2+ humans.
+    TUNING.camera.splitscreen = humanCount >= 2;
   }
 
-  // 1. Apply configurations
-  if (configs && configs[0] && athletes[0]) {
-    athletes[0].setTeamAndVariant(configs[0].team, configs[0].variant, { primaryColor: configs[0].primaryColor });
-    if (configs[0].headwear !== undefined && athletes[0].headwear !== configs[0].headwear) athletes[0].setHeadwear(configs[0].headwear);
-    playerCameras[0].setMode(configs[0].cameraMode);
-    if (TUNING.players[0]) {
-      TUNING.players[0].team = configs[0].team;
-      TUNING.players[0].variant = configs[0].variant;
-      TUNING.players[0].primaryColor = configs[0].primaryColor;
-      TUNING.players[0].headwear = configs[0].headwear;
-      TUNING.players[0].cameraMode = configs[0].cameraMode;
+  // Honor shared fullscreen Broadcast / Sports if chosen by any human player in multiplayer
+  const humanRequestedBroadcast = athletes.some(
+    (_, i) => !activeBotSlots.includes(i) && (configs?.[i]?.cameraMode === 'broadcast' || configs?.[i]?.cameraMode === 'sports'),
+  );
+  const sharedStartMode = (TUNING.camera.splitscreen && humanRequestedBroadcast)
+    ? (configs?.find((c, i) => !activeBotSlots.includes(i) && (c?.cameraMode === 'broadcast' || c?.cameraMode === 'sports'))?.cameraMode || 'broadcast')
+    : null;
+
+  // 1. Apply configurations across all active athletes (2 in 1v1, 4 in 2v2)
+  for (let i = 0; i < athletes.length; i++) {
+    const cfg = configs?.[i];
+    const ath = athletes[i];
+    if (!cfg || !ath) continue;
+    ath.setTeamAndVariant(cfg.team, cfg.variant, { primaryColor: cfg.primaryColor });
+    if (cfg.headwear !== undefined && ath.headwear !== cfg.headwear) ath.setHeadwear(cfg.headwear);
+    const camMode = sharedStartMode || cfg.cameraMode || 'chase';
+    playerCameras[i]?.setMode(camMode, false);
+    const tp = TUNING.players[i];
+    if (tp) {
+      tp.team = cfg.team;
+      tp.variant = cfg.variant;
+      tp.primaryColor = cfg.primaryColor;
+      tp.headwear = cfg.headwear;
     }
-  }
-  if (configs && configs[1] && athletes[1]) {
-    athletes[1].setTeamAndVariant(configs[1].team, configs[1].variant, { primaryColor: configs[1].primaryColor });
-    if (configs[1].headwear !== undefined && athletes[1].headwear !== configs[1].headwear) athletes[1].setHeadwear(configs[1].headwear);
-    playerCameras[1].setMode(configs[1].cameraMode);
-    if (TUNING.players[1]) {
-      TUNING.players[1].team = configs[1].team;
-      TUNING.players[1].variant = configs[1].variant;
-      TUNING.players[1].primaryColor = configs[1].primaryColor;
-      TUNING.players[1].headwear = configs[1].headwear;
-      TUNING.players[1].cameraMode = configs[1].cameraMode;
-    }
+    syncPlayerCameraMode(i, playerCameras[i]?.mode || camMode);
   }
 
   // 2. Dynamic Scoreboard & Palette Colors matching player choices
@@ -3196,8 +3129,12 @@ function handleStartMatch(configs, matchRulesOrBall = {}) {
   matchManager.startMatch(configs, { durationSeconds, ballPreference, arenaType });
   matchState = matchManager.getState();
   matchState.targetGoal = 'N';
+  matchState.celebrationTicks = 0;
   matchState.lastScoredFor = null;
   matchState.lastGoalId = null;
+  if (matchState.ballTrackers && typeof matchState.ballTrackers.clear === 'function') {
+    matchState.ballTrackers.clear();
+  }
   matchState.ticksRemaining = TUNING.match.durationSeconds * TUNING.loop.fixedHz;
   matchState.countdownTicksRemaining = TUNING.match.countdownSeconds * TUNING.loop.fixedHz;
   matchState.isCountingDown = true;
@@ -3210,28 +3147,8 @@ function handleStartMatch(configs, matchRulesOrBall = {}) {
   turfParticles.reset();
   goalCelebration.reset();
 
-  // Position athletes at stream heads matching chosen team (Home -> South, Away -> North)
-  if (athletes.length >= 2) {
-    const random = fixtureRandom || Math.random;
-    const southHead = random() < 0.5 ? TUNING.match.streamHeads.sw : TUNING.match.streamHeads.se;
-    const northHead = random() < 0.5 ? TUNING.match.streamHeads.nw : TUNING.match.streamHeads.ne;
-
-    const p1IsHome = configs && configs[0]?.team === 'home';
-    const p1Head = p1IsHome ? southHead : northHead;
-    const p2Head = p1IsHome ? northHead : southHead;
-
-    athletes[0].teleportTo({ x: p1Head.x, y: p1Head.y + 7.5, z: p1Head.z }, p1Head.yaw);
-    athletes[1].teleportTo({ x: p2Head.x, y: p2Head.y + 7.5, z: p2Head.z }, p2Head.yaw);
-
-    playerCameras[0].azimuth = p1Head.yaw;
-    playerCameras[1].azimuth = p2Head.yaw;
-    playerCameras[0].manualAzimuthOffset = 0;
-    playerCameras[0].manualPitchOffset = 0;
-    playerCameras[1].manualAzimuthOffset = 0;
-    playerCameras[1].manualPitchOffset = 0;
-    playerCameras[0].resetSmoothing();
-    playerCameras[1].resetSmoothing();
-  }
+  // Position athletes on stream heads opposite their target goals
+  spawnMatchAthletesAndCameras(configs, matchState.targetGoal, fixtureRandom || Math.random);
 
   // Fresh match ball at 10m
   if (balls.length > 0) {
@@ -3239,33 +3156,6 @@ function handleStartMatch(configs, matchRulesOrBall = {}) {
     resetBall(balls[0], loop.tick, dropPos);
     balls[0]._preMatchSpawnPos = { x: dropPos.x, y: dropPos.y, z: dropPos.z };
     if (matchState) matchState.preMatchSpawnPos = balls[0]._preMatchSpawnPos;
-  }
-
-  // ═══ AI BOT SETUP ═══
-  botControllers = [];
-  activeBotSlots = [];
-  if (athletes.length > 0 && configs && configs.length > 0) {
-    let hasHuman = false;
-    for (let i = 0; i < athletes.length; i++) {
-      const pConfig = configs[i];
-      if (pConfig && pConfig.type === 'ai') {
-        const bot = createBotController({
-          difficulty: pConfig.difficulty || 'medium',
-          slotIndex: i,
-          aggressiveness: pConfig.aggressiveness ?? 0.60,
-          seed: activeFixture ? fixtureBotSeed(activeFixture, i) : loop.tick + 42 + i,
-        });
-        botControllers.push(bot);
-        activeBotSlots.push(i);
-        console.log(`[ai] P${i + 1} bot created — difficulty: ${pConfig.difficulty}, aggressiveness: ${(pConfig.aggressiveness ?? 0.60).toFixed(2)}`);
-      } else {
-        hasHuman = true;
-      }
-    }
-
-    // Decided fresh every match: fullscreen for human vs AI or AI vs AI, splitscreen
-    // for two humans. Never inherit a previous match's value.
-    TUNING.camera.splitscreen = hasHuman && activeBotSlots.length === 0;
   }
 
   // Start the flyover cutscene
@@ -3281,7 +3171,11 @@ function handleStartMatch(configs, matchRulesOrBall = {}) {
   const p2TeamName = (configs?.[1]?.displayName || getColorName(p2Color)).toUpperCase();
   const p1Hex = '#' + p1Color.toString(16).padStart(6, '0');
   const p2Hex = '#' + p2Color.toString(16).padStart(6, '0');
-  showFlyoverOverlay(p1TeamName, p2TeamName, p1Hex, p2Hex);
+  showFlyoverOverlay(p1TeamName, p2TeamName, p1Hex, p2Hex, {
+    is2v2: matchCount >= 4,
+    team1Roster: matchCount >= 4 ? 'TEAM 1 (P1 & P3)' : 'TEAM 1 (P1)',
+    team2Roster: matchCount >= 4 ? 'TEAM 2 (P2 & P4)' : 'TEAM 2 (P2)',
+  });
   applyViewportSize();
   console.log('[match] starting 10s flyover cutscene...');
 }
@@ -3296,6 +3190,7 @@ function handleStartPractice(playerConfig = null, ballChoice = 'all') {
   hideMainMenu();
   hideInGameMenu();
   hideVictoryScreen();
+  clearGameplayInputQueues();
   turfParticles.reset();
   goalCelebration.reset();
   victoryCameraActive = false;
@@ -3329,15 +3224,14 @@ function handleStartPractice(playerConfig = null, ballChoice = 'all') {
   if (playerConfig && athletes[0]) {
     athletes[0].setTeamAndVariant(playerConfig.team || 'home', playerConfig.variant || 'classic', { primaryColor: playerConfig.primaryColor });
     if (playerConfig.headwear !== undefined && athletes[0].headwear !== playerConfig.headwear) athletes[0].setHeadwear(playerConfig.headwear);
-    playerCameras[0].setMode(playerConfig.cameraMode || 'chase');
+    playerCameras[0].setMode(playerConfig.cameraMode || 'chase', false);
     if (TUNING.players[0]) {
       TUNING.players[0].team = playerConfig.team;
       TUNING.players[0].variant = playerConfig.variant;
       TUNING.players[0].primaryColor = playerConfig.primaryColor;
       TUNING.players[0].headwear = playerConfig.headwear;
-      TUNING.players[0].cameraMode = playerConfig.cameraMode;
     }
-    TUNING.camera.mode = playerCameras[0].mode;
+    syncPlayerCameraMode(0, playerCameras[0].mode);
     const pColor = playerConfig.primaryColor ?? 0xd90429;
     if (TUNING.athlete?.palette) {
       TUNING.athlete.palette.homePrimary = pColor;
@@ -3420,11 +3314,14 @@ function handleStartPractice(playerConfig = null, ballChoice = 'all') {
     }
   }
 
-  // Drop P1 from above center court
+  // Spawn P1 cleanly at center court facing North (-Z)
   const isDeterministic = armedCaptureTick !== null; // read boot-local `urlParams` before: threw on every practice start since v0.2.0
   if (athletes[0]) {
-    const spawnPos = (arenaPreset && arenaPreset.spawn) || { x: 0, y: 1.2, z: 0 };
-    athletes[0].teleportTo({ x: spawnPos.x, y: 12.0, z: spawnPos.z }, 0);
+    const spawnPos = (arenaPreset && arenaPreset.spawn) || { x: 0, y: 1.5, z: 0 };
+    athletes[0].teleportTo({ x: spawnPos.x, y: Math.max(1.5, spawnPos.y), z: spawnPos.z }, Math.PI);
+    playerCameras[0].azimuth = 0;
+    playerCameras[0].manualAzimuthOffset = 0;
+    playerCameras[0].manualPitchOffset = 0;
     playerCameras[0].resetSmoothing();
   }
 
@@ -3517,34 +3414,13 @@ function returnToMainMenu() {
   practiceStats.totalTouches = 0;
   practiceSessionTicks = 0;
 
-  for (const s of athleteMatchStats) {
-    s.totalTouches = 0;
-    s.sweetSpotHits = 0;
-    s.spikes = 0;
-    s.dives = 0;
-    s.divingHits = 0;
-    s.defensiveBlocks = 0;
-    s.ownCircleTouches = 0;
-    s.oppCircleTouches = 0;
-  }
+  athleteMatchStats.forEach((s, idx) => resetPlayerMatchStats(s, idx));
 
   // 3. Reset athletes, physics velocities, trackers and knockdowns
+  athleteManager.resetStats();
   for (let i = 0; i < athletes.length; i++) {
     const a = athletes[i];
     if (!a) continue;
-    if (a.strikeState) resetStrikeState(a.strikeState);
-    if (a.actionState) {
-      a.actionState.slideTime = 0;
-      a.actionState.diveTime = 0;
-      a.actionState.jumpPhase = 0;
-    }
-    if (a.tracker) {
-      a.tracker.queuedKnockdown = false;
-      a.tracker.queuedKnockdownTone = 0;
-      a.tracker.blendWeight = 1.0;
-      a.tracker.blendProgress = 1.0;
-      a.tracker.toneAuthority = 1.0;
-    }
     if (a.motor?.body) {
       a.motor.body.setEnabled(true);
       a.motor.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
@@ -3560,10 +3436,11 @@ function returnToMainMenu() {
     if (a.ragdoll?.group) a.ragdoll.group.visible = true;
   }
 
-  // 4. Teleport athletes to stream heads and restore visibility
+  // 4. Stage active title athletes on stream heads and disable extra 2v2 slots
+  athleteManager.stageForTitle();
   if (athletes.length >= 2) {
-    athletes[0].teleportTo(TUNING.match.streamHeads.sw, 0);
-    athletes[1].teleportTo(TUNING.match.streamHeads.ne, Math.PI);
+    athletes[0].teleportTo(TUNING.match.streamHeads.sw, Math.PI);
+    athletes[1].teleportTo(TUNING.match.streamHeads.ne, 0);
   }
 
   // 5. Reset camera smoothing and manual stick/mouse offsets
@@ -3595,11 +3472,11 @@ function handleEnterSetup(mode = 'match') {
     }
   }
 
-  athleteManager.stageForLobby(mode);
-  // Re-dress both athletes from their configs: practice may have dressed athlete 0
-  // as the P2 human, and the preview must show each column's own player.
   const setupCfgs = getPlayerConfigs();
-  for (let i = 0; i < 2; i++) {
+  const count = mode === 'match2v2' ? 4 : 2;
+  ensureAthletesRegistered(count, setupCfgs);
+  athleteManager.stageForLobby(mode);
+  for (let i = 0; i < count; i++) {
     if (setupCfgs[i]) handlePlayerConfigChange(i, setupCfgs[i]);
   }
   cinematicCamera.startSetupPreview();
@@ -3693,12 +3570,12 @@ async function boot() {
     clips: characterClips,
   });
   athletes = athleteManager.ensureRoster(2, TUNING.players);
-  athletes[0].teleportTo(p1Head, p1Head.yaw);
-  athletes[1].teleportTo(p2Head, p2Head.yaw);
+  athletes[0].teleportTo(p1Head, Math.PI);
+  athletes[1].teleportTo(p2Head, 0);
   playerCameras[0].mode = p1Cfg.cameraMode || 'chase';
   playerCameras[1].mode = p2Cfg.cameraMode || 'chase';
-  playerCameras[0].azimuth = p1Head.yaw;
-  playerCameras[1].azimuth = p2Head.yaw;
+  playerCameras[0].azimuth = 0;
+  playerCameras[1].azimuth = Math.PI;
   playerCameras[0].resetSmoothing();
   playerCameras[1].resetSmoothing();
   TUNING.camera.mode = playerCameras[0].mode;
@@ -3735,7 +3612,8 @@ async function boot() {
   initInputRouter(canvas);
   initControlsOverlay();
   loop.onFrame(() => {
-    sampleAllInputs([playerCameras[0].camera, playerCameras[1].camera], gameState === 'practice' ? 1 : athletes.length, TUNING.match.mode, activeBotSlots);
+    const isGameplayActive = (gameState === 'match' || gameState === 'practice') && !isInGameMenuOpen() && !isMainMenuActive() && !isVictoryScreenVisible();
+    sampleAllInputs(playerCameras.map((pc) => pc.camera), gameState === 'practice' ? 1 : athletes.length, TUNING.match.mode, activeBotSlots, isGameplayActive);
     updateControlsOverlay(getControlsSnapshot(), gameState, isInGameMenuOpen(), isVictoryScreenVisible(), !!matchState?.matchOver, !!matchState?.isCountingDown, isMainMenuActive());
   });
 
@@ -3768,31 +3646,35 @@ async function boot() {
     },
     onCameraChange: (playerIdx, mode) => {
       if (playerCameras[playerIdx]) {
-        playerCameras[playerIdx].setMode(mode);
-        if (TUNING.players[playerIdx]) {
-          TUNING.players[playerIdx].cameraMode = mode;
+        playerCameras[playerIdx].setMode(mode, false);
+        syncPlayerCameraMode(playerIdx, mode);
+        if ((mode === 'broadcast' || mode === 'sports') && TUNING.camera.splitscreen) {
+          for (const s of getActiveHumanSlots()) {
+            if (s === playerIdx) continue;
+            playerCameras[s]?.setMode(mode, false);
+            syncPlayerCameraMode(s, mode);
+          }
+        } else if (mode !== 'broadcast' && mode !== 'sports') {
+          leaveSharedCameraForOtherSlot(playerIdx);
         }
-        if (playerIdx === 0) {
-          TUNING.camera.mode = mode;
-        }
-        // Re-run the splitscreen camera rules now, e.g. leaving a shared Broadcast view.
+        // Re-run the splitscreen camera rules now, e.g. entering or leaving a shared Broadcast view.
         applyViewportSize();
       }
     },
     getCameraRows: () => {
-      const isSplit = gameState === 'match' && !!TUNING.camera.splitscreen && athletes.length >= 2;
-      return [0, 1].map((i) => {
-        const present = gameState === 'practice' ? i === 0 : i < athletes.length;
+      return [0, 1, 2, 3].map((i) => {
+        const present = gameState === 'practice' ? i === 0 : (i < athletes.length && !!athletes[i]?.isEnabled);
         const cfg = TUNING.players[i] || {};
-        const side = gameState === 'practice' ? '' : ` (${cfg.team === 'away' ? 'AWAY' : 'HOME'})`;
+        const teamNum = (i === 0 || i === 2) ? 1 : 2;
+        const side = gameState === 'practice' ? '' : ` · TEAM ${teamNum} (${cfg.team === 'away' ? 'AWAY' : 'HOME'})`;
         return {
           // AI players have no camera anyone sees
           visible: present && !activeBotSlots.includes(i),
-          label: `PLAYER ${i + 1} · ${getColorName(cfg.primaryColor).toUpperCase()}${side}`,
+          label: `P${i + 1} · ${getColorName(cfg.primaryColor).toUpperCase()}${side}`,
           hint: getCameraCycleHint(i),
-          mode: playerCameras[i].mode,
-          // Broadcast is fullscreen: in splitscreen it exists only as the shared view
-          allowBroadcast: !isSplit || playerCameras[i].mode === 'broadcast',
+          mode: playerCameras[i]?.mode || 'chase',
+          // Broadcast is available anytime as a shared fullscreen view
+          allowBroadcast: true,
         };
       });
     },

@@ -2,7 +2,6 @@ import { soundManager } from '../../../audio/soundManager.js';
 import { state } from './state.js';
 import { setExplicitDeviceMappings } from '../../../input/inputRouter.js';
 import { MENU_PAD } from '../../../input/menuPads.js';
-import { showToast } from './toast.js';
 
 let containerEl = null;
 let currentMode = '1v1'; // '1v1' or '2v2'
@@ -45,40 +44,39 @@ export function buildControllerAssignmentScreen(rootEl, callbacks = {}) {
     inset: 0;
     display: none;
     flex-direction: column;
-    justify-content: space-between;
+    justify-content: flex-end;
     align-items: center;
-    padding: 36px 48px;
-    background: radial-gradient(circle at 50% 35%, rgba(6, 16, 28, 0.4) 0%, rgba(3, 6, 12, 0.94) 100%);
-    backdrop-filter: blur(8px);
+    padding: 14px 24px 14px 24px;
+    background: linear-gradient(180deg, rgba(3, 6, 12, 0.0) 0%, rgba(3, 6, 12, 0.14) 48%, rgba(3, 6, 12, 0.82) 100%);
     z-index: 550;
     font-family: inherit;
     user-select: none;
     box-sizing: border-box;
+    gap: 10px;
   `;
 
-  // --- HEADER SECTION ---
+  // --- HEADER SECTION (mounted inside the Bottom Command Dock so the center stays open) ---
   const header = document.createElement('div');
   header.style.cssText = `
     display: flex;
     flex-direction: column;
-    align-items: center;
-    gap: 8px;
-    margin-top: 4px;
+    align-items: flex-start;
+    gap: 3px;
+    min-width: 0;
   `;
 
   const titleRow = document.createElement('div');
-  titleRow.style.cssText = 'display: flex; align-items: center; gap: 14px;';
+  titleRow.style.cssText = 'display: flex; align-items: center; gap: 10px;';
 
   const title = document.createElement('h2');
   title.textContent = 'CONTROLLER ASSIGNMENT & SIDES';
   title.style.cssText = `
     margin: 0;
-    font-size: 28px;
+    font-size: 16px;
     font-weight: 900;
-    letter-spacing: 0.12em;
+    letter-spacing: 0.1em;
     color: #ffffff;
     text-transform: uppercase;
-    text-shadow: 0 0 20px rgba(0, 229, 255, 0.4);
   `;
 
   const modeBadge = document.createElement('button');
@@ -86,20 +84,20 @@ export function buildControllerAssignmentScreen(rootEl, callbacks = {}) {
   modeBadge.style.cssText = `
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    padding: 6px 14px;
-    border-radius: 6px;
-    font-size: 11px;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 5px;
+    font-size: 10px;
     font-weight: 800;
-    letter-spacing: 0.1em;
+    letter-spacing: 0.08em;
     color: #000000;
     background: linear-gradient(90deg, #00e5ff, #38bdf8);
     border: none;
     cursor: pointer;
-    box-shadow: 0 0 16px rgba(0, 229, 255, 0.5);
+    box-shadow: 0 0 12px rgba(0, 229, 255, 0.45);
     transition: transform 0.15s ease;
   `;
-  modeBadge.innerHTML = `<span>MODE: 1v1 VERSUS</span><span class="contextual-btn-badge" style="background:#000;color:#fff;font-size:9px;">1v1 ACTIVE</span>`;
+  modeBadge.innerHTML = `<span>MODE: 1v1 VERSUS</span><span class="contextual-btn-badge" style="background:#000;color:#fff;font-size:8.5px;">1v1 ACTIVE</span>`;
   modeBadge.onclick = () => {
     toggleMode();
   };
@@ -109,25 +107,23 @@ export function buildControllerAssignmentScreen(rootEl, callbacks = {}) {
 
   const subtitle = document.createElement('div');
   subtitle.id = 'assignment-subtitle';
-  subtitle.style.cssText = 'font-size: 13px; font-weight: 700; color: #94a3b8; letter-spacing: 0.04em; text-align: center;';
-  subtitle.innerHTML = 'Controller: <b>A</b> join &middot; <b>◀ ▶</b> switch side &middot; <b>B</b> drop out &middot; <b>Start</b> continue'
-    + '<br>Keyboard: <b>A / D</b> or <b>← →</b> switch side &middot; <b>B</b> drop out &middot; <b>Enter</b> join / continue';
+  subtitle.style.cssText = 'font-size: 10px; font-weight: 700; color: #94a3b8; letter-spacing: 0.03em;';
+  subtitle.innerHTML = 'Controller: <b>◀ ▶</b> claim Team 1 / Team 2 &middot; <b>A</b> join / continue &middot; <b>B</b> bench / back &middot; Keyboard: <b>A / D</b> or <b>← →</b> switch side &middot; <b>Enter</b> join / continue';
 
   header.appendChild(titleRow);
   header.appendChild(subtitle);
-  containerEl.appendChild(header);
 
-  // --- 3-COLUMN ARENA GRID ---
+  // --- 3-COLUMN ARENA GRID (Lower-Third Deck) ---
   const arenaGrid = document.createElement('div');
   arenaGrid.id = 'assignment-arena-grid';
   arenaGrid.style.cssText = `
     display: grid;
     grid-template-columns: 1fr 1fr 1fr;
-    gap: 24px;
+    gap: 16px;
     width: 100%;
-    max-width: 1120px;
-    margin: 20px 0;
-    flex: 1;
+    max-width: 1420px;
+    margin: 0;
+    flex: 0 1 auto;
     min-height: 0;
   `;
 
@@ -137,19 +133,21 @@ export function buildControllerAssignmentScreen(rootEl, callbacks = {}) {
   colTeam1.style.cssText = `
     display: flex;
     flex-direction: column;
-    gap: 12px;
-    background: rgba(0, 229, 255, 0.04);
-    border: 2px solid rgba(0, 229, 255, 0.4);
-    border-radius: 12px;
-    padding: 18px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), inset 0 0 20px rgba(0, 229, 255, 0.08);
+    gap: 8px;
+    background: rgba(11, 17, 26, 0.84);
+    border: 1.5px solid rgba(0, 229, 255, 0.45);
+    border-radius: 10px;
+    padding: 12px 14px;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.65), inset 0 0 16px rgba(0, 229, 255, 0.06);
   `;
   colTeam1.innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(0,229,255,0.25);padding-bottom:10px;">
-      <span style="font-size:16px;font-weight:900;letter-spacing:0.12em;color:#00e5ff;">TEAM 1 (HOME)</span>
+    <div style="display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(0,229,255,0.22);padding-bottom:6px;">
+      <span style="font-size:13px;font-weight:900;letter-spacing:0.12em;color:#00e5ff;">TEAM 1 (P1 &amp; P3)</span>
       <span class="contextual-btn-badge" style="border-color:#00e5ff;color:#00e5ff;">◀ TILT LEFT</span>
     </div>
-    <div id="team1-slots-container" style="display:flex;flex-direction:column;gap:12px;flex:1;"></div>
+    <div id="team1-slots-container" style="display:flex;flex-direction:column;gap:8px;flex:1;"></div>
   `;
 
   // Column 2: Bench (Available Devices)
@@ -158,19 +156,21 @@ export function buildControllerAssignmentScreen(rootEl, callbacks = {}) {
   colBench.style.cssText = `
     display: flex;
     flex-direction: column;
-    gap: 12px;
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px dashed rgba(255, 255, 255, 0.2);
-    border-radius: 12px;
-    padding: 18px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+    gap: 8px;
+    background: rgba(11, 17, 26, 0.82);
+    border: 1px dashed rgba(255, 255, 255, 0.25);
+    border-radius: 10px;
+    padding: 12px 14px;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.65);
   `;
   colBench.innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,0.12);padding-bottom:10px;">
-      <span style="font-size:15px;font-weight:900;letter-spacing:0.12em;color:#ffffff;">AVAILABLE CONTROLLERS</span>
-      <span style="font-size:11px;font-weight:700;color:#94a3b8;">[BENCH]</span>
+    <div style="display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,0.12);padding-bottom:6px;">
+      <span style="font-size:13px;font-weight:900;letter-spacing:0.12em;color:#ffffff;">AVAILABLE CONTROLLERS</span>
+      <span style="font-size:10px;font-weight:700;color:#94a3b8;">[BENCH]</span>
     </div>
-    <div id="bench-slots-container" style="display:flex;flex-direction:column;gap:10px;flex:1;overflow-y:auto;"></div>
+    <div id="bench-slots-container" style="display:flex;flex-direction:column;gap:8px;flex:1;max-height:175px;overflow-y:auto;"></div>
   `;
 
   // Column 3: Team 2 (Away - Coral)
@@ -179,19 +179,21 @@ export function buildControllerAssignmentScreen(rootEl, callbacks = {}) {
   colTeam2.style.cssText = `
     display: flex;
     flex-direction: column;
-    gap: 12px;
-    background: rgba(255, 46, 85, 0.04);
-    border: 2px solid rgba(255, 46, 85, 0.4);
-    border-radius: 12px;
-    padding: 18px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), inset 0 0 20px rgba(255, 46, 85, 0.08);
+    gap: 8px;
+    background: rgba(11, 17, 26, 0.84);
+    border: 1.5px solid rgba(255, 46, 85, 0.45);
+    border-radius: 10px;
+    padding: 12px 14px;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.65), inset 0 0 16px rgba(255, 46, 85, 0.06);
   `;
   colTeam2.innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(255,46,85,0.25);padding-bottom:10px;">
-      <span style="font-size:16px;font-weight:900;letter-spacing:0.12em;color:#ff2e55;">TEAM 2 (AWAY)</span>
+    <div style="display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(255,46,85,0.22);padding-bottom:6px;">
+      <span style="font-size:13px;font-weight:900;letter-spacing:0.12em;color:#ff2e55;">TEAM 2 (P2 &amp; P4)</span>
       <span class="contextual-btn-badge" style="border-color:#ff2e55;color:#ff2e55;">TILT RIGHT ▶</span>
     </div>
-    <div id="team2-slots-container" style="display:flex;flex-direction:column;gap:12px;flex:1;"></div>
+    <div id="team2-slots-container" style="display:flex;flex-direction:column;gap:8px;flex:1;"></div>
   `;
 
   arenaGrid.appendChild(colTeam1);
@@ -199,16 +201,31 @@ export function buildControllerAssignmentScreen(rootEl, callbacks = {}) {
   arenaGrid.appendChild(colTeam2);
   containerEl.appendChild(arenaGrid);
 
-  // --- BOTTOM ACTION ROW ---
+  // --- BOTTOM COMMAND DOCK (aligns Header + Action Buttons at the bottom of the page) ---
+  const bottomDock = document.createElement('div');
+  bottomDock.id = 'assignment-bottom-dock';
+  bottomDock.style.cssText = `
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    width: 100%;
+    max-width: 1420px;
+    background: rgba(11, 17, 26, 0.88);
+    border: 1px solid rgba(120, 170, 210, 0.28);
+    border-radius: 10px;
+    padding: 8px 16px;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.72);
+    box-sizing: border-box;
+  `;
+
   const actionRow = document.createElement('div');
   actionRow.style.cssText = `
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    width: 100%;
-    max-width: 1120px;
-    padding-top: 14px;
-    border-top: 1px solid rgba(255, 255, 255, 0.12);
+    gap: 8px;
   `;
 
   const btnBack = document.createElement('button');
@@ -216,20 +233,20 @@ export function buildControllerAssignmentScreen(rootEl, callbacks = {}) {
   btnBack.style.cssText = `
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    padding: 12px 24px;
-    font-size: 13px;
+    gap: 6px;
+    padding: 9px 14px;
+    font-size: 11px;
     font-weight: 800;
     font-family: inherit;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.06em;
     color: #ffffff;
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid rgba(255, 255, 255, 0.25);
-    border-radius: 8px;
+    border-radius: 6px;
     cursor: pointer;
     transition: all 0.15s ease;
   `;
-  btnBack.innerHTML = `<span class="contextual-btn-badge">B / ESC</span><span>BACK TO TITLE</span>`;
+  btnBack.innerHTML = `<span class="contextual-btn-badge">B / ESC</span><span>TITLE</span>`;
   btnBack.onclick = () => {
     soundManager.playTone(330, 0.08, 'sine', 0.15);
     hideControllerAssignment();
@@ -241,21 +258,21 @@ export function buildControllerAssignmentScreen(rootEl, callbacks = {}) {
   btnToggle.style.cssText = `
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    padding: 12px 20px;
-    font-size: 12px;
+    gap: 6px;
+    padding: 9px 14px;
+    font-size: 11px;
     font-weight: 800;
     font-family: inherit;
-    letter-spacing: 0.08em;
-    color: #cfe3f5;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    border-radius: 8px;
-    cursor: not-allowed;
-    opacity: 0.65;
+    letter-spacing: 0.06em;
+    color: #ffffff;
+    background: rgba(245, 158, 11, 0.14);
+    border: 1px solid rgba(245, 158, 11, 0.45);
+    border-radius: 6px;
+    cursor: pointer;
+    box-shadow: 0 0 12px rgba(245, 158, 11, 0.2);
     transition: all 0.15s ease;
   `;
-  btnToggle.innerHTML = `<span class="contextual-btn-badge" style="background:#f59e0b;color:#000;font-weight:900;">COMING IN V0.4.0!</span><span>2v2 (4 ATHLETES)</span>`;
+  btnToggle.innerHTML = `<span class="contextual-btn-badge" style="border-color:#f59e0b;color:#f59e0b;">Y</span><span>SWITCH TO 2v2</span>`;
   btnToggle.onclick = () => toggleMode();
 
   const btnBothAI = document.createElement('button');
@@ -263,21 +280,21 @@ export function buildControllerAssignmentScreen(rootEl, callbacks = {}) {
   btnBothAI.style.cssText = `
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    padding: 12px 18px;
-    font-size: 12px;
+    gap: 6px;
+    padding: 9px 14px;
+    font-size: 11px;
     font-weight: 800;
     font-family: inherit;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.06em;
     color: #00e5ff;
     background: rgba(0, 229, 255, 0.08);
     border: 1px solid rgba(0, 229, 255, 0.35);
-    border-radius: 8px;
+    border-radius: 6px;
     cursor: pointer;
     box-shadow: 0 0 12px rgba(0, 229, 255, 0.2);
     transition: all 0.15s ease;
   `;
-  btnBothAI.innerHTML = `<span class="contextual-btn-badge" style="border-color:#00e5ff;color:#00e5ff;">X</span><span>SET BOTH AI (SPECTATE)</span>`;
+  btnBothAI.innerHTML = `<span class="contextual-btn-badge" style="border-color:#00e5ff;color:#00e5ff;">X</span><span>ALL AI</span>`;
   btnBothAI.onclick = () => setBothAI();
 
   const btnProceed = document.createElement('button');
@@ -285,28 +302,30 @@ export function buildControllerAssignmentScreen(rootEl, callbacks = {}) {
   btnProceed.style.cssText = `
     display: inline-flex;
     align-items: center;
-    gap: 10px;
-    padding: 14px 28px;
-    font-size: 14px;
+    gap: 8px;
+    padding: 10px 18px;
+    font-size: 12px;
     font-weight: 900;
     font-family: inherit;
-    letter-spacing: 0.1em;
+    letter-spacing: 0.08em;
     color: #000000;
     background: #10b981;
     border: 2px solid #ffffff;
-    border-radius: 8px;
+    border-radius: 6px;
     cursor: pointer;
-    box-shadow: 0 0 20px rgba(16, 185, 129, 0.5);
+    box-shadow: 0 0 18px rgba(16, 185, 129, 0.5);
     transition: all 0.15s ease;
   `;
-  btnProceed.innerHTML = `<span>CONTINUE TO SETUP</span><span class="contextual-btn-badge" style="background:#000;color:#fff;">START / A / ENTER</span>`;
+  btnProceed.innerHTML = `<span>CONTINUE</span><span class="contextual-btn-badge" style="background:#000;color:#fff;">START / A</span>`;
   btnProceed.onclick = () => proceedToSetup();
 
   actionRow.appendChild(btnBack);
   actionRow.appendChild(btnBothAI);
   actionRow.appendChild(btnToggle);
   actionRow.appendChild(btnProceed);
-  containerEl.appendChild(actionRow);
+  bottomDock.appendChild(header);
+  bottomDock.appendChild(actionRow);
+  containerEl.appendChild(bottomDock);
 
   if (rootEl) rootEl.appendChild(containerEl);
   state.controllerAssignmentEl = containerEl;
@@ -314,12 +333,15 @@ export function buildControllerAssignmentScreen(rootEl, callbacks = {}) {
   return containerEl;
 }
 
-export function showControllerAssignment(mode = '1v1', callbacks = {}) {
+export function showControllerAssignment(mode = '1v1', callbacks = {}, options = {}) {
   if (callbacks.onProceed) onProceedCallback = callbacks.onProceed;
   if (callbacks.onBack) onBackCallback = callbacks.onBack;
   currentMode = mode;
 
-  initDefaultAssignments();
+  const hasExisting = allDevices().length > 0;
+  if (!options.preserveExisting || !hasExisting) {
+    initDefaultAssignments();
+  }
   renderAssignmentUI();
 
   if (containerEl) {
@@ -337,9 +359,35 @@ export function getControllerAssignmentEl() {
   return containerEl;
 }
 
+export function getControllerAssignmentMode() {
+  return currentMode;
+}
+
 export function toggleMode() {
-  showToast('2v2 Versus is currently in development. Coming in v0.4.0!', 'warning', 3500);
-  soundManager.playTone(440, 0.08, 'sine', 0.16);
+  currentMode = currentMode === '1v1' ? '2v2' : '1v1';
+  if (currentMode === '1v1') {
+    if (assignmentState.team1[1]) {
+      assignmentState.bench.push(assignmentState.team1[1]);
+      assignmentState.team1[1] = null;
+    }
+    if (assignmentState.team2[1]) {
+      assignmentState.bench.push(assignmentState.team2[1]);
+      assignmentState.team2[1] = null;
+    }
+  } else {
+    for (const teamKey of ['team1', 'team2']) {
+      for (let i = 0; i < 2; i++) {
+        if (!assignmentState[teamKey][i]) {
+          const padIdx = assignmentState.bench.findIndex((d) => d && d.type === 'gamepad');
+          if (padIdx >= 0) {
+            assignmentState[teamKey][i] = assignmentState.bench.splice(padIdx, 1)[0];
+          }
+        }
+      }
+    }
+  }
+  soundManager.playTone(currentMode === '2v2' ? 660 : 520, 0.07, 'sine', 0.2);
+  renderAssignmentUI();
 }
 
 function makePadDevice(pad) {
@@ -386,8 +434,9 @@ function playDenied() {
 }
 
 /**
- * One tilt / arrow step: from the bench a device claims that side; from the far
- * side it drops back to the bench. Never bumps a seated player off a full side.
+ * One tilt / arrow step: from the bench a device claims that side (swapping any
+ * idle auto-seated device onto the bench so 3–4 connected pads never dead-end);
+ * from the far side it drops back to the bench.
  */
 function stepDevice(device, dir) {
   const loc = locateDevice(device);
@@ -398,10 +447,6 @@ function stepDevice(device, dir) {
     return true;
   }
   if (loc === 'bench') {
-    if (!hasOpenSlot(fromBench)) {
-      playDenied();
-      return false;
-    }
     assignDeviceToTeam(device, fromBench);
     return true;
   }
@@ -409,16 +454,17 @@ function stepDevice(device, dir) {
 }
 
 /**
- * A / Start / Enter. A benched device joins the first open side while someone is
- * already seated (the usual "press A to join") and is refused when both sides are
- * taken. Seated devices, or anyone when nobody is seated (Set Both AI), continue.
+ * A / Enter. A benched device joins an open side while one is free; once active
+ * sides are filled (or if the device is already seated, or Both AI is active),
+ * confirming advances straight to Player Setup without locking out bench pads.
  */
 function joinOrProceed(device) {
   if (device && locateDevice(device) === 'bench' && anySeated()) {
     const team = hasOpenSlot('team1') ? 'team1' : hasOpenSlot('team2') ? 'team2' : null;
-    if (team) assignDeviceToTeam(device, team);
-    else playDenied();
-    return;
+    if (team) {
+      assignDeviceToTeam(device, team);
+      return;
+    }
   }
   proceedToSetup();
 }
@@ -491,8 +537,17 @@ function initDefaultAssignments() {
     if (padDevices.length > 1) {
       assignmentState.team2[0] = padDevices[1];
     }
+    if (currentMode === '2v2') {
+      if (padDevices.length > 2) assignmentState.team1[1] = padDevices[2];
+      if (padDevices.length > 3) assignmentState.team2[1] = padDevices[3];
+    }
     devices.forEach((d) => {
-      if (d !== assignmentState.team1[0] && d !== assignmentState.team2[0]) {
+      if (
+        d !== assignmentState.team1[0] &&
+        d !== assignmentState.team2[0] &&
+        d !== assignmentState.team1[1] &&
+        d !== assignmentState.team2[1]
+      ) {
         assignmentState.bench.push(d);
       }
     });
@@ -686,11 +741,15 @@ function assignDeviceToTeam(device, teamKey) {
     }
   }
 
-  // If team is full, replace first slot
-  if (teamSlots[0]) {
-    assignmentState.bench.push(teamSlots[0]);
+  // If team is full, displace oldest slot (FIFO) to the bench
+  if (maxSlots === 2) {
+    if (teamSlots[0]) assignmentState.bench.push(teamSlots[0]);
+    teamSlots[0] = teamSlots[1];
+    teamSlots[1] = device;
+  } else {
+    if (teamSlots[0]) assignmentState.bench.push(teamSlots[0]);
+    teamSlots[0] = device;
   }
-  teamSlots[0] = device;
   soundManager.playTone(teamKey === 'team1' ? 620 : 540, 0.045, 'sine', 0.18);
   renderAssignmentUI();
   return true;
@@ -749,18 +808,26 @@ export function pollAssignmentGamepads(pads, menuPads) {
     if ((e & MENU_PAD.left) && stepDevice(device, -1)) triggerHaptic(pad);
     if ((e & MENU_PAD.right) && stepDevice(device, 1)) triggerHaptic(pad);
 
-    // B drops a seated pad to the bench. From the bench it only backs out to the
-    // title when nobody is seated, so a benched player can't kick seated ones out.
+    // B drops a seated pad to the bench; pressing B again from the bench (or Back
+    // from anywhere) returns cleanly to the Title Screen without trapping players.
+    if (e & MENU_PAD.back) {
+      soundManager.playTone(330, 0.08, 'sine', 0.15);
+      hideControllerAssignment();
+      if (onBackCallback) onBackCallback();
+      triggerHaptic(pad);
+      return;
+    }
+
     if (e & MENU_PAD.b) {
       if (locateDevice(device) !== 'bench') {
         unassignDevice(device);
         triggerHaptic(pad);
-      } else if (!anySeated()) {
+      } else {
+        soundManager.playTone(330, 0.08, 'sine', 0.15);
         hideControllerAssignment();
         if (onBackCallback) onBackCallback();
+        triggerHaptic(pad);
         return;
-      } else {
-        playDenied();
       }
     }
 
@@ -776,8 +843,15 @@ export function pollAssignmentGamepads(pads, menuPads) {
       triggerHaptic(pad);
     }
 
-    // A / Start: join from the bench, or continue to setup
-    if (e & (MENU_PAD.a | MENU_PAD.start)) {
+    // Start from any controller always proceeds directly to Player Setup
+    if (e & MENU_PAD.start) {
+      proceedToSetup();
+      triggerHaptic(pad);
+      return;
+    }
+
+    // A: join open slot from the bench, or continue to setup
+    if (e & MENU_PAD.a) {
       joinOrProceed(device);
       triggerHaptic(pad);
     }
