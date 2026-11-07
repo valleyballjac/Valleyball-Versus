@@ -1,19 +1,21 @@
 # Valleyball Versus roadmap
 
-Last updated 2026-11-01. This is the one place for what comes next. [AGENTS.md](../AGENTS.md) holds the rules and [the Gameplay Source of Truth](VALLEYBALL_GAMEPLAY_SOURCE_OF_TRUTH.md) holds the rules of the sport.
+Last updated 2026-11-07. This is the one place for what comes next. [AGENTS.md](../AGENTS.md) holds the rules and [the Gameplay Source of Truth](VALLEYBALL_GAMEPLAY_SOURCE_OF_TRUTH.md) holds the rules of the sport.
 
-## Now: v0.3.7
+## Now: v0.4.0
 
-Brings the lobby, input, camera and fixture work onto `main`.
+Brings full 1v1 and 2v2 team gameplay, per-controller lobby navigation, right-aligned title menu, staggered idle poses, individual + collective team stats, inertia-scaled angular tracking + 4-tick buzz filtering, unified 8/15/42-tick AI strike & ballistic hoop targeting, and fixture support onto the release build.
 
-- [ ] Play-test the lobby, keyboard assignment, hot-plug and pause-menu camera rows with real controllers.
-- [ ] Merge to `main`, tag, and deploy to GitHub Pages and itch.io, on Jac's go-ahead.
+- [x] Play-test the lobby, keyboard assignment, hot-plug and pause-menu camera rows with real controllers.
+- [x] Full 2v2 team mode (4-athlete roster, quad split-screen, team & individual stats, grouped lobby setup, teammate bot roles, strike arbitration).
+- [x] AI v0.4.0 strike horizons (`8/15/42`), Rapier limb-offset matching, additive-impulse aim compensation, East-West hoop playbook, and headless mechanical parity.
+- [x] Merge to `main`, tag `v0.4.0`, and package release builds.
 
 ## Inaugural Championship: December 27, 2026
 
 Expected to be 1v1 this year, so it does not depend on 2v2. `?fixture=` (`src/features/match/matchFixture.js`, `npm run fixture`) already plays one fully specified 1v1 match.
 
-## v0.4: 2v2
+## v0.4.0: 2v2 (Shipped)
 
 Already in place: team scoring, four `TUNING.players` configs, four input slots, the controller assignment screen and four stream heads.
 
@@ -42,7 +44,7 @@ If a later league plays 2v2, the fixture format needs to change too: it allows o
 ## Open follow-ups
 
 - **Arena Blender sources.** Commits cite `.blend` files v10.0 to v10.9, which are not in git. Find them and store them with the arena's other source files. Until then, `arena.glb` is the only source of truth (see AGENTS.md).
-- **Bot prediction horizons** are hard-coded at 14/20/42 ticks, while `TUNING.strike`'s sweet ticks are 8/15/42. Fix this on its own and A/B it.
+- **AI tactical & spike/aerial refinement.** v0.4.0 aligned prediction horizons to 8/15/42 ticks, Rapier limb offsets, and East-West hoop ballistics; continue tuning standing/jump spike frequency, 2v2 off-ball chemistry, and multi-touch combinations.
 - **Trace expectations.** `docs/archive/BRACE_GATE.md` lists unresolved volley and kick trace expectations.
 - **Menu cost during play.** Phase 0 saw `menuNavigation.js` in the CPU profile during matches. Re-measure now that the menu input has been rewritten.
 - **Corner-fan certification.** `npm run audit` has failed its collision half since arena v11.1 (it passes at `arena-v11`), so CI runs only `node scripts/audit.mjs` for now. The rule flags 26 vertical triangles at `|x| = 25` inside the corner fan band, added by the Oct 24 boundary work. All 1,772 rest checks, the drop test and the traversal test pass, so the rule is probably stale. Confirm the geometry is intended, then update the rule and put `npm run audit` back in CI.
