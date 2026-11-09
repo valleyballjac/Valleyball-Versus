@@ -2660,6 +2660,8 @@ export function updateFocusUI() {
   // Every human slot ALWAYS has its own active row cursor highlight (independent simultaneous per-controller cursors),
   // AND focusedColumn also highlights any AI slot currently being configured via LB/RB/TAB.
   const activeIndices = getActivePlayerIndices();
+  const humanCount = activeIndices.filter((i) => playerConfigs[i]?.type === 'human').length;
+  const isSlotCursorActive = (s) => (humanCount > 1 ? (playerConfigs[s]?.type === 'human' || focusedColumn === s) : focusedColumn === s);
   activeIndices.forEach((idx) => {
     const tag = ctrlTagEls[idx];
     const col = colEls[idx];
@@ -2679,7 +2681,7 @@ export function updateFocusUI() {
       }
     }
     if (col && !playerReadyState[idx]) {
-      if (isHumanSlot || focusedColumn === idx) {
+      if (isSlotCursorActive(idx)) {
         col.style.borderColor = 'rgba(255, 255, 255, 0.42)';
       } else {
         col.style.borderColor = 'rgba(255, 255, 255, 0.15)';
@@ -2687,7 +2689,7 @@ export function updateFocusUI() {
     }
 
     const activeRow = playerFocusRow[idx];
-    const isThisColActive = isHumanSlot || focusedColumn === idx;
+    const isThisColActive = isSlotCursorActive(idx);
     const teamSlots = (idx % 2 === 0) ? [0, 2] : [1, 3];
 
     // Rows 0..7: 0=Team Kit, 1=Team Color, 2=Control Type, 3=AI Style, 4=Headwear, 5=Physique, 6=Camera, 7=Assist
@@ -2695,7 +2697,7 @@ export function updateFocusUI() {
       const el = playerRowElements[idx]?.[rIdx];
       if (!el) return;
       const isFocused = (rIdx <= 1)
-        ? teamSlots.some((s) => s < activeIndices.length && playerFocusRow[s] === rIdx && (playerConfigs[s]?.type === 'human' || focusedColumn === s))
+        ? teamSlots.some((s) => s < activeIndices.length && playerFocusRow[s] === rIdx && isSlotCursorActive(s))
         : (rIdx === activeRow && isThisColActive);
       if (isFocused) {
         el.classList.add('rainbow-focused');
@@ -2712,7 +2714,7 @@ export function updateFocusUI() {
   // Row 8: Action Row (Back and Next)
   if (btnBack && btnNext) {
     const isActionFocused = activeIndices.some(
-      (i) => playerFocusRow[i] === 8 && (playerConfigs[i]?.type === 'human' || focusedColumn === i),
+      (i) => playerFocusRow[i] === 8 && isSlotCursorActive(i),
     );
     if (isActionFocused) {
       if (screen1ActionCol === 0) {

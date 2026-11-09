@@ -20,7 +20,7 @@
     "src/features/match/matchManager.js": 5,
     "src/features/ui/mainMenu/settingsModal.js": 8,
     "src/input/inputRouter.js": 2,
-    "src/main.js": 39
+    "src/main.js": 41
   },
   "dead-module": {
     "src/features/athletes/index.js": 1,
@@ -79,8 +79,8 @@
   },
   "clips": {},
   "size": {
-    "src/config/tuning.js": 1850,
-    "src/main.js": 4031,
+    "src/config/tuning.js": 1851,
+    "src/main.js": 4039,
     "src/mechanics/strikes.js": 1055,
     "src/sim/animtarget.js": 2011
   }

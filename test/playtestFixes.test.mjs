@@ -29,7 +29,15 @@ import {
   consumeCameraCyclePlayer,
   consumeCameraCycleArena,
   consumeAthleteJump,
+  setExplicitDeviceMappings,
+  getAssignedSlotForPad,
 } from '../src/input/inputRouter.js';
+import {
+  setMenuNavigationContext,
+  startMenuGamepadPolling,
+  stopSetupGamepadPolling,
+} from '../src/features/ui/mainMenu/menuNavigation.js';
+import { state as menuState } from '../src/features/ui/mainMenu/state.js';
 import { createTracker, computeOffMount, applyTracking } from '../src/sim/tracker.js';
 import { snapshotRagdoll } from '../src/sim/ragdoll.js';
 import { createGoalIndicators } from '../src/visuals/goalIndicators.js';
@@ -667,4 +675,167 @@ test('v0.4.0 AI aligns strike horizons (8/15/42), kinematic arrival braking, and
   };
   updateBot(bot, ownAthlete, oppAthlete, activeBalls, matchState, inputSlot, 120, 1 / 60);
   assert.equal(inputSlot.volleyQueued, true, 'Hard bot must queue volley at 15-tick sweet-spot horizon');
+});
+
+test('Menu gamepad polling navigates Character Selection (Page 1) and Match Setup (Page 2) with object device mappings', () => {
+  const prevNavigator = globalThis.navigator;
+  const prevWindow = globalThis.window;
+  const prevDocument = globalThis.document;
+  const prevSetInterval = globalThis.setInterval;
+  const prevClearInterval = globalThis.clearInterval;
+
+  let pollTickFn = null;
+  const buttons = Array.from({ length: 16 }, () => ({ pressed: false, value: 0 }));
+  const fakePad = {
+    index: 0,
+    id: 'Xbox Wireless Controller',
+    connected: true,
+    axes: [0, 0, 0, 0],
+    buttons,
+  };
+
+  const pressButton = (btnIdx) => {
+    buttons[btnIdx].pressed = true;
+    buttons[btnIdx].value = 1;
+    pollTickFn();
+    buttons[btnIdx].pressed = false;
+    buttons[btnIdx].value = 0;
+    pollTickFn();
+  };
+
+  Object.defineProperty(globalThis, 'navigator', {
+    value: { getGamepads: () => [fakePad] },
+    configurable: true,
+  });
+  globalThis.window = {
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    _updateSetupPage: () => {},
+  };
+  globalThis.document = {
+    getElementById: () => null,
+  };
+  globalThis.setInterval = (fn) => {
+    pollTickFn = fn;
+    return 1234;
+  };
+  globalThis.clearInterval = () => {
+    pollTickFn = null;
+  };
+
+  try {
+    menuState.rootEl = { style: { display: 'flex' } };
+    menuState.titleScreenEl = { style: { display: 'none' } };
+    menuState.controllerAssignmentEl = { style: { display: 'none' } };
+
+    // Simulate proceedToSetup() from controllerAssignment.js which stores a plain object `{ 0: ... }`
+    setExplicitDeviceMappings({
+      0: { type: 'gamepad', padIndex: 0, name: 'Gamepad 1', id: fakePad.id },
+    });
+
+    const cycledOptions = [];
+    let matchBallCycles = 0;
+    let durationCycles = 0;
+    let readyToggles = 0;
+    let launched = false;
+
+    const mockPlayerSetup = {
+      playerSetupEl: { style: { display: 'flex' } },
+      currentSetupMode: 'match',
+      setupPage: 1,
+      focusedColumn: 0,
+      playerFocusRow: [4, 2, 2, 2],
+      screen1ActionCol: 1,
+      matchRulesFocusRow: 0,
+      matchRulesActionCol: 2,
+      matchCountdownActive: false,
+      playerReadyState: [false, true, true, true],
+      playerConfigs: [
+        { type: 'human', difficulty: 'medium' },
+        { type: 'ai', difficulty: 'medium' },
+      ],
+      btnStartMatch: {
+        disabled: true,
+        click: () => { launched = true; },
+      },
+      btnBack: { click: () => {} },
+      getActiveMatchPlayerCount: () => 2,
+      isVersusLobby: () => false,
+      updateInputBadgesUI: () => {},
+      updateFocusUI: () => {},
+      updateReadyUI: () => {},
+      cycleOption: (col, row, dir) => {
+        cycledOptions.push({ col, row, dir });
+      },
+      cycleMatchBall: (dir) => { matchBallCycles += dir; },
+      cycleMatchDuration: (dir) => { durationCycles += dir; },
+      cycleArena: () => {},
+      togglePlayerReady: (slotIdx) => {
+        readyToggles++;
+        mockPlayerSetup.playerReadyState[slotIdx] = !mockPlayerSetup.playerReadyState[slotIdx];
+        mockPlayerSetup.btnStartMatch.disabled = !mockPlayerSetup.playerReadyState[slotIdx];
+      },
+      launchMatchNow: () => { launched = true; },
+    };
+
+    setMenuNavigationContext({ playerSetup: mockPlayerSetup });
+    startMenuGamepadPolling();
+    assert.equal(typeof pollTickFn, 'function', 'Gamepad polling loop must register');
+
+    // 1. Page 1 (Character Selection): D-pad Right (15) on Row 4 (Hat) cycles P1's Hat
+    pressButton(15);
+    assert.deepEqual(cycledOptions[0], { col: 0, row: 4, dir: 1 }, 'D-pad Right on Page 1 cycles P1 Hat (row 4)');
+
+    // 2. Page 1: D-pad Down (13) moves P1 from Row 4 (Hat) to Row 5 (Build), and A (0) cycles P1 Build
+    pressButton(13);
+    assert.equal(mockPlayerSetup.playerFocusRow[0], 5, 'D-pad Down moves P1 focus from Hat (4) to Build (5)');
+    pressButton(0);
+    assert.deepEqual(cycledOptions[1], { col: 0, row: 5, dir: 1 }, 'A button on Page 1 cycles P1 Build (row 5)');
+
+    // 3. Page 1: RB (5) switches focus to AI P2 (col 1) and D-pad Right (15) cycles AI difficulty (row 2)
+    pressButton(5);
+    assert.equal(mockPlayerSetup.focusedColumn, 1, 'RB switches active column from P1 (0) to AI P2 (1)');
+    pressButton(15);
+    assert.deepEqual(cycledOptions[2], { col: 1, row: 2, dir: 1 }, 'D-pad Right on AI P2 cycles AI difficulty (row 2)');
+
+    // 4. Page 1: Start (9) advances to Page 2 (Match Setup / Rules)
+    pressButton(9);
+    assert.equal(mockPlayerSetup.setupPage, 2, 'Start on Page 1 advances to Page 2 (Match Setup)');
+
+    // 5. Page 2 (Match Setup): D-pad Right (15) cycles Match Ball, D-pad Down (13) moves to Duration and cycles it
+    pressButton(15);
+    assert.equal(matchBallCycles, 1, 'D-pad Right on Page 2 Row 0 cycles Match Ball');
+    pressButton(13);
+    assert.equal(mockPlayerSetup.matchRulesFocusRow, 1, 'D-pad Down on Page 2 moves focus to Match Duration (row 1)');
+    pressButton(15);
+    assert.equal(durationCycles, 1, 'D-pad Right on Page 2 Row 1 cycles Match Duration');
+
+    // 6. Page 2: X (2) toggles P1 Ready, and Start (9) launches the match
+    pressButton(2);
+    assert.equal(readyToggles, 1, 'X button on Page 2 toggles P1 Ready');
+    assert.equal(mockPlayerSetup.playerReadyState[0], true);
+    pressButton(9);
+    assert.equal(launched, true, 'Start button on Page 2 launches match once Ready');
+
+    // 7. Also verify that if a solo human slot was left on default Keyboard mapping and a pad is used in the lobby,
+    //    the pad auto-binds to slot 0 and drives both the lobby and gameplay.
+    mockPlayerSetup.setupPage = 1;
+    setExplicitDeviceMappings({
+      0: { type: 'keyboard', keyId: 'kb1', name: 'Keyboard 1 (WASD)' },
+    });
+    assert.equal(getAssignedSlotForPad(0), -1);
+    pressButton(15);
+    assert.equal(getAssignedSlotForPad(0), 0, 'Unassigned pad driving keyboard-mapped P1 auto-binds to slot 0');
+  } finally {
+    stopSetupGamepadPolling();
+    setExplicitDeviceMappings(null);
+    if (prevNavigator === undefined) delete globalThis.navigator;
+    else Object.defineProperty(globalThis, 'navigator', { value: prevNavigator, configurable: true });
+    if (prevWindow === undefined) delete globalThis.window;
+    else globalThis.window = prevWindow;
+    if (prevDocument === undefined) delete globalThis.document;
+    else globalThis.document = prevDocument;
+    globalThis.setInterval = prevSetInterval;
+    globalThis.clearInterval = prevClearInterval;
+  }
 });

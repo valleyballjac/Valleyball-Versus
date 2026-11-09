@@ -474,7 +474,16 @@ function syncConnectedPads(pads) {
   let changed = false;
   for (const pad of pads) {
     if (pad && !findPadDevice(pad.index)) {
-      assignmentState.bench.push(makePadDevice(pad));
+      const padDev = makePadDevice(pad);
+      // If no gamepads were awake when this screen opened (so Keyboard 1 was only auto-seated in Team 1),
+      // auto-promote the first newly-woken gamepad into Team 1 Slot 1 and move Keyboard 1 to the bench.
+      const hasSeatedPad = [...assignmentState.team1, ...assignmentState.team2].some((d) => d && d.type === 'gamepad');
+      if (!hasSeatedPad && assignmentState.team1[0]?.type === 'keyboard' && !assignmentState.team2[0]) {
+        assignmentState.bench.push(assignmentState.team1[0]);
+        assignmentState.team1[0] = padDev;
+      } else {
+        assignmentState.bench.push(padDev);
+      }
       changed = true;
     }
   }

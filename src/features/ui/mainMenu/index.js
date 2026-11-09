@@ -360,10 +360,10 @@ export function showPlayerSetup(mode = 'match', options = {}) {
   setFocusedColumn(mode === 'match' && firstHuman >= 0 ? firstHuman : 0);
 
   const focusRows = getPlayerFocusRow();
-  focusRows[0] = (mode === 'practice') ? 1 : 2;
-  focusRows[1] = 2;
-  focusRows[2] = 2;
-  focusRows[3] = 2;
+  focusRows[0] = (mode === 'practice') ? 1 : (cfgs[0]?.type === 'human' ? 4 : 2);
+  focusRows[1] = cfgs[1]?.type === 'human' ? 4 : 2;
+  focusRows[2] = cfgs[2]?.type === 'human' ? 4 : 2;
+  focusRows[3] = cfgs[3]?.type === 'human' ? 4 : 2;
 
   if (window._updateSetupPage) window._updateSetupPage();
   updateReadyUI();

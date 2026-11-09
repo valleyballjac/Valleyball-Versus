@@ -828,15 +828,26 @@ function resolveDeviceRouting(pads, athleteCount, mode, botSlots) {
   if (mode === 'practice' || athleteCount === 1) {
     if (!botSlots.includes(0)) slotPads[0] = pads[0] || null;
   } else if (explicitDeviceMappings) {
+    let anyMappedPad = false;
     for (let s = 0; s < 4; s++) {
       const m = explicitDeviceMappings[s];
       if (!m) continue;
       if (m.type === 'gamepad' && typeof m.padIndex === 'number') {
         slotPads[s] = findPad(pads, m.padIndex);
+        anyMappedPad = true;
       } else if (m.type === 'keyboard') {
         const ks = m.keyId === 'kb2' ? 1 : 0;
         keysetSlot[ks] = s;
         slotKeyset[s] = ks;
+      }
+    }
+    if (!anyMappedPad && pads.length > 0) {
+      const humanSlots = [];
+      for (let s = 0; s < Math.min(4, athleteCount); s++) {
+        if (!botSlots.includes(s)) humanSlots.push(s);
+      }
+      if (humanSlots.length === 1) {
+        slotPads[humanSlots[0]] = pads[0];
       }
     }
   } else {

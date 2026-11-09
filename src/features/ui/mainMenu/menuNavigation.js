@@ -5,6 +5,7 @@ import {
   getAssignedSlotForPad,
   getExplicitDeviceMappings,
   getMatchSlotForKeyset,
+  assignPadToSlot,
 } from '../../../input/inputRouter.js';
 import { createMenuPadTracker, MENU_PAD } from '../../../input/menuPads.js';
 import { hideMainMenuSettingsModal, getMainMenuSettingsModalEl } from './settingsModal.js';
@@ -55,7 +56,11 @@ export function moveScreen1Row(col, delta) {
   if (cur === 2 && delta > 0 && !isAi) next = 4;
   if (cur === 4 && delta < 0 && !isAi) next = 2;
   next = Math.max(0, Math.min(8, next));
+  if (next === 8 && cur !== 8) {
+    navCallbacks.playerSetup.screen1ActionCol = 1;
+  }
   navCallbacks.playerSetup.playerFocusRow[col] = next;
+  navCallbacks.playerSetup.focusedColumn = col;
   navCallbacks.playerSetup.updateFocusUI();
   soundManager.playTone(520, 0.035, 'sine', 0.12);
 }
@@ -128,6 +133,7 @@ function toggleFocusedColumn(dir = 1, ownerSlot = -1) {
 /** Screen 1 (players): one navigation step in column `col`. Returns true if an option changed. */
 function screen1Action(col, action) {
   const ps = navCallbacks.playerSetup;
+  ps.focusedColumn = col;
   const row = ps.playerFocusRow[col];
   if (action === 'up' || action === 'down') {
     moveScreen1Row(col, action === 'up' ? -1 : 1);
@@ -742,7 +748,15 @@ export function startMenuGamepadPolling() {
       let assignedSlot = getAssignedSlotForPad(pad.index);
       if (assignedSlot >= n) assignedSlot = -1;
       const mappings = getExplicitDeviceMappings();
-      const hasAssignedGamepad = Boolean(mappings && mappings.slice(0, n).some((m) => m && m.type === 'gamepad'));
+      let hasAssignedGamepad = false;
+      if (mappings) {
+        for (let i = 0; i < n; i++) {
+          if (mappings[i] && mappings[i].type === 'gamepad') {
+            hasAssignedGamepad = true;
+            break;
+          }
+        }
+      }
       const hasOpenAiSlot = Boolean(ps.playerConfigs && ps.playerConfigs.slice(0, n).some((c) => c?.type === 'ai'));
 
       // Direct Lobby Join: an unassigned controller pressing Y (or A/Start when another pad is already mapped)
@@ -758,6 +772,13 @@ export function startMenuGamepadPolling() {
       }
 
       const ownerSlot = resolvePadOwnerSlot(pad.index);
+      if (assignedSlot < 0 && ownerSlot >= 0 && !hasAssignedGamepad) {
+        assignPadToSlot(ownerSlot, pad.index, pad.id);
+        assignedSlot = ownerSlot;
+        hasAssignedGamepad = true;
+        ps.updateInputBadgesUI?.();
+        ps.updateFocusUI?.();
+      }
       if (versus && ownerSlot < 0 && assignedSlot < 0) {
         if (hasAssignedGamepad) continue;
       }
