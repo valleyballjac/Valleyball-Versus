@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { TUNING } from '../config/tuning.js';
+import { TUNING, assetUrl } from '../config/tuning.js';
 import { displayCoordinator } from './displayCoordinator.js';
 
 /**
@@ -83,6 +83,33 @@ export function isDarkColor(hex) {
 
 /** Canonical athletic broadcast display typography */
 const ATHLETIC_FONT = "'Orbitron', 'Impact', 'Arial Black', sans-serif";
+
+/**
+ * Registers the bundled Orbitron faces (public/fonts/orbitron, OFL) and
+ * resolves once they have loaded. It ships with the game so an offline machine
+ * (the desktop build at an event) does not draw every board in Impact.
+ *
+ * A canvas does not wait for a web font: text drawn before the face loads is
+ * baked into the texture in the fallback. Boot awaits this before
+ * createScoreboards(), and it covers the hustle boards too. Never rejects.
+ *
+ * @returns {Promise<void>}
+ */
+export function loadDisplayFont() {
+  if (typeof document === 'undefined' || !document.fonts || typeof FontFace === 'undefined') {
+    return Promise.resolve();
+  }
+  const faces = ['700', '800', '900'].map((weight) => {
+    const url = assetUrl(`fonts/orbitron/orbitron-latin-${weight}-normal.woff2`);
+    const face = new FontFace('Orbitron', `url(${url}) format('woff2')`, { weight });
+    document.fonts.add(face);
+    return face.load();
+  });
+  return Promise.all(faces).then(
+    () => {},
+    (error) => console.warn('[font] Orbitron did not load; boards use the fallback face', error),
+  );
+}
 
 function drawTeamText(ctx, text, x, y, color, strokeWidth = 2.5) {
   if (isDarkColor(color)) {

@@ -18,8 +18,8 @@ Expected to be 1v1 this year, so it does not depend on 2v2. `?fixture=` (`src/fe
 The Windows desktop build (`npm run desktop:dist`, see AGENTS.md) is the tournament runtime. On Jac's laptop it renders on the discrete GPU at the panel's native 165 Hz and keeps rendering when unfocused. Still to do before the event:
 
 - [ ] Play-test with four controllers on a hub, including after clicking onto another monitor.
-- [ ] Bundle the Orbitron font. `index.html` loads it from Google Fonts, so an offline machine falls back to a system font.
-- [ ] Decide whether the title screen needs a Quit item. `window.desktopAPI.quit()` exists; today Alt+F4 is the only exit in fullscreen.
+- [x] Bundle the Orbitron font (`public/fonts/orbitron`, loaded by `loadDisplayFont()` in `src/visuals/scoreboards.js` before the boards are drawn). The game makes no network requests at all now.
+- [x] Quit to desktop on the title screen, desktop build only. It takes two presses, since menu navigation wraps onto it from the top.
 - [ ] The exe is unsigned, so Windows SmartScreen warns on first run. Fine for the event machine; needs a code-signing certificate before a public download.
 - [ ] Steam: `steamworks.js` and an App ID, once there is a Steam page.
 

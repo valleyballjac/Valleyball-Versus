@@ -1,6 +1,9 @@
 import { createBrandBall } from '../../../visuals/brandBall.js';
 import { state } from './state.js';
 
+const QUIT_LABEL = 'QUIT TO DESKTOP';
+const QUIT_ARMED_LABEL = 'PRESS AGAIN TO QUIT';
+
 /**
  * Main Menu Title Screen
  */
@@ -193,6 +196,24 @@ export function buildTitleScreen(rootEl, navActions = {}) {
     btnValleyballVS,
     btnValleyballOrg,
   ];
+
+  // Desktop build only (electron/preload.cjs). Fullscreen has no other exit but
+  // Alt+F4. Navigation wraps, so one press up from the top lands here: the
+  // first press arms it and only a second press quits.
+  const desktop = typeof window !== 'undefined' ? window.desktopAPI : undefined;
+  if (desktop?.isDesktop) {
+    const btnQuit = createMenuButton(QUIT_LABEL, 'rgba(255, 46, 85, 0.10)', () => {
+      if (btnQuit.dataset.armed === '1') {
+        desktop.quit();
+        return;
+      }
+      btnQuit.dataset.armed = '1';
+      btnQuit.textContent = QUIT_ARMED_LABEL;
+    });
+    btnQuit.id = 'btn-title-quit';
+    menuList.appendChild(btnQuit);
+    state.titleButtons.push(btnQuit);
+  }
   state.titleFocusIndex = 1;
   state.titleButtons.forEach((btn, idx) => {
     btn.onmouseenter = () => {
@@ -248,6 +269,10 @@ export function updateTitleFocusUI() {
       btn.style.transform = 'translateX(-10px) scale(1.02)';
       try { btn.focus(); } catch (_) {}
     } else {
+      if (btn.dataset.armed) {
+        delete btn.dataset.armed;
+        btn.textContent = QUIT_LABEL;
+      }
       btn.classList.remove('rainbow-focused');
       btn.style.transform = 'translateX(0) scale(1)';
       btn.style.borderColor = isPlayMatch ? '#ffffff' : 'rgba(255, 255, 255, 0.2)';

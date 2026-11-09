@@ -107,7 +107,7 @@ import {
   checkStrikeAssist, KIND_NAME,
 } from './mechanics/strikes.js';
 import { createMatchState, updateScoring, matchProbe } from './mechanics/scoring.js';
-import { createScoreboards, updateScoreboards } from './visuals/scoreboards.js';
+import { createScoreboards, updateScoreboards, loadDisplayFont } from './visuals/scoreboards.js';
 import { createHustleBoards, updateHustleBoards } from './visuals/hustleBoards.js';
 import { displayCoordinator } from './visuals/displayCoordinator.js';
 import { initCelestialSkybox, updateCelestialSkybox } from './visuals/skybox.js';
@@ -3536,7 +3536,7 @@ async function boot() {
 
   arenaPreset = activeArenaPreset();
   console.log(`[arena] active type "${activeArenaType()}"`);
-  const arena = await createArena(scene);
+  const [arena] = await Promise.all([createArena(scene), loadDisplayFont()]); // boards bake text into canvases
 
   scoreboards = createScoreboards(scene);
   window.__scoreboards = scoreboards;
