@@ -53,8 +53,9 @@ export function moveScreen1Row(col, delta) {
   let cur = navCallbacks.playerSetup.playerFocusRow[col];
   const isAi = navCallbacks.playerSetup.playerConfigs?.[col]?.type === 'ai';
   let next = cur + delta;
-  if (cur === 2 && delta > 0 && !isAi) next = 4;
-  if (cur === 4 && delta < 0 && !isAi) next = 2;
+  // Row 6 = CTRL (Human / AI Difficulty), Row 7 = STYLE (AI Playstyle, hidden when Human), Row 8 = Action Bar
+  if (cur === 6 && delta > 0 && !isAi) next = 8;
+  if (cur === 8 && delta < 0 && !isAi) next = 6;
   next = Math.max(0, Math.min(8, next));
   if (next === 8 && cur !== 8) {
     navCallbacks.playerSetup.screen1ActionCol = 1;
@@ -114,14 +115,17 @@ function toggleReadyFrom(ownerSlot, target) {
 
 function toggleFocusedColumn(dir = 1, ownerSlot = -1) {
   const ps = navCallbacks.playerSetup;
+  // Lock P2-P4 strictly to their own column; only P1 (ownerSlot <= 0) can cycle onto AI slots
+  if (ownerSlot >= 1) {
+    soundManager.playTone(220, 0.1, 'sawtooth', 0.15);
+    return ownerSlot;
+  }
   const n = activeMatchSlotCount();
   const baseOrder = n >= 4 ? [0, 2, 1, 3] : [0, 1];
-  const order = ownerSlot >= 0
-    ? baseOrder.filter((s) => s === ownerSlot || ps.playerConfigs?.[s]?.type === 'ai')
-    : baseOrder;
+  const order = baseOrder.filter((s) => s === 0 || ps.playerConfigs?.[s]?.type === 'ai');
   if (order.length <= 1) {
     soundManager.playTone(220, 0.1, 'sawtooth', 0.15);
-    return ownerSlot >= 0 ? ownerSlot : ps.focusedColumn;
+    return 0;
   }
   const curIdx = Math.max(0, order.indexOf(ps.focusedColumn));
   ps.focusedColumn = order[(curIdx + dir + order.length) % order.length];
@@ -147,6 +151,10 @@ function screen1Action(col, action) {
       return false;
     }
     ps.cycleOption(col, row, action === 'left' ? -1 : 1);
+    if (ps.playerFocusRow[col] === 7 && ps.playerConfigs?.[col]?.type !== 'ai') {
+      ps.playerFocusRow[col] = 6;
+      ps.updateFocusUI();
+    }
     return true;
   }
   if (action === 'act') {
@@ -160,20 +168,24 @@ function screen1Action(col, action) {
       return false;
     }
     ps.cycleOption(col, row, 1);
+    if (ps.playerFocusRow[col] === 7 && ps.playerConfigs?.[col]?.type !== 'ai') {
+      ps.playerFocusRow[col] = 6;
+      ps.updateFocusUI();
+    }
     return true;
   }
   return false;
 }
 
-/** Screen 2 (match rules): shared rule cursor + instant per-player Ready via X / Start / A. */
+/**
+ * Screen 2 (match rules):
+ * - Only P1 (ownerSlot <= 0) can edit Match Rules (Row 0 = Ball Size, Row 1 = Match Length, Row 2 = P1 Action Bar [Back, Ready P1, Launch]).
+ * - P2, P3, P4 (ownerSlot >= 1) default directly to their own Ready button and can only toggle their own Ready state.
+ */
 function rulesAction(action, ownerSlot) {
   const ps = navCallbacks.playerSetup;
   const row = ps.matchRulesFocusRow;
   const n = activeMatchSlotCount();
-  const is2v2 = n === 4;
-  const maxActionCol = is2v2 ? 5 : 3;
-  const startBtnCol = is2v2 ? 3 : 2;
-  const selfSlot = ownerSlot >= 0 ? ownerSlot : soloHumanSlot();
   const resetHumanReady = () => {
     for (let i = 0; i < n; i++) {
       if (ps.playerConfigs?.[i]?.type === 'human') ps.playerReadyState[i] = false;
@@ -185,17 +197,35 @@ function rulesAction(action, ownerSlot) {
     }
     return true;
   };
+
+  // Non-P1 human players (P2, P3, P4): locked to their own Ready button
+  if (ownerSlot >= 1) {
+    if (action === 'act' || action === 'ready' || action === 'start') {
+      toggleReadyFrom(ownerSlot, ownerSlot);
+    } else if (action === 'back') {
+      if (ps.playerReadyState[ownerSlot] || ps.matchCountdownActive) {
+        toggleReadyFrom(ownerSlot, ownerSlot);
+      } else {
+        ps.setupPage = 1;
+        window._updateSetupPage();
+        soundManager.playTone(330, 0.08, 'sine', 0.15);
+      }
+    }
+    return;
+  }
+
+  // P1 (ownerSlot <= 0): controls Match Rules (Row 0 = Ball Size, Row 1 = Match Length, Row 2 = [Back, P1 Ready, Launch])
+  const p1DefaultCol = ps.playerConfigs?.[0]?.type === 'human' ? 1 : 2;
   if (action === 'up' || action === 'down') {
-    ps.matchRulesFocusRow = Math.max(0, Math.min(3, row + (action === 'up' ? -1 : 1)));
+    ps.matchRulesFocusRow = Math.max(0, Math.min(2, row + (action === 'up' ? -1 : 1)));
     ps.updateFocusUI();
     soundManager.playTone(520, 0.035, 'sine', 0.12);
   } else if (action === 'left' || action === 'right') {
     const dir = action === 'left' ? -1 : 1;
     if (row === 0) ps.cycleMatchBall(dir);
     else if (row === 1) ps.cycleMatchDuration(dir);
-    else if (row === 2) ps.cycleArena(dir);
     else {
-      ps.matchRulesActionCol = Math.max(0, Math.min(maxActionCol, (ps.matchRulesActionCol ?? startBtnCol) + dir));
+      ps.matchRulesActionCol = Math.max(0, Math.min(2, (ps.matchRulesActionCol ?? p1DefaultCol) + dir));
       ps.updateFocusUI();
     }
     soundManager.playTone(440, 0.04, 'sine', 0.15);
@@ -203,31 +233,16 @@ function rulesAction(action, ownerSlot) {
     if (ps.matchCountdownActive) ps.launchMatchNow();
     else if (row === 0) ps.cycleMatchBall(1);
     else if (row === 1) ps.cycleMatchDuration(1);
-    else if (row === 2) ps.cycleArena(1);
     else {
-      const col = ps.matchRulesActionCol ?? startBtnCol;
+      const col = Math.max(0, Math.min(2, ps.matchRulesActionCol ?? p1DefaultCol));
       if (col === 0) {
         ps.btnBack?.click();
-      } else if (ownerSlot >= 0) {
-        // Assigned pad on the Ready/Start bar: launch if all ready, else toggle own Ready slot
-        if (!ps.btnStartMatch?.disabled && col === startBtnCol) ps.btnStartMatch?.click();
-        else toggleReadyFrom(ownerSlot, ownerSlot);
-      } else if (!is2v2 && col === 1) {
-        toggleReadyFrom(-1, 0);
-      } else if (!is2v2 && col === 3) {
-        toggleReadyFrom(-1, 1);
-      } else if (is2v2 && col === 1) {
-        toggleReadyFrom(-1, 0);
-      } else if (is2v2 && col === 2) {
-        toggleReadyFrom(-1, 2);
-      } else if (is2v2 && col === 4) {
-        toggleReadyFrom(-1, 1);
-      } else if (is2v2 && col === 5) {
-        toggleReadyFrom(-1, 3);
-      } else if (!ps.btnStartMatch?.disabled) {
-        ps.btnStartMatch?.click();
-      } else {
-        toggleReadyFrom(-1, selfSlot);
+      } else if (col === 1) {
+        if (ps.playerConfigs?.[0]?.type === 'human') toggleReadyFrom(0, 0);
+        else if (!ps.btnStartMatch?.disabled) ps.btnStartMatch?.click();
+      } else if (col === 2) {
+        if (!ps.btnStartMatch?.disabled) ps.btnStartMatch?.click();
+        else if (ps.playerConfigs?.[0]?.type === 'human') toggleReadyFrom(0, 0);
       }
     }
   } else if (action === 'ready') {
@@ -238,8 +253,8 @@ function rulesAction(action, ownerSlot) {
       ps.updateReadyUI();
     } else if (isAllAI()) {
       ps.btnStartMatch?.click();
-    } else {
-      toggleReadyFrom(ownerSlot, selfSlot);
+    } else if (ps.playerConfigs?.[0]?.type === 'human') {
+      toggleReadyFrom(0, 0);
     }
   } else if (action === 'back') {
     if (ps.matchCountdownActive) {
@@ -255,7 +270,7 @@ function rulesAction(action, ownerSlot) {
   } else if (action === 'start') {
     if (ps.matchCountdownActive) ps.launchMatchNow();
     else if (!ps.btnStartMatch?.disabled) ps.btnStartMatch?.click();
-    else toggleReadyFrom(ownerSlot, selfSlot);
+    else if (ps.playerConfigs?.[0]?.type === 'human') toggleReadyFrom(0, 0);
   }
 }
 
@@ -383,28 +398,43 @@ export function startMenuGamepadPolling() {
       if (e.repeat) return;
       if (e.code === 'KeyB') {
         e.preventDefault();
-        handleAssignmentKey('drop');
+        handleAssignmentKey('drop', 'kb1');
+        return;
+      }
+      if (e.code === 'KeyK') {
+        e.preventDefault();
+        handleAssignmentKey('drop', 'kb2');
+        return;
+      }
+      if (e.code === 'KeyJ') {
+        e.preventDefault();
+        handleAssignmentKey('left', 'kb2');
+        return;
+      }
+      if (e.code === 'KeyL') {
+        e.preventDefault();
+        handleAssignmentKey('right', 'kb2');
         return;
       }
       if (e.code === 'Enter' || e.code === 'Space') {
         e.preventDefault();
-        handleAssignmentKey('confirm');
+        handleAssignmentKey('confirm', e.code === 'Enter' ? 'kb2' : 'kb1');
         return;
       }
       if (e.code === 'ArrowLeft' || e.code === 'KeyA') {
         e.preventDefault();
-        handleAssignmentKey('left');
+        handleAssignmentKey('left', 'kb1');
         return;
       }
       if (e.code === 'ArrowRight' || e.code === 'KeyD') {
         e.preventDefault();
-        handleAssignmentKey('right');
+        handleAssignmentKey('right', 'kb1');
         return;
       }
       return;
     }
 
-    // 2. Title Screen Active
+    // 2. Title Screen Active (P1 Control Only)
     if (state.titleScreenEl && state.titleScreenEl.style.display === 'flex') {
       if (e.code === 'KeyW' || e.code === 'ArrowUp') {
         e.preventDefault();
@@ -532,8 +562,9 @@ export function startMenuGamepadPolling() {
 
     if (e.code === 'Tab') {
       e.preventDefault();
-      if (versus) soundManager.playTone(220, 0.1, 'sawtooth', 0.15);
-      else toggleFocusedColumn(e.shiftKey ? -1 : 1, keyOwner(0));
+      // Only P1 (Keyset 0 / Slot 0) can use Tab to configure AI slots; P2-P4 are locked to their own slot
+      const p1Slot = keyOwner(0);
+      toggleFocusedColumn(e.shiftKey ? -1 : 1, p1Slot > 0 ? p1Slot : 0);
       return;
     }
 
@@ -546,7 +577,7 @@ export function startMenuGamepadPolling() {
     const hasTwoKeysets = owner >= 0 && otherOwner >= 0 && owner !== otherOwner;
     const col = hasTwoKeysets
       ? (nav[0] === 0 && focusedCfg?.type === 'ai' ? navCallbacks.playerSetup.focusedColumn : owner)
-      : (versus ? (owner >= 0 ? owner : 0) : (focusedCfg?.type === 'ai' || owner < 0 ? navCallbacks.playerSetup.focusedColumn : owner));
+      : (versus ? (owner >= 0 && !(owner === 0 && focusedCfg?.type === 'ai') ? owner : navCallbacks.playerSetup.focusedColumn) : (focusedCfg?.type === 'ai' || owner < 0 ? navCallbacks.playerSetup.focusedColumn : owner));
     screen1Action(col, nav[1]);
   };
   window.addEventListener('keydown', onMenuKeyDown);
@@ -630,10 +661,13 @@ export function startMenuGamepadPolling() {
       return;
     }
 
-    // 2. Title Screen Active -> Any connected pad navigates Title options
+    // 2. Title Screen Active -> Restricted strictly to P1's controller (Pad 0 or explicitly assigned Slot 0)
     if (state.titleScreenEl && state.titleScreenEl.style.display === 'flex') {
       for (const pad of pads) {
         if (!pad) continue;
+        const assigned = getAssignedSlotForPad(pad.index);
+        const isP1Controller = assigned === 0 || (assigned < 0 && pad.index === pads[0]?.index);
+        if (!isP1Controller) continue;
         const e = menuPads.pressed(pad);
 
         if (e & MENU_PAD.up) {
@@ -736,8 +770,8 @@ export function startMenuGamepadPolling() {
     }
 
     // --- MATCH MODE (SCREEN 1: PLAYERS, SCREEN 2: MATCH RULES) ---
-    // Each assigned gamepad drives its own player card independently (and can cycle onto AI slots via LB/RB).
-    // Any unassigned gamepad pressing Y (or A/Start when another pad is already assigned) joins an open AI slot directly.
+    // Each assigned gamepad drives its own player card independently.
+    // P2-P4 are locked strictly to their own slot; only P1 (Slot 0) can use LB/RB to configure AI slots.
     const ps = navCallbacks.playerSetup;
     const n = activeMatchSlotCount();
     const versus = ps.isVersusLobby();
@@ -793,18 +827,24 @@ export function startMenuGamepadPolling() {
         if (e & (MENU_PAD.b | MENU_PAD.back)) rulesAction('back', ownerSlot);
         else if (e & MENU_PAD.start) rulesAction('start', ownerSlot);
       } else {
-        // Resolve this controller's independent target column on Page 1
-        let col = ownerSlot >= 0 ? (padTargetSlot[pad.index] ?? ownerSlot) : ps.focusedColumn;
-        if (ownerSlot >= 0 && col !== ownerSlot && ps.playerConfigs?.[col]?.type !== 'ai') {
-          col = ownerSlot;
-          padTargetSlot[pad.index] = ownerSlot;
+        // Resolve this controller's independent target column on Page 1.
+        // P2-P4 (ownerSlot >= 1) are strictly locked to their own column!
+        let col = ownerSlot >= 1 ? ownerSlot : (ownerSlot === 0 ? (padTargetSlot[pad.index] ?? 0) : ps.focusedColumn);
+        if (ownerSlot === 0 && col !== 0 && ps.playerConfigs?.[col]?.type !== 'ai') {
+          col = 0;
+          padTargetSlot[pad.index] = 0;
         }
 
         if (e & (MENU_PAD.lb | MENU_PAD.rb)) {
           const dir = (e & MENU_PAD.lb) ? -1 : 1;
-          if (ownerSlot >= 0) {
+          if (ownerSlot >= 1) {
+            // P2-P4 cannot LB/RB into other character setups
+            col = ownerSlot;
+            padTargetSlot[pad.index] = ownerSlot;
+            soundManager.playTone(220, 0.1, 'sawtooth', 0.15);
+          } else if (ownerSlot === 0) {
             const baseOrder = n >= 4 ? [0, 2, 1, 3] : [0, 1];
-            const allowed = baseOrder.filter((s) => s === ownerSlot || ps.playerConfigs?.[s]?.type === 'ai');
+            const allowed = baseOrder.filter((s) => s === 0 || ps.playerConfigs?.[s]?.type === 'ai');
             if (allowed.length <= 1) {
               soundManager.playTone(220, 0.1, 'sawtooth', 0.15);
             } else {

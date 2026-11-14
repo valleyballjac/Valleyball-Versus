@@ -1,3 +1,18 @@
+/**
+ * @module audio/soundManager
+ * Hybrid Web Audio sound engine combining curated sports audio samples (.wav)
+ * with procedural synthesis fallbacks and 3D spatial stereo panning.
+ *
+ * Key exports:
+ * - `soundManager`: Singleton `SoundManager` instance.
+ *
+ * Dependencies: `../config/tuning.js`.
+ * Side effects: Attaches `window.__soundManager` in browser environments and registers
+ *   one-shot user-gesture unlock listeners on `window` when `init()` is called.
+ * Hot-path notes: Dispatched on gameplay events; sample pool arrays are hoisted to
+ *   module-scope constants and non-repeating sample selection avoids array allocation.
+ */
+
 import { TUNING, assetUrl } from '../config/tuning.js';
 
 /**
@@ -8,7 +23,6 @@ import { TUNING, assetUrl } from '../config/tuning.js';
  *
  * Core Sound Features:
  * - Real rubber dodgeball / playground ball acoustic impacts (small, med, large).
- * - Basketball sneaker squeaks on cuts, sprint launches, slides, and landings.
  * - Basketball arena electric buzzer + heavy steel hoop clank + net swish.
  * - Rhythmic court footsteps during locomotion.
  * - Seamless procedural fallbacks for all sounds if samples are loading.
@@ -19,6 +33,17 @@ import { TUNING, assetUrl } from '../config/tuning.js';
  * and positions; it NEVER writes to physics, never alters transforms, and never
  * affects simulation determinism.
  */
+
+const POOL_RUBBER_SMALL = ['rubber_small_1', 'rubber_small_2'];
+const POOL_RUBBER_MED = ['rubber_med_1', 'rubber_med_2', 'rubber_med_3'];
+const POOL_RUBBER_LARGE = ['rubber_large_1', 'rubber_large_2'];
+const POOL_GLASS = ['glass_1', 'glass_2', 'glass_3'];
+const POOL_HOOP_CLANK = ['hoop_clank_1', 'hoop_clank_2', 'hoop_clank_3'];
+const POOL_BODY_THUD = ['body_thud_1', 'body_thud_2', 'body_thud_3'];
+const POOL_FOOTSTEP = ['footstep_1', 'footstep_2', 'footstep_3'];
+const POOL_GRUNT_VOLLEY = ['grunt_volley_1', 'grunt_volley_2', 'grunt_volley_3'];
+const POOL_GRUNT_SPIKE = ['grunt_spike_1', 'grunt_spike_2', 'grunt_spike_3'];
+const POOL_GRUNT_KICK = ['grunt_kick_1', 'grunt_kick_2', 'grunt_kick_3'];
 
 class SoundManager {
   constructor() {
@@ -37,13 +62,11 @@ class SoundManager {
 
     // Ambient loop nodes
     this.windNode = null;
-    this.riverNode = null;
     this.ambienceStarted = false;
 
     // Footstep toggle
     this.footstepIdx = 0;
     this.lastBounceTime = 0;
-    this.lastSqueakTime = 0;
     this.lastGlassTime = 0;
     this.lastHoopClankTime = 0;
     this.lastBodyThudTime = 0;
@@ -142,14 +165,11 @@ class SoundManager {
 
     const samples = [
       // Rubber ball pools
-      ['rubber_small', 'audio/rubber_hit_small.wav'],
       ['rubber_small_1', 'audio/rubber_hit_small_1.wav'],
       ['rubber_small_2', 'audio/rubber_hit_small_2.wav'],
-      ['rubber_med', 'audio/rubber_hit_med.wav'],
       ['rubber_med_1', 'audio/rubber_hit_med_1.wav'],
       ['rubber_med_2', 'audio/rubber_hit_med_2.wav'],
       ['rubber_med_3', 'audio/rubber_hit_med_3.wav'],
-      ['rubber_large', 'audio/rubber_hit_large.wav'],
       ['rubber_large_1', 'audio/rubber_hit_large_1.wav'],
       ['rubber_large_2', 'audio/rubber_hit_large_2.wav'],
       // Glass backboard boundary hits
@@ -160,7 +180,6 @@ class SoundManager {
       ['hoop_clank_1', 'audio/hoop_clank_1.wav'],
       ['hoop_clank_2', 'audio/hoop_clank_2.wav'],
       ['hoop_clank_3', 'audio/hoop_clank_3.wav'],
-      ['hoop_clank', 'audio/hoop_metal_clank.wav'],
       ['hoop_swish', 'audio/hoop_swish.wav'],
       // Incidental player body thuds
       ['body_thud_1', 'audio/body_thud_1.wav'],
@@ -324,10 +343,10 @@ class SoundManager {
   playSampleFromPool(poolName, keys, volume = 1.0, baseRate = 1.0, worldPos = null, targetBus = this.sfxGain) {
     if (!keys || keys.length === 0) return false;
     const lastKey = this.lastPlayedInPool.get(poolName);
-    let candidate = keys[Math.floor(Math.random() * keys.length)];
+    const idx = Math.floor(Math.random() * keys.length);
+    let candidate = keys[idx];
     if (keys.length > 1 && candidate === lastKey) {
-      const filtered = keys.filter((k) => k !== lastKey);
-      candidate = filtered[Math.floor(Math.random() * filtered.length)];
+      candidate = keys[(idx + 1 + Math.floor(Math.random() * (keys.length - 1))) % keys.length];
     }
     this.lastPlayedInPool.set(poolName, candidate);
 
@@ -358,13 +377,13 @@ class SoundManager {
     const norm = Math.max(0, (speed - 0.35) / 10.0);
     const volume = Math.min(1.0, Math.pow(norm, 1.35) * 0.95 + 0.035);
 
-    let pool = ['rubber_med_1', 'rubber_med_2', 'rubber_med_3'];
+    let pool = POOL_RUBBER_MED;
     let poolName = 'rubber_med';
     if (ballRadius <= 0.3) {
-      pool = ['rubber_small_1', 'rubber_small_2'];
+      pool = POOL_RUBBER_SMALL;
       poolName = 'rubber_small';
     } else if (ballRadius >= 0.65) {
-      pool = ['rubber_large_1', 'rubber_large_2'];
+      pool = POOL_RUBBER_LARGE;
       poolName = 'rubber_large';
     }
 
@@ -380,12 +399,6 @@ class SoundManager {
   }
 
   /**
-   * Continuous Ball Rolling Sound:
-   * Removed for launch; to be re-evaluated for future releases.
-   */
-  updateBallRolling() {}
-
-  /**
    * Boundary Glass / Basketball Backboard Impact:
    * Solid acrylic slap and polycarbonate glass flex when hitting boundaries.
    */
@@ -398,7 +411,7 @@ class SoundManager {
     this.lastGlassTime = now;
 
     const volume = Math.min(1.0, Math.max(0.18, Math.pow(speed / 10.0, 0.75)));
-    this.playSampleFromPool('glass', ['glass_1', 'glass_2', 'glass_3'], volume, 1.0, worldPos);
+    this.playSampleFromPool('glass', POOL_GLASS, volume, 1.0, worldPos);
   }
 
   /**
@@ -414,7 +427,7 @@ class SoundManager {
     this.lastHoopClankTime = now;
 
     const volume = Math.min(1.0, Math.max(0.25, Math.pow(speed / 8.0, 0.7)));
-    this.playSampleFromPool('hoop_clank', ['hoop_clank_1', 'hoop_clank_2', 'hoop_clank_3'], volume, 1.0, worldPos);
+    this.playSampleFromPool('hoop_clank', POOL_HOOP_CLANK, volume, 1.0, worldPos);
   }
 
   /**
@@ -433,7 +446,7 @@ class SoundManager {
     // Distinctly softer than court floor bounces
     const norm = Math.max(0, (speed - 0.25) / 8.0);
     const volume = Math.min(0.55, Math.pow(norm, 1.1) * 0.45 + 0.08);
-    this.playSampleFromPool('body_thud', ['body_thud_1', 'body_thud_2', 'body_thud_3'], volume, 1.0, worldPos);
+    this.playSampleFromPool('body_thud', POOL_BODY_THUD, volume, 1.0, worldPos);
   }
 
   /**
@@ -448,7 +461,7 @@ class SoundManager {
 
     const norm = Math.min(1.0, Math.max(0.15, intensity));
     const volume = Math.min(0.65, 0.2 + norm * 0.45);
-    this.playSampleFromPool('body_thud', ['body_thud_1', 'body_thud_2', 'body_thud_3'], volume, 1.0, worldPos);
+    this.playSampleFromPool('body_thud', POOL_BODY_THUD, volume, 1.0, worldPos);
   }
 
   /**
@@ -459,7 +472,7 @@ class SoundManager {
     if (!this.ensureRunning()) return;
     this.playBodyCollision(1.0, worldPos);
     this.playSweetSpotPop(worldPos, false);
-    this.playSampleFromPool('rubber_med', ['rubber_med_1', 'rubber_med_2', 'rubber_med_3'], 0.85, 1.05, worldPos);
+    this.playSampleFromPool('rubber_med', POOL_RUBBER_MED, 0.85, 1.05, worldPos);
   }
 
   /**
@@ -469,11 +482,11 @@ class SoundManager {
   playPlayerGrunt(kindName, quality = 0.5, worldPos = null) {
     if (!this.ensureRunning()) return;
 
-    let pool = ['grunt_volley_1', 'grunt_volley_2', 'grunt_volley_3'];
+    let pool = POOL_GRUNT_VOLLEY;
     if (kindName === 'spike') {
-      pool = ['grunt_spike_1', 'grunt_spike_2', 'grunt_spike_3'];
+      pool = POOL_GRUNT_SPIKE;
     } else if (kindName === 'kick') {
-      pool = ['grunt_kick_1', 'grunt_kick_2', 'grunt_kick_3'];
+      pool = POOL_GRUNT_KICK;
     }
 
     const volume = Math.min(1.0, 0.75 + 0.25 * quality);
@@ -487,17 +500,16 @@ class SoundManager {
   playStrike(kindName, quality = 0.5, speed = 14.0, worldPos = null, ballRadius = 0.5) {
     if (!this.ensureRunning()) return;
 
-    const now = this.ctx.currentTime;
     const q = Math.max(0.3, Math.min(1.0, quality));
     const volume = Math.min(1.0, Math.max(0.4, speed / 16.0));
 
-    let pool = ['rubber_med_1', 'rubber_med_2', 'rubber_med_3'];
+    let pool = POOL_RUBBER_MED;
     let poolName = 'rubber_med';
     if (ballRadius <= 0.3) {
-      pool = ['rubber_small_1', 'rubber_small_2'];
+      pool = POOL_RUBBER_SMALL;
       poolName = 'rubber_small';
     } else if (ballRadius >= 0.65) {
-      pool = ['rubber_large_1', 'rubber_large_2'];
+      pool = POOL_RUBBER_LARGE;
       poolName = 'rubber_large';
     }
 
@@ -548,12 +560,6 @@ class SoundManager {
   }
 
   /**
-   * Sneaker Traction Squeak:
-   * Removed for launch per user direction to eliminate annoying squeaks.
-   */
-  playSneakerSqueak() {}
-
-  /**
    * Athletic Court Footsteps:
    * Clean rubber shoe taps on court floor cycling across 3 variations.
    */
@@ -561,8 +567,7 @@ class SoundManager {
     if (!this.ensureRunning()) return;
 
     this.footstepIdx = (this.footstepIdx + 1) % 3;
-    const pool = ['footstep_1', 'footstep_2', 'footstep_3'];
-    const sampleKey = pool[this.footstepIdx];
+    const sampleKey = POOL_FOOTSTEP[this.footstepIdx];
     const rate = 0.94 + Math.random() * 0.12;
 
     this.playSample(sampleKey, 0.45, rate, worldPos);
@@ -663,8 +668,6 @@ class SoundManager {
     src.start(now);
     src.stop(now + dur + 0.01);
   }
-
-  playProceduralSqueak() {}
 
   playProceduralArenaBuzzer() {
     const now = this.ctx.currentTime;

@@ -1,11 +1,17 @@
+/**
+ * @file victoryScreen.js
+ * Responsibility: Post-match Victory / Draw summary screen and Practice Mode session summary overlay.
+ * Upstream: Initialized and shown by `src/main.js` when a match concludes or practice ends.
+ * Downstream: Reads `src/config/tuning.js`, `src/ui/mainMenu.js`, `src/input/menuPads.js`, and `src/features/match/matchManager.js`.
+ * Key invariants:
+ * - Displays both 1v1 and 2v2 team + individual player breakdown tables.
+ * - Supports mouse, keyboard, and gamepad navigation for Rematch, Practice, and Main Menu actions.
+ */
+
 import { TUNING } from '../config/tuning.js';
 import { getColorName } from './mainMenu.js';
 import { createMenuPadTracker, MENU_PAD } from '../input/menuPads.js';
 import { buildMatchStatsReport } from '../features/match/matchManager.js';
-
-/**
- * Arcade Victory Screen overlay for Valleyball Versus Match Mode.
- */
 
 let overlayElement = null;
 let titleElement = null;

@@ -1,58 +1,88 @@
 # Valleyball Versus roadmap
 
-Last updated 2026-11-07. This is the one place for what comes next. [AGENTS.md](../AGENTS.md) holds the rules and [the Gameplay Source of Truth](VALLEYBALL_GAMEPLAY_SOURCE_OF_TRUTH.md) holds the rules of the sport.
+Last updated 2026-11-10. This is the one place for what comes next. [AGENTS.md](../AGENTS.md) holds the rules and [the Gameplay Source of Truth](VALLEYBALL_GAMEPLAY_SOURCE_OF_TRUTH.md) holds the rules of the sport.
 
-## Now: v0.4.0
+## Shipped: v0.4.0
 
-Brings full 1v1 and 2v2 team gameplay, per-controller lobby navigation, right-aligned title menu, staggered idle poses, individual + collective team stats, inertia-scaled angular tracking + 4-tick buzz filtering, unified 8/15/42-tick AI strike & ballistic hoop targeting, and fixture support onto the release build.
+Brought full 1v1 and 2v2 team gameplay, per-controller lobby navigation, right-aligned title menu, staggered idle poses, individual + collective team stats, inertia-scaled angular tracking + 4-tick buzz filtering, unified 8/15/42-tick AI strike & ballistic hoop targeting, and fixture support onto the release build.
 
-- [x] Play-test the lobby, keyboard assignment, hot-plug and pause-menu camera rows with real controllers.
-- [x] Full 2v2 team mode (4-athlete roster, quad split-screen, team & individual stats, grouped lobby setup, teammate bot roles, strike arbitration).
-- [x] AI v0.4.0 strike horizons (`8/15/42`), Rapier limb-offset matching, additive-impulse aim compensation, East-West hoop playbook, and headless mechanical parity.
-- [x] Merge to `main`, tag `v0.4.0`, and package release builds.
+---
 
-## Inaugural Championship: December 27, 2026
+## Now: v0.4.1 — Simplification, Efficiency, Bug Fixes, Docs & Core Completeness
 
-Expected to be 1v1 this year, so it does not depend on 2v2. `?fixture=` (`src/features/match/matchFixture.js`, `npm run fixture`) already plays one fully specified 1v1 match.
+Focuses on streamlining the post-v0.4.0 codebase, eliminating dead/vestigial code, unlocking major CPU/GPU frame-time efficiencies, fixing silent 2v2 AI and physics bugs, standardizing human + AI documentation across `src/`, and completing small unfinished match features (`Overtime Tiebreaker Menu` and `2v2 Fixtures`).
 
-The Windows desktop build (`npm run desktop:dist`, see AGENTS.md) is the tournament runtime. On Jac's laptop it renders on the discrete GPU at the panel's native 165 Hz and keeps rendering when unfocused. Still to do before the event:
+### 1. Modular Extraction (`src/main.js` Diet) & State Consolidation
+- [ ] **Finish `ViewportManager` (`src/features/camera/viewportManager.js`)**: Move 1-screen, 2-way splitscreen, 4-way quad splitscreen, camera mode notifications, and post-processing out of `src/main.js`.
+- [ ] **Finish `MatchManager` (`src/features/match/matchManager.js`)**: Fix `startMatch()` property names (`'N'`/`'S'`, `ticksRemaining`) and consolidate the 4 duplicate `matchState` reset blocks (`handleStartMatch`, `handleRematch`, `handleStartPractice`, `gui.js`).
+- [ ] **Extract Dedicated Subsystems from `src/main.js`**:
+  - `src/ui/hudOverlay.js` — HUD telemetry DOM caching, FPS/perf readouts, drag/weight displays.
+  - `src/features/match/practiceMode.js` — Practice drill setup, 3-ball activation, `resetPracticeStats`.
+  - `src/debug/hotkeys.js` — Dev keyboard shortcuts (`KeyK` knockdown, `Backspace` respawn, camera/headgear cycling).
+- [ ] **Purge Dead Code & Unused Imports**:
+  - Delete the ~250 lines of dead single-athlete G3.5 code in `src/main.js` (`spawnRagdoll`, `logL5Residuals`, `driveAttenuation`..`isTumbling`, dead `tracker`/`mountFollowerState`/`actionState`/`strikeState`, missing `models/actions.glb` reference).
+  - Delete the 5 unused `src/features/*/index.js` barrel files, unused `AthleteManager` lifecycle methods, and all 42 `dead-import` entries in `baselines/audit-allow.json`.
+- [ ] **Unify Menu State (`state.js` + `playerSetup.js`)**: Merge duplicated `playerConfigs` and remove the ~35 dead state fields in `src/features/ui/mainMenu/state.js`; fix D-pad/keyboard AI Playstyle chip highlighting (`DEF`, `BAL`, `AGG`, `ALL`).
 
-- [ ] Play-test with four controllers on a hub, including after clicking onto another monitor.
-- [x] Bundle the Orbitron font (`public/fonts/orbitron`, loaded by `loadDisplayFont()` in `src/visuals/scoreboards.js` before the boards are drawn). The game makes no network requests at all now.
-- [x] Quit to desktop on the title screen, desktop build only. It takes two presses, since menu navigation wraps onto it from the top.
-- [ ] The exe is unsigned, so Windows SmartScreen warns on first run. Fine for the event machine; needs a code-signing certificate before a public download.
-- [ ] Steam: `steamworks.js` and an App ID, once there is a Steam page.
+### 2. Physics, AI, Audio & Cosmetics Bug Fixes & Cleanup
+- [ ] **Fix `src/sim/motor.js` Bowl Remnant & Shared State**:
+  - Replace circular-bowl math (`Math.hypot(x, z) > 8.0`) in `applyCleatAnchor` with actual `groundNormal` slope checks for the rectangular Valley Court.
+  - Move `_lastHitRingIndex` from a module-level global onto each `motor` instance so multi-athlete ground-ray temporal coherence works.
+  - Re-record determinism and scenario trace baselines once all scenario assertions pass.
+- [ ] **Fix Silent 2v2 AI Bugs in `src/ai/botController.js` & `src/ai/botPerception.js`**:
+  - Fix `mateBusy` (`teammate.tracker?.weight < 0.5 || teammate.isDiving?.()`), populate `opponent.isKnockedDown` in `botPerception.js`, replace `!trajectory.weHavePriority` with `trajectory.firstTouchBy !== 'self'`, fix `self.speedXZ` -> `self.speed`, and fix premature slide abort threshold (`dangerLowSpeed`).
+  - Wire the 7 disconnected AI tuning keys (`strikeHeightMin/Max`, `defenseDepth`, `arriveRadiusChase/Position/Strike`, `jumpHeightThreshold`) from `TUNING.ai` into `botController.js` / `botSteering.js`.
+  - Remove stale `trained_params.json`, dead `MULTI_STAGE_ATTACK` state machine, and 4 unused `botSteering.js` exports.
+- [ ] **Fix `resetTuning()` Deep Copy (`src/config/tuning.js`)**: Deep-clone `DEFAULTS` so runtime mutations cannot corrupt nested config objects, and remove dead config keys.
+- [ ] **Audio Cleanup (`src/audio/soundManager.js` & `public/audio/`)**: Delete empty `playSneakerSqueak`, `playProceduralSqueak`, and `updateBallRolling` stubs, stop preloading 4 unused WAV keys, and delete unreferenced squeak/roll/duplicate WAV files.
+- [ ] **Cosmetics Cleanup**: Delete dead `createCurvedBaseballVisorGeo` in `src/sim/ragdoll.js`, remove the 5 superseded headwear builders and unreachable `isSignature` branches in `src/sim/cosmeticsBuilders.js`, and deduplicate visor/palette/math/PRNG helpers.
 
-## v0.4.0: 2v2 (Shipped)
+### 3. Runtime Performance & Frame-Time Efficiencies
+- [ ] **Cache 2v2 AI Ball Trajectory (`src/ai/botPerception.js`)**: Share `simulateLongHorizonTrajectory` per `(ball, tick)` across all bots on the same tick (75% reduction in 2v2 trajectory CPU work).
+- [ ] **Skip Hidden Skeleton Sync (`src/sim/ragdoll.js`)**: Guard `syncRagdollPose` bone matrix updates with `if (state.characterRoot?.visible)`.
+- [ ] **Pre-Invert Static Bind Matrices (`src/sim/autorig.js`)**: Pre-compute `bindBoneToBody` and `bindBodyToBone` once at rig creation (eliminating 3,840 `Matrix4.invert()` calls/sec across 4 athletes).
+- [ ] **Eliminate Hot-Loop Allocations & Console Spam**:
+  - Gate `auditSkeleton()` + `console.table()` in `autorig.js` and hot-loop `console.log()` calls in `strikes.js` / `actions.js` behind debug flags.
+  - Replace per-tick/per-frame allocations in `computeCompensatedAimAndSpeed`, `scoring.js`, `PlayerCamera`/`SportsCamera` (`getForwardXZ`/`getRightXZ`), `inputRouter.js`, `hustleBoards.js` (dirty-tick gate), `countdownOverlay.js`, and `turfParticles.js` (`instanceColor.needsUpdate` only when dirty).
+- [ ] **Skybox Animation in Splitscreen & Flyover**: Call `updateCelestialSkybox` in 2-player splitscreen, 4-player quad splitscreen, and menu flyover modes.
 
-Already in place: team scoring, four `TUNING.players` configs, four input slots, the controller assignment screen and four stream heads.
+### 4. Tied-Match Overtime Menu, 2v2 Fixtures & Snapshot Foundation
+- [ ] **Tied-Match / Overtime Decision Menu**: When regulation (`00:00`) ends in a tie, pause physics in place and present an Overtime Agreement Menu allowing players to choose:
+  - **Accept Draw / End Match** vs **Start Overtime**
+  - **Overtime Format**: `Golden Goal (Next Goal Wins)` vs `Timed Overtime` (`1:00`, `2:00`, `3:00`, `5:00`)
+  - **Player Position**: `Resume Live in Place` (unfreeze exact court positions/velocities) vs `Stream Head Respawn` (respawn on stream heads **aligned with each team's current defending/attacking goal orientation** after end flips, with a midfield ball drop).
+- [ ] **2v2 Fixture Support (`?fixture=`) & 4-Player Victory Cam**: Extend `src/features/match/matchFixture.js` and `reportMatchResult` to 4-athlete 2v2 matches, and fix victory screen winner/team camera targeting.
+- [ ] **Compact `InputFrame` & `WorldSnapshot` Serializer (`src/core/snapshot.js`)**: Lay the binary/typed-array serialization foundation for v0.4.2 `.vbreplay` recording, Spectator ring-buffer replays, and Desktop LAN.
 
-Build in this order, so each step can be tested by the one before it:
+### 5. Human + AI Code Comments & Scripts / CI Gate
+- [ ] **Codebase-Wide Comment Pass**: Add clear **Module Headers** (Role, Frame Phase, Active Invariants), replace cryptic historical gate shorthand (`G3.5 Option B`) with plain-English *"Why"* explanations, fix all contradictory/stale comments, and document JSDoc units + scratch-buffer contracts.
+- [ ] **Certify `corner-fan` Audit & Clean Up `scripts/`**: Update `scripts/audit_collision_coverage.mjs` so full `npm run audit` runs in CI, fix `scripts/generate_court_heightmap.mjs`, move arena GLB patchers to `scripts/arena-patches/`, commit `.github/workflows/desktop.yml` + `scripts/desktop_smoke.mjs`, and remove broken v0.2 Python capture and one-off marketing scripts.
 
-1. **Four-athlete test harness.** `src/ai/headlessSim.js` builds two athletes. Add four, plus a four-athlete determinism anchor and `npm run eval:match` support.
-2. **Roster and spawns.** `ensureRoster(2, ...)` in `src/main.js` and the match-start code handle two athletes. Replace or delete `AthleteManager.teleportToMatchSpawns`, which is never called and puts P2 and P3 on the wrong sides.
-3. **Input.** `src/input/inputRouter.js` samples only human slots 0 and 1.
-4. **Ball contact.** Strike state is per athlete, with no shared claim on the ball. Add arbitration so teammates can't double-hit it. The v0.2.0 post-mortem warned about double-impulse bugs here.
-5. **Bots.** `updateBot` and `buildPerception` take one opponent and have no concept of a teammate. In `src/main.js`, `opponentIdx` hands the P3 bot its own teammate as the opponent. Bots also need role assignment so two teammates don't both chase the ball.
-6. **Rendering.** `src/main.js` hard-codes a two-way split. `src/features/camera/viewportManager.js` has a quad split that nothing imports: wire it in or delete it.
-7. **Lobby and end of match.** `playerSetup.js` assumes exactly two players. Stats, winner selection and the victory screen are keyed to P1 and P2.
-8. **Performance.** Phase 0 estimated about 7 ms mean and 14 ms p95 for physics alone with four athletes, on a 2-core cloud runner. Measure on real hardware early, since the frame budget is 16.7 ms.
-9. **Unlock.** Remove the "Coming in v0.4.0" locks in `titleScreen.js` and `controllerAssignment.js`.
+---
 
-If a later league plays 2v2, the fixture format needs to change too: it allows one athlete per side, with fixed slots.
+## Next: v0.4.2 — Spectating, Replays, Desktop LAN, Music & Championship Polish
 
-**Structure:** most of these steps run through `src/main.js`. The `features/` modules were meant to own this logic, but the move stopped halfway. Finish the move only where 2v2 forces an edit, rather than running a separate refactor. The size ratchet rose to about 4,150 lines for fixtures in v0.3.7, and 2v2 should bring it back down.
+Builds on the clean v0.4.1 foundation to deliver tournament broadcast/spectating tools, local network play, full audio atmosphere, and 2v2 AI depth ahead of the **December 27, 2026 Inaugural Championship**.
 
-## Side quests (unscheduled)
+### 1. Spectator Mode, Broadcast Director & Match Replays (`.vbreplay`)
+- [ ] **Compact Match Recording (`.vbreplay`)**: Record match seed + 60 Hz `InputFrame` log (~40 KB per 5-minute match) so any match can be saved, re-watched from any angle, or fed directly into the highlight-mining pipeline.
+- [ ] **Live Broadcast Director Camera**: Auto-switching camera director (Sideline Broadcast, Rim Orbit on aerial contests, Player Chase on fast breaks) for live tournament streams and bot-vs-bot exhibitions.
+- [ ] **Free-Fly / Caster Drone Camera**: Smooth controller or mouse/WASD free-camera for live tournament commentators and video capture.
+- [ ] **Spectator-Only Instant Replays**: Rolling 5-second `WorldSnapshot` transform ring buffer driving post-goal Picture-in-Picture / Rim-Cam instant replays **strictly on the Spectator view and Replay Viewer** (never interrupting live players' Continuous Momentum on court).
 
-- **In-game music.** `musicManager.js` and its tracks are on `archive/trailer-debut-v2`.
-- **Crowd audio** reacting to shot power and near misses.
-- **Halloween skins**, the explainer pipeline and the locker photo booth. See [the archive index](archive/README.md).
+### 2. Desktop LAN Multiplayer & Dual-Monitor Tournament Spectator
+- [ ] **Multi-PC LAN Play & Spectating (`electron/`)**: Auto-discovered local network rooms over UDP/WebSocket allowing 1–4 Player PCs (each with full-screen chase cameras at native 144–240 Hz) plus unlimited Spectator PCs on the local switch/router.
+- [ ] **Single-PC Dual-Monitor Spectator Window**: Optional second Electron window outputting the clean Broadcast Director + Spectator Instant Replays + Hustle Telemetry to a tournament projector or capture card while players play on the primary display.
 
-## Open follow-ups
+### 3. Audio Atmosphere (`musicManager.js` & Crowd Reactions)
+- [ ] **In-Game Music Manager**: Bring `src/audio/musicManager.js` and soundtrack stems from `archive/trailer-debut-v2` onto `main` with menu/in-game mix controls.
+- [ ] **Reactive Crowd Audio**: Dynamic crowd swells reacting to supersonic strikes, rim clanks, clutch dive saves, and overtime tension.
 
-- **Arena Blender sources.** Commits cite `.blend` files v10.0 to v10.9, which are not in git. Find them and store them with the arena's other source files. Until then, `arena.glb` is the only source of truth (see AGENTS.md).
-- **AI tactical & spike/aerial refinement.** v0.4.0 aligned prediction horizons to 8/15/42 ticks, Rapier limb offsets, and East-West hoop ballistics; continue tuning standing/jump spike frequency, 2v2 off-ball chemistry, and multi-touch combinations.
-- **Trace expectations.** `docs/archive/BRACE_GATE.md` lists unresolved volley and kick trace expectations.
-- **Menu cost during play.** Phase 0 saw `menuNavigation.js` in the CPU profile during matches. Re-measure now that the menu input has been rewritten.
-- **Corner-fan certification.** `npm run audit` has failed its collision half since arena v11.1 (it passes at `arena-v11`), so CI runs only `node scripts/audit.mjs` for now. The rule flags 26 vertical triangles at `|x| = 25` inside the corner fan band, added by the Oct 24 boundary work. All 1,772 rest checks, the drop test and the traversal test pass, so the rule is probably stale. Confirm the geometry is intended, then update the rule and put `npm run audit` back in CI.
+### 4. 2v2 AI Chemistry & Evolutionary Re-Training
+- [ ] **2v2 Off-Ball & Aerial Chemistry**: Tune bot setter/spiker coordination, standing/jump spike frequency, and multi-touch combinations.
+- [ ] **Evolutionary Training Sweep**: Run `npm run train:bot` with the 7 newly wired genome parameters and validate via `npm run eval:match`.
+
+### 5. Inaugural Championship Readiness (December 27, 2026)
+- [ ] **4-Controller Hub & Defocus Soak Test**: Verify 4 controllers on a USB hub with window defocus (`backgroundThrottling: false`).
+- [ ] **Cross-Platform Desktop Builds**: Run and verify the GitHub Actions "Desktop builds" workflow (`.github/workflows/desktop.yml`) for Windows, macOS, and Linux.
+- [ ] **Public Distribution Prep**: Windows code-signing certificate, macOS notarization, Linux AppImage/sandbox handling, and `steamworks.js` integration once the Steam page is live.

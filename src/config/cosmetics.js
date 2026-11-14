@@ -1,25 +1,19 @@
 /**
- * COSMETICS SCHEMA (Operation "Suit Up & Step Out", Phases 1 & 2).
+ * MODULE HEADER — src/config/cosmetics.js
  *
- * This is the single source of truth for athlete palettes, headwear, and the
- * canonical roster. It is PURE STATIC DATA plus read-only accessors. It deliberately
- * has ZERO physics imports: no Rapier rigid bodies, no colliders, no solver seams.
- * Cosmetics are scene-graph decorations. A cosmetic can never move the ball, cost a
- * tick, or change a capture hash.
- *
- * LAW 4 / LAW 6 apply: everything lives in this one file, nothing is rebuilt or
- * mutated at runtime, and all exported collections are frozen at module load so
- * nothing downstream can accidentally write into them. Callers must not allocate
- * inside the fixed 60 Hz loop; the lookup helpers below return pre-frozen objects,
- * so asking them for a palette or an athlete's cosmetics costs no heap action.
- *
- * CROSS-MODULE CONTRACT (`src/sim/cosmeticsBuilders.js`, owned by Purple):
- * `HEADWEAR_CATALOG` items carry a `meshBuilderKey`. The builders module MUST expose
- * one builder function per distinct key, keyed by that exact string, returning a
- * Three.js Object3D group. The builder receives `{ palette, tint }` and attaches
- * nothing itself — mounting is the ragdoll's `headwearSlot` job. `socketTarget` is the
- * name of that slot (`'headwearSlot'`). Adding a builder key here without shipping the
- * matching builder (or vice versa) is a broken contract; keep them in lockstep.
+ * Role: Static schema and zero-allocation lookup helpers for athlete palettes,
+ *   canonical roster, headwear catalog, and the Series 1 playtest headwear cycle
+ *   (`PALETTES`, `PALETTE_IDS`, `HEADWEAR_CATALOG`, `HEADWEAR_IDS`, `MESH_BUILDER_KEYS`,
+ *   `CANONICAL_ROSTER`, `ATHLETE_IDS`, `SERIES_1_PLAYTEST_CYCLE`, `SERIES_1_PLAYTEST_IDS`,
+ *   `resolveHeadwearSpec`, `getHeadwearLabel`, `getNextHeadwearId`,
+ *   `getCanonHeadwearIdForColorName`).
+ * Frame Phase: Boot, menu/lobby configuration, and render-side headwear cycling;
+ *   never mutates physics state.
+ * Active Architectural Laws:
+ *   - LAW 4 (One Source of Truth & Zero Allocations): All exported tables are
+ *     frozen at module load; lookup helpers allocate nothing at call time.
+ *   - LAW 6 (Determinism): Zero physics imports; cosmetics are pure scene-graph
+ *     decorations and cannot affect simulation or capture hashes.
  */
 
 /**
@@ -110,52 +104,52 @@ export const HEADWEAR_CATALOG = Object.freeze({
   // ── SIGNATURE PIECES (one per athlete) ─────────────────────────────────────
   'john-captains-visor': Object.freeze({
     id: 'john-captains-visor', label: "Captain's Cap",
-    meshBuilderKey: 'cap', socketTarget: 'headwearSlot',
+    meshBuilderKey: 'manager_cap', socketTarget: 'headwearSlot',
     paletteTintable: true, tier: 'signature', ownerAthleteId: 'john',
   }),
   'umpire-ref-cap': Object.freeze({
     id: 'umpire-ref-cap', label: "Umpire's Ref Cap",
-    meshBuilderKey: 'cap', socketTarget: 'headwearSlot',
+    meshBuilderKey: 'sensor_visor', socketTarget: 'headwearSlot',
     paletteTintable: true, tier: 'signature', ownerAthleteId: 'umpire',
   }),
   'bhavin-keepers-helmet': Object.freeze({
     id: 'bhavin-keepers-helmet', label: "Keeper's Helmet",
-    meshBuilderKey: 'helmet', socketTarget: 'headwearSlot',
+    meshBuilderKey: 'wicket_grill', socketTarget: 'headwearSlot',
     paletteTintable: true, tier: 'signature', ownerAthleteId: 'bhavin',
   }),
   'malik-sluggers-headband': Object.freeze({
     id: 'malik-sluggers-headband', label: "Slugger's Headband",
-    meshBuilderKey: 'headband', socketTarget: 'headwearSlot',
+    meshBuilderKey: 'wrestler_bands', socketTarget: 'headwearSlot',
     paletteTintable: true, tier: 'signature', ownerAthleteId: 'malik',
   }),
   'tupac-groundsmans-sunhat': Object.freeze({
     id: 'tupac-groundsmans-sunhat', label: "Groundsman's Sun Hat",
-    meshBuilderKey: 'sunhat', socketTarget: 'headwearSlot',
+    meshBuilderKey: 'terrace_visor', socketTarget: 'headwearSlot',
     paletteTintable: true, tier: 'signature', ownerAthleteId: 'tupac',
   }),
   'parisa-costumers-beret': Object.freeze({
     id: 'parisa-costumers-beret', label: "Costumer's Beret",
-    meshBuilderKey: 'beret', socketTarget: 'headwearSlot',
+    meshBuilderKey: 'couture_wrap', socketTarget: 'headwearSlot',
     paletteTintable: true, tier: 'signature', ownerAthleteId: 'parisa',
   }),
   'kahu-riggers-goggles': Object.freeze({
     id: 'kahu-riggers-goggles', label: "Rigger's Goggles",
-    meshBuilderKey: 'goggles', socketTarget: 'headwearSlot',
+    meshBuilderKey: 'rigger_band', socketTarget: 'headwearSlot',
     paletteTintable: true, tier: 'signature', ownerAthleteId: 'kahu',
   }),
   'catarina-broadcast-headset': Object.freeze({
     id: 'catarina-broadcast-headset', label: 'Broadcast Headset',
-    meshBuilderKey: 'headset', socketTarget: 'headwearSlot',
+    meshBuilderKey: 'broadcaster_mic', socketTarget: 'headwearSlot',
     paletteTintable: true, tier: 'signature', ownerAthleteId: 'catarina',
   }),
   'vinny-scouts-bucket-hat': Object.freeze({
     id: 'vinny-scouts-bucket-hat', label: "Scout's Bucket Hat",
-    meshBuilderKey: 'buckethat', socketTarget: 'headwearSlot',
+    meshBuilderKey: 'cursor_cap', socketTarget: 'headwearSlot',
     paletteTintable: true, tier: 'signature', ownerAthleteId: 'vinny',
   }),
   'kimi-fans-beanie': Object.freeze({
     id: 'kimi-fans-beanie', label: "Fan's Beanie",
-    meshBuilderKey: 'beanie', socketTarget: 'headwearSlot',
+    meshBuilderKey: 'ouendan_knot', socketTarget: 'headwearSlot',
     paletteTintable: true, tier: 'signature', ownerAthleteId: 'kimi',
   }),
 
@@ -202,22 +196,6 @@ export const HEADWEAR_IDS = Object.freeze(Object.keys(HEADWEAR_CATALOG));
 export const MESH_BUILDER_KEYS = Object.freeze(
   [...new Set(HEADWEAR_IDS.map((id) => HEADWEAR_CATALOG[id].meshBuilderKey))],
 );
-
-/**
- * THE SERIES 1 LOCKER RACK.
- *
- * Every catalog id an athlete may cycle through in the eventual locker: the
- * standard common rack first, then the signature silhouettes, then `none`.
- * Frozen so the locker order cannot drift from the catalog. This is distinct
- * from SERIES_1_PLAYTEST_CYCLE below, which is the in-match selector (the ten
- * approved Locker Headgear Pack pieces plus `none`) and is keyed by the
- * playtest vocabulary, not catalog ids.
- */
-export const SERIES_1_HEADWEAR_IDS = Object.freeze([
-  ...HEADWEAR_IDS.filter((id) => HEADWEAR_CATALOG[id].tier === 'standard'),
-  ...HEADWEAR_IDS.filter((id) => HEADWEAR_CATALOG[id].tier === 'signature'),
-  'none',
-]);
 
 /**
  * THE CANONICAL ROSTER.
@@ -295,85 +273,6 @@ export const CANONICAL_ROSTER = Object.freeze({
 export const ATHLETE_IDS = Object.freeze(Object.keys(CANONICAL_ROSTER));
 
 /**
- * PRE-RESOLVED ATHLETE COSMETICS.
- *
- * `getAthleteCosmetics` is called at selection / lobby time, but it must also be
- * safe to call from any code path that might touch the beat loop, so the resolved
- * composite is built once here and frozen. Asking for an athlete's cosmetics is a
- * plain map read, never a fresh object.
- */
-const _resolved = new Map();
-for (const id of ATHLETE_IDS) {
-  const entry = CANONICAL_ROSTER[id];
-  _resolved.set(id, Object.freeze({
-    athlete: entry,
-    palette: PALETTES[entry.paletteId],
-    signatureHeadwear: HEADWEAR_CATALOG[entry.signatureHeadwearId],
-  }));
-}
-const RESOLVED_COSMETICS = _resolved;
-
-/**
- * Resolve an athlete's full cosmetic identity: roster entry, palette, and the
- * signature headwear item that belongs to them. Returns a frozen composite, or
- * null if the id is unknown. Zero allocation.
- *
- * @param {string} athleteId an ATHLETE_IDS slug
- * @returns {{athlete: object, palette: object, signatureHeadwear: object} | null}
- */
-export function getAthleteCosmetics(athleteId) {
-  return RESOLVED_COSMETICS.get(athleteId) || null;
-}
-
-/**
- * Resolve a palette by its `id` or `colorKey`. Zero allocation.
- * @param {string} key palette id or colorKey
- * @returns {object | null}
- */
-export function getPalette(key) {
-  if (!key) return null;
-  return PALETTES[key] || PALETTES[String(key).toLowerCase()] || null;
-}
-
-/**
- * Resolve a headwear item by id. Zero allocation.
- * @param {string} headwearId a HEADWEAR_IDS slug
- * @returns {object | null}
- */
-export function getHeadwear(headwearId) {
-  return HEADWEAR_CATALOG[headwearId] || null;
-}
-
-/**
- * Headwear an athlete is allowed to equip: their own signature piece plus every
- * standard item. Signature pieces are NOT transferable. Frozen, zero allocation.
- * @param {string} athleteId an ATHLETE_IDS slug
- * @returns {string[]} headwear ids, the owner's signature first
- */
-export function listHeadwearForAthlete(athleteId) {
-  const entry = CANONICAL_ROSTER[athleteId];
-  if (!entry) return Object.freeze([]);
-  const out = [entry.signatureHeadwearId];
-  for (const id of HEADWEAR_IDS) {
-    if (HEADWEAR_CATALOG[id].tier === 'standard') out.push(id);
-  }
-  return Object.freeze(out);
-}
-
-/**
- * Validate a cosmetic selection. A selection is `{ athleteId, headwearId, paletteId? }`.
- *
- * Rules enforced:
- *  1. athleteId must be a known roster slug.
- *  2. headwearId must be a known catalog id.
- *  3. a signature piece may only be worn by its owner; standard pieces are open.
- *  4. an optional paletteId, when present, must be a known palette.
- *
- * Returns `{ valid, errors: string[] }`. It never throws; it reports.
- * @param {{athleteId?: string, headwearId?: string, paletteId?: string}} selection
- * @returns {{valid: boolean, errors: string[]}}
- */
-/**
  * THE SERIES 1 PLAYTEST CYCLE (in-match headwear selector).
  *
  * The approved Locker Headgear Pack (pass 7, 2026-10-17): the ten canonical
@@ -448,35 +347,6 @@ export function getHeadwearLabel(headwearId) {
 export function getNextHeadwearId(currentId) {
   const index = SERIES_1_PLAYTEST_IDS.indexOf(currentId);
   return SERIES_1_PLAYTEST_IDS[(index + 1) % SERIES_1_PLAYTEST_IDS.length];
-}
-
-export function validateCosmeticSelection(selection = {}) {
-  const errors = [];
-  const athleteId = selection && selection.athleteId;
-  const headwearId = selection && selection.headwearId;
-  const paletteId = selection && selection.paletteId;
-
-  const roster = CANONICAL_ROSTER[athleteId];
-  if (!roster) {
-    errors.push(`Unknown athleteId: ${athleteId}`);
-  }
-
-  const headwear = HEADWEAR_CATALOG[headwearId];
-  if (!headwear) {
-    errors.push(`Unknown headwearId: ${headwearId}`);
-  } else if (roster) {
-    if (headwear.tier === 'signature' && headwear.ownerAthleteId !== athleteId) {
-      errors.push(
-        `Signature piece "${headwear.label}" belongs to ${headwear.ownerAthleteId}, not ${athleteId}`,
-      );
-    }
-  }
-
-  if (paletteId !== undefined && paletteId !== null && !PALETTES[paletteId]) {
-    errors.push(`Unknown paletteId: ${paletteId}`);
-  }
-
-  return { valid: errors.length === 0, errors };
 }
 
 const PLAYTEST_ID_BY_CATALOG_ID = Object.freeze(

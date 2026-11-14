@@ -97,8 +97,24 @@ function isAppPage(url) {
   return url.startsWith(`${SCHEME}://${HOST}/`);
 }
 
+function applyMenu() {
+  if (process.platform === 'darwin') {
+    // macOS keeps a minimal app menu so Cmd+Q, Cmd+H and Ctrl+Cmd+F work as
+    // Mac players expect. No View > Reload: a reload mid-match ends the match.
+    Menu.setApplicationMenu(
+      Menu.buildFromTemplate([
+        { role: 'appMenu' },
+        { label: 'View', submenu: [{ role: 'togglefullscreen' }] },
+        { role: 'windowMenu' },
+      ]),
+    );
+  } else {
+    Menu.setApplicationMenu(null);
+  }
+}
+
 function createWindow() {
-  Menu.setApplicationMenu(null);
+  applyMenu();
 
   mainWindow = new BrowserWindow({
     ...windowedBounds(),

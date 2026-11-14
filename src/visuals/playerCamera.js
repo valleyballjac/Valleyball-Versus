@@ -1,9 +1,20 @@
+/**
+ * Module: visuals/playerCamera
+ * Role: Per-player camera rig supporting 1st-person, 3rd-person chase, 3rd-person ball-framing, tactical overhead, broadcast sideline, and sports cameras.
+ * Frame Phase: Render (Post-Interpolation)
+ * Active Architectural Laws:
+ *   - LAW 1 (Single Authority): Reads interpolated athlete and ball transforms; never mutates simulation state.
+ *   - LAW 8 (60 FPS Frame-Time Budget): Uses pre-allocated scratch vectors (`_fwdXZ`, `_rightXZ`, `_athleteFocus`, `_target`, etc.) and a reusable Rapier ray to avoid per-frame heap allocations.
+ */
+
 import * as THREE from 'three';
 import { TUNING } from '../config/tuning.js';
 import { RAPIER, ENVIRONMENT_RAY_GROUPS } from '../sim/physics.js';
 import { updateSportsCamera, resetSportsCamera } from './sportsCamera.js';
 
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
+const _fwdXZ = new THREE.Vector3();
+const _rightXZ = new THREE.Vector3();
 
 /**
  * Resolves the camera focus anchor for an athlete.
@@ -711,45 +722,32 @@ export class PlayerCamera {
       this._applyCameraEffects(tuning, frameDelta);
       return;
     }
+  }
 
-    // 6. FALLBACK ORBIT CAMERA (Fallback for unhandled modes)
-    {
-      const tpTuning = tuning.thirdPerson || { radius: 8.0, targetHeight: 1.2 };
-      const lookX = inputSlot ? inputSlot.lookX : 0;
-      const lookY = inputSlot ? inputSlot.lookY : 0;
-      const mouse = mouseDeltas;
-
-      this.azimuth -= lookX * tuning.orbitSpeed * frameDelta;
-      this.azimuth -= mouse.dx / tuning.mousePixelsPerRadian;
-      this.pitch += lookY * tuning.orbitSpeed * frameDelta;
-      this.pitch += mouse.dy / tuning.mousePixelsPerRadian;
-      this.pitch = Math.min(
-        tuning.maxPitch,
-        Math.max(tuning.minPitch, this.pitch),
-      );
-
-      this._target.copy(focusTarget);
-
-      // Dynamic pull-back when pitching down/looking up into the sky
-      let desiredDistance = tpTuning.radius || tuning.radius || 8.0;
-      if (this.pitch < 0) {
-        const pullFraction = Math.max(
-          0,
-          Math.min(1, this.pitch / tuning.minPitch),
-        );
-        desiredDistance = THREE.MathUtils.lerp(
-          desiredDistance,
-          tuning.pullbackMinDistance,
-          pullFraction,
-        );
-        // Slightly elevate look target to prevent ground scraping
-        this._target.y += 0.35 * pullFraction;
-      }
-
-      this._computeArmDirection(desiredDistance, this.azimuth, this.pitch);
-      this._applySpringArm(world, tuning, desiredDistance, frameDelta);
-      this.camera.lookAt(this._smoothedTarget);
-      this._applyCameraEffects(tuning, frameDelta);
+  /**
+   * Returns the horizontal (XZ-plane) forward unit vector of this camera using a module-scoped scratch vector.
+   *
+   * @returns {THREE.Vector3}
+   */
+  getForwardXZ() {
+    this.camera.getWorldDirection(_fwdXZ);
+    _fwdXZ.y = 0;
+    if (_fwdXZ.lengthSq() > 1e-8) {
+      _fwdXZ.normalize();
+    } else {
+      _fwdXZ.set(0, 0, -1);
     }
+    return _fwdXZ;
+  }
+
+  /**
+   * Returns the horizontal (XZ-plane) right unit vector of this camera using a module-scoped scratch vector.
+   *
+   * @returns {THREE.Vector3}
+   */
+  getRightXZ() {
+    const fwd = this.getForwardXZ();
+    _rightXZ.crossVectors(fwd, WORLD_UP).normalize();
+    return _rightXZ;
   }
 }

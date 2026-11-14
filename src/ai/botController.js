@@ -1,9 +1,25 @@
+/**
+ * @module botController
+ * @description Unified tactical, ballistic, and 2v2 role planner for Valleyball AI bots.
+ *
+ * - **Role**: Drives synthetic input into an athlete's `inputSlot` (`moveWorld`, `sprintHeld`,
+ *   `slideHeld`, `braceHeld`, `jumpQueued`, `diveQueued`, `cutQueued`, `volleyQueued`, `spikeQueued`,
+ *   `aimYaw`), making AI athletes indistinguishable from human gamepad controllers.
+ * - **Frame Phase**: Fixed 60 Hz simulation step (AI decision phase, after input polling and before
+ *   motor/action/strike mechanics).
+ * - **Active Architectural Laws**:
+ *   - **LAW 1 (Single Physics Writer)**: Never mutates Rapier rigid-body positions or velocities directly;
+ *     writes exclusively to `inputSlot`.
+ *   - **LAW 6 (Determinism & Zero Allocations)**: All timing uses integer `tick` counters and a seeded
+ *     xorshift32 PRNG (`bot.rng`). Hot-path perception, aim compensation, and trajectory sampling reuse
+ *     pre-allocated ring buffers and module-scoped scratch objects with 0 per-tick heap allocations.
+ */
+
 import * as THREE from 'three';
 import { TUNING } from '../config/tuning.js';
 import {
   buildPerception,
   createPerception,
-  projectBallPosition,
   sampleTrajectoryAtTick,
   getCourtFloorY,
 } from './botPerception.js';
@@ -16,122 +32,24 @@ import {
   shouldExecuteCut,
 } from './botSteering.js';
 
-/**
- * AI BOT CONTROLLER — v0.4.0 Unified Tactical, Ballistic & 2v2 Role Planner
- *
- * Drives synthetic input into an athlete's input slot, making it
- * indistinguishable from a human controller. The bot reads world state
- * through the perception layer and writes to the same moveWorld / action
- * queues that a gamepad would.
- *
- * LAW 6 — All timing in integer ticks. No Date.now(), no Math.random().
- * LAW 1 — Never writes physics state directly; only writes input.
- */
-
 // ═══ STRATEGY STATES ═══
 export const STRATEGY = {
-  CHASE:              0,  // Ball is far, sprint toward intercept pocket
-  POSITION:           1,  // Ball approaching, maneuver to optimal strike pocket
-  STRIKE:             2,  // Active strike windup or immediate strike step-in
-  RECOVER:            3,  // Knocked down, wait for recovery
-  DEFEND:             4,  // Ball heading toward own goal, guard rim or clear
-  STREAM_DRIBBLE:     5,  // Controlled advance up lateral stream channel
-  MULTI_STAGE_ATTACK: 6,  // Coordinated multi-touch set, stream-head & finish
+  CHASE:          0, // Ball is far, sprint toward intercept pocket
+  POSITION:       1, // Ball approaching, maneuver to optimal strike pocket
+  STRIKE:         2, // Active strike windup or immediate strike step-in
+  RECOVER:        3, // Knocked down, wait for recovery
+  DEFEND:         4, // Ball heading toward own goal, guard rim or clear
+  STREAM_DRIBBLE: 5, // Controlled advance up lateral stream channel
 };
 
-// ═══ ATTACK SEQUENCE DEFINITIONS ═══
-export const ATTACK_STAGE = {
-  NONE:           0,
-  RETRIEVE:       1,
-  STREAM_ADVANCE: 2,
-  SETUP_POP:      3,
-  AERIAL_FINISH:  4,
-};
-
-export const ATTACK_TYPE = {
-  NONE:                   0,
-  FAST_BREAK_2_STAGE:     2,
-  STREAM_RUN_3_STAGE:     3,
-  SET_AND_SPIKE_4_STAGE:  4,
-};
-
-// ═══ DIFFICULTY TUNING DEFAULTS (fallback if not in TUNING.ai) ═══
+// ═══ DIFFICULTY TUNING DEFAULTS (sourced directly from TUNING.ai) ═══
 const DIFFICULTY_DEFAULTS = {
-  easy: {
-    reactionDelayTicks: 12,
-    aimAccuracy: 0.50,
-    interceptLeadFactor: 0.65,
-    strikeTimingJitter: 4,
-    sprintUsage: 0.50,
-    diveAccuracy: 0.25,
-    diveCooldownTicks: 260,
-    spikeAccuracy: 0.40,
-    defensiveAwareness: 0.35,
-    strategyUpdateInterval: 10,
-    positionOffset: 0.45,
-    strikeRange: 2.1,
-    strikeHeightMin: -0.5,
-    strikeHeightMax: 3.2,
-    chaseToPositionDist: 10.0,
-    defenseDepth: 0.4,
-    arriveRadiusChase: 1.2,
-    arriveRadiusPosition: 0.7,
-    arriveRadiusStrike: 0.3,
-    jumpHeightThreshold: 2.0,
-    diveDistMin: 1.8,
-    diveDistMax: 4.2,
-  },
-  medium: {
-    reactionDelayTicks: 6,
-    aimAccuracy: 0.80,
-    interceptLeadFactor: 0.88,
-    strikeTimingJitter: 1,
-    sprintUsage: 0.80,
-    diveAccuracy: 0.55,
-    diveCooldownTicks: 190,
-    spikeAccuracy: 0.70,
-    defensiveAwareness: 0.65,
-    strategyUpdateInterval: 6,
-    positionOffset: 0.35,
-    strikeRange: 2.0,
-    strikeHeightMin: -0.5,
-    strikeHeightMax: 3.2,
-    chaseToPositionDist: 11.0,
-    defenseDepth: 0.45,
-    arriveRadiusChase: 1.0,
-    arriveRadiusPosition: 0.6,
-    arriveRadiusStrike: 0.25,
-    jumpHeightThreshold: 1.8,
-    diveDistMin: 1.8,
-    diveDistMax: 4.5,
-  },
-  hard: {
-    reactionDelayTicks: 1,
-    aimAccuracy: 0.96,
-    interceptLeadFactor: 1.0,
-    strikeTimingJitter: 0,
-    sprintUsage: 0.95,
-    diveAccuracy: 0.85,
-    diveCooldownTicks: 150,
-    spikeAccuracy: 0.90,
-    defensiveAwareness: 0.90,
-    strategyUpdateInterval: 4,
-    positionOffset: 0.30,
-    strikeRange: 2.0,
-    strikeHeightMin: -0.5,
-    strikeHeightMax: 3.2,
-    chaseToPositionDist: 12.0,
-    defenseDepth: 0.5,
-    arriveRadiusChase: 0.9,
-    arriveRadiusPosition: 0.5,
-    arriveRadiusStrike: 0.2,
-    jumpHeightThreshold: 1.7,
-    diveDistMin: 1.75,
-    diveDistMax: 4.7,
-  },
+  easy: TUNING.ai.easy,
+  medium: TUNING.ai.medium,
+  hard: TUNING.ai.hard,
 };
 
-// ═══ SCRATCH VECTORS (allocation-free hot path) ═══
+// ═══ SCRATCH VECTORS & OBJECTS (allocation-free hot path, LAW 6) ═══
 const _interceptTarget = new THREE.Vector3();
 const _defenseTarget = new THREE.Vector3();
 const _playTarget = new THREE.Vector3();
@@ -140,6 +58,7 @@ const _ballAtSweet = new THREE.Vector3();
 const _velAtSweet = new THREE.Vector3();
 const _ballAtSpike = new THREE.Vector3();
 const _velAtSpike = new THREE.Vector3();
+const _compAim = { yaw: 0, effVH: 0 };
 
 const HOOP_CENTER_Y = 10.0;
 const HOOP_RADIUS = 4.667;
@@ -162,7 +81,10 @@ function createSeededRNG(seed) {
 }
 
 /**
- * Creates a new bot controller state object.
+ * Creates a new bot controller state object with pre-allocated perception ring buffers.
+ *
+ * @param {Object} [options={}] - `{ difficulty ('easy'|'medium'|'hard'), slotIndex, seed, aggressiveness }`
+ * @returns {Object} Bot controller instance
  */
 export function createBotController({
   difficulty = 'medium',
@@ -176,14 +98,11 @@ export function createBotController({
     rng: createSeededRNG(seed),
     baseAggressiveness: aggressiveness,
     currentAggressiveness: aggressiveness,
+    params: TUNING.ai?.[difficulty] || TUNING.ai?.medium,
 
     // Strategy
     strategy: STRATEGY.CHASE,
     lastStrategyTick: -Infinity,
-    attackStage: ATTACK_STAGE.NONE,
-    attackType: ATTACK_TYPE.NONE,
-    stageStartTick: 0,
-    lastPopTick: -Infinity,
 
     // Pre-allocated perception ring buffer for zero GC allocations and strict instance isolation
     perceptionPool: Array.from({ length: 32 }, () => ({
@@ -198,12 +117,10 @@ export function createBotController({
     lastStrikeKind: 'volley',
     lastStrikeSweetTick: 15,
     lastStrikeAimYaw: NaN,      // aim held through the open swing window
-    strikeCooldownTicks: 24,
     lastDiveTick: -Infinity,
     lastJumpTick: -Infinity,
     jumpCooldownTicks: 90,
     pendingJumpTick: -Infinity, // scheduled jump during 42-tick spike windup
-    pendingSpikeTick: -Infinity,
     lastCutTick: -Infinity,
     cutCooldownTicks: 70,
     lastSlideTick: -Infinity,
@@ -232,8 +149,9 @@ export function createBotController({
 }
 
 export function setBotDifficulty(bot, difficulty) {
-  if (bot && DIFFICULTY_DEFAULTS[difficulty]) {
+  if (bot && TUNING.ai?.[difficulty]) {
     bot.difficulty = difficulty;
+    bot.params = bot.overrideParams || TUNING.ai[difficulty];
   }
 }
 
@@ -313,18 +231,33 @@ function predictEastKindAtPress(athlete, selfPos, ballPos) {
  * Computes the exact `aimYaw` needed so `strikes.js:808`'s additive impulse
  * (`v_exit = v_ball + vH_raw * [sin(yaw), cos(yaw)]`) cancels the ball's transverse
  * velocity and launches the ball straight along the horizontal ray `fromPos -> targetPos`.
+ *
+ * **Why**: Because strikes add impulse onto the ball's existing velocity vector rather than
+ * replacing it, aiming naively at the hoop when the ball has lateral velocity causes shots to miss wide.
+ *
+ * @param {{x: number, y: number, z: number}} fromPos - Contact world position in meters (`m`)
+ * @param {number} targetX - Target world X coordinate in meters (`m`)
+ * @param {number} targetZ - Target world Z coordinate in meters (`m`)
+ * @param {number} vHRaw - Raw horizontal strike impulse speed in `m/s`
+ * @param {{x: number, y: number, z: number}|null} ballVel - Incoming ball velocity in `m/s`
+ * @param {{yaw: number, effVH: number}} [out=_compAim] - Scratch result object populated in-place
+ * @returns {{yaw: number, effVH: number}} Mutated `out` (`yaw` in `rad`, `effVH` in `m/s`; do not retain across calls)
  */
-function computeCompensatedAimAndSpeed(fromPos, targetX, targetZ, vHRaw, ballVel) {
+function computeCompensatedAimAndSpeed(fromPos, targetX, targetZ, vHRaw, ballVel, out = _compAim) {
   const dx = targetX - fromPos.x;
   const dz = targetZ - fromPos.z;
   const dist = Math.hypot(dx, dz);
   if (dist < 1e-4) {
-    return { yaw: 0, effVH: vHRaw * 0.91 };
+    out.yaw = 0;
+    out.effVH = vHRaw * 0.91;
+    return out;
   }
   const ux = dx / dist;
   const uz = dz / dist;
   if (!ballVel) {
-    return { yaw: Math.atan2(ux, uz), effVH: vHRaw * 0.91 };
+    out.yaw = Math.atan2(ux, uz);
+    out.effVH = vHRaw * 0.91;
+    return out;
   }
   const vbx = ballVel.x || 0;
   const vbz = ballVel.z || 0;
@@ -339,8 +272,9 @@ function computeCompensatedAimAndSpeed(fromPos, targetX, targetZ, vHRaw, ballVel
   const dvFwd = Math.sqrt(Math.max(1.0, vHRaw * vHRaw - (dvPerpX * dvPerpX + dvPerpZ * dvPerpZ)));
   const dvX = dvPerpX + ux * dvFwd;
   const dvZ = dvPerpZ + uz * dvFwd;
-  const effVH = Math.max(4.5, (vAlong + dvFwd) * 0.91);
-  return { yaw: Math.atan2(dvX, dvZ), effVH };
+  out.yaw = Math.atan2(dvX, dvZ);
+  out.effVH = Math.max(4.5, (vAlong + dvFwd) * 0.91);
+  return out;
 }
 
 /**
@@ -592,8 +526,6 @@ function applyAimJitterAndSafety(bot, fromPos, baseYaw, defendGoalPos, attackGoa
 
 function selectStrategy(bot, perception, params, tick) {
   if (perception.self.isRecovering) {
-    bot.attackStage = ATTACK_STAGE.NONE;
-    bot.attackType = ATTACK_TYPE.NONE;
     return STRATEGY.RECOVER;
   }
 
@@ -635,8 +567,10 @@ function selectStrategy(bot, perception, params, tick) {
   const isGoalSide = perception.goalSide.isGoalSide;
   const ballRelY = ballPos.y - selfPos.y;
   const strikeRange = (params.strikeRange ?? 2.0) + (agg - 0.5) * 0.5;
+  const strikeHeightMin = bot.params?.strikeHeightMin ?? params.strikeHeightMin ?? -0.55;
+  const strikeHeightMax = bot.params?.strikeHeightMax ?? params.strikeHeightMax ?? 3.3;
 
-  if (isGoalSide && distToBall <= strikeRange && ballRelY >= -0.55 && ballRelY <= 3.3) {
+  if (isGoalSide && distToBall <= strikeRange && ballRelY >= strikeHeightMin && ballRelY <= strikeHeightMax) {
     return STRATEGY.STRIKE;
   }
 
@@ -682,7 +616,27 @@ export function updateBot(bot, athlete, opponent, balls, matchState, inputSlot, 
 
   if (Array.isArray(allAthletes) && allAthletes.length > 2) {
     const myTeam = athlete.team || (athlete.slotIndex % 2 === 0 ? 'home' : 'away');
-    const bPos = balls[0]?.body?.translation?.();
+    const selfPosNow = athlete.motor?.body?.translation?.();
+    let nearestBall = null;
+    let minBallSqDist = Infinity;
+    for (let i = 0; i < balls.length; i++) {
+      const b = balls[i];
+      if (!b || !b.body) continue;
+      if (!selfPosNow) {
+        nearestBall = b;
+        break;
+      }
+      const bt = b.body.translation();
+      const dx = bt.x - selfPosNow.x;
+      const dy = bt.y - selfPosNow.y;
+      const dz = bt.z - selfPosNow.z;
+      const sqDist = dx * dx + dy * dy + dz * dz;
+      if (sqDist < minBallSqDist) {
+        minBallSqDist = sqDist;
+        nearestBall = b;
+      }
+    }
+    const bPos = nearestBall ? nearestBall.body.translation() : null;
     let bestOppDist = Infinity;
     for (let i = 0; i < allAthletes.length; i++) {
       const other = allAthletes[i];
@@ -702,6 +656,7 @@ export function updateBot(bot, athlete, opponent, balls, matchState, inputSlot, 
   }
 
   const params = getDifficultyParams(bot);
+  bot.params = params;
 
   // ═══ PERCEPTION (with reaction delay & zero GC allocation) ═══
   let freshPerception;
@@ -738,7 +693,11 @@ export function updateBot(bot, athlete, opponent, balls, matchState, inputSlot, 
 
   // ═══ 2v2 DYNAMIC ROLE ARBITRATION (ON-BALL vs OFF-BALL FINISHER / RIM ANCHOR) ═══
   if (teammate && teammate.motor?.body && !usePerception.self.isRecovering) {
-    const mateBusy = teammate.knockdownState?.active || teammate.diveState?.active;
+    const mateWeight = teammate.tracker?.weight ?? 1.0;
+    const mateDiving = typeof teammate.isDiving === 'function'
+      ? teammate.isDiving(tick)
+      : Boolean(teammate.actionState?.diveActive || teammate.diveState?.active);
+    const mateBusy = mateWeight < 0.5 || Boolean(teammate.knockdownState?.active) || mateDiving;
     if (!mateBusy) {
       const matePos = teammate.motor.body.translation();
       bot.hasActiveTeammate = true;
@@ -829,7 +788,6 @@ export function updateBot(bot, athlete, opponent, balls, matchState, inputSlot, 
         bot.stats.dribbleTime = (bot.stats.dribbleTime || 0) + 1;
         break;
 
-      case STRATEGY.MULTI_STAGE_ATTACK:
       case STRATEGY.STRIKE:
         executeStrikeApproach(bot, usePerception, freshPerception, params, inputSlot, tick);
         break;
@@ -900,7 +858,7 @@ function executeActiveWindupStepIn(bot, freshPerception, params, slot, elapsedSt
   steerToward(slot, selfPos, _interceptTarget, {
     sprint: distToSweet > 0.35,
     arrive: true,
-    arriveRadius: 0.30,
+    arriveRadius: bot.params?.arriveRadiusStrike ?? params.arriveRadiusStrike ?? 0.32,
     maxSpeed: profile.maxApproachSpeed,
     decelFactor: profile.decelFactor,
     minDrive: distToSweet > 0.14 ? 0.72 : 0.0,
@@ -980,12 +938,13 @@ function executeChase(bot, perception, freshPerception, params, slot, tick) {
       decelFactor: profile.decelFactor,
       runwayOffset: posOffset + 0.45,
       pocketDist,
+      arriveRadius: bot.params?.arriveRadiusPosition ?? params.arriveRadiusPosition ?? 0.34,
     });
   } else {
     steerToward(slot, selfPos, _interceptTarget, {
       sprint: shouldSprint,
       arrive: true,
-      arriveRadius: 1.0,
+      arriveRadius: bot.params?.arriveRadiusChase ?? params.arriveRadiusChase ?? 1.0,
       maxSpeed: profile.maxApproachSpeed,
       decelFactor: profile.decelFactor,
       minDrive: distToTarget > 1.2 ? 0.65 : 0.0,
@@ -1046,6 +1005,7 @@ function executePosition(bot, perception, freshPerception, params, slot, tick) {
     decelFactor: profile.decelFactor,
     runwayOffset: posOffset + 0.42,
     pocketDist,
+    arriveRadius: bot.params?.arriveRadiusPosition ?? params.arriveRadiusPosition ?? 0.34,
   });
 
   if (distToBall < TUNING.ai.facing.strikeAimRadius) {
@@ -1138,7 +1098,7 @@ function executeStrikeApproach(bot, perception, freshPerception, params, slot, t
   steerToward(slot, selfPos, _interceptTarget, {
     sprint: distToPocket > 0.45,
     arrive: true,
-    arriveRadius: 0.32,
+    arriveRadius: bot.params?.arriveRadiusStrike ?? params.arriveRadiusStrike ?? 0.32,
     maxSpeed: profile.maxApproachSpeed,
     decelFactor: profile.decelFactor,
     minDrive: distToPocket > 0.16 ? 0.68 : 0.0,
@@ -1209,7 +1169,9 @@ function executeDefend(bot, perception, freshPerception, params, slot, tick) {
     const signDefZ = Math.sign(defendPos.z) || 1;
     const ballSideSignX = Math.abs(ballPos.x) > 0.5 ? Math.sign(ballPos.x) : 1;
     const rimX = Math.max(-4.5, Math.min(4.5, ballSideSignX * Math.max(1.8, Math.abs(ballPos.x) * 0.38)));
-    const rimZ = signDefZ * 35.0;
+    const rawDefenseDepth = bot.params?.defenseDepth ?? params.defenseDepth ?? 6.0;
+    const defenseDepth = rawDefenseDepth <= 1.5 ? (3.0 + rawDefenseDepth * 5.0) : rawDefenseDepth;
+    const rimZ = signDefZ * Math.max(28.0, Math.min(37.5, Math.abs(defendPos.z) - defenseDepth));
     const rimY = getCourtFloorY(rimX, rimZ);
     _defenseTarget.set(rimX, rimY, rimZ);
 
@@ -1279,7 +1241,7 @@ function updateTacticalSlideAndBlock(bot, athlete, freshPerception, params, slot
   if (isBotSliding) {
     const slideDuration = tick - bot.slideStartTick;
     const minCommittedTicks = TUNING.action?.minSlideTicks ?? 15;
-    const dangerLowSpeed = speedXZ < 4.40; // well above 4.0 m/s knockdown threshold
+    const dangerLowSpeed = speedXZ < (TUNING.action?.knockdownSpeed ?? 0.6) + 0.5; // 1.1 m/s safety margin above 0.6 m/s knockdown threshold
     const arrivedAtPocket = bot.slideMode === 'surf' && liveDistXZ <= 5.8;
     const finishedBurst = tick >= bot.slideUntilTick || slideDuration >= 20;
 
@@ -1457,7 +1419,7 @@ function evaluatePredictiveStrikes(bot, athlete, freshPerception, params, slot, 
   if (!isStrikeWindowActive) {
     const dotBallTowardSelf = ((selfPos.x - ballPos.x) * ballVel.x + (selfPos.z - ballPos.z) * ballVel.z) / Math.max(0.1, liveDistXZ);
     const signDefendZ = Math.sign(defendGoalPos.z) || 1;
-    const isBodyBlockingOpponent = !freshPerception.trajectory.weHavePriority &&
+    const isBodyBlockingOpponent = freshPerception.trajectory.firstTouchBy !== 'self' &&
       oppDistToBall <= 1.45 && liveDistXZ <= 2.3 && oppDistToBall + 0.35 < liveDistXZ;
     const isWrongSideRetreat = !freshPerception.goalSide.isGoalSide &&
       liveDistXZ <= 2.2 && (ballVel.z * signDefendZ) > 0.8;
@@ -1466,7 +1428,7 @@ function evaluatePredictiveStrikes(bot, athlete, freshPerception, params, slot, 
       slot.braceHeld = true;
       if (freshPerception.goalSide.isGoalSide) {
         const blockYaw = solveOffensiveAimAndTarget(bot, selfPos, 'volley', freshPerception, params, _playTarget);
-        if (liveDistXZ <= (TUNING.ai.facing?.strikeAimRadius ?? 3.8) || freshPerception.self.speedXZ < 2.2) {
+        if (liveDistXZ <= (TUNING.ai.facing?.strikeAimRadius ?? 3.8) || freshPerception.self.speed < 2.2) {
           slot.aimYaw = blockYaw;
           slot.cameraYaw = blockYaw;
           slot.hasAim = true;
@@ -1584,10 +1546,11 @@ function evaluatePredictiveStrikes(bot, athlete, freshPerception, params, slot, 
           selfAt42Z = selfPos.z + selfVel.z * brkScale;
         }
 
+        const jumpHeightThreshold = bot.params?.jumpHeightThreshold ?? params.jumpHeightThreshold ?? 2.16;
         let jumpDelayTicks = -1;
         let spikeLimbHeightAboveFloor = 1.32;
-        if (futureBallAboveFloor > 1.85) {
-          const wantHighJump = futureBallAboveFloor > 2.55;
+        if (futureBallAboveFloor > jumpHeightThreshold - 0.31) {
+          const wantHighJump = futureBallAboveFloor > jumpHeightThreshold + 0.39;
           const candDelay = wantHighJump ? 24 : 30;
           if (freshPerception.self.grounded && (tick + candDelay - bot.lastJumpTick >= bot.jumpCooldownTicks)) {
             jumpDelayTicks = candDelay;
@@ -1709,18 +1672,19 @@ function evaluatePredictiveStrikes(bot, athlete, freshPerception, params, slot, 
 
         const selfFloor = getCourtFloorY(selfAtX, selfAtZ);
         const ballAboveFloor = _ballAtSweet.y - selfFloor;
+        const volleyJumpThreshold = bot.params?.jumpHeightThreshold ?? params.jumpHeightThreshold ?? 2.16;
 
         let limbY;
         let jumpMode = 0;
         if (!freshPerception.self.grounded) {
           const airBodyY = Math.max(selfFloor + 0.5, selfPos.y + selfVel.y * dtV - 6.0 * dtV * dtV);
           limbY = airBodyY + 0.58;
-        } else if (canJumpNow && ballAboveFloor >= 2.16 && ballAboveFloor <= 3.15) {
+        } else if (canJumpNow && ballAboveFloor >= volleyJumpThreshold && ballAboveFloor <= 3.15) {
           // Immediate jump (`7.0 / 1.047 = 6.685 m/s` upward velocity, `-12 m/s²` gravity -> `+1.30m` at 15t)
           const jumpGain = 6.685 * dtV - 6.0 * dtV * dtV;
           limbY = selfFloor + 1.08 + jumpGain;
           jumpMode = 1;
-        } else if (canJumpNow && ballAboveFloor >= 1.56 && ballAboveFloor < 2.16) {
+        } else if (canJumpNow && ballAboveFloor >= (volleyJumpThreshold - 0.60) && ballAboveFloor < volleyJumpThreshold) {
           // 6-tick delayed Hop-Volley (`candTick - 6` ticks airborne -> `+0.87m` lift -> `floor + 1.95m`)
           const hopDt = Math.max(0.08, (candTick - 6) * (1 / 60));
           const hopGain = 6.685 * hopDt - 6.0 * hopDt * hopDt;

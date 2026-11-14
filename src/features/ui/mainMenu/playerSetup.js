@@ -1,4 +1,11 @@
-import { TUNING } from '../../../config/tuning.js';
+/**
+ * Module: features/ui/mainMenu/playerSetup
+ * Role: Two-page Player & Team Setup and Match Rules / Practice Sandbox configuration screen.
+ * Frame Phase: UI Event / Polling
+ * Active Architectural Laws:
+ *   - LAW 1 (Single Authority): Shares `state.playerConfigs` (4-slot array) with Controller Assignment and main orchestrator.
+ */
+
 import {
   getControllerAssignments,
   getExplicitDeviceMappings,
@@ -19,8 +26,10 @@ import {
   MATCH_BALL_OPTIONS,
   MATCH_DURATION_OPTIONS,
   ARENA_OPTIONS,
-  PRACTICE_BALL_OPTIONS,
   ASSIST_OPTIONS,
+  getPlayerSlotTheme,
+  renderCardinalDiamondSvg,
+  renderViewportBadgeHtml,
 } from './constants.js';
 import { getCanonHeadwearIdForColorName } from '../../../config/cosmetics.js';
 
@@ -49,56 +58,8 @@ export function setPlayerSetupCallbacks(cbs = {}, navs = {}) {
 }
 
 
-let playerConfigs = [
-  {
-    name: 'Player 1',
-    type: 'human',
-    difficulty: 'medium',
-    aggressiveness: 0.60,
-    team: 'home',
-    headwear: 'wrestler_bands',
-    variant: 'classic',
-    primaryColor: 0xd90429,
-    cameraMode: 'chase',
-    assistPreset: 'standard',
-  },
-  {
-    name: 'Player 2',
-    type: 'human',
-    difficulty: 'medium',
-    aggressiveness: 0.60,
-    team: 'away',
-    headwear: 'wicket_grill',
-    variant: 'classic',
-    primaryColor: 0x1d4ed8,
-    cameraMode: 'chase',
-    assistPreset: 'standard',
-  },
-  {
-    name: 'Player 3',
-    type: 'ai',
-    difficulty: 'medium',
-    aggressiveness: 0.60,
-    team: 'home',
-    headwear: 'wrestler_bands',
-    variant: 'classic',
-    primaryColor: 0xd90429,
-    cameraMode: 'chase',
-    assistPreset: 'standard',
-  },
-  {
-    name: 'Player 4',
-    type: 'ai',
-    difficulty: 'medium',
-    aggressiveness: 0.60,
-    team: 'away',
-    headwear: 'wicket_grill',
-    variant: 'classic',
-    primaryColor: 0x1d4ed8,
-    cameraMode: 'chase',
-    assistPreset: 'standard',
-  },
-];
+// Shared 4-slot player configuration array owned by state.js
+const playerConfigs = state.playerConfigs;
 
 let currentSetupMode = 'match';
 let matchFormat = '1v1';
@@ -165,6 +126,7 @@ let playerAssistButtons = [[], [], [], []];
 let playerAssistDescEls = [null, null, null, null];
 let playerReadyButtons = [null, null, null, null];
 let playerInputBadges = [null, null, null, null];
+let playerViewportBadges = [null, null, null, null];
 let playerRowElements = [[], [], [], []];
 let playerFocusRow = [0, 0, 0, 0];
 let focusedColumn = 0; // 0..3 for active player column (used for shared-cursor lobbies)
@@ -360,21 +322,22 @@ export function buildPlayerSetupScreen(root, cbs = {}, navs = {}) {
   columnsBoxEl.appendChild(teamGroup2El);
   container.appendChild(columnsBoxEl);
 
-  // Match Rules Box (Screen 2 — Horizontal Bottom-Aligned Deck so 3D characters stay visible in center!)
+  // Match Rules Box (Screen 2 — Vertical Top-to-Bottom Stack: Row 0 Ball Size -> Row 1 Match Duration)
   matchRulesBoxEl = document.createElement('div');
   matchRulesBoxEl.id = 'match-rules-box';
   matchRulesBoxEl.style.cssText = `
     display: none;
-    grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr) minmax(0, 0.85fr);
+    flex-direction: column;
     gap: 10px;
-    margin: 0;
-    max-width: 100%;
+    margin: 0 auto;
+    max-width: 860px;
     width: 100%;
     box-sizing: border-box;
-    background: rgba(11, 17, 26, 0.86);
-    border: 1px solid rgba(255, 255, 255, 0.18);
+    background: rgba(11, 17, 26, 0.88);
+    border: 1.5px solid rgba(0, 229, 255, 0.35);
+    border-top: 4px solid #00e5ff;
     border-radius: 10px;
-    padding: 10px 14px;
+    padding: 12px 16px;
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
     box-shadow: 0 12px 32px rgba(0, 0, 0, 0.65);
@@ -382,20 +345,24 @@ export function buildPlayerSetupScreen(root, cbs = {}, navs = {}) {
 
   const rulesHeader = document.createElement('div');
   rulesHeader.id = 'match-rules-header-title';
-  rulesHeader.style.cssText = 'display: none;';
-  rulesHeader.textContent = 'MATCH RULES & CUSTOMIZATION';
+  rulesHeader.style.cssText = 'display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 6px;';
+  rulesHeader.innerHTML = `
+    <span style="font-size:12px;font-weight:900;letter-spacing:0.12em;color:#ffffff;">MATCH RULES (VERTICAL TOP-TO-BOTTOM)</span>
+    <span class="contextual-btn-badge" style="border-color:#00e5ff;color:#00e5ff;background:rgba(0,229,255,0.14);">🎮 P1 CONTROLS RULES · P2–P4 READY BELOW</span>
+  `;
   matchRulesBoxEl.appendChild(rulesHeader);
 
-  // 1. Match Ball Selector
+  // Row 0: Match Ball Selector (Top)
   const mbs = buildMatchBallSelector();
   matchRulesBoxEl.appendChild(mbs);
 
-  // 2. Match Duration Selector
+  // Row 1: Match Duration Selector (Bottom)
   const mds = buildMatchDurationSelector();
   matchRulesBoxEl.appendChild(mds);
 
-  // 3. Arena Selector
+  // Arena Selector kept hidden (single arena: Valley Arena)
   const as = buildArenaSelector();
+  as.style.display = 'none';
   matchRulesBoxEl.appendChild(as);
 
   container.appendChild(matchRulesBoxEl);
@@ -451,10 +418,8 @@ export function buildPlayerSetupScreen(root, cbs = {}, navs = {}) {
     const durationBox = document.getElementById('match-duration-selector-box');
     const arenaBox = document.getElementById('arena-selector-box');
     if (durationBox) durationBox.style.display = 'flex';
-    if (arenaBox) arenaBox.style.display = 'flex';
-    if (rulesHeader) rulesHeader.style.display = 'none';
-    matchRulesBoxEl.style.maxWidth = '100%';
-    matchRulesBoxEl.style.margin = '0';
+    if (arenaBox) arenaBox.style.display = 'none';
+    if (rulesHeader) rulesHeader.style.display = 'flex';
 
     if (setupPage === 1) {
       columnsBoxEl.style.display = 'grid';
@@ -474,8 +439,12 @@ export function buildPlayerSetupScreen(root, cbs = {}, navs = {}) {
       }
     } else {
       columnsBoxEl.style.display = 'none';
-      matchRulesBoxEl.style.display = 'grid';
-      matchRulesBoxEl.style.gridTemplateColumns = 'minmax(0, 1.35fr) minmax(0, 1fr) minmax(0, 0.85fr)';
+      matchRulesBoxEl.style.display = 'flex';
+      matchRulesBoxEl.style.flexDirection = 'column';
+      matchRulesBoxEl.style.maxWidth = '860px';
+      matchRulesBoxEl.style.margin = '0 auto';
+      matchRulesFocusRow = 0;
+      matchRulesActionCol = playerConfigs[0]?.type === 'human' ? 1 : 2;
       if (btnBack) btnBack.textContent = '⮌ PLAYERS';
       if (btnNext) btnNext.style.display = 'none';
       if (btnReadyP1) btnReadyP1.style.display = 'block';
@@ -483,11 +452,10 @@ export function buildPlayerSetupScreen(root, cbs = {}, navs = {}) {
       if (btnReadyP3) btnReadyP3.style.display = is2v2 ? 'block' : 'none';
       if (btnReadyP4) btnReadyP4.style.display = is2v2 ? 'block' : 'none';
       if (btnStartMatch) btnStartMatch.style.display = 'block';
-      lobbyTitleEl.textContent = 'MATCH RULES & CUSTOMIZATION';
-      if (lobbySubtitleEl) lobbySubtitleEl.textContent = 'Set regulation ball, match duration, and arena venue';
+      lobbyTitleEl.textContent = 'MATCH RULES & READY UP';
+      if (lobbySubtitleEl) lobbySubtitleEl.textContent = 'P1 sets Ball Size & Match Length (↕ / ◀ ▶) — Each player locks in their own Ready button';
       updateMatchBallUI();
       updateMatchDurationUI();
-      updateArenaUI();
     }
     updateReadyUI();
     getActivePlayerIndices().forEach((idx) => updateAggressivenessUI(idx));
@@ -566,22 +534,26 @@ export function buildPlayerSetupScreen(root, cbs = {}, navs = {}) {
     setupPage = 2;
     window._updateSetupPage();
   };
+  [0, 1, 2, 3].forEach((i) => {
+    if (playerRowElements[i]) playerRowElements[i][8] = btnNext;
+  });
 
   const makeReadyBtn = (idx) => {
+    const slotTheme = getPlayerSlotTheme(idx);
     const btn = document.createElement('button');
     btn.id = `btn-ready-p${idx + 1}`;
     btn.textContent = `READY P${idx + 1}`;
     btn.style.cssText = `
-      flex: 0 1 135px;
-      min-width: 88px;
+      flex: 0 1 155px;
+      min-width: 105px;
       padding: 9px 10px;
       font-size: 11px;
       font-weight: 800;
       font-family: inherit;
       letter-spacing: 0.05em;
-      color: #cfe3f5;
-      background: rgba(255, 255, 255, 0.08);
-      border: 1px solid rgba(255, 255, 255, 0.2);
+      color: ${slotTheme.hex};
+      background: ${slotTheme.bg};
+      border: 1.5px solid ${slotTheme.hex};
       border-radius: 8px;
       white-space: nowrap;
       overflow: hidden;
@@ -591,8 +563,19 @@ export function buildPlayerSetupScreen(root, cbs = {}, navs = {}) {
       transition: all 0.15s ease;
     `;
     btn.onclick = () => {
-      matchRulesFocusRow = 3;
-      focusedColumn = idx;
+      if (idx > 0 && playerConfigs[idx]?.type === 'human') {
+        const m = getExplicitDeviceMappings()?.[idx];
+        soundManager.playTone(240, 0.08, 'sawtooth', 0.14);
+        const devHint = m?.type === 'gamepad'
+          ? `Pad ${m.padIndex + 1} (press □/X, ✕/A, or START)`
+          : 'Keyboard 2 (press ENTER)';
+        showToast(`🎮 P${idx + 1} must Ready Up on their own controller: ${devHint}`, 'info', 2000);
+        return;
+      }
+      if (idx === 0) {
+        matchRulesFocusRow = 2;
+        matchRulesActionCol = 1;
+      }
       updateFocusUI();
       togglePlayerReady(idx);
     };
@@ -744,12 +727,12 @@ export function buildMatchBallSelector() {
 
   const titleWrapper = document.createElement('div');
   matchBallHeaderTitleEl = document.createElement('span');
-  matchBallHeaderTitleEl.style.cssText = 'font-size: 11px; font-weight: 900; letter-spacing: 0.1em; color: #ffffff;';
-  matchBallHeaderTitleEl.textContent = 'MATCH BALL';
+  matchBallHeaderTitleEl.style.cssText = 'font-size: 11px; font-weight: 900; letter-spacing: 0.1em; color: #00e5ff;';
+  matchBallHeaderTitleEl.textContent = '1. MATCH BALL SIZE';
 
   matchBallHeaderDescEl = document.createElement('span');
   matchBallHeaderDescEl.style.cssText = 'font-size: 10px; color: #94a3b8; margin-left: 8px;';
-  matchBallHeaderDescEl.textContent = 'Select regulation ball or randomize (Gamepad LB / RB to cycle)';
+  matchBallHeaderDescEl.textContent = 'P1 selects regulation ball or random (◀ ▶ or LB / RB to cycle)';
 
   titleWrapper.appendChild(matchBallHeaderTitleEl);
   titleWrapper.appendChild(matchBallHeaderDescEl);
@@ -840,12 +823,12 @@ export function buildMatchDurationSelector() {
 
   const titleWrapper = document.createElement('div');
   const titleEl = document.createElement('span');
-  titleEl.style.cssText = 'font-size: 11px; font-weight: 900; letter-spacing: 0.1em; color: #ffffff;';
-  titleEl.textContent = 'MATCH DURATION';
+  titleEl.style.cssText = 'font-size: 11px; font-weight: 900; letter-spacing: 0.1em; color: #00e5ff;';
+  titleEl.textContent = '2. MATCH LENGTH';
 
   const descEl = document.createElement('span');
   descEl.style.cssText = 'font-size: 10px; color: #94a3b8; margin-left: 8px;';
-  descEl.textContent = 'Regulation match time limit (Arrow keys or LB / RB to cycle)';
+  descEl.textContent = 'P1 selects regulation time limit (◀ ▶ or LB / RB to cycle)';
 
   titleWrapper.appendChild(titleEl);
   titleWrapper.appendChild(descEl);
@@ -1032,8 +1015,9 @@ export function updateAggressivenessUI(idx) {
   if (container) {
     container.style.display = isAi ? 'flex' : 'none';
   }
+  const aggVal = playerConfigs[idx].aggressiveness ?? 0.60;
+  const curVal = Math.round(aggVal * 100);
   const slider = document.getElementById(`agg-slider-p${idx + 1}`);
-  const curVal = Math.round((playerConfigs[idx].aggressiveness ?? 0.60) * 100);
   if (slider && document.activeElement !== slider) {
     slider.value = String(curVal);
   }
@@ -1045,6 +1029,26 @@ export function updateAggressivenessUI(idx) {
     badge.style.background = info.bg;
     badge.style.borderColor = info.border;
   }
+  // Sync the 4 playstyle chip buttons (DEF, BAL, AGG, ALL) so Keyboard/Gamepad D-Pad cycling highlights the active chip
+  const chipsRow = document.getElementById(`agg-chips-p${idx + 1}`);
+  if (chipsRow) {
+    const presets = [0.25, 0.60, 0.80, 1.00];
+    let activeChipIdx = 1;
+    let bestDist = Infinity;
+    presets.forEach((v, cIdx) => {
+      const d = Math.abs(aggVal - v);
+      if (d < bestDist) {
+        bestDist = d;
+        activeChipIdx = cIdx;
+      }
+    });
+    Array.from(chipsRow.children).forEach((b, cIdx) => {
+      const sel = cIdx === activeChipIdx;
+      b.style.background = sel ? '#00e5ff' : 'rgba(255, 255, 255, 0.06)';
+      b.style.borderColor = sel ? '#00e5ff' : 'rgba(255, 255, 255, 0.14)';
+      b.style.color = sel ? '#000000' : '#cbd5e1';
+    });
+  }
 }
 
 export function updateInputBadgesUI() {
@@ -1052,29 +1056,46 @@ export function updateInputBadgesUI() {
   const assignments = getControllerAssignments(activeCount, currentSetupMode);
   const slotNames = [assignments.p1, assignments.p2, assignments.p3, assignments.p4];
   const defaultKb = ['KEYBOARD WASD', 'KEYBOARD IJKL', 'KEYBOARD WASD', 'KEYBOARD IJKL'];
+  const explicit = getExplicitDeviceMappings();
+  const activeIndices = getActivePlayerIndices();
+  const humanSlots = activeIndices.filter((i) => playerConfigs[i]?.type === 'human');
 
   [0, 1, 2, 3].forEach((idx) => {
     const badge = playerInputBadges[idx];
+    const vpBadge = playerViewportBadges[idx];
+    const slotTheme = getPlayerSlotTheme(idx);
+
+    if (vpBadge) {
+      vpBadge.innerHTML = renderViewportBadgeHtml(idx, humanSlots, currentSetupMode);
+    }
+
     if (!badge) return;
 
     if (currentSetupMode === 'practice') {
-      badge.textContent = `INPUT: ${assignments.p1 || 'KEYBOARD WASD'}`;
-      badge.style.color = '#ffffff';
-      badge.style.borderColor = 'rgba(255, 255, 255, 0.25)';
+      badge.textContent = `🎮 P1: ${assignments.p1 || 'KEYBOARD WASD'}`;
+      badge.style.color = slotTheme.hex;
+      badge.style.borderColor = slotTheme.hex;
+      badge.style.background = slotTheme.bg;
       return;
     }
 
     const cfg = playerConfigs[idx];
     if (cfg && cfg.type === 'ai') {
       const diff = (cfg.difficulty || 'medium').toUpperCase();
-      badge.textContent = `INPUT: AI BOT (${diff})`;
-      badge.style.color = idx % 2 === 0 ? '#00e5ff' : '#ff2e55';
-      badge.style.borderColor = idx % 2 === 0 ? 'rgba(0, 229, 255, 0.4)' : 'rgba(255, 46, 85, 0.4)';
+      badge.textContent = `🤖 AI BOT (${diff})`;
+      badge.style.color = '#94a3b8';
+      badge.style.borderColor = 'rgba(148, 163, 184, 0.35)';
+      badge.style.background = 'rgba(255, 255, 255, 0.04)';
     } else {
+      const m = explicit?.[idx];
+      const isFight = m?.type === 'gamepad' && Boolean(m?.fightingPad);
+      const devIcon = m?.type === 'gamepad' ? (isFight ? '🕹️' : '🎮') : '⌨️';
+      const fightSuffix = isFight ? ' [D-PAD]' : '';
       const devName = slotNames[idx];
-      badge.textContent = `INPUT: ${(devName || defaultKb[idx]).toUpperCase()}`;
-      badge.style.color = '#ffffff';
-      badge.style.borderColor = 'rgba(255, 255, 255, 0.25)';
+      badge.textContent = `${devIcon} ${(devName || defaultKb[idx]).toUpperCase()}${fightSuffix}`;
+      badge.style.color = slotTheme.hex;
+      badge.style.borderColor = slotTheme.hex;
+      badge.style.background = slotTheme.bg;
     }
   });
 }
@@ -1396,6 +1417,7 @@ export function setPlayerCamera(idx, cameraMode) {
     showToast('SIDELINE BROADCAST — Shared Fullscreen View for All Players', 'info', 2200);
   }
 
+  updateInputBadgesUI();
   notifyPlayerUpdate(idx);
 }
 
@@ -1481,7 +1503,7 @@ export function cycleOption(playerIdx, rowIdx, direction = 1) {
     return;
   }
 
-  // Match Mode Screen 1 row mapping (Top-to-Bottom: 0=Team Kit, 1=Team Color, 2=Control Type, 3=AI Style, 4=Headwear, 5=Physique, 6=Camera, 7=Assist, 8=Action Bar)
+  // Match Mode Screen 1 row mapping (Top-to-Bottom: 0=Team Kit, 1=Team Color, 2=Headwear, 3=Physique, 4=Camera, 5=Assist, 6=Control/AI Difficulty, 7=AI Style, 8=Action Bar)
   if (rowIdx === 0) {
     setPlayerTeam(playerIdx, playerConfigs[playerIdx].team === 'home' ? 'away' : 'home');
   } else if (rowIdx === 1) {
@@ -1493,34 +1515,44 @@ export function cycleOption(playerIdx, rowIdx, direction = 1) {
     const nextIdx = (curIdx + direction + allowed.length) % allowed.length;
     setPlayerColor(playerIdx, allowed[nextIdx].hex);
   } else if (rowIdx === 2) {
+    cyclePlayerHeadwear(playerIdx, direction);
+  } else if (rowIdx === 3) {
+    const curIdx = PHYSIQUE_OPTIONS.indexOf(playerConfigs[playerIdx].variant);
+    const nextIdx = (curIdx + direction + PHYSIQUE_OPTIONS.length) % PHYSIQUE_OPTIONS.length;
+    setPlayerPhysique(playerIdx, PHYSIQUE_OPTIONS[nextIdx]);
+  } else if (rowIdx === 4) {
+    const curIdx = CAMERA_OPTIONS.findIndex((c) => c.id === playerConfigs[playerIdx].cameraMode);
+    const nextIdx = (curIdx + direction + CAMERA_OPTIONS.length) % CAMERA_OPTIONS.length;
+    setPlayerCamera(playerIdx, CAMERA_OPTIONS[nextIdx].id);
+  } else if (rowIdx === 5) {
+    const curPreset = playerConfigs[playerIdx].assistPreset || 'standard';
+    const curIdx = ASSIST_OPTIONS.findIndex((a) => a.id === curPreset);
+    const nextIdx = (curIdx + direction + ASSIST_OPTIONS.length) % ASSIST_OPTIONS.length;
+    setPlayerAssist(playerIdx, ASSIST_OPTIONS[nextIdx].id);
+  } else if (rowIdx === 6) {
     const types = ['human', 'ai-easy', 'ai-medium', 'ai-hard'];
     const curConfig = playerConfigs[playerIdx];
     const curId = curConfig.type === 'human' ? 'human' : `ai-${curConfig.difficulty}`;
     const curIdx = types.indexOf(curId);
     const nextIdx = (curIdx + direction + types.length) % types.length;
     setPlayerType(playerIdx, types[nextIdx]);
-  } else if (rowIdx === 3) {
+  } else if (rowIdx === 7) {
     if (playerConfigs[playerIdx].type === 'ai') {
+      const presets = [0.25, 0.60, 0.80, 1.00];
       const curVal = playerConfigs[playerIdx].aggressiveness ?? 0.60;
-      const nextVal = Math.max(0, Math.min(1.0, Math.round((curVal + direction * 0.05) * 100) / 100));
-      setPlayerAggressiveness(playerIdx, nextVal);
+      let curIdx = 1;
+      let bestDist = Infinity;
+      presets.forEach((v, idx) => {
+        const d = Math.abs(curVal - v);
+        if (d < bestDist) {
+          bestDist = d;
+          curIdx = idx;
+        }
+      });
+      const nextIdx = (curIdx + direction + presets.length) % presets.length;
+      setPlayerAggressiveness(playerIdx, presets[nextIdx]);
       soundManager.playTone(direction > 0 ? 520 : 380, 0.04, 'sine', 0.15);
     }
-  } else if (rowIdx === 4) {
-    cyclePlayerHeadwear(playerIdx, direction);
-  } else if (rowIdx === 5) {
-    const curIdx = PHYSIQUE_OPTIONS.indexOf(playerConfigs[playerIdx].variant);
-    const nextIdx = (curIdx + direction + PHYSIQUE_OPTIONS.length) % PHYSIQUE_OPTIONS.length;
-    setPlayerPhysique(playerIdx, PHYSIQUE_OPTIONS[nextIdx]);
-  } else if (rowIdx === 6) {
-    const curIdx = CAMERA_OPTIONS.findIndex((c) => c.id === playerConfigs[playerIdx].cameraMode);
-    const nextIdx = (curIdx + direction + CAMERA_OPTIONS.length) % CAMERA_OPTIONS.length;
-    setPlayerCamera(playerIdx, CAMERA_OPTIONS[nextIdx].id);
-  } else if (rowIdx === 7) {
-    const curPreset = playerConfigs[playerIdx].assistPreset || 'standard';
-    const curIdx = ASSIST_OPTIONS.findIndex((a) => a.id === curPreset);
-    const nextIdx = (curIdx + direction + ASSIST_OPTIONS.length) % ASSIST_OPTIONS.length;
-    setPlayerAssist(playerIdx, ASSIST_OPTIONS[nextIdx].id);
   } else if (rowIdx === 8) {
     if (screen1ActionCol === 0) {
       if (btnBack) btnBack.click();
@@ -1577,7 +1609,7 @@ export function claimLobbySlotForPad(padIndex, padId = '') {
   if (state.playerConfigs && state.playerConfigs[targetSlot]) {
     state.playerConfigs[targetSlot].type = 'human';
   }
-  playerFocusRow[targetSlot] = 4; // Start on Hat row ready to customize
+  playerFocusRow[targetSlot] = targetSlot === 0 ? 1 : 2; // P1 starts on Team Color, P2-P4 start on Hat
 
   updateReadyUI();
   updateTypeButtonsUI();
@@ -1605,7 +1637,7 @@ export function toggleLobbySlotHumanAi(slotIdx, padIndex = -1, padId = '') {
     }
     playerConfigs[slotIdx].type = 'human';
     playerReadyState[slotIdx] = false;
-    if (playerFocusRow[slotIdx] < 2) playerFocusRow[slotIdx] = 2;
+    playerFocusRow[slotIdx] = slotIdx === 0 ? 1 : 2;
     if (state.playerConfigs && state.playerConfigs[slotIdx]) {
       state.playerConfigs[slotIdx].type = 'human';
     }
@@ -1617,6 +1649,7 @@ export function toggleLobbySlotHumanAi(slotIdx, padIndex = -1, padId = '') {
     notifyPlayerUpdate(slotIdx);
     soundManager.playTone(660, 0.07, 'sine', 0.22);
   } else {
+    playerFocusRow[slotIdx] = 6;
     setPlayerType(slotIdx, `ai-${playerConfigs[slotIdx].difficulty || 'medium'}`);
     soundManager.playTone(380, 0.07, 'sine', 0.18);
   }
@@ -1790,33 +1823,40 @@ export function updateReadyUI() {
     }
 
     if (btn) {
+      const slotTheme = getPlayerSlotTheme(idx);
       if (setupPage === 2) {
-        btn.style.display = (idx < 2 || is2v2) ? 'block' : 'none';
+        btn.style.display = (idx < 2 || is2v2) ? 'inline-flex' : 'none';
+        btn.style.alignItems = 'center';
+        btn.style.justifyContent = 'center';
+        btn.style.gap = '5px';
       }
       if (isAI) {
-        btn.textContent = `✓ BOT ${idx + 1} READY`;
+        btn.innerHTML = `<span>✓ BOT P${idx + 1} READY</span>`;
         btn.disabled = true;
-        btn.style.background = 'rgba(0, 229, 255, 0.15)';
-        btn.style.borderColor = '#00e5ff';
-        btn.style.color = '#00e5ff';
+        btn.style.background = 'rgba(148, 163, 184, 0.12)';
+        btn.style.borderColor = 'rgba(148, 163, 184, 0.35)';
+        btn.style.borderLeft = `4px solid ${slotTheme.hex}`;
+        btn.style.color = '#94a3b8';
         btn.style.cursor = 'default';
         btn.style.boxShadow = 'none';
       } else if (isReady) {
         btn.disabled = false;
-        btn.textContent = `✓ P${idx + 1} READY`;
+        btn.innerHTML = `<span style="padding:1px 5px;border-radius:3px;background:${slotTheme.hex};color:${slotTheme.textOnFill};font-size:9.5px;font-weight:900;">P${idx + 1}</span><span>✓ READY!</span>`;
         btn.style.background = '#10b981';
-        btn.style.borderColor = '#10b981';
+        btn.style.borderColor = '#34d399';
+        btn.style.borderLeft = `5px solid ${slotTheme.hex}`;
         btn.style.color = '#ffffff';
         btn.style.cursor = 'pointer';
-        btn.style.boxShadow = '0 0 14px rgba(16, 185, 129, 0.45)';
+        btn.style.boxShadow = `0 0 16px rgba(16, 185, 129, 0.55), 0 0 8px ${slotTheme.glow}`;
       } else {
         btn.disabled = false;
-        btn.textContent = `[X] READY P${idx + 1}`;
-        btn.style.background = 'rgba(255, 255, 255, 0.08)';
-        btn.style.borderColor = 'rgba(255, 255, 255, 0.2)';
-        btn.style.color = '#cfe3f5';
+        btn.innerHTML = `<span style="padding:1px 5px;border-radius:3px;background:${slotTheme.hex};color:${slotTheme.textOnFill};font-size:9.5px;font-weight:900;">P${idx + 1}</span>${renderCardinalDiamondSvg('west', 12)}<span>□/X READY</span>`;
+        btn.style.background = slotTheme.bg;
+        btn.style.borderColor = slotTheme.hex;
+        btn.style.borderLeft = `5px solid ${slotTheme.hex}`;
+        btn.style.color = '#ffffff';
         btn.style.cursor = 'pointer';
-        btn.style.boxShadow = 'none';
+        btn.style.boxShadow = `0 0 12px ${slotTheme.glow}`;
       }
     }
   });
@@ -2045,6 +2085,7 @@ export function buildTeamGroupPanel(teamGroupIdx, teamTitle, slotIndices) {
 }
 
 export function buildPlayerColumn(idx, label, themeColor, sharedTeamStatusRow = null, sharedTeamColorRow = null) {
+  const slotTheme = getPlayerSlotTheme(idx);
   const col = document.createElement('div');
   col.id = `player-setup-col-${idx + 1}`;
   colEls[idx] = col;
@@ -2058,7 +2099,8 @@ export function buildPlayerColumn(idx, label, themeColor, sharedTeamStatusRow = 
     flex-direction: column;
     padding: 10px 12px;
     background: rgba(11, 17, 26, 0.88);
-    border: 1px solid rgba(255, 255, 255, 0.16);
+    border: 1.5px solid rgba(255, 255, 255, 0.16);
+    border-top: 3px solid ${slotTheme.hex};
     border-radius: 10px;
     gap: 6px;
     min-width: 0;
@@ -2080,13 +2122,31 @@ export function buildPlayerColumn(idx, label, themeColor, sharedTeamStatusRow = 
   `;
 
   const labelSpan = document.createElement('span');
-  labelSpan.style.cssText = 'font-size: 13px; font-weight: 900; letter-spacing: 0.08em; color: #ffffff; display: inline-flex; align-items: center; gap: 5px;';
+  labelSpan.style.cssText = 'font-size: 13px; font-weight: 900; letter-spacing: 0.08em; color: #ffffff; display: inline-flex; align-items: center; gap: 6px;';
+
+  const slotColorPill = document.createElement('span');
+  slotColorPill.style.cssText = `
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: ${slotTheme.bg};
+    border: 1px solid ${slotTheme.hex};
+    color: ${slotTheme.hex};
+    font-size: 10px;
+    font-weight: 900;
+    letter-spacing: 0.06em;
+  `;
+  slotColorPill.textContent = slotTheme.short;
+  labelSpan.appendChild(slotColorPill);
+
   if (idx === 0 || idx === 1) {
     const badgeEl = document.createElement('span');
     badgeEl.className = 'contextual-btn-badge';
     badgeEl.id = idx === 0 ? 'badge-p1-lb' : 'badge-p2-rb';
-    badgeEl.style.borderColor = idx === 0 ? '#00e5ff' : '#ff2e55';
-    badgeEl.style.color = idx === 0 ? '#00e5ff' : '#ff2e55';
+    badgeEl.style.borderColor = slotTheme.hex;
+    badgeEl.style.color = slotTheme.hex;
     badgeEl.textContent = idx === 0 ? 'LB' : 'RB';
     const titleTextEl = document.createElement('span');
     titleTextEl.textContent = label;
@@ -2105,23 +2165,29 @@ export function buildPlayerColumn(idx, label, themeColor, sharedTeamStatusRow = 
   const ctrlTag = document.createElement('span');
   ctrlTag.id = `ctrl-tag-p${idx + 1}`;
   ctrlTag.style.cssText = 'font-size: 9.5px; font-weight: 800; letter-spacing: 0.04em; color: #ffffff;';
-  ctrlTag.innerHTML = idx === 0 ? '<span class="contextual-btn-badge" style="border-color:#10b981;color:#10b981;">ACTIVE</span>' : '<span class="contextual-btn-badge">TAB/RB</span>';
+  ctrlTag.innerHTML = idx === 0 ? `<span class="contextual-btn-badge" style="border-color:${slotTheme.hex};color:${slotTheme.hex};">ACTIVE</span>` : '<span class="contextual-btn-badge">P1: TAB/RB</span>';
   ctrlTagEls[idx] = ctrlTag;
 
   pHeader.appendChild(labelSpan);
   pHeader.appendChild(ctrlTag);
   col.appendChild(pHeader);
 
-  // Compact Single-Line Status Row (Input Assignment + Ready Pill side-by-side)
+  // Compact Status Strip (Input Assignment + Viewport Screen Indicator + Ready Pill)
   const statusStrip = document.createElement('div');
-  statusStrip.style.cssText = 'display: flex; gap: 5px; align-items: center; min-width: 0;';
+  statusStrip.style.cssText = 'display: flex; gap: 5px; align-items: center; min-width: 0; flex-wrap: wrap;';
 
   const inputBadge = document.createElement('div');
   inputBadge.id = `input-badge-p${idx + 1}`;
-  inputBadge.style.cssText = 'flex: 1; min-width: 0; font-size: 9.5px; font-weight: 700; color: #ffffff; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 5px; padding: 3px 6px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;';
+  inputBadge.style.cssText = 'flex: 1; min-width: 110px; font-size: 9.5px; font-weight: 700; color: #ffffff; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 5px; padding: 3px 6px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;';
   inputBadge.textContent = idx % 2 === 0 ? 'INPUT: KEYBOARD WASD' : 'INPUT: KEYBOARD IJKL';
   playerInputBadges[idx] = inputBadge;
   statusStrip.appendChild(inputBadge);
+
+  const viewportBadge = document.createElement('div');
+  viewportBadge.id = `viewport-badge-p${idx + 1}`;
+  viewportBadge.style.cssText = 'display: inline-flex; align-items: center; flex-shrink: 0;';
+  playerViewportBadges[idx] = viewportBadge;
+  statusStrip.appendChild(viewportBadge);
 
   const readyBanner = document.createElement('div');
   readyBanner.id = `ready-banner-p${idx + 1}`;
@@ -2149,10 +2215,216 @@ export function buildPlayerColumn(idx, label, themeColor, sharedTeamStatusRow = 
   playerRowElements[idx][0] = sharedTeamStatusRow;
   playerRowElements[idx][1] = sharedTeamColorRow;
 
-  // Row 2: Control Type + Row 3: AI Style
+  // Individual Athlete Options Container (Placed FIRST, above Human/AI Control Type)
+  const charCard = document.createElement('div');
+  charCard.id = `char-options-card-p${idx + 1}`;
+  charCard.style.cssText = 'display: flex; flex-direction: column; gap: 5px;';
+
+  // Row 2 (Match) / Row 3 (Practice): Headwear (Single-line horizontal row)
+  const headwearRow = document.createElement('div');
+  headwearRow.id = `row-headwear-p${idx + 1}`;
+  headwearRow.style.cssText = 'display: flex; align-items: center; gap: 6px; padding: 2px 3px; border-radius: 6px; transition: all 0.15s ease;';
+
+  const hwTitle = document.createElement('div');
+  hwTitle.style.cssText = 'font-size: 9.5px; font-weight: 800; color: #94a3b8; min-width: 38px; letter-spacing: 0.06em;';
+  hwTitle.textContent = 'HAT';
+
+  const headwearCyclerRow = document.createElement('div');
+  headwearCyclerRow.style.cssText = 'display: flex; gap: 4px; align-items: center; flex: 1; min-width: 0;';
+
+  const btnPrevHw = document.createElement('button');
+  btnPrevHw.textContent = '<';
+  btnPrevHw.style.cssText = 'padding: 5px 8px; font-size: 10.5px; font-weight: 800; font-family: inherit; color: #ffffff; background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 5px; cursor: pointer;';
+  btnPrevHw.onclick = () => {
+    playerFocusRow[idx] = currentSetupMode === 'practice' ? 3 : 2;
+    focusedColumn = idx;
+    cyclePlayerHeadwear(idx, -1);
+    updateFocusUI();
+  };
+
+  const headwearLabelEl = document.createElement('div');
+  headwearLabelEl.id = `label-headwear-p${idx + 1}`;
+  headwearLabelEl.style.cssText = 'flex: 1; padding: 5px 6px; font-size: 10px; font-weight: 800; text-align: center; color: #ffffff; background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;';
+  const initialHwOpt = HEADWEAR_OPTIONS.find((o) => o.id === playerConfigs[idx].headwear);
+  headwearLabelEl.textContent = initialHwOpt ? initialHwOpt.label : (playerConfigs[idx].headwear || 'NONE');
+  playerHeadwearLabelEls[idx] = headwearLabelEl;
+
+  const btnNextHw = document.createElement('button');
+  btnNextHw.textContent = '>';
+  btnNextHw.style.cssText = 'padding: 5px 8px; font-size: 10.5px; font-weight: 800; font-family: inherit; color: #ffffff; background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 5px; cursor: pointer;';
+  btnNextHw.onclick = () => {
+    playerFocusRow[idx] = currentSetupMode === 'practice' ? 3 : 2;
+    focusedColumn = idx;
+    cyclePlayerHeadwear(idx, 1);
+    updateFocusUI();
+  };
+
+  headwearCyclerRow.append(btnPrevHw, headwearLabelEl, btnNextHw);
+  headwearRow.append(hwTitle, headwearCyclerRow);
+  charCard.appendChild(headwearRow);
+  playerRowElements[idx][2] = headwearRow;
+
+  // Row 3 (Match) / Row 4 (Practice): Player Physique (Single-line horizontal row)
+  const physiqueRow = document.createElement('div');
+  physiqueRow.id = `row-physique-p${idx + 1}`;
+  physiqueRow.style.cssText = 'display: flex; align-items: center; gap: 6px; padding: 2px 3px; border-radius: 6px; transition: all 0.15s ease;';
+
+  const physTitle = document.createElement('div');
+  physTitle.style.cssText = 'font-size: 9.5px; font-weight: 800; color: #94a3b8; min-width: 38px; letter-spacing: 0.06em;';
+  physTitle.textContent = 'BUILD';
+
+  const physiqueBtnRow = document.createElement('div');
+  physiqueBtnRow.style.cssText = 'display: flex; gap: 4px; flex: 1;';
+
+  const shortPhysLabels = { classic: 'CLASSIC', masculine: 'MASC', feminine: 'FEM' };
+  playerPhysiqueButtons[idx] = [];
+  PHYSIQUE_OPTIONS.forEach((variant) => {
+    const btn = document.createElement('button');
+    btn.textContent = shortPhysLabels[variant] || variant.toUpperCase();
+    const isSelected = playerConfigs[idx].variant === variant;
+    btn.style.cssText = `
+      flex: 1;
+      padding: 5px 4px;
+      font-size: 9.5px;
+      font-weight: 800;
+      font-family: inherit;
+      color: ${isSelected ? '#000000' : '#94a3b8'};
+      background: ${isSelected ? '#ffffff' : 'rgba(255, 255, 255, 0.06)'};
+      border: 1px solid ${isSelected ? '#ffffff' : 'rgba(255, 255, 255, 0.15)'};
+      border-radius: 5px;
+      white-space: nowrap;
+      box-shadow: ${isSelected ? '0 0 8px rgba(255, 255, 255, 0.35)' : 'none'};
+      cursor: pointer;
+    `;
+    btn.onclick = () => {
+      playerFocusRow[idx] = currentSetupMode === 'practice' ? 4 : 3;
+      focusedColumn = idx;
+      updateFocusUI();
+      setPlayerPhysique(idx, variant);
+    };
+    playerPhysiqueButtons[idx].push({ btn, variant });
+    physiqueBtnRow.appendChild(btn);
+  });
+  physiqueRow.append(physTitle, physiqueBtnRow);
+  charCard.appendChild(physiqueRow);
+  playerRowElements[idx][3] = physiqueRow;
+
+  // Row 4 (Match) / Row 5 (Practice): Streamlined Camera Selector (Single-line + 5-dot indicator)
+  const cameraRow = document.createElement('div');
+  cameraRow.id = `row-camera-p${idx + 1}`;
+  cameraRow.style.cssText = 'display: flex; align-items: center; gap: 6px; padding: 2px 3px; border-radius: 6px; transition: all 0.15s ease;';
+
+  const camTitleWrap = document.createElement('div');
+  camTitleWrap.style.cssText = 'display: flex; flex-direction: column; gap: 2px; min-width: 38px;';
+  const camTitle = document.createElement('span');
+  camTitle.style.cssText = 'font-size: 9.5px; font-weight: 800; color: #94a3b8; letter-spacing: 0.06em;';
+  camTitle.textContent = 'CAM';
+
+  const dotsWrap = document.createElement('div');
+  dotsWrap.style.cssText = 'display: flex; gap: 2px;';
+  playerCameraDotsEls[idx] = [];
+  const initCamIdx = Math.max(0, CAMERA_OPTIONS.findIndex((o) => o.id === playerConfigs[idx].cameraMode));
+  CAMERA_OPTIONS.forEach((_, dIdx) => {
+    const dot = document.createElement('span');
+    const active = dIdx === initCamIdx;
+    dot.style.cssText = `width: 4px; height: 4px; border-radius: 50%; background: ${active ? '#00e5ff' : 'rgba(255,255,255,0.22)'};`;
+    playerCameraDotsEls[idx].push(dot);
+    dotsWrap.appendChild(dot);
+  });
+  camTitleWrap.append(camTitle, dotsWrap);
+
+  const cameraCyclerRow = document.createElement('div');
+  cameraCyclerRow.style.cssText = 'display: flex; gap: 4px; align-items: center; flex: 1; min-width: 0;';
+
+  const btnPrevCam = document.createElement('button');
+  btnPrevCam.textContent = '<';
+  btnPrevCam.style.cssText = 'padding: 5px 8px; font-size: 10.5px; font-weight: 800; font-family: inherit; color: #ffffff; background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 5px; cursor: pointer;';
+  btnPrevCam.onclick = () => {
+    playerFocusRow[idx] = currentSetupMode === 'practice' ? 5 : 4;
+    focusedColumn = idx;
+    cyclePlayerCamera(idx, -1);
+    updateFocusUI();
+  };
+
+  const cameraLabelEl = document.createElement('div');
+  cameraLabelEl.id = `label-camera-p${idx + 1}`;
+  cameraLabelEl.style.cssText = 'flex: 1; padding: 5px 6px; font-size: 10px; font-weight: 800; text-align: center; color: #00e5ff; background: rgba(0, 229, 255, 0.08); border: 1px solid rgba(0, 229, 255, 0.28); border-radius: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer;';
+  const initialCamOpt = CAMERA_OPTIONS[initCamIdx];
+  cameraLabelEl.textContent = initialCamOpt ? initialCamOpt.label : (playerConfigs[idx].cameraMode || 'CHASE').toUpperCase();
+  cameraLabelEl.onclick = () => {
+    playerFocusRow[idx] = currentSetupMode === 'practice' ? 5 : 4;
+    focusedColumn = idx;
+    cyclePlayerCamera(idx, 1);
+    updateFocusUI();
+  };
+  playerCameraLabelEls[idx] = cameraLabelEl;
+
+  const btnNextCam = document.createElement('button');
+  btnNextCam.textContent = '>';
+  btnNextCam.style.cssText = 'padding: 5px 8px; font-size: 10.5px; font-weight: 800; font-family: inherit; color: #ffffff; background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 5px; cursor: pointer;';
+  btnNextCam.onclick = () => {
+    playerFocusRow[idx] = currentSetupMode === 'practice' ? 5 : 4;
+    focusedColumn = idx;
+    cyclePlayerCamera(idx, 1);
+    updateFocusUI();
+  };
+
+  cameraCyclerRow.append(btnPrevCam, cameraLabelEl, btnNextCam);
+  cameraRow.append(camTitleWrap, cameraCyclerRow);
+  charCard.appendChild(cameraRow);
+  playerRowElements[idx][4] = cameraRow;
+
+  // Row 5 (Match) / Row 6 (Practice): Strike Assist Preset (Single-line horizontal row)
+  const assistRow = document.createElement('div');
+  assistRow.id = `row-assist-p${idx + 1}`;
+  assistRow.style.cssText = 'display: flex; align-items: center; gap: 6px; padding: 2px 3px; border-radius: 6px; transition: all 0.15s ease;';
+
+  const assistTitle = document.createElement('div');
+  assistTitle.style.cssText = 'font-size: 9.5px; font-weight: 800; color: #94a3b8; min-width: 38px; letter-spacing: 0.06em;';
+  assistTitle.textContent = 'ASSIST';
+
+  const assistBtnRow = document.createElement('div');
+  assistBtnRow.style.cssText = 'display: flex; gap: 4px; flex: 1;';
+
+  playerAssistButtons[idx] = [];
+  ASSIST_OPTIONS.forEach((opt) => {
+    const btn = document.createElement('button');
+    btn.textContent = opt.label;
+    const isSelected = (playerConfigs[idx].assistPreset || 'standard') === opt.id;
+    btn.style.cssText = `
+      flex: 1;
+      padding: 5px 4px;
+      font-size: 9.5px;
+      font-weight: 800;
+      font-family: inherit;
+      color: ${isSelected ? '#000000' : '#94a3b8'};
+      background: ${isSelected ? '#38bdf8' : 'rgba(255, 255, 255, 0.06)'};
+      border: 1px solid ${isSelected ? '#38bdf8' : 'rgba(255, 255, 255, 0.15)'};
+      border-radius: 5px;
+      white-space: nowrap;
+      box-shadow: ${isSelected ? '0 0 8px rgba(56, 189, 248, 0.45)' : 'none'};
+      cursor: pointer;
+      transition: all 0.15s ease;
+    `;
+    btn.onclick = () => {
+      playerFocusRow[idx] = currentSetupMode === 'practice' ? 6 : 5;
+      focusedColumn = idx;
+      updateFocusUI();
+      setPlayerAssist(idx, opt.id);
+    };
+    playerAssistButtons[idx].push({ btn, id: opt.id });
+    assistBtnRow.appendChild(btn);
+  });
+  assistRow.append(assistTitle, assistBtnRow);
+  charCard.appendChild(assistRow);
+  playerRowElements[idx][5] = assistRow;
+
+  col.appendChild(charCard);
+
+  // Row 6: Control Type (Human / AI Difficulty) + Row 7: AI Style (Placed at the BOTTOM of the selection menu)
   const typeCard = document.createElement('div');
   typeCard.id = `type-options-card-p${idx + 1}`;
-  typeCard.style.cssText = 'display: flex; flex-direction: column; gap: 4px;';
+  typeCard.style.cssText = 'display: flex; flex-direction: column; gap: 4px; border-top: 1px solid rgba(255, 255, 255, 0.08); padding-top: 5px;';
 
   const typeRow = document.createElement('div');
   typeRow.id = `row-type-status-p${idx + 1}`;
@@ -2196,7 +2468,7 @@ export function buildPlayerColumn(idx, label, themeColor, sharedTeamStatusRow = 
       transition: all 0.12s ease;
     `;
     btn.onclick = () => {
-      playerFocusRow[idx] = 2;
+      playerFocusRow[idx] = 6;
       focusedColumn = idx;
       updateFocusUI();
       setPlayerType(idx, t.id);
@@ -2207,7 +2479,7 @@ export function buildPlayerColumn(idx, label, themeColor, sharedTeamStatusRow = 
   typeRow.appendChild(typeBtnWrap);
   typeCard.appendChild(typeRow);
 
-  // Row 3: Single-line AI Aggressiveness Row (visible when AI is selected)
+  // Row 7: Single-line AI Aggressiveness Row (visible when AI is selected)
   const isAi = playerConfigs[idx].type === 'ai';
   const aggContainer = document.createElement('div');
   aggContainer.id = `agg-container-p${idx + 1}`;
@@ -2243,12 +2515,13 @@ export function buildPlayerColumn(idx, label, themeColor, sharedTeamStatusRow = 
   aggContainer.appendChild(aggSlider);
 
   aggContainer.onclick = () => {
-    playerFocusRow[idx] = 3;
+    playerFocusRow[idx] = 7;
     focusedColumn = idx;
     updateFocusUI();
   };
 
   const chipsRow = document.createElement('div');
+  chipsRow.id = `agg-chips-p${idx + 1}`;
   chipsRow.style.cssText = 'display: flex; gap: 4px; flex: 1;';
   [
     { label: 'DEF', val: 0.25 },
@@ -2273,7 +2546,7 @@ export function buildPlayerColumn(idx, label, themeColor, sharedTeamStatusRow = 
     `;
     chipBtn.onclick = (e) => {
       e.stopPropagation();
-      playerFocusRow[idx] = 3;
+      playerFocusRow[idx] = 7;
       focusedColumn = idx;
       aggSlider.value = String(Math.round(chip.val * 100));
       setPlayerAggressiveness(idx, chip.val);
@@ -2290,220 +2563,69 @@ export function buildPlayerColumn(idx, label, themeColor, sharedTeamStatusRow = 
   aggContainer.appendChild(chipsRow);
 
   typeCard.appendChild(aggContainer);
-  playerRowElements[idx][2] = typeRow;
-  playerRowElements[idx][3] = aggContainer;
+  playerRowElements[idx][6] = typeRow;
+  playerRowElements[idx][7] = aggContainer;
   col.appendChild(typeCard);
-
-  // Individual Athlete Options Container
-  const charCard = document.createElement('div');
-  charCard.id = `char-options-card-p${idx + 1}`;
-  charCard.style.cssText = 'display: flex; flex-direction: column; gap: 5px;';
-
-  // Row 4 (Match) / Row 3 (Practice): Headwear (Single-line horizontal row)
-  const headwearRow = document.createElement('div');
-  headwearRow.id = `row-headwear-p${idx + 1}`;
-  headwearRow.style.cssText = 'display: flex; align-items: center; gap: 6px; padding: 2px 3px; border-radius: 6px; transition: all 0.15s ease;';
-
-  const hwTitle = document.createElement('div');
-  hwTitle.style.cssText = 'font-size: 9.5px; font-weight: 800; color: #94a3b8; min-width: 38px; letter-spacing: 0.06em;';
-  hwTitle.textContent = 'HAT';
-
-  const headwearCyclerRow = document.createElement('div');
-  headwearCyclerRow.style.cssText = 'display: flex; gap: 4px; align-items: center; flex: 1; min-width: 0;';
-
-  const btnPrevHw = document.createElement('button');
-  btnPrevHw.textContent = '<';
-  btnPrevHw.style.cssText = 'padding: 5px 8px; font-size: 10.5px; font-weight: 800; font-family: inherit; color: #ffffff; background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 5px; cursor: pointer;';
-  btnPrevHw.onclick = () => {
-    playerFocusRow[idx] = currentSetupMode === 'practice' ? 3 : 4;
-    focusedColumn = idx;
-    cyclePlayerHeadwear(idx, -1);
-    updateFocusUI();
-  };
-
-  const headwearLabelEl = document.createElement('div');
-  headwearLabelEl.id = `label-headwear-p${idx + 1}`;
-  headwearLabelEl.style.cssText = 'flex: 1; padding: 5px 6px; font-size: 10px; font-weight: 800; text-align: center; color: #ffffff; background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;';
-  const initialHwOpt = HEADWEAR_OPTIONS.find((o) => o.id === playerConfigs[idx].headwear);
-  headwearLabelEl.textContent = initialHwOpt ? initialHwOpt.label : (playerConfigs[idx].headwear || 'NONE');
-  playerHeadwearLabelEls[idx] = headwearLabelEl;
-
-  const btnNextHw = document.createElement('button');
-  btnNextHw.textContent = '>';
-  btnNextHw.style.cssText = 'padding: 5px 8px; font-size: 10.5px; font-weight: 800; font-family: inherit; color: #ffffff; background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 5px; cursor: pointer;';
-  btnNextHw.onclick = () => {
-    playerFocusRow[idx] = currentSetupMode === 'practice' ? 3 : 4;
-    focusedColumn = idx;
-    cyclePlayerHeadwear(idx, 1);
-    updateFocusUI();
-  };
-
-  headwearCyclerRow.append(btnPrevHw, headwearLabelEl, btnNextHw);
-  headwearRow.append(hwTitle, headwearCyclerRow);
-  charCard.appendChild(headwearRow);
-  playerRowElements[idx][4] = headwearRow;
-
-  // Row 5 (Match) / Row 4 (Practice): Player Physique (Single-line horizontal row)
-  const physiqueRow = document.createElement('div');
-  physiqueRow.id = `row-physique-p${idx + 1}`;
-  physiqueRow.style.cssText = 'display: flex; align-items: center; gap: 6px; padding: 2px 3px; border-radius: 6px; transition: all 0.15s ease;';
-
-  const physTitle = document.createElement('div');
-  physTitle.style.cssText = 'font-size: 9.5px; font-weight: 800; color: #94a3b8; min-width: 38px; letter-spacing: 0.06em;';
-  physTitle.textContent = 'BUILD';
-
-  const physiqueBtnRow = document.createElement('div');
-  physiqueBtnRow.style.cssText = 'display: flex; gap: 4px; flex: 1;';
-
-  const shortPhysLabels = { classic: 'CLASSIC', masculine: 'MASC', feminine: 'FEM' };
-  playerPhysiqueButtons[idx] = [];
-  PHYSIQUE_OPTIONS.forEach((variant) => {
-    const btn = document.createElement('button');
-    btn.textContent = shortPhysLabels[variant] || variant.toUpperCase();
-    const isSelected = playerConfigs[idx].variant === variant;
-    btn.style.cssText = `
-      flex: 1;
-      padding: 5px 4px;
-      font-size: 9.5px;
-      font-weight: 800;
-      font-family: inherit;
-      color: ${isSelected ? '#000000' : '#94a3b8'};
-      background: ${isSelected ? '#ffffff' : 'rgba(255, 255, 255, 0.06)'};
-      border: 1px solid ${isSelected ? '#ffffff' : 'rgba(255, 255, 255, 0.15)'};
-      border-radius: 5px;
-      white-space: nowrap;
-      box-shadow: ${isSelected ? '0 0 8px rgba(255, 255, 255, 0.35)' : 'none'};
-      cursor: pointer;
-    `;
-    btn.onclick = () => {
-      playerFocusRow[idx] = currentSetupMode === 'practice' ? 4 : 5;
-      focusedColumn = idx;
-      updateFocusUI();
-      setPlayerPhysique(idx, variant);
-    };
-    playerPhysiqueButtons[idx].push({ btn, variant });
-    physiqueBtnRow.appendChild(btn);
-  });
-  physiqueRow.append(physTitle, physiqueBtnRow);
-  charCard.appendChild(physiqueRow);
-  playerRowElements[idx][5] = physiqueRow;
-
-  // Row 6 (Match) / Row 5 (Practice): Streamlined Camera Selector (Single-line + 5-dot indicator)
-  const cameraRow = document.createElement('div');
-  cameraRow.id = `row-camera-p${idx + 1}`;
-  cameraRow.style.cssText = 'display: flex; align-items: center; gap: 6px; padding: 2px 3px; border-radius: 6px; transition: all 0.15s ease;';
-
-  const camTitleWrap = document.createElement('div');
-  camTitleWrap.style.cssText = 'display: flex; flex-direction: column; gap: 2px; min-width: 38px;';
-  const camTitle = document.createElement('span');
-  camTitle.style.cssText = 'font-size: 9.5px; font-weight: 800; color: #94a3b8; letter-spacing: 0.06em;';
-  camTitle.textContent = 'CAM';
-
-  const dotsWrap = document.createElement('div');
-  dotsWrap.style.cssText = 'display: flex; gap: 2px;';
-  playerCameraDotsEls[idx] = [];
-  const initCamIdx = Math.max(0, CAMERA_OPTIONS.findIndex((o) => o.id === playerConfigs[idx].cameraMode));
-  CAMERA_OPTIONS.forEach((_, dIdx) => {
-    const dot = document.createElement('span');
-    const active = dIdx === initCamIdx;
-    dot.style.cssText = `width: 4px; height: 4px; border-radius: 50%; background: ${active ? '#00e5ff' : 'rgba(255,255,255,0.22)'};`;
-    playerCameraDotsEls[idx].push(dot);
-    dotsWrap.appendChild(dot);
-  });
-  camTitleWrap.append(camTitle, dotsWrap);
-
-  const cameraCyclerRow = document.createElement('div');
-  cameraCyclerRow.style.cssText = 'display: flex; gap: 4px; align-items: center; flex: 1; min-width: 0;';
-
-  const btnPrevCam = document.createElement('button');
-  btnPrevCam.textContent = '<';
-  btnPrevCam.style.cssText = 'padding: 5px 8px; font-size: 10.5px; font-weight: 800; font-family: inherit; color: #ffffff; background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 5px; cursor: pointer;';
-  btnPrevCam.onclick = () => {
-    playerFocusRow[idx] = currentSetupMode === 'practice' ? 5 : 6;
-    focusedColumn = idx;
-    cyclePlayerCamera(idx, -1);
-    updateFocusUI();
-  };
-
-  const cameraLabelEl = document.createElement('div');
-  cameraLabelEl.id = `label-camera-p${idx + 1}`;
-  cameraLabelEl.style.cssText = 'flex: 1; padding: 5px 6px; font-size: 10px; font-weight: 800; text-align: center; color: #00e5ff; background: rgba(0, 229, 255, 0.08); border: 1px solid rgba(0, 229, 255, 0.28); border-radius: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer;';
-  const initialCamOpt = CAMERA_OPTIONS[initCamIdx];
-  cameraLabelEl.textContent = initialCamOpt ? initialCamOpt.label : (playerConfigs[idx].cameraMode || 'CHASE').toUpperCase();
-  cameraLabelEl.onclick = () => {
-    playerFocusRow[idx] = currentSetupMode === 'practice' ? 5 : 6;
-    focusedColumn = idx;
-    cyclePlayerCamera(idx, 1);
-    updateFocusUI();
-  };
-  playerCameraLabelEls[idx] = cameraLabelEl;
-
-  const btnNextCam = document.createElement('button');
-  btnNextCam.textContent = '>';
-  btnNextCam.style.cssText = 'padding: 5px 8px; font-size: 10.5px; font-weight: 800; font-family: inherit; color: #ffffff; background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 5px; cursor: pointer;';
-  btnNextCam.onclick = () => {
-    playerFocusRow[idx] = currentSetupMode === 'practice' ? 5 : 6;
-    focusedColumn = idx;
-    cyclePlayerCamera(idx, 1);
-    updateFocusUI();
-  };
-
-  cameraCyclerRow.append(btnPrevCam, cameraLabelEl, btnNextCam);
-  cameraRow.append(camTitleWrap, cameraCyclerRow);
-  charCard.appendChild(cameraRow);
-  playerRowElements[idx][6] = cameraRow;
-
-  // Row 7 (Match) / Row 6 (Practice): Strike Assist Preset (Single-line horizontal row)
-  const assistRow = document.createElement('div');
-  assistRow.id = `row-assist-p${idx + 1}`;
-  assistRow.style.cssText = 'display: flex; align-items: center; gap: 6px; padding: 2px 3px; border-radius: 6px; transition: all 0.15s ease;';
-
-  const assistTitle = document.createElement('div');
-  assistTitle.style.cssText = 'font-size: 9.5px; font-weight: 800; color: #94a3b8; min-width: 38px; letter-spacing: 0.06em;';
-  assistTitle.textContent = 'ASSIST';
-
-  const assistBtnRow = document.createElement('div');
-  assistBtnRow.style.cssText = 'display: flex; gap: 4px; flex: 1;';
-
-  playerAssistButtons[idx] = [];
-  ASSIST_OPTIONS.forEach((opt) => {
-    const btn = document.createElement('button');
-    btn.textContent = opt.label;
-    const isSelected = (playerConfigs[idx].assistPreset || 'standard') === opt.id;
-    btn.style.cssText = `
-      flex: 1;
-      padding: 5px 4px;
-      font-size: 9.5px;
-      font-weight: 800;
-      font-family: inherit;
-      color: ${isSelected ? '#000000' : '#94a3b8'};
-      background: ${isSelected ? '#38bdf8' : 'rgba(255, 255, 255, 0.06)'};
-      border: 1px solid ${isSelected ? '#38bdf8' : 'rgba(255, 255, 255, 0.15)'};
-      border-radius: 5px;
-      white-space: nowrap;
-      box-shadow: ${isSelected ? '0 0 8px rgba(56, 189, 248, 0.45)' : 'none'};
-      cursor: pointer;
-      transition: all 0.15s ease;
-    `;
-    btn.onclick = () => {
-      playerFocusRow[idx] = currentSetupMode === 'practice' ? 6 : 7;
-      focusedColumn = idx;
-      updateFocusUI();
-      setPlayerAssist(idx, opt.id);
-    };
-    playerAssistButtons[idx].push({ btn, id: opt.id });
-    assistBtnRow.appendChild(btn);
-  });
-  assistRow.append(assistTitle, assistBtnRow);
-  charCard.appendChild(assistRow);
-  playerRowElements[idx][7] = assistRow;
 
   // Row 8: Next Button
   playerRowElements[idx][8] = btnNext;
 
-  col.appendChild(charCard);
-
   return col;
+}
+
+function clearControllerFocusStyle(el) {
+  if (!el) return;
+  el.classList.remove('rainbow-focused');
+  el.style.outline = 'none';
+  el.style.boxShadow = 'none';
+  if (!el.tagName || el.tagName !== 'BUTTON') {
+    if (el.id !== 'match-ball-selector-box' && el.id !== 'match-duration-selector-box' && el.id !== 'arena-selector-box') {
+      el.style.background = 'transparent';
+    }
+  }
+  el.style.transform = 'scale(1)';
+  const badge = el.querySelector(':scope > .ctrl-focus-pill');
+  if (badge) badge.remove();
+}
+
+function applyControllerFocusStyle(el, controllerSlotIdx, customLabel = null) {
+  if (!el) return;
+  el.classList.remove('rainbow-focused');
+  const theme = getPlayerSlotTheme(controllerSlotIdx);
+  el.style.outline = `2px solid ${theme.hex}`;
+  el.style.outlineOffset = '1px';
+  el.style.boxShadow = `0 0 14px ${theme.glow}, inset 0 0 8px ${theme.bg}`;
+  if (!el.tagName || el.tagName !== 'BUTTON') {
+    if (el.id !== 'match-ball-selector-box' && el.id !== 'match-duration-selector-box' && el.id !== 'arena-selector-box') {
+      el.style.background = theme.bg;
+    }
+  }
+  el.style.position = 'relative';
+  let badge = el.querySelector(':scope > .ctrl-focus-pill');
+  if (!badge) {
+    badge = document.createElement('span');
+    badge.className = 'ctrl-focus-pill';
+    el.appendChild(badge);
+  }
+  badge.style.cssText = `
+    position: absolute;
+    top: -9px;
+    right: 6px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: #060b13;
+    border: 1.5px solid ${theme.hex};
+    color: ${theme.hex};
+    font-size: 8.5px;
+    font-weight: 900;
+    letter-spacing: 0.06em;
+    line-height: 1.2;
+    pointer-events: none;
+    z-index: 5;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.75);
+    white-space: nowrap;
+  `;
+  badge.textContent = customLabel || `${theme.short}`;
 }
 
 export function updateFocusUI() {
@@ -2514,27 +2636,27 @@ export function updateFocusUI() {
 
   const lbBadge = document.getElementById('badge-p1-lb');
   const rbBadge = document.getElementById('badge-p2-rb');
-  const showSwitchBadges = sharedCursor && currentSetupMode === 'match';
+  const showSwitchBadges = currentSetupMode === 'match' && playerConfigs.some((c, i) => i < getActiveMatchPlayerCount() && c.type === 'ai');
   if (lbBadge) lbBadge.style.display = showSwitchBadges ? 'inline-flex' : 'none';
   if (rbBadge) rbBadge.style.display = showSwitchBadges ? 'inline-flex' : 'none';
 
   if (setupLegendEl) {
     if (currentSetupMode === 'practice') {
-      setupLegendEl.innerHTML = '🎮 <b>↕</b> ROW &middot; <b>◀ ▶</b> CHANGE &middot; <b style="color:#10b981;">START</b> LAUNCH PRACTICE &middot; <b>B / ESC</b> TITLE';
+      setupLegendEl.innerHTML = `🎮 <b>↕</b> ROW &middot; <b>◀ ▶</b> CHANGE &middot; <b style="color:#10b981;">START</b> LAUNCH PRACTICE &middot; ${renderCardinalDiamondSvg('east', '#f87171', 12)} <b>○/B / ESC</b> TITLE`;
     } else if (setupPage === 2) {
-      setupLegendEl.innerHTML = '🎮 <b>↕ / ◀ ▶</b> MATCH RULES &middot; <b style="color:#10b981;">X / START</b> READY UP &middot; <b style="color:#00e5ff;">A / START</b> LAUNCH WHEN READY &middot; <b>B / ESC</b> PLAYERS';
+      setupLegendEl.innerHTML = `🎮 <b style="color:#00e5ff;">P1 ONLY: ↕ / ◀ ▶ MATCH RULES</b> &middot; ${renderCardinalDiamondSvg('west', '#10b981', 12)} <b style="color:#10b981;">□/X / START</b> OWN READY &middot; ${renderCardinalDiamondSvg('south', '#00e5ff', 12)} <b style="color:#00e5ff;">✕/A / START</b> P1 LAUNCH &middot; ${renderCardinalDiamondSvg('east', '#f87171', 12)} <b>○/B / ESC</b> PLAYERS`;
     } else if (!sharedCursor) {
-      setupLegendEl.innerHTML = '🎮 EACH CONTROLLER EDITS ITS OWN PLAYER &amp; TEAM &middot; <b>↕</b> ROW &middot; <b>◀ ▶</b> CHANGE &middot; <b style="color:#f59e0b;">Y</b> TOGGLE BOT &middot; <b style="color:#10b981;">START</b> MATCH RULES ➔ &middot; <b>B</b> CONTROLLERS';
+      setupLegendEl.innerHTML = `🎮 EACH CONTROLLER EDITS ITS OWN PLAYER &amp; TEAM &middot; <b>↕</b> ROW &middot; <b>◀ ▶</b> CHANGE &middot; <b style="color:#00e5ff;">P1 LB/RB/TAB</b> EDIT AI &middot; <b style="color:#10b981;">START</b> MATCH RULES ➔ &middot; ${renderCardinalDiamondSvg('east', '#f87171', 12)} <b>○/B</b> CONTROLLERS`;
     } else {
-      setupLegendEl.innerHTML = '🎮 <b>↕</b> ROW &middot; <b>◀ ▶</b> CHANGE &middot; <b style="color:#f59e0b;">A / Y</b> JOIN / BOT &middot; <b style="color:#00e5ff;">LB / RB / TAB</b> SWITCH SLOT &middot; <b style="color:#10b981;">START</b> MATCH RULES ➔ &middot; <b>B</b> CONTROLLERS';
+      setupLegendEl.innerHTML = `🎮 <b>↕</b> ROW &middot; <b>◀ ▶</b> CHANGE &middot; ${renderCardinalDiamondSvg('north', '#f59e0b', 12)} <b style="color:#f59e0b;">△/Y</b> JOIN / BOT &middot; <b style="color:#00e5ff;">P1 LB / RB / TAB</b> SWITCH SLOT &middot; <b style="color:#10b981;">START</b> MATCH RULES ➔ &middot; ${renderCardinalDiamondSvg('east', '#f87171', 12)} <b>○/B</b> CONTROLLERS`;
     }
   }
 
   // 1. PRACTICE MODE (Single Page)
   if (currentSetupMode === 'practice') {
     if (ctrlTagEls[0]) {
-      ctrlTagEls[0].textContent = '[ACTIVE FOCUS]';
-      ctrlTagEls[0].style.color = '#ffffff';
+      ctrlTagEls[0].textContent = '[P1 ACTIVE]';
+      ctrlTagEls[0].style.color = '#00e5ff';
     }
 
     const activeRow = playerFocusRow[0];
@@ -2542,36 +2664,29 @@ export function updateFocusUI() {
     const practiceRowMap = {
       1: playerRowElements[0]?.[0], // Team Status
       2: playerRowElements[0]?.[1], // Team Color
-      3: playerRowElements[0]?.[4], // Headwear
-      4: playerRowElements[0]?.[5], // Physique
-      5: playerRowElements[0]?.[6], // Camera
-      6: playerRowElements[0]?.[7], // Strike Assist
+      3: playerRowElements[0]?.[2], // Headwear
+      4: playerRowElements[0]?.[3], // Physique
+      5: playerRowElements[0]?.[4], // Camera
+      6: playerRowElements[0]?.[5], // Strike Assist
     };
 
     [1, 2, 3, 4, 5, 6].forEach((rIdx) => {
       const el = practiceRowMap[rIdx];
       if (!el) return;
       if (rIdx === activeRow) {
-        el.classList.add('rainbow-focused');
+        applyControllerFocusStyle(el, 0, 'P1');
       } else {
-        el.classList.remove('rainbow-focused');
-        el.style.outline = 'none';
-        el.style.boxShadow = 'none';
-        el.style.background = 'transparent';
-        el.style.transform = 'scale(1)';
+        clearControllerFocusStyle(el);
       }
     });
 
     // Row 7: Practice Ball Selector Box
     if (ballBox) {
       if (activeRow === 7) {
-        ballBox.classList.add('rainbow-focused');
+        applyControllerFocusStyle(ballBox, 0, 'P1');
       } else {
-        ballBox.classList.remove('rainbow-focused');
+        clearControllerFocusStyle(ballBox);
         ballBox.style.borderColor = 'rgba(255, 255, 255, 0.15)';
-        ballBox.style.outline = 'none';
-        ballBox.style.boxShadow = 'none';
-        ballBox.style.transform = 'scale(1)';
       }
     }
 
@@ -2579,110 +2694,103 @@ export function updateFocusUI() {
     if (btnBack && btnStartMatch) {
       if (activeRow === 8) {
         if (practiceActionCol === 0) {
-          btnBack.classList.add('rainbow-focused');
-          btnStartMatch.classList.remove('rainbow-focused');
-          btnStartMatch.style.outline = 'none';
-          btnStartMatch.style.transform = 'scale(1)';
+          applyControllerFocusStyle(btnBack, 0, 'P1');
+          clearControllerFocusStyle(btnStartMatch);
         } else {
-          btnStartMatch.classList.add('rainbow-focused');
-          btnBack.classList.remove('rainbow-focused');
-          btnBack.style.outline = 'none';
-          btnBack.style.transform = 'scale(1)';
+          applyControllerFocusStyle(btnStartMatch, 0, 'P1');
+          clearControllerFocusStyle(btnBack);
         }
       } else {
-        btnBack.classList.remove('rainbow-focused');
-        btnStartMatch.classList.remove('rainbow-focused');
-        btnBack.style.outline = 'none';
-        btnStartMatch.style.outline = 'none';
-        btnBack.style.transform = 'scale(1)';
-        btnStartMatch.style.transform = 'scale(1)';
+        clearControllerFocusStyle(btnBack);
+        clearControllerFocusStyle(btnStartMatch);
       }
     }
     return;
   }
 
   // 2. MATCH MODE SCREEN 2: MATCH RULES & CUSTOMIZATION
+  // Only P1 controls Match Rules (Row 0 = Ball Size, Row 1 = Match Length, Row 2 = P1 Action Bar).
+  // Other human players (P2-P4) default directly to their own color-coded Ready button.
   if (setupPage === 2) {
     if (ballBox) {
       if (matchRulesFocusRow === 0) {
-        ballBox.classList.add('rainbow-focused');
+        applyControllerFocusStyle(ballBox, 0, 'P1 RULES');
       } else {
-        ballBox.classList.remove('rainbow-focused');
+        clearControllerFocusStyle(ballBox);
         ballBox.style.borderColor = 'rgba(255, 255, 255, 0.15)';
-        ballBox.style.outline = 'none';
-        ballBox.style.boxShadow = 'none';
-        ballBox.style.transform = 'scale(1)';
       }
     }
 
     if (durationBox) {
       if (matchRulesFocusRow === 1) {
-        durationBox.classList.add('rainbow-focused');
+        applyControllerFocusStyle(durationBox, 0, 'P1 RULES');
       } else {
-        durationBox.classList.remove('rainbow-focused');
+        clearControllerFocusStyle(durationBox);
         durationBox.style.borderColor = 'rgba(255, 255, 255, 0.15)';
-        durationBox.style.outline = 'none';
-        durationBox.style.boxShadow = 'none';
-        durationBox.style.transform = 'scale(1)';
       }
     }
 
     if (arenaBox) {
-      if (matchRulesFocusRow === 2) {
-        arenaBox.classList.add('rainbow-focused');
-      } else {
-        arenaBox.classList.remove('rainbow-focused');
-        arenaBox.style.borderColor = 'rgba(255, 255, 255, 0.15)';
-        arenaBox.style.outline = 'none';
-        arenaBox.style.boxShadow = 'none';
-        arenaBox.style.transform = 'scale(1)';
-      }
+      clearControllerFocusStyle(arenaBox);
     }
 
-    const actionBtns = matchFormat === '2v2'
-      ? [btnBack, btnReadyP1, btnReadyP3, btnStartMatch, btnReadyP2, btnReadyP4]
-      : [btnBack, btnReadyP1, btnStartMatch, btnReadyP2];
-    actionBtns.forEach((btn, colIdx) => {
+    const p1ActionBtns = [btnBack, btnReadyP1, btnStartMatch];
+    const clampedP1Col = Math.max(0, Math.min(p1ActionBtns.length - 1, matchRulesActionCol));
+    p1ActionBtns.forEach((btn, colIdx) => {
       if (!btn) return;
-      const isFocused = (matchRulesFocusRow === 3) && (matchRulesActionCol === colIdx);
+      const isFocused = (matchRulesFocusRow === 2) && (clampedP1Col === colIdx);
       if (isFocused) {
-        btn.classList.add('rainbow-focused');
+        applyControllerFocusStyle(btn, 0, 'P1');
       } else {
-        btn.classList.remove('rainbow-focused');
-        btn.style.outline = 'none';
-        btn.style.transform = 'scale(1)';
+        clearControllerFocusStyle(btn);
+      }
+    });
+
+    // P2, P3, P4 always focus their own Ready button on Page 2
+    [1, 2, 3].forEach((slotIdx) => {
+      const rBtn = playerReadyButtons[slotIdx];
+      if (!rBtn) return;
+      const isActiveSlot = slotIdx < getActiveMatchPlayerCount() && playerConfigs[slotIdx]?.type === 'human';
+      if (isActiveSlot) {
+        applyControllerFocusStyle(rBtn, slotIdx, `P${slotIdx + 1}`);
+      } else {
+        clearControllerFocusStyle(rBtn);
       }
     });
     return;
   }
 
   // 3. MATCH MODE SCREEN 1: TEAM & PLAYER SETUP
-  // Every human slot ALWAYS has its own active row cursor highlight (independent simultaneous per-controller cursors),
-  // AND focusedColumn also highlights any AI slot currently being configured via LB/RB/TAB.
+  // Every human slot ALWAYS has its own active row cursor highlight with its signature controller color & badge,
+  // AND focusedColumn allows P1 (Slot 0) to configure AI slots via LB/RB/TAB.
   const activeIndices = getActivePlayerIndices();
   const humanCount = activeIndices.filter((i) => playerConfigs[i]?.type === 'human').length;
-  const isSlotCursorActive = (s) => (humanCount > 1 ? (playerConfigs[s]?.type === 'human' || focusedColumn === s) : focusedColumn === s);
+  const isSlotCursorActive = (s) => (humanCount > 1 ? (playerConfigs[s]?.type === 'human' || focusedColumn === s) : (playerConfigs[s]?.type === 'human' && s === 0) || focusedColumn === s);
+
+  // Clear shared team rows first before applying active focus highlights
+  [0, 1].forEach((teamRep) => {
+    clearControllerFocusStyle(playerRowElements[teamRep]?.[0]);
+    clearControllerFocusStyle(playerRowElements[teamRep]?.[1]);
+  });
+
   activeIndices.forEach((idx) => {
+    const slotTheme = getPlayerSlotTheme(idx);
     const tag = ctrlTagEls[idx];
     const col = colEls[idx];
     const isHumanSlot = playerConfigs[idx]?.type === 'human';
     if (tag) {
       if (isHumanSlot) {
-        const isPrimaryFocus = focusedColumn === idx;
-        const borderCol = isPrimaryFocus ? '#10b981' : (idx % 2 === 0 ? '#00e5ff' : '#ff2e55');
-        tag.innerHTML = `<span class="contextual-btn-badge" style="border-color:${borderCol};color:${borderCol};">${lobbyDeviceLabel(idx)}</span>`;
+        tag.innerHTML = `<span class="contextual-btn-badge" style="border-color:${slotTheme.hex};color:${slotTheme.hex};">${lobbyDeviceLabel(idx)}</span>`;
         tag.style.color = '#ffffff';
       } else if (focusedColumn === idx) {
-        tag.innerHTML = `<span class="contextual-btn-badge" style="border-color:#10b981;color:#10b981;box-shadow:0 0 10px rgba(16,185,129,0.5);">ACTIVE · Y: JOIN</span>`;
+        tag.innerHTML = `<span class="contextual-btn-badge" style="border-color:#00e5ff;color:#00e5ff;box-shadow:0 0 10px rgba(0,229,255,0.45);">P1 EDITING · △/Y: JOIN</span>`;
       } else {
-        tag.innerHTML = idx % 2 === 0
-          ? `<span class="contextual-btn-badge" style="border-color:#00e5ff;color:#00e5ff;">A/Y: JOIN · LB</span>`
-          : `<span class="contextual-btn-badge" style="border-color:#ff2e55;color:#ff2e55;">A/Y: JOIN · RB</span>`;
+        tag.innerHTML = `<span class="contextual-btn-badge" style="border-color:rgba(255,255,255,0.28);color:#94a3b8;">BOT · P1 LB/RB/TAB</span>`;
       }
     }
     if (col && !playerReadyState[idx]) {
       if (isSlotCursorActive(idx)) {
-        col.style.borderColor = 'rgba(255, 255, 255, 0.42)';
+        col.style.borderColor = isHumanSlot ? slotTheme.hex : '#00e5ff';
       } else {
         col.style.borderColor = 'rgba(255, 255, 255, 0.15)';
       }
@@ -2690,51 +2798,65 @@ export function updateFocusUI() {
 
     const activeRow = playerFocusRow[idx];
     const isThisColActive = isSlotCursorActive(idx);
-    const teamSlots = (idx % 2 === 0) ? [0, 2] : [1, 3];
+    const controllerOwner = isHumanSlot ? idx : 0;
+    const badgeLabel = isHumanSlot ? slotTheme.short : `P1 ➔ BOT ${slotTheme.short}`;
 
-    // Rows 0..7: 0=Team Kit, 1=Team Color, 2=Control Type, 3=AI Style, 4=Headwear, 5=Physique, 6=Camera, 7=Assist
-    [0, 1, 2, 3, 4, 5, 6, 7].forEach((rIdx) => {
+    // Individual rows 2..7: 2=Headwear, 3=Physique, 4=Camera, 5=Assist, 6=Control Type, 7=AI Style
+    [2, 3, 4, 5, 6, 7].forEach((rIdx) => {
       const el = playerRowElements[idx]?.[rIdx];
       if (!el) return;
-      const isFocused = (rIdx <= 1)
-        ? teamSlots.some((s) => s < activeIndices.length && playerFocusRow[s] === rIdx && isSlotCursorActive(s))
-        : (rIdx === activeRow && isThisColActive);
-      if (isFocused) {
-        el.classList.add('rainbow-focused');
+      if (rIdx === activeRow && isThisColActive) {
+        applyControllerFocusStyle(el, controllerOwner, badgeLabel);
       } else {
-        el.classList.remove('rainbow-focused');
-        el.style.outline = 'none';
-        el.style.boxShadow = 'none';
-        el.style.background = 'transparent';
-        el.style.transform = 'scale(1)';
+        clearControllerFocusStyle(el);
+      }
+    });
+  });
+
+  // Shared Team Header rows (0 = Team Kit, 1 = Team Color) for Team 1 ([0, 2]) and Team 2 ([1, 3])
+  [
+    { rep: 0, slots: [0, 2] },
+    { rep: 1, slots: [1, 3] },
+  ].forEach(({ rep, slots }) => {
+    const validSlots = slots.filter((s) => activeIndices.includes(s));
+    [0, 1].forEach((rIdx) => {
+      const el = playerRowElements[rep]?.[rIdx];
+      if (!el) return;
+      const focusingSlots = validSlots.filter((s) => playerFocusRow[s] === rIdx && isSlotCursorActive(s));
+      if (focusingSlots.length > 0) {
+        const primarySlot = focusingSlots[0];
+        const ownerIdx = playerConfigs[primarySlot]?.type === 'human' ? primarySlot : 0;
+        const combinedLabel = focusingSlots
+          .map((s) => (playerConfigs[s]?.type === 'human' ? getPlayerSlotTheme(s).short : `P1➔${getPlayerSlotTheme(s).short}`))
+          .join(' + ');
+        applyControllerFocusStyle(el, ownerIdx, combinedLabel);
+      } else {
+        clearControllerFocusStyle(el);
       }
     });
   });
 
   // Row 8: Action Row (Back and Next)
   if (btnBack && btnNext) {
-    const isActionFocused = activeIndices.some(
+    const actionSlots = activeIndices.filter(
       (i) => playerFocusRow[i] === 8 && isSlotCursorActive(i),
     );
-    if (isActionFocused) {
+    if (actionSlots.length > 0) {
+      const primarySlot = actionSlots[0];
+      const ownerIdx = playerConfigs[primarySlot]?.type === 'human' ? primarySlot : 0;
+      const combinedLabel = actionSlots
+        .map((s) => (playerConfigs[s]?.type === 'human' ? getPlayerSlotTheme(s).short : 'P1'))
+        .join(' + ');
       if (screen1ActionCol === 0) {
-        btnBack.classList.add('rainbow-focused');
-        btnNext.classList.remove('rainbow-focused');
-        btnNext.style.outline = 'none';
-        btnNext.style.transform = 'scale(1)';
+        applyControllerFocusStyle(btnBack, ownerIdx, combinedLabel);
+        clearControllerFocusStyle(btnNext);
       } else {
-        btnNext.classList.add('rainbow-focused');
-        btnBack.classList.remove('rainbow-focused');
-        btnBack.style.outline = 'none';
-        btnBack.style.transform = 'scale(1)';
+        applyControllerFocusStyle(btnNext, ownerIdx, combinedLabel);
+        clearControllerFocusStyle(btnBack);
       }
     } else {
-      btnNext.classList.remove('rainbow-focused');
-      btnBack.classList.remove('rainbow-focused');
-      btnNext.style.outline = 'none';
-      btnBack.style.outline = 'none';
-      btnNext.style.transform = 'scale(1)';
-      btnBack.style.transform = 'scale(1)';
+      clearControllerFocusStyle(btnNext);
+      clearControllerFocusStyle(btnBack);
     }
   }
 }

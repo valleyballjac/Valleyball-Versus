@@ -1,13 +1,25 @@
+/**
+ * @module botSteering
+ * @description Reynolds velocity-space locomotion steering, slope drift compensation, and approach geometry for AI bots.
+ *
+ * - **Role**: Translates tactical target positions and desired shot vectors from `botController.js` into
+ *   synthetic analog stick inputs (`moveWorld`, `moveX`, `moveZ`, `sprintHeld`, `aimYaw`) on the athlete's `inputSlot`.
+ * - **Frame Phase**: Fixed 60 Hz simulation step (AI decision phase, prior to motor force application).
+ * - **Active Architectural Laws**:
+ *   - **LAW 1 (Single Physics Writer)**: Never mutates Rapier rigid bodies directly; writes exclusively to `inputSlot`.
+ *   - **LAW 6 (Determinism & Zero Allocations)**: All vector math uses module-scoped `_scratch*` `THREE.Vector3`
+ *     instances so per-tick steering allocates 0 heap objects.
+ */
+
 import * as THREE from 'three';
 import { TUNING } from '../config/tuning.js';
 
-// Pre-allocate scratch vectors for deterministic math (Rule 6)
+// Pre-allocated module-scoped scratch vectors for zero-allocation hot path (LAW 6)
 const scratchDir = new THREE.Vector3();
 const _scratchToTarget = new THREE.Vector3();
 const _scratchVDesired = new THREE.Vector3();
 const _scratchFSteer = new THREE.Vector3();
 const _scratchArcTarget = new THREE.Vector3();
-const _scratchRunwayPoint = new THREE.Vector3();
 const _scratchShotDir = new THREE.Vector3();
 const _scratchApproachTarget = new THREE.Vector3();
 
@@ -215,15 +227,17 @@ export function steerGoalSideArc(inputSlot, selfPos, ballPos, defendGoalPos, opt
 
 /**
  * Steers the athlete along a curved approach arc that lines up with the shot vector toward the goal.
- * Ensures the athlete's velocity is already tangent to the shot direction upon arrival.
- * 
- * @param {Object} inputSlot
- * @param {Object} selfPos - Current position { x, y, z }
- * @param {Object} selfVel - Current velocity { x, y, z }
- * @param {Object} ballPos - Target or ball position { x, y, z }
- * @param {Object} attackTargetPos - Intended destination for this stage (e.g. stream head or goal)
- * @param {Object} defendGoalPos - Defending goal position for goal-side safety
- * @param {Object} options - { sprint, runwayOffset, decelFactor, maxSpeed }
+ *
+ * **Why**: Arriving with horizontal velocity already tangent to the intended shot ray prevents
+ * sideways momentum from carrying the ragdoll past the ball during the 8–42 tick strike windup.
+ *
+ * @param {Object} inputSlot - Synthetic input slot mutated in-place
+ * @param {{x: number, y: number, z: number}} selfPos - Current athlete position in meters (`m`)
+ * @param {{x: number, y: number, z: number}} selfVel - Current athlete velocity in `m/s`
+ * @param {{x: number, y: number, z: number}} ballPos - Target ball/intercept position in meters (`m`)
+ * @param {{x: number, y: number, z: number}} attackTargetPos - Intended offensive target in meters (`m`)
+ * @param {{x: number, y: number, z: number}} defendGoalPos - Defending hoop position in meters (`m`)
+ * @param {Object} [options={}] - `{ sprint, runwayOffset (m), pocketDist (m), arriveRadius (m), decelFactor, maxSpeed }`
  */
 export function steerGoalAlignedApproach(inputSlot, selfPos, selfVel, ballPos, attackTargetPos, defendGoalPos, options = {}) {
     // Shot direction from ball to attack target in XZ plane
@@ -293,6 +307,7 @@ export function steerGoalAlignedApproach(inputSlot, selfPos, selfVel, ballPos, a
     const distToBall = Math.hypot(ballPos.x - selfPos.x, ballPos.z - selfPos.z);
     const ballRadius = options.ballRadius ?? 0.50;
     const pocketDist = options.pocketDist ?? (0.30 + ballRadius * 0.55);
+    const arriveRadius = options.arriveRadius ?? 0.34;
     if (distToBall < 1.8) {
         _scratchApproachTarget.set(
             ballPos.x - _scratchShotDir.x * pocketDist,
@@ -302,7 +317,7 @@ export function steerGoalAlignedApproach(inputSlot, selfPos, selfVel, ballPos, a
         steerToward(inputSlot, selfPos, _scratchApproachTarget, {
             sprint: distToBall > 1.05,
             arrive: true,
-            arriveRadius: 0.34,
+            arriveRadius,
             maxSpeed: (options.maxSpeed ?? 1.0) * 0.92,
             minDrive: distToBall > pocketDist + 0.18 ? 0.55 : 0.0,
             aimYaw,
@@ -326,18 +341,11 @@ export function steerGoalAlignedApproach(inputSlot, selfPos, selfVel, ballPos, a
 }
 
 /**
- * Legacy alias for backwards compatibility with multi-stage attack executors.
- */
-export function steerStageRunway(inputSlot, selfPos, ballPos, attackTargetPos, defendGoalPos, options = {}) {
-    return steerGoalAlignedApproach(inputSlot, selfPos, options.currentVel, ballPos, attackTargetPos, defendGoalPos, options);
-}
-
-/**
- * Computes the yaw angle to face the target position.
- * 
- * @param {Object} ownPos - Current position { x, y, z }
- * @param {Object} targetPos - Target position { x, y, z }
- * @returns {number} Yaw angle in radians
+ * Computes the horizontal yaw angle in radians (`rad`) to face `targetPos` from `ownPos`.
+ *
+ * @param {{x: number, y: number, z: number}} ownPos - Origin position in meters (`m`)
+ * @param {{x: number, y: number, z: number}} targetPos - Target position in meters (`m`)
+ * @returns {number} World yaw angle in radians (`atan2(dx, dz)`)
  */
 export function computeAimYaw(ownPos, targetPos) {
     const dx = targetPos.x - ownPos.x;
@@ -346,104 +354,9 @@ export function computeAimYaw(ownPos, targetPos) {
 }
 
 /**
- * Computes the yaw angle to shoot toward a goal hoop located in the X = 0 plane.
- * 
- * Because the hoop apertures sit in the X = 0 plane, testHoopCrossing requires
- * the ball trajectory to cross from one side of X = 0 to the other with non-zero dx.
- * If the athlete is near X = 0, aiming directly at (0, Z_hoop) results in dx ≈ 0,
- * which cannot register a goal.
- * 
- * This function calculates a target point that guarantees a clean crossing through
- * the hoop aperture disc (radius ~4.667m at Z = ±40.0, Y = 10.0).
- * 
- * @param {Object} ownPos - Current position { x, y, z }
- * @param {Object} goalPos - Goal position { x: 0, y: 10, z: ±40 }
- * @returns {number} Yaw angle in radians
- */
-export function computeGoalAimYaw(originPos, goalPos) {
-    const signZ = Math.sign(goalPos.z - originPos.z) || 1;
-    const distToGoalZ = Math.abs(goalPos.z - originPos.z);
-    const absX = Math.abs(originPos.x);
-
-    // 1. FLANK SCORING ARCS (|X| >= 3.5m):
-    // From any flank or stream lane position (distances 8m to 48m), a volley crossing X = 0
-    // into the hoop aperture scores cleanly through the open side without hitting the front arch.
-    if (absX >= 3.5 && distToGoalZ <= 48.0) {
-        const targetZ = goalPos.z;
-        const dx = -originPos.x;
-        const dz = targetZ - originPos.z;
-        return Math.atan2(dx, dz);
-    }
-
-    // 2. CLOSE-RANGE CENTER FINISH (distToGoalZ <= 12.0m):
-    // Angle sharply across X = 0 so crossing occurs safely inside the circular opening.
-    if (distToGoalZ <= 12.0) {
-        const crossDir = originPos.x >= 0 ? -1 : 1;
-        const targetX = crossDir * 2.5;
-        const targetZ = goalPos.z;
-        const dx = targetX - originPos.x;
-        const dz = targetZ - originPos.z;
-        return Math.atan2(dx, dz);
-    }
-
-    // 3. MID-RANGE / TRANSITION FROM CENTER CHANNEL (|X| < 3.5m, distToGoalZ > 12.0m):
-    // Direct shots down the center line collide with the front metal arch at Z = ±35.33.
-    // Set the ball into the attacking flank / stream lane (X = ±8.5m, Z = 75% to goal)
-    // to establish the optimal flank scoring angle!
-    const flankX = originPos.x >= 0 ? 8.5 : -8.5;
-    const flankZ = goalPos.z * 0.75;
-    const dx = flankX - originPos.x;
-    const dz = flankZ - originPos.z;
-    return Math.atan2(dx, dz);
-}
-
-/**
- * Computes precision aim yaw from a stream head position across X = 0 directly into
- * the hoop aperture disc.
- * 
- * @param {Object} ownPos - Current position { x, y, z }
- * @param {Object} goalPos - Goal position { x: 0, y: 10, z: ±40 }
- * @returns {number} Yaw angle in radians
- */
-export function computeStreamHeadAimYaw(ownPos, goalPos) {
-    const dx = -ownPos.x;
-    const dz = goalPos.z - ownPos.z;
-    return Math.atan2(dx, dz);
-}
-
-/**
- * Computes tactical aim yaw: clears wide along the flanks when in the defending
- * danger zone (to eliminate own goals), and aims directly at the attack hoop
- * when in midfield or offensive court.
- * 
- * @param {Object} ownPos - Current position { x, y, z }
- * @param {Object} attackGoalPos - Opponent hoop position { x: 0, y: 10, z: ±40 }
- * @param {Object} defendGoalPos - Own hoop position { x: 0, y: 10, z: ∓40 }
- * @returns {number} Yaw angle in radians
- */
-export function computeClearanceAimYaw(originPos, attackGoalPos, defendGoalPos) {
-    const distToDefendZ = Math.abs(originPos.z - defendGoalPos.z);
-    if (distToDefendZ <= 15.0) {
-        // DEFENSIVE FLANK CLEARANCE:
-        // Clear wide down the sideline into the opponent's corner (|X| >= 8.5m).
-        // NEVER aim across the center line (X = 0) near the defending goal mouth.
-        const clearX = originPos.x >= 0 ? Math.max(8.5, originPos.x + 1.5) : Math.min(-8.5, originPos.x - 1.5);
-        const clearZ = attackGoalPos.z * 0.75;
-        const dx = clearX - originPos.x;
-        const dz = clearZ - originPos.z;
-        return Math.atan2(dx, dz);
-    }
-    // Stream head finish zone: clean aperture piercing
-    if (Math.abs(originPos.z - attackGoalPos.z) <= 17.0 && Math.abs(originPos.x) >= 3.5) {
-        return computeStreamHeadAimYaw(originPos, attackGoalPos);
-    }
-    return computeGoalAimYaw(originPos, attackGoalPos);
-}
-
-/**
- * Stops all bot movement by zeroing the input slot.
- * 
- * @param {Object} inputSlot - The input slot to zero out
+ * Stops all bot movement by zeroing locomotion axes and sprint/slide holds on `inputSlot`.
+ *
+ * @param {Object} inputSlot - Synthetic input slot to zero out
  */
 export function steerIdle(inputSlot) {
     inputSlot.moveX = 0;

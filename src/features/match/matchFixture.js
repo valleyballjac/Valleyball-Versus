@@ -1,30 +1,23 @@
 /**
- * MATCH FIXTURES — one match, fully specified, from the URL.
+ * @module features/match/matchFixture
+ * URL-driven deterministic match fixture parser, validator, seed generator,
+ * device mapper, and result builder supporting both 1v1 and 2v2 matches.
  *
  *   ?fixture=<base64url JSON>      what runners and tournament links send
  *   ?fixture=<URI-encoded JSON>    readable by hand while testing
  *
- * A fixture names both sides, each a bot or a human, with its kit and display
- * name, plus one ball, one length, one assist rule and a seed. The page skips
+ * A fixture names each side (home/away in 1v1, or home/away/home2/away2 in 2v2),
+ * each a bot or a human, with its kit and display name, plus one ball, one
+ * length, one assist rule, optional overtime policy, and a seed. The page skips
  * the menus, plays exactly that match, and reports one result (`vb:matchover`).
- * It is how the league runner starts a broadcast match and how an organizer
- * starts a human one.
  *
  * STRICT ON PURPOSE. An unknown key or a bad value is an error, never a quiet
  * default: in a tournament, a typo such as "controller": "humna" must not turn
  * a player into a bot.
  *
- * SLOTS ARE FIXED: home is athlete slot 0, away is slot 1.
- *
- * ONE RULE FOR BOTH SIDES. Ball, length and strike assist belong to the match,
- * not to a side, so neither player can be on easier terms than the other.
- *
- * Example:
- *   {
- *     "id": "S1-R1-M1", "seed": 1234, "durationSeconds": 300, "ball": "medium",
- *     "home": { "name": "Volt", "controller": "bot", "difficulty": "hard", "color": "#FFD000" },
- *     "away": { "name": "Jac", "controller": "human", "device": "gamepad1", "color": "blue" }
- *   }
+ * SLOTS ARE FIXED:
+ *   1v1: home is slot 0, away is slot 1.
+ *   2v2: home is slot 0, away is slot 1, home2 is slot 2, away2 is slot 3.
  */
 
 import { TUNING } from '../../config/tuning.js';
@@ -32,14 +25,33 @@ import { PALETTES, resolveHeadwearSpec } from '../../config/cosmetics.js';
 
 export const FIXTURE_VERSION = 1;
 
-const TOP_KEYS = ['version', 'id', 'seed', 'durationSeconds', 'ball', 'assist', 'flyover', 'home', 'away'];
+const TOP_KEYS = [
+  'version',
+  'id',
+  'seed',
+  'mode',
+  'durationSeconds',
+  'ball',
+  'assist',
+  'flyover',
+  'overtime',
+  'overtimeDurationSeconds',
+  'home',
+  'away',
+  'home2',
+  'away2',
+  'players',
+];
 const SIDE_KEYS = ['name', 'controller', 'device', 'difficulty', 'aggressiveness', 'variant', 'color', 'headwear', 'camera'];
+const MODES = ['1v1', '2v2'];
 const BALLS = ['small', 'medium', 'large', 'random'];
 const CONCRETE_BALLS = ['small', 'medium', 'large'];
 const CONTROLLERS = ['bot', 'human'];
 const DIFFICULTIES = ['easy', 'medium', 'hard'];
 const VARIANTS = ['classic', 'masculine', 'feminine'];
 const CAMERAS = ['chase', 'thirdPerson', 'firstPerson'];
+const OVERTIME_MODES = ['draw', 'golden_goal', 'timed'];
+const OVERTIME_DURATIONS = [60, 120, 180, 300];
 
 // A human side's device, by the name an organizer writes, to the input
 // router's mapping. 'auto' leaves the side on the router's default routing.
@@ -159,8 +171,14 @@ export function decodeFixtureParam(raw) {
   return JSON.parse(new TextDecoder().decode(bytes));
 }
 
-function normalizeSide(input, team, errors) {
-  const where = team;
+const DEFAULT_SIDE_NAMES = {
+  home: 'Home',
+  away: 'Away',
+  home2: 'Home 2',
+  away2: 'Away 2',
+};
+
+function normalizeSide(input, where, errors) {
   const cfg = TUNING.fixture;
   const side = input === undefined ? {} : input;
   if (!isPlainObject(side)) {
@@ -169,12 +187,14 @@ function normalizeSide(input, team, errors) {
   }
   checkKeys(side, SIDE_KEYS, where, errors);
 
+  const isHomeSide = where === 'home' || where === 'home2';
+  const defaultName = DEFAULT_SIDE_NAMES[where] || (isHomeSide ? 'Home' : 'Away');
   const controller = oneOf(side.controller, CONTROLLERS, 'bot', `${where}.controller`, errors);
   const out = {
-    name: cleanName(side.name, team === 'home' ? 'Home' : 'Away', `${where}.name`, errors),
+    name: cleanName(side.name, defaultName, `${where}.name`, errors),
     controller,
     variant: oneOf(side.variant, VARIANTS, cfg.variant, `${where}.variant`, errors),
-    color: parseColor(side.color, team === 'home' ? cfg.homeColor : cfg.awayColor, `${where}.color`, errors),
+    color: parseColor(side.color, isHomeSide ? cfg.homeColor : cfg.awayColor, `${where}.color`, errors),
     headwear: null,
     camera: oneOf(side.camera, CAMERAS, cfg.camera, `${where}.camera`, errors),
   };
@@ -236,6 +256,8 @@ export function normalizeFixture(input) {
     else errors.push('seed must be an integer from 0 to 4294967295');
   }
 
+  const mode = oneOf(input.mode, MODES, '1v1', 'mode', errors);
+
   let durationSeconds = cfg.durationSeconds;
   if (input.durationSeconds !== undefined) {
     const d = input.durationSeconds;
@@ -249,22 +271,76 @@ export function normalizeFixture(input) {
     else errors.push('flyover must be true or false');
   }
 
+  const overtime = oneOf(input.overtime, OVERTIME_MODES, 'draw', 'overtime', errors);
+  const overtimeDurationSeconds = oneOf(input.overtimeDurationSeconds, OVERTIME_DURATIONS, 120, 'overtimeDurationSeconds', errors);
+
+  let homeInput = input.home;
+  let awayInput = input.away;
+  let home2Input = input.home2;
+  let away2Input = input.away2;
+
+  if (input.players !== undefined) {
+    if (homeInput !== undefined || awayInput !== undefined || home2Input !== undefined || away2Input !== undefined) {
+      errors.push('players array cannot be combined with home, away, home2, or away2 keys');
+    } else if (!Array.isArray(input.players)) {
+      errors.push('players must be an array');
+    } else {
+      const expectedLen = mode === '2v2' ? 4 : 2;
+      if (input.players.length !== expectedLen) {
+        errors.push(`players must have ${expectedLen} entries for mode "${mode}", got ${input.players.length}`);
+      } else {
+        homeInput = input.players[0];
+        awayInput = input.players[1];
+        if (mode === '2v2') {
+          home2Input = input.players[2];
+          away2Input = input.players[3];
+        }
+      }
+    }
+  } else if (mode === '1v1') {
+    if (home2Input !== undefined) errors.push('home2 only applies when mode is "2v2"');
+    if (away2Input !== undefined) errors.push('away2 only applies when mode is "2v2"');
+  }
+
+  const home = normalizeSide(homeInput, 'home', errors);
+  const away = normalizeSide(awayInput, 'away', errors);
+  const home2 = mode === '2v2' ? normalizeSide(home2Input, 'home2', errors) : null;
+  const away2 = mode === '2v2' ? normalizeSide(away2Input, 'away2', errors) : null;
+
   const fixture = {
     version: FIXTURE_VERSION,
     id,
     seed,
+    mode,
     durationSeconds,
     ball: oneOf(input.ball, BALLS, cfg.ball, 'ball', errors),
     assist: oneOf(input.assist, Object.keys(TUNING.strike.assistPresets), cfg.assist, 'assist', errors),
     flyover,
-    home: normalizeSide(input.home, 'home', errors),
-    away: normalizeSide(input.away, 'away', errors),
+    overtime,
+    overtimeDurationSeconds,
+    home,
+    away,
   };
 
-  const { home, away } = fixture;
-  if (home && away && home.controller === 'human' && away.controller === 'human'
-      && home.device !== 'auto' && home.device === away.device) {
-    errors.push(`home and away cannot both use ${home.device}`);
+  if (mode === '2v2') {
+    fixture.home2 = home2;
+    fixture.away2 = away2;
+  }
+
+  const namedSides = mode === '2v2'
+    ? [['home', home], ['away', away], ['home2', home2], ['away2', away2]]
+    : [['home', home], ['away', away]];
+
+  for (let i = 0; i < namedSides.length; i++) {
+    const [nameA, sideA] = namedSides[i];
+    if (!sideA || sideA.controller !== 'human' || sideA.device === 'auto') continue;
+    for (let j = i + 1; j < namedSides.length; j++) {
+      const [nameB, sideB] = namedSides[j];
+      if (!sideB || sideB.controller !== 'human' || sideB.device === 'auto') continue;
+      if (sideA.device === sideB.device) {
+        errors.push(`${nameA} and ${nameB} cannot both use ${sideA.device}`);
+      }
+    }
   }
 
   return { fixture: errors.length ? null : fixture, errors };
@@ -293,17 +369,19 @@ export function readFixtureFromSearch(search) {
  * @returns {{ mappings: object, autoSlots: number[] } | null}
  */
 export function fixtureDeviceMappings(fixture) {
-  const sides = [fixture.home, fixture.away];
-  if (!sides.some((s) => s.controller === 'human' && s.device !== 'auto')) return null;
+  const sides = fixture.mode === '2v2'
+    ? [fixture.home, fixture.away, fixture.home2, fixture.away2]
+    : [fixture.home, fixture.away];
+  if (!sides.some((s) => s && s.controller === 'human' && s.device !== 'auto')) return null;
   const mappings = {};
   const autoSlots = [];
   for (let i = 0; i < sides.length; i++) {
     const s = sides[i];
-    if (s.controller === 'human' && s.device !== 'auto') {
+    if (s && s.controller === 'human' && s.device !== 'auto') {
       mappings[i] = { ...DEVICES[s.device] };
     } else {
       mappings[i] = null;
-      if (s.controller === 'human') autoSlots.push(i);
+      if (s && s.controller === 'human') autoSlots.push(i);
     }
   }
   return { mappings, autoSlots };
@@ -336,11 +414,18 @@ export function fixtureMatchSetup(fixture, random) {
   const ball = fixture.ball === 'random'
     ? CONCRETE_BALLS[Math.floor(random() * CONCRETE_BALLS.length)]
     : fixture.ball;
+  const configs = [
+    sideConfig(fixture.home, 'home', 'p1', fixture.assist),
+    sideConfig(fixture.away, 'away', 'p2', fixture.assist),
+  ];
+  if (fixture.mode === '2v2' && fixture.home2 && fixture.away2) {
+    configs.push(
+      sideConfig(fixture.home2, 'home', 'p3', fixture.assist),
+      sideConfig(fixture.away2, 'away', 'p4', fixture.assist),
+    );
+  }
   return {
-    configs: [
-      sideConfig(fixture.home, 'home', 'p1', fixture.assist),
-      sideConfig(fixture.away, 'away', 'p2', fixture.assist),
-    ],
+    configs,
     rules: { ball, duration: fixture.durationSeconds },
     devices: fixtureDeviceMappings(fixture),
   };
@@ -373,15 +458,17 @@ export function resultSide(config, stats, device = null) {
  * @param {object} args
  * @param {object | null} args.fixture the fixture that started the match; null for a lobby match
  * @param {{ scoreHome: number, scoreAway: number, events: object[] }} args.matchState
- * @param {{ home: object | null, away: object | null }} args.sides from resultSide
+ * @param {{ home: object | null, away: object | null, home2?: object | null, away2?: object | null }} args.sides from resultSide
  */
 export function buildMatchResult({ fixture, matchState, sides, ball, durationSeconds, endedTick }) {
   const home = matchState.scoreHome || 0;
   const away = matchState.scoreAway || 0;
-  return {
+  const is2v2 = fixture?.mode === '2v2' || Boolean(sides?.home2 || sides?.away2);
+  const result = {
     version: FIXTURE_VERSION,
     fixtureId: fixture ? fixture.id : null,
     seed: fixture ? fixture.seed : null,
+    mode: is2v2 ? '2v2' : '1v1',
     ball,
     assist: fixture ? fixture.assist : null,
     durationSeconds,
@@ -390,6 +477,17 @@ export function buildMatchResult({ fixture, matchState, sides, ball, durationSec
     winner: home > away ? 'home' : away > home ? 'away' : 'draw',
     home: sides.home,
     away: sides.away,
-    goals: matchState.events.map((e) => ({ tick: e.tick, scoredFor: e.scoredFor, goal: e.goal })),
+    goals: (matchState.events || []).map((e) => ({ tick: e.tick, scoredFor: e.scoredFor, goal: e.goal })),
   };
+  if (is2v2) {
+    result.home2 = sides.home2 ?? null;
+    result.away2 = sides.away2 ?? null;
+  }
+  if (matchState.overtimePeriod > 0 || matchState.overtimeMode) {
+    result.overtime = {
+      mode: matchState.overtimeMode || (matchState.isGoldenGoal ? 'golden_goal' : 'timed'),
+      periods: matchState.overtimePeriod || 1,
+    };
+  }
+  return result;
 }

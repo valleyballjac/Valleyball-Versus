@@ -1,20 +1,51 @@
-import * as THREE from 'three';
-import { TUNING } from '../config/tuning.js';
-
 /**
- * Multi-Target Dynamic Sports Framing Camera.
- *
- * Designed for local multiplayer Valleyball (1v1 and 2v2).
- * Automatically frames all active athletes and the match ball smoothly.
- * Uses exact frustum trigonometry so all players and the ball are guaranteed
- * to remain in view across the entire 120m court.
+ * Module: visuals/sportsCamera
+ * Role: Multi-target dynamic sideline broadcast camera that frames all active athletes and the match ball across the 120m valley court.
+ * Frame Phase: Render (Post-Interpolation)
+ * Active Architectural Laws:
+ *   - LAW 1 (Single Authority): Purely visual framing read from interpolated athlete and ball positions.
+ *   - LAW 8 (60 FPS Frame-Time Budget): Uses module-scoped scratch vectors (`_camTarget`, `_desiredPos`, `_tempTarget`, `_fwdXZ`, `_rightXZ`) with zero per-frame allocations.
  */
 
-const _centroid = new THREE.Vector3();
+import * as THREE from 'three';
+
+const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const _camTarget = new THREE.Vector3();
 const _desiredPos = new THREE.Vector3();
 const _tempTarget = new THREE.Vector3();
+const _fwdXZ = new THREE.Vector3();
+const _rightXZ = new THREE.Vector3();
 let initialized = false;
+
+/**
+ * Returns the horizontal (XZ-plane) forward unit vector for a sports camera using a module-scoped scratch vector.
+ *
+ * @param {THREE.Camera} camera
+ * @returns {THREE.Vector3}
+ */
+export function getForwardXZ(camera) {
+  if (!camera) return _fwdXZ.set(0, 0, -1);
+  camera.getWorldDirection(_fwdXZ);
+  _fwdXZ.y = 0;
+  if (_fwdXZ.lengthSq() > 1e-8) {
+    _fwdXZ.normalize();
+  } else {
+    _fwdXZ.set(0, 0, -1);
+  }
+  return _fwdXZ;
+}
+
+/**
+ * Returns the horizontal (XZ-plane) right unit vector for a sports camera using a module-scoped scratch vector.
+ *
+ * @param {THREE.Camera} camera
+ * @returns {THREE.Vector3}
+ */
+export function getRightXZ(camera) {
+  const fwd = getForwardXZ(camera);
+  _rightXZ.crossVectors(fwd, WORLD_UP).normalize();
+  return _rightXZ;
+}
 
 export function getSportsCameraTarget() {
   return _camTarget;

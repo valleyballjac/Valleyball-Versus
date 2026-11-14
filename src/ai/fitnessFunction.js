@@ -1,12 +1,20 @@
 /**
- * Fitness scoring module for Valleyball AI evolutionary parameter optimization.
- * Accumulates per-tick statistics during headless matches and computes a final fitness score.
+ * @module fitnessFunction
+ * @description Fitness scoring module for Valleyball AI evolutionary parameter optimization.
+ *
+ * - **Role**: Accumulates per-tick tactical, strike-quality, and territorial telemetry during
+ *   headless matches (`headlessSim.js`) and computes a scalar fitness score for `evolutionarySearch.js`.
+ * - **Frame Phase**: Post-step observer hook (`onTick`) inside headless training simulations.
+ * - **Active Architectural Laws**:
+ *   - **LAW 6 (Determinism & Zero Allocations)**: `accumulateTick` mutates scalar counters on a
+ *     pre-allocated accumulator struct without creating per-tick heap objects.
  */
 
 /**
  * Creates a new fitness accumulator for the given side.
- * @param {'home'|'away'} side The side the AI is playing on.
- * @returns {object} The accumulator object.
+ *
+ * @param {'home'|'away'} side - The team side the evaluated AI is playing on
+ * @returns {object} Pre-allocated scalar accumulator object
  */
 export function createFitnessAccumulator(side) {
   return {
@@ -31,7 +39,6 @@ export function createFitnessAccumulator(side) {
     ownCircleTouches: 0,
     whiffs: 0,
     totalDistanceToBall: 0,
-    ticksRecovering: 0,
   };
 }
 
@@ -103,15 +110,6 @@ export function accumulateTick(acc, match) {
   }
   if (match.divingHits) {
     acc.divingHits = match.divingHits[acc.side] || 0;
-  }
-  if (match.sweetSpotHits) {
-    acc.sweetSpotHits = match.sweetSpotHits[acc.side] || 0;
-  }
-  if (match.oppCircleTouches) {
-    acc.oppCircleTouches = match.oppCircleTouches[acc.side] || 0;
-  }
-  if (match.ownCircleTouches) {
-    acc.ownCircleTouches = match.ownCircleTouches[acc.side] || 0;
   }
   if (match.defensiveBlocks) {
     acc.defensiveBlocks = match.defensiveBlocks[acc.side] || 0;

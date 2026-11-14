@@ -3,21 +3,18 @@ import { HEADWEAR_CATALOG } from '../config/cosmetics.js';
 import * as HeadgearRoster from './valleyballHeadgear.js';
 
 /**
- * PROCEDURAL THREE.JS HEADWEAR BUILDERS (Operation "Suit Up & Step Out", Phase 2).
+ * MODULE HEADER — src/sim/cosmeticsBuilders.js
  *
- * Owned by Purple (Parisa "The Palette" Shirin).
- *
- * Implements the complete, closed set of mesh builders for MESH_BUILDER_KEYS
- * defined in src/config/cosmetics.js. Every headwear piece is constructed
- * procedurally from Three.js primitives and materials, with zero runtime heap
- * churn on the match loop, zero physics bodies or colliders, and pure scene-graph
- * attachment to the ragdoll's `headwearSlot`.
- *
- * Brand & Aesthetic Discipline:
- * - Clean silhouettes recognizable across arena camera distances.
- * - Exact palette mapping via `userData.colorRole` ('primary', 'accent', 'joint', 'dark', 'white', 'lens').
- * - Materials utilize PBR MeshStandardMaterial with calibrated roughness and metalness.
- * - Shadow casting and receiving enabled for all structural meshes.
+ * Role: Procedural Three.js headwear mesh builders and registry (`HEADWEAR_BUILDERS`,
+ *   `buildHeadwear`, `resolveCosmeticColors`, `createCurvedBaseballVisorGeo`,
+ *   `buildVisor`, `buildCap`, `buildHeadband`, `buildGoggles`, `buildBeanie`,
+ *   `buildBandana`, plus re-exports `resolveHeadwearPalette`, `recolorHeadgear`).
+ * Frame Phase: Render-side mount/recolor only (at athlete spawn or headwear cycle);
+ *   never invoked inside the 60 Hz fixed step.
+ * Active Architectural Laws:
+ *   - LAW 4 (Zero Hot-Loop Allocations): Headwear is constructed only on mount;
+ *     color updates mutate existing material uniforms in place via `recolorHeadgear`.
+ *   - LAW 6 / LAW 10 (Render-Only Cosmetics): Zero Rapier bodies or colliders.
  */
 
 // Reusable unit constants
@@ -262,7 +259,7 @@ export function createCurvedBaseballVisorGeo(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 1. VISOR (John Valleyball signature & standard training visor)
+// 1. VISOR (Standard training visor)
 // ─────────────────────────────────────────────────────────────────────────────
 export function buildVisor(options = {}) {
   const radius = options.radius ?? DEFAULT_HEAD_RADIUS;
@@ -300,23 +297,11 @@ export function buildVisor(options = {}) {
   strapMesh.castShadow = true;
   group.add(strapMesh);
 
-  // Signature Captain's Chevron Plate
-  const isSignature = options.headwearId === 'john-captains-visor' || options.tier === 'signature' || options.athleteId === 'john';
-  if (isSignature) {
-    const badgeGeo = new THREE.BoxGeometry(radius * 0.22, radius * 0.07, radius * 0.03);
-    const badgeMesh = new THREE.Mesh(badgeGeo, mats.accentMat);
-    badgeMesh.name = 'visor-captain-badge';
-    badgeMesh.position.set(0, crownRadius * Math.cos(phiRim * 0.75), -crownRadius * Math.sin(phiRim * 0.75) * 1.01);
-    badgeMesh.rotation.x = -0.32;
-    badgeMesh.castShadow = true;
-    group.add(badgeMesh);
-  }
-
   return group;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 2. CAP (Umpire Bot signature ref cap & standard plain cap)
+// 2. CAP (Standard plain cap)
 // ─────────────────────────────────────────────────────────────────────────────
 export function buildCap(options = {}) {
   const radius = options.radius ?? DEFAULT_HEAD_RADIUS;
@@ -360,22 +345,10 @@ export function buildCap(options = {}) {
   strapMesh.castShadow = true;
   group.add(strapMesh);
 
-  // Signature Umpire referee piping/stripe
-  const isSignature = options.headwearId === 'umpire-ref-cap' || options.tier === 'signature' || options.athleteId === 'umpire';
-  if (isSignature) {
-    const stripeGeo = new THREE.TorusGeometry(crownRadius * 0.99, radius * 0.02, 8, 32, Math.PI);
-    const stripeMesh = new THREE.Mesh(stripeGeo, mats.accentMat);
-    stripeMesh.name = 'cap-ref-stripe';
-    stripeMesh.position.set(0, 0, 0);
-    stripeMesh.rotation.y = Math.PI / 2;
-    stripeMesh.castShadow = true;
-    group.add(stripeMesh);
-  }
-
   // Backwards cap (catalog spec `billBackward: true`): one group yaw flips the
-  // bill to sit over the nape and the adjustment strap to face forward. Crown,
-  // button and (absent) stripe are radially symmetric, so a single rotation is
-  // the whole visual change; no new geometry, no new materials.
+  // bill to sit over the nape and the adjustment strap to face forward. Crown
+  // and button are radially symmetric, so a single rotation is the whole visual
+  // change; no new geometry, no new materials.
   if (options.billBackward === true) {
     group.rotation.y = Math.PI;
   }
@@ -384,74 +357,7 @@ export function buildCap(options = {}) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 3. HELMET (Bhavin Bhasin signature keeper's helmet)
-// ─────────────────────────────────────────────────────────────────────────────
-export function buildHelmet(options = {}) {
-  const radius = options.radius ?? DEFAULT_HEAD_RADIUS;
-  const colors = resolveCosmeticColors(options);
-  const mats = createCosmeticMaterials(colors);
-
-  const group = new THREE.Group();
-  group.name = 'headwear-helmet';
-
-  const helmRadius = radius * 1.05;
-
-  // Protective outer dome
-  const shellGeo = new THREE.SphereGeometry(helmRadius, 32, 18, 0, Math.PI * 2, 0, Math.PI * 0.52);
-  const shellMesh = new THREE.Mesh(shellGeo, mats.primaryMat);
-  shellMesh.name = 'helmet-shell';
-  shellMesh.castShadow = true;
-  group.add(shellMesh);
-
-  // Reinforced brow impact bar
-  const browGeo = new THREE.TorusGeometry(helmRadius * 0.98, radius * 0.05, 12, 32, Math.PI * 0.85);
-  const browMesh = new THREE.Mesh(browGeo, mats.accentMat);
-  browMesh.name = 'helmet-brow-bar';
-  browMesh.position.set(0, radius * 0.12, 0);
-  browMesh.rotation.x = Math.PI * 0.60;
-  browMesh.rotation.z = -Math.PI * 0.425;
-  browMesh.castShadow = true;
-  group.add(browMesh);
-
-  // Top central ridge / ventilation spine
-  const spineGeo = new THREE.BoxGeometry(radius * 0.12, radius * 0.08, helmRadius * 1.8);
-  const spineMesh = new THREE.Mesh(spineGeo, mats.accentMat);
-  spineMesh.name = 'helmet-crest';
-  spineMesh.position.set(0, helmRadius * 0.96, -radius * 0.05);
-  spineMesh.castShadow = true;
-  group.add(spineMesh);
-
-  // Left & right protective ear guards
-  const earLGeo = new THREE.CylinderGeometry(radius * 0.22, radius * 0.22, radius * 0.06, 16);
-  const earL = new THREE.Mesh(earLGeo, mats.jointMat);
-  earL.name = 'helmet-ear-l';
-  earL.position.set(-helmRadius * 0.95, -radius * 0.08, 0);
-  earL.rotation.z = Math.PI / 2;
-  earL.castShadow = true;
-  group.add(earL);
-
-  const earR = new THREE.Mesh(earLGeo, mats.jointMat);
-  earR.name = 'helmet-ear-r';
-  earR.position.set(helmRadius * 0.95, -radius * 0.08, 0);
-  earR.rotation.z = Math.PI / 2;
-  earR.castShadow = true;
-  group.add(earR);
-
-  // Under-chin fastener strap
-  const strapGeo = new THREE.TorusGeometry(radius * 0.92, radius * 0.025, 8, 24, Math.PI * 0.7);
-  const strapMesh = new THREE.Mesh(strapGeo, mats.jointMat);
-  strapMesh.name = 'helmet-strap';
-  strapMesh.position.set(0, -radius * 0.45, -radius * 0.10);
-  strapMesh.rotation.x = Math.PI * 0.15;
-  strapMesh.rotation.z = Math.PI * 0.65;
-  strapMesh.castShadow = true;
-  group.add(strapMesh);
-
-  return group;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 4. HEADBAND (Malik Modou signature slugger's headband & standard headband)
+// 3. HEADBAND (Standard sweat headband)
 // ─────────────────────────────────────────────────────────────────────────────
 export function buildHeadband(options = {}) {
   const radius = options.radius ?? DEFAULT_HEAD_RADIUS;
@@ -481,151 +387,11 @@ export function buildHeadband(options = {}) {
   stripeMesh.castShadow = true;
   group.add(stripeMesh);
 
-  // Signature Malik tie knot and trailing dynamic ribbons at rear (+Z)
-  const isSignature = options.headwearId === 'malik-sluggers-headband' || options.tier === 'signature' || options.athleteId === 'malik';
-  if (isSignature) {
-    const knotGeo = new THREE.SphereGeometry(radius * 0.08, 12, 12);
-    const knotMesh = new THREE.Mesh(knotGeo, mats.primaryMat);
-    knotMesh.name = 'headband-knot';
-    knotMesh.position.set(0, radius * 0.10, bandRadius * 1.02);
-    knotMesh.castShadow = true;
-    group.add(knotMesh);
-
-    // Twin fluttering ribbon tails
-    const ribbonGeo = new THREE.BoxGeometry(radius * 0.06, radius * 0.35, radius * 0.02);
-    const ribbonL = new THREE.Mesh(ribbonGeo, mats.primaryMat);
-    ribbonL.name = 'headband-tail-l';
-    ribbonL.position.set(-radius * 0.06, -radius * 0.12, bandRadius * 1.05);
-    ribbonL.rotation.set(-0.25, 0, 0.28);
-    ribbonL.castShadow = true;
-    group.add(ribbonL);
-
-    const ribbonR = new THREE.Mesh(ribbonGeo, mats.accentMat);
-    ribbonR.name = 'headband-tail-r';
-    ribbonR.position.set(radius * 0.06, -radius * 0.14, bandRadius * 1.05);
-    ribbonR.rotation.set(-0.32, 0, -0.22);
-    ribbonR.castShadow = true;
-    group.add(ribbonR);
-  }
-
   return group;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 5. SUNHAT (Tupac Quispe signature groundsman's sunhat)
-// ─────────────────────────────────────────────────────────────────────────────
-export function buildSunhat(options = {}) {
-  const radius = options.radius ?? DEFAULT_HEAD_RADIUS;
-  const colors = resolveCosmeticColors(options);
-  const mats = createCosmeticMaterials(colors);
-
-  const group = new THREE.Group();
-  group.name = 'headwear-sunhat';
-
-  const crownRadius = radius * 1.02;
-
-  // Crown cylinder with rounded top
-  const crownGeo = new THREE.CylinderGeometry(crownRadius * 0.88, crownRadius, radius * 0.65, 32);
-  const crownMesh = new THREE.Mesh(crownGeo, mats.primaryMat);
-  crownMesh.name = 'sunhat-crown';
-  crownMesh.position.set(0, radius * 0.42, 0);
-  crownMesh.castShadow = true;
-  group.add(crownMesh);
-
-  // Crown dome cap
-  const capGeo = new THREE.SphereGeometry(crownRadius * 0.88, 32, 12, 0, Math.PI * 2, 0, Math.PI * 0.4);
-  const capMesh = new THREE.Mesh(capGeo, mats.primaryMat);
-  capMesh.name = 'sunhat-top-dome';
-  capMesh.position.set(0, radius * 0.68, 0);
-  capMesh.castShadow = true;
-  group.add(capMesh);
-
-  // Woven ribbon hatband around base of crown
-  const bandGeo = new THREE.CylinderGeometry(crownRadius * 1.02, crownRadius * 1.02, radius * 0.10, 32);
-  const bandMesh = new THREE.Mesh(bandGeo, mats.accentMat);
-  bandMesh.name = 'sunhat-band';
-  bandMesh.position.set(0, radius * 0.16, 0);
-  bandMesh.castShadow = true;
-  group.add(bandMesh);
-
-  // 360-degree wide sloping brim
-  const brimGeo = new THREE.CylinderGeometry(radius * 1.85, crownRadius * 1.01, radius * 0.12, 32, 1, true);
-  const brimMesh = new THREE.Mesh(brimGeo, mats.primaryMat);
-  brimMesh.name = 'sunhat-brim';
-  brimMesh.position.set(0, radius * 0.08, 0);
-  brimMesh.castShadow = true;
-  brimMesh.receiveShadow = true;
-  group.add(brimMesh);
-
-  // Brim edge trim in accent color
-  const trimGeo = new THREE.TorusGeometry(radius * 1.85, radius * 0.02, 10, 32);
-  const trimMesh = new THREE.Mesh(trimGeo, mats.accentMat);
-  trimMesh.name = 'sunhat-trim';
-  trimMesh.position.set(0, radius * 0.02, 0);
-  trimMesh.rotation.x = Math.PI / 2;
-  trimMesh.castShadow = true;
-  group.add(trimMesh);
-
-  // Draw cord / toggle
-  const cordGeo = new THREE.CylinderGeometry(radius * 0.015, radius * 0.015, radius * 0.50, 8);
-  const cordMesh = new THREE.Mesh(cordGeo, mats.jointMat);
-  cordMesh.name = 'sunhat-cord';
-  cordMesh.position.set(0, -radius * 0.28, 0);
-  cordMesh.castShadow = true;
-  group.add(cordMesh);
-
-  return group;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 6. BERET (Parisa Shirin signature costumer's beret)
-// ─────────────────────────────────────────────────────────────────────────────
-export function buildBeret(options = {}) {
-  const radius = options.radius ?? DEFAULT_HEAD_RADIUS;
-  const colors = resolveCosmeticColors(options);
-  const mats = createCosmeticMaterials(colors);
-
-  const group = new THREE.Group();
-  group.name = 'headwear-beret';
-
-  // Chic tilted beret container sitting flush atop the skull
-  const beretCrown = new THREE.Group();
-  beretCrown.name = 'beret-crown-group';
-  beretCrown.position.set(radius * 0.12, radius * 0.82, -radius * 0.04);
-  beretCrown.rotation.z = -0.24; // classic Parisian tilt
-  beretCrown.rotation.x = 0.08;
-
-  // Single unified squashed sphere body: clean silhouette, zero overlapping seams/Z-fighting
-  const crownGeo = new THREE.SphereGeometry(radius * 0.92, 24, 16);
-  const crownMesh = new THREE.Mesh(crownGeo, mats.primaryMat);
-  crownMesh.name = 'beret-body';
-  crownMesh.scale.set(1.0, 0.28, 1.0);
-  crownMesh.castShadow = true;
-  beretCrown.add(crownMesh);
-
-  // Subtle headband rim anchoring to skull
-  const rimGeo = new THREE.TorusGeometry(radius * 0.58, radius * 0.035, 12, 24);
-  const rimMesh = new THREE.Mesh(rimGeo, mats.accentMat);
-  rimMesh.name = 'beret-rim';
-  rimMesh.rotation.x = Math.PI / 2;
-  rimMesh.position.set(0, -radius * 0.14, 0);
-  rimMesh.castShadow = true;
-  beretCrown.add(rimMesh);
-
-  // Classic top stem tab (cabillou)
-  const stemGeo = new THREE.CylinderGeometry(radius * 0.02, radius * 0.02, radius * 0.08, 8);
-  const stemMesh = new THREE.Mesh(stemGeo, mats.accentMat);
-  stemMesh.name = 'beret-stem';
-  stemMesh.position.set(0, radius * 0.26, 0);
-  stemMesh.castShadow = true;
-  beretCrown.add(stemMesh);
-
-  group.add(beretCrown);
-  return group;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 7. GOGGLES (Kahu Manaaki signature rigger's goggles & standard goggles)
+// 4. GOGGLES (Standard court goggles)
 // ─────────────────────────────────────────────────────────────────────────────
 export function buildGoggles(options = {}) {
   const radius = options.radius ?? DEFAULT_HEAD_RADIUS;
@@ -686,158 +452,11 @@ export function buildGoggles(options = {}) {
   bridgeMesh.castShadow = true;
   group.add(bridgeMesh);
 
-  // Signature industrial studs for Kahu's piece
-  const isSignature = options.headwearId === 'kahu-riggers-goggles' || options.tier === 'signature' || options.athleteId === 'kahu';
-  if (isSignature) {
-    const studGeo = new THREE.CylinderGeometry(radius * 0.035, radius * 0.035, radius * 0.03, 8);
-    const studL = new THREE.Mesh(studGeo, mats.accentMat);
-    studL.name = 'goggles-stud-l';
-    studL.position.set(-eyeSpacing * 1.6, eyeY, eyeZ * 0.85);
-    studL.rotation.z = Math.PI / 2;
-    group.add(studL);
-
-    const studR = new THREE.Mesh(studGeo, mats.accentMat);
-    studR.name = 'goggles-stud-r';
-    studR.position.set(eyeSpacing * 1.6, eyeY, eyeZ * 0.85);
-    studR.rotation.z = Math.PI / 2;
-    group.add(studR);
-  }
-
   return group;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 8. HEADSET (Catarina Sol signature broadcast headset)
-// ─────────────────────────────────────────────────────────────────────────────
-export function buildHeadset(options = {}) {
-  const radius = options.radius ?? DEFAULT_HEAD_RADIUS;
-  const colors = resolveCosmeticColors(options);
-  const mats = createCosmeticMaterials(colors);
-
-  const group = new THREE.Group();
-  group.name = 'headwear-headset';
-
-  const archRadius = radius * 1.05;
-
-  // Overhead cushioned arch band from ear to ear across the top of the skull
-  const bandGeo = new THREE.TorusGeometry(archRadius, radius * 0.04, 10, 24, Math.PI);
-  const bandMesh = new THREE.Mesh(bandGeo, mats.primaryMat);
-  bandMesh.name = 'headset-arch';
-  bandMesh.castShadow = true;
-  group.add(bandMesh);
-
-  // Left & right cushioned earcups sitting flush against the skull sides
-  const cupGeo = new THREE.CylinderGeometry(radius * 0.28, radius * 0.28, radius * 0.12, 20);
-
-  // Left earcup (-X)
-  const cupL = new THREE.Mesh(cupGeo, mats.jointMat);
-  cupL.name = 'headset-cup-l';
-  cupL.position.set(-archRadius * 0.98, 0, 0);
-  cupL.rotation.z = Math.PI / 2;
-  cupL.castShadow = true;
-  group.add(cupL);
-
-  const plateL = new THREE.Mesh(new THREE.CylinderGeometry(radius * 0.22, radius * 0.22, radius * 0.04, 16), mats.primaryMat);
-  plateL.position.set(-archRadius * 1.04, 0, 0);
-  plateL.rotation.z = Math.PI / 2;
-  group.add(plateL);
-
-  // Right earcup (+X)
-  const cupR = new THREE.Mesh(cupGeo, mats.jointMat);
-  cupR.name = 'headset-cup-r';
-  cupR.position.set(archRadius * 0.98, 0, 0);
-  cupR.rotation.z = Math.PI / 2;
-  cupR.castShadow = true;
-  group.add(cupR);
-
-  const plateR = new THREE.Mesh(new THREE.CylinderGeometry(radius * 0.22, radius * 0.22, radius * 0.04, 16), mats.primaryMat);
-  plateR.position.set(archRadius * 1.04, 0, 0);
-  plateR.rotation.z = Math.PI / 2;
-  group.add(plateR);
-
-  // Articulating boom microphone: anchored cleanly to left earcup, extending forward (-Z) and down toward mouth
-  const boomGroup = new THREE.Group();
-  boomGroup.name = 'headset-boom';
-  boomGroup.position.set(-archRadius * 0.98, -radius * 0.05, 0);
-
-  const armGeo = new THREE.CylinderGeometry(radius * 0.02, radius * 0.02, radius * 0.72, 8);
-  const armMesh = new THREE.Mesh(armGeo, mats.jointMat);
-  armMesh.position.set(radius * 0.25, -radius * 0.20, -radius * 0.35);
-  armMesh.rotation.set(0.70, 0.40, -0.45);
-  armMesh.castShadow = true;
-  boomGroup.add(armMesh);
-
-  // Microphone windscreen capsule
-  const micGeo = new THREE.SphereGeometry(radius * 0.06, 12, 8);
-  const micMesh = new THREE.Mesh(micGeo, mats.accentMat);
-  micMesh.position.set(radius * 0.45, -radius * 0.42, -radius * 0.65);
-  micMesh.castShadow = true;
-  boomGroup.add(micMesh);
-
-  group.add(boomGroup);
-  return group;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 9. BUCKETHAT (Vinny Valerius signature scout's bucket hat)
-// ─────────────────────────────────────────────────────────────────────────────
-export function buildBuckethat(options = {}) {
-  const radius = options.radius ?? DEFAULT_HEAD_RADIUS;
-  const colors = resolveCosmeticColors(options);
-  const mats = createCosmeticMaterials(colors);
-
-  const group = new THREE.Group();
-  group.name = 'headwear-buckethat';
-
-  const crownRadius = radius * 1.02;
-
-  // Tapered bucket crown
-  const crownGeo = new THREE.CylinderGeometry(crownRadius * 0.88, crownRadius, radius * 0.52, 32);
-  const crownMesh = new THREE.Mesh(crownGeo, mats.primaryMat);
-  crownMesh.name = 'buckethat-crown';
-  crownMesh.position.set(0, radius * 0.34, 0);
-  crownMesh.castShadow = true;
-  group.add(crownMesh);
-
-  // Crown flat top
-  const topGeo = new THREE.CircleGeometry(crownRadius * 0.88, 32);
-  const topMesh = new THREE.Mesh(topGeo, mats.primaryMat);
-  topMesh.name = 'buckethat-top';
-  topMesh.position.set(0, radius * 0.60, 0);
-  topMesh.rotation.x = -Math.PI / 2;
-  topMesh.castShadow = true;
-  group.add(topMesh);
-
-  // Contrast scout band
-  const bandGeo = new THREE.CylinderGeometry(crownRadius * 1.015, crownRadius * 1.015, radius * 0.09, 32);
-  const bandMesh = new THREE.Mesh(bandGeo, mats.accentMat);
-  bandMesh.name = 'buckethat-band';
-  bandMesh.position.set(0, radius * 0.14, 0);
-  bandMesh.castShadow = true;
-  group.add(bandMesh);
-
-  // Downward-sloping flared bucket brim
-  const brimGeo = new THREE.CylinderGeometry(crownRadius, radius * 1.48, radius * 0.20, 32, 1, true);
-  const brimMesh = new THREE.Mesh(brimGeo, mats.primaryMat);
-  brimMesh.name = 'buckethat-brim';
-  brimMesh.position.set(0, radius * 0.04, 0);
-  brimMesh.castShadow = true;
-  brimMesh.receiveShadow = true;
-  group.add(brimMesh);
-
-  // Stitch rim accent
-  const stitchGeo = new THREE.TorusGeometry(radius * 1.48, radius * 0.018, 8, 32);
-  const stitchMesh = new THREE.Mesh(stitchGeo, mats.accentMat);
-  stitchMesh.name = 'buckethat-stitch';
-  stitchMesh.position.set(0, -radius * 0.06, 0);
-  stitchMesh.rotation.x = Math.PI / 2;
-  group.add(stitchMesh);
-
-  return group;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 10. BEANIE (Kimi Kizuna signature fan's beanie & standard club beanie)
+// 5. BEANIE (Standard club beanie)
 // ─────────────────────────────────────────────────────────────────────────────
 export function buildBeanie(options = {}) {
   const radius = options.radius ?? DEFAULT_HEAD_RADIUS;
@@ -865,22 +484,11 @@ export function buildBeanie(options = {}) {
   cuffMesh.castShadow = true;
   group.add(cuffMesh);
 
-  // Signature fluffy pom-pom for Kimi's piece
-  const isSignature = options.headwearId === 'kimi-fans-beanie' || options.tier === 'signature' || options.athleteId === 'kimi';
-  if (isSignature) {
-    const pomGeo = new THREE.SphereGeometry(radius * 0.16, 16, 16);
-    const pomMesh = new THREE.Mesh(pomGeo, mats.accentMat);
-    pomMesh.name = 'beanie-pompom';
-    pomMesh.position.set(0, beanieRadius * 1.06, 0);
-    pomMesh.castShadow = true;
-    group.add(pomMesh);
-  }
-
   return group;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 11. BANDANA (Standard club bandana / street court wrap)
+// 6. BANDANA (Standard club bandana / street court wrap)
 // ─────────────────────────────────────────────────────────────────────────────
 export function buildBandana(options = {}) {
   const radius = options.radius ?? DEFAULT_HEAD_RADIUS;
@@ -1019,13 +627,8 @@ const APPROVED_ROSTER_BUILDERS = Object.freeze(
 export const HEADWEAR_BUILDERS = Object.freeze({
   visor: buildVisor,
   cap: buildCap,
-  helmet: buildHelmet,
   headband: buildHeadband,
-  sunhat: buildSunhat,
-  beret: buildBeret,
   goggles: buildGoggles,
-  headset: buildHeadset,
-  buckethat: buildBuckethat,
   beanie: buildBeanie,
   bandana: buildBandana,
   ...APPROVED_ROSTER_BUILDERS,

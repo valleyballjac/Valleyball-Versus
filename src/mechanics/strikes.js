@@ -2,60 +2,20 @@ import { TUNING } from '../config/tuning.js';
 import { bodySideForRigKey, rigSuffixForBodySide } from '../sim/autorig.js';
 
 /**
- * THE STRIKES — the volley, the spike and the kick: one mechanism, three rows.
+ * MODULE HEADER — src/mechanics/strikes.js
  *
- * A strike is three things and only three (G4 §1):
- *
- *   1. A POSE OVERLAY — a hold-point ratchet over the strike clip, in the
- *      action tier, exactly the shape the jump, the slide and the dive already
- *      have (RULING GF-3.3). This file owns the ratchet; the ghost owns how
- *      much of the pose is showing.
- *   2. A TIMING WINDOW — a tick latch from the press. `tick - lastStrikeTick`
- *      inside `[windowOpen, windowClose]` is the whole of it.
- *   3. A CONTACT RESOLVER — a qualifying body part touching a ball inside that
- *      window puts one impulse on THE BALL.
- *
- * LAW 1 — PHYSICS OWNS MOMENTUM, AND A STRIKE PUSHES THE BALL. This file makes
- * exactly one impulse call and its receiver is a ball body. Nothing here writes
- * an impulse, a force, a velocity or a position on any athlete body, the sphere
- * included, and nothing here teleports anything. Recoil would be a torque on the
- * sphere through the ordinary input path, and it is not in G4.
- *
- * The census for that greps this directory for Rapier's two impulse setters and
- * must return ONE line. This paragraph is deliberately written without spelling
- * either name, so that it cannot answer its own grep — the same trap the G4
- * spec's first draft fell into, and the reason its census wording was replaced.
- *
- * LAW 4 (GF-2.0) — THERE IS NO STRIKE STATE. What this module carries is one
- * monotone ratchet and a set of recorded values, every one of them the same
- * class as `motor.lastJumpTick`: the tick of the last press, which kind it was,
- * which side, how that side was chosen, the aim it was thrown at, the kind East
- * last selected, the athlete's speed, the tick a contact resolved, and the tick
- * of the last strike that resolved. Nothing branches on "are we striking". The
- * window is a subtraction; the kind selects a ROW OF A TABLE, never a code
- * path. There is no striking flag and no can-strike predicate anywhere in the
- * project, and the census greps for those two names return nothing — including
- * from this comment, which is why neither is spelled here.
- *
- * G4.1 ADDS ONE ROW AND ONE RULE, and neither is an exception to that. The
- * kick is a third row of the same table. The East button is still ONE press
- * latch: what changed is that the row it selects is now read from the ball's
- * height at the press instead of being fixed, which is a recorded value from a
- * continuous query at an edge — precisely what the side already was. There is
- * no second latch, no per-kind code path, and no flag naming the kick, for the
- * same reason there is none naming the swing.
- *
- * LESSON 15 — THE RESOLVER DOES NOT GATE ON FORCE. Any contact of a qualifying
- * body inside the window resolves. The force is RECORDED per resolved strike so
- * a force floor can be set later from measurements rather than invented now —
- * which is exactly the mistake the ball's own instrumentation avoided in G2.
- *
- * LAW 3 — nothing here damps anything, and no damping setter is named in this
- * file, in code or in a comment, so a grep hit in `mechanics/` is a violation
- * rather than a mention.
- *
- * THE DIRECTORY RULE (src/mechanics/): nothing here names a wall clock or a
- * scheduler. The clock is `tick`.
+ * Role: Table-driven strike system (`createStrikeState`, `resetStrikeState`,
+ *   `runStrikes`, `resolveStrikeContact`, `checkStrikeAssist`, `resolveBraceRedirect`,
+ *   `applyStrikeAssistPreset`, `strikeProbe`, `KIND_NAME`) for volley, spike, and kick.
+ * Frame Phase: Fixed-step pre-physics (`runStrikes`) and post-physics contact
+ *   resolution (`resolveStrikeContact`, `checkStrikeAssist`, `resolveBraceRedirect`).
+ * Active Architectural Laws:
+ *   - LAW 1 (Physics Owns Momentum): Strikes and brace redirects apply a single
+ *     impulse to the BALL body only; athlete bodies and motors are never pushed here.
+ *   - LAW 3 (No Uncontrolled Damping): No damping setters are called or named here.
+ *   - LAW 4 (No Strike State Machine & Zero Allocations): Uses a monotone ratchet
+ *     and recorded ticks/table rows; reuses `state._result` and `_impulse`.
+ *   - LAW 6 (Determinism): All timing windows are tick subtractions (`tick - lastStrikeTick`).
  */
 
 /** Radians per degree. The table authors elevation in degrees, humans read degrees. */
@@ -187,6 +147,13 @@ export function createStrikeState() {
     assistWindowTicks: 0,
     aimMagnetism: 0.0,
     targetGoalZ: null,
+    /** Pre-allocated return object mutated in place by `runStrikes` (Law 4). */
+    _result: {
+      strikeMix: 0,
+      strikePhase: 0,
+      strikeKind: KIND_NONE,
+      strikeSide: 1,
+    },
   };
 }
 
@@ -446,10 +413,12 @@ function eastKind(state, ghost, motor, balls) {
   // learns that the player is pressing at nothing.
   if (!near || near.distance > strike.contextRadius) {
     state.lastEastKind = KIND_VOLLEY;
-    console.log(
-      `[strike] east -> volley  no ball within ${strike.contextRadius.toFixed(2)} m` +
-        `${near ? ` (nearest ${near.distance.toFixed(2)} m, ball:${near.ball.id})` : ' (no balls)'}`,
-    );
+    if (TUNING.debug?.logStrikes) {
+      console.log(
+        `[strike] east -> volley  no ball within ${strike.contextRadius.toFixed(2)} m` +
+          `${near ? ` (nearest ${near.distance.toFixed(2)} m, ball:${near.ball.id})` : ' (no balls)'}`,
+      );
+    }
     return KIND_VOLLEY;
   }
 
@@ -464,11 +433,13 @@ function eastKind(state, ghost, motor, balls) {
   // ONE LINE PER EAST PRESS. This is the designer's tuning data for the
   // threshold (§5.5) — the number that says whether -0.10 is the right place
   // for it, read off real presses at real balls rather than off the bind pose.
-  console.log(
-    `[strike] east -> ${KIND_NAME[kind]}  ballY-pelvisY ${rel.toFixed(3)} m  ` +
-      `threshold ${strike.kickBelowHips.toFixed(3)}  hyst ${repeat ? 'yes' : 'no'}  ` +
-      `ball:${near.ball.id}`,
-  );
+  if (TUNING.debug?.logStrikes) {
+    console.log(
+      `[strike] east -> ${KIND_NAME[kind]}  ballY-pelvisY ${rel.toFixed(3)} m  ` +
+        `threshold ${strike.kickBelowHips.toFixed(3)}  hyst ${repeat ? 'yes' : 'no'}  ` +
+        `ball:${near.ball.id}`,
+    );
+  }
   return kind;
 }
 
@@ -567,11 +538,13 @@ function chooseSide(state, row, input, motor, ghost, balls, dt) {
   // The side logged is the side of the BODY. The clip it selects is named the
   // other way round in this asset, so both are printed: a log that showed only
   // one of them is how the mirrored naming stayed invisible.
-  console.log(
-    `[strike] side ${side < 0 ? 'L' : 'R'} via ${via}  ` +
-      `localX now ${localNow.toFixed(3)} m -> at contact ${localAt.toFixed(3)} m ` +
-      `(dt ${row.sweetTick} ticks)  clip:${rigSuffixForBodySide(side)}  ball:${near.ball.id}`,
-  );
+  if (TUNING.debug?.logStrikes) {
+    console.log(
+      `[strike] side ${side < 0 ? 'L' : 'R'} via ${via}  ` +
+        `localX now ${localNow.toFixed(3)} m -> at contact ${localAt.toFixed(3)} m ` +
+        `(dt ${row.sweetTick} ticks)  clip:${rigSuffixForBodySide(side)}  ball:${near.ball.id}`,
+    );
+  }
   return side;
 }
 
@@ -689,12 +662,12 @@ export function runStrikes({ state, input, motor, ghost, balls, volleyQueued, sp
   const ease = 1 - Math.exp(-strike.mixEase * dt);
   state.strikeMix += ((striking ? 1 : 0) - state.strikeMix) * ease;
 
-  return {
-    strikeMix: state.strikeMix,
-    strikePhase: state.strikePhase,
-    strikeKind: state.lastStrikeKind,
-    strikeSide: state.lastStrikeSide,
-  };
+  const out = state._result;
+  out.strikeMix = state.strikeMix;
+  out.strikePhase = state.strikePhase;
+  out.strikeKind = state.lastStrikeKind;
+  out.strikeSide = state.lastStrikeSide;
+  return out;
 }
 
 /**
@@ -730,7 +703,7 @@ export function resolveStrikeContact(state, ball, rigKey, force, tick, isAssist 
   // kicks rather than from scuffs. That is only possible if the two are
   // distinguishable afterwards, so every touch carries the athlete's ground
   // speed, the ball's speed and whether a window was open. Filter on those.
-  if (rigKey) {
+  if (rigKey && TUNING.debug?.logStrikes) {
     const v = ball.body.linvel();
     console.log(
       `[contact] ${rigKey} ${force.toFixed(1)} N  ball:${ball.id} ` +
@@ -846,13 +819,15 @@ export function resolveStrikeContact(state, ball, rigKey, force, tick, isAssist 
   // One line per resolved strike. This is the §6.5 calibration data: the force
   // column is what a force floor would eventually be set from, and it is being
   // collected precisely because nothing gates on it yet (LESSON 15).
-  console.log(
-    `[strike] ${KIND_NAME[state.lastStrikeKind]} ` +
-      `q ${q.toFixed(3)} (err ${Math.abs(elapsed - row.sweetTick)} ticks) ` +
-      `${rigKey} ${force.toFixed(1)} N -> ${speed.toFixed(2)} m/s ` +
-      `ball:${ball.id} mass ${ball.body.mass().toFixed(3)} kg${isAssist ? ' ASSISTED' : ''}` +
-      `${agreement} tick ${tick}`,
-  );
+  if (TUNING.debug?.logStrikes) {
+    console.log(
+      `[strike] ${KIND_NAME[state.lastStrikeKind]} ` +
+        `q ${q.toFixed(3)} (err ${Math.abs(elapsed - row.sweetTick)} ticks) ` +
+        `${rigKey} ${force.toFixed(1)} N -> ${speed.toFixed(2)} m/s ` +
+        `ball:${ball.id} mass ${ball.body.mass().toFixed(3)} kg${isAssist ? ' ASSISTED' : ''}` +
+        `${agreement} tick ${tick}`,
+    );
+  }
   return true;
 }
 
@@ -1046,9 +1021,11 @@ export function resolveBraceRedirect(ball, braceMix, facingYaw, tick) {
 
   ball.lastBraceRedirectTick = tick;
 
-  console.log(
-    `[brace] redirect ${inbound.toFixed(2)} -> ${outbound.toFixed(2)} m/s ` +
-      `ball:${ball.id} tick ${tick}`,
-  );
+  if (TUNING.debug?.logStrikes) {
+    console.log(
+      `[brace] redirect ${inbound.toFixed(2)} -> ${outbound.toFixed(2)} m/s ` +
+        `ball:${ball.id} tick ${tick}`,
+    );
+  }
   return true;
 }

@@ -5,22 +5,18 @@ import { TUNING } from '../config/tuning.js';
 import { RAPIER, getWorld, ENVIRONMENT_GROUPS } from './physics.js';
 
 /**
- * THE TWO ARENAS.
+ * MODULE HEADER — src/sim/arena.js
  *
- *   bowl  — the procedural lathe. A flat floor curving up into a rim, built
- *           from one geometry: the visual mesh and the trimesh collider are the
- *           SAME object, so they cannot drift and no feel bug is unfalsifiable.
- *           This is the permanent physics test rig and the determinism anchor.
- *   court — the authored Valleyball court, loaded from a GLB.
- *
- * THE COURT CANNOT KEEP THE ONE-GEOMETRY GUARANTEE, and it is worth being
- * honest about which half survives. An authored asset arrives as forty meshes
- * with their own transforms; there is no single geometry to share. What is kept
- * is the direction of the dependency: every collider is derived FROM the render
- * mesh it belongs to, baked through that mesh's own world matrix. Nobody authors
- * a collision proxy by hand, so the collider cannot describe a surface the
- * player is not looking at. It can only ever be missing, never wrong — and the
- * inclusion decision is logged at boot so "missing" is visible.
+ * Role: Loads the authored Valleyball court GLB (`loadCourtArena`, `createArena`),
+ *   normalizes court/barrier materials, extracts non-degenerate triangle meshes
+ *   (`toTrimeshArrays`), builds static Rapier trimesh colliders in deterministic
+ *   order, and maps collider handles to semantic surface types (`getArenaColliderType`).
+ * Frame Phase: Boot / initialization only (`createArena`).
+ * Active Architectural Laws:
+ *   - DERIVATION FROM VISUALS: Every court collider is derived from the authored
+ *     mesh geometry baked through its world transform.
+ *   - LAW 6 (Determinism): Collider creation order is deterministic and independent
+ *     of debug visualization flags (`?showColliders=1`).
  */
 const arenaColliderTypes = new Map();
 
@@ -71,41 +67,18 @@ const _edgeAB = new THREE.Vector3();
 const _edgeAC = new THREE.Vector3();
 
 /**
- * Extracts the vertex and index arrays a Rapier trimesh wants, in the exact
- * types it wants them in.
+ * Extracts the vertex and index arrays a Rapier trimesh wants, filtering out
+ * zero-area degenerate triangles and (when `options.filterInverted` is set)
+ * downward-facing floor triangles before Rapier builds its BVH.
  *
- * LatheGeometry is indexed, but a non-indexed geometry is handled rather than
- * assumed away: a sequential index is a valid triangle list.
- *
- * DEGENERATE TRIANGLES ARE REMOVED, and that removal is the whole reason this
- * function is not a two-liner.
- *
- * A lathe whose profile starts at radius 0 has a pole: every one of the
- * `latheSegments` quads in the first ring collapses to a triangle with two
- * coincident vertices, so the bowl arrives with exactly `latheSegments`
- * zero-area triangles stacked at the origin. They are invisible — a triangle
- * with no area rasterises to nothing — so the visual mesh does not care.
- *
- * Rapier's contact generation cares enormously. A zero-area triangle has no
- * well-defined normal, and the solver reads a nest of them as a thicket of
- * mutually contradictory contact planes. A ball resting on that spot has every
- * drive impulse cancelled by the contradictory contacts and the residue dumped
- * into yaw: it sits at the centre of the bowl spinning on the spot, taking
- * torque and going nowhere. That is exactly where the ball spawns.
- *
- * Rapier's own TriMeshFlags do not solve this. DELETE_DEGENERATE_TRIANGLES
- * leaves the ball stuck, and FIX_INTERNAL_EDGES (which implies
- * MERGE_DUPLICATE_VERTICES) is actively catastrophic on this mesh — it breaks
- * collision outright and the ball falls through the floor to y = -487. Both
- * were measured, not assumed. The filter therefore runs here, in JS, before
- * Rapier ever sees the index buffer.
- *
- * Only the COLLIDER's index buffer is filtered. The geometry object itself is
- * untouched and is still the single shared source for visual and collider
- * alike — the triangles dropped here are the ones that draw nothing.
+ * Zero-area triangles have no well-defined normal and produce contradictory
+ * contact planes in Rapier's solver; filtering them in JS before Rapier sees
+ * the index buffer keeps ball and motor rolling contacts clean without using
+ * `FIX_INTERNAL_EDGES` (which merges vertices and breaks collision).
  *
  * @param {THREE.BufferGeometry} geometry
- * @returns {{ vertices: Float32Array, indices: Uint32Array, degenerateCount: number }}
+ * @param {{ filterInverted?: boolean, maxInvertedY?: number }} [options]
+ * @returns {{ vertices: Float32Array, indices: Uint32Array, degenerateCount: number, invertedCount: number }}
  */
 export function toTrimeshArrays(geometry, options = {}) {
   const position = geometry.getAttribute('position');
@@ -180,37 +153,6 @@ export function toTrimeshArrays(geometry, options = {}) {
 }
 
 /**
- * Builds the bowl and its static collider.
- * @returns {{ group: THREE.Group, geometry: THREE.BufferGeometry, body: object, collider: object, triangleCount: number }}
- */
-/**
- * MESHES THAT ARE SCENERY, not surface. EMPTY, and measured that way.
- *
- * The mechanism stays because a court will eventually carry decals worth
- * skipping, and because a deny-list is the safe direction: get an allow-list
- * wrong and a wall the artist added is quietly not solid, which nobody notices
- * until a player walks out of the world. Get a deny-list wrong and a painted
- * line is standable, which costs triangles and changes nothing anyone can feel.
- *
- * IT STARTED WITH TWO ENTRIES AND BOTH WERE WRONG. "CenterCircle" and
- * "Scoring Circle N/S" read like decals — the names say so, and they are the
- * two heaviest detail meshes in the file. They are the FLOOR. CenterCircle is a
- * 1,078-triangle disc at y 0.00-0.05 covering x,z +/-10.1, which is the middle
- * of the court and where everything spawns; the scoring circles carry the
- * ground from z +/-30 out to +/-50, past where the inner field stops.
- *
- * Measured on a 2 m grid over x +/-24, z +/-58, casting down from y 45:
- *
- *   all nodes collidable              1474 / 1475 points have floor
- *   minus the two scoring circles     1405 / 1475        (70 holes)
- *   minus those and CenterCircle      1325 / 1475       (150 holes)
- *
- * So the cost of "obviously scenery" was a hole under the spawn point. Anything
- * added here in future gets the same grid run over it first.
- */
-const RENDER_ONLY_PREFIXES = [];
-
-/**
  * Names as the ARTIST wrote them, recovered from what the loader produced.
  *
  * Two things mangle them on the way in. GLTFLoader sanitises for property
@@ -243,14 +185,13 @@ function ownerNode(object, root) {
 }
 
 /**
- * Is this mesh scenery? Checked against the mesh AND every ancestor up to the
- * root, because the name that carries the artist's intent may be two levels up.
+ * Returns true if this mesh is visual-only scenery (dense circle rims or raised
+ * chalk line meshes) that should be excluded from Rapier physics colliders.
  *
  * @param {THREE.Object3D} object
- * @param {THREE.Object3D} root
  * @returns {boolean}
  */
-function isRenderOnly(object, root) {
+function isRenderOnly(object) {
   // Dense circle rims: visuals only
   if (object.name === 'Circle039_1' || object.name === 'Circle186_1') return true;
 
@@ -260,23 +201,12 @@ function isRenderOnly(object, root) {
     if (mats.some((m) => m && m.name && m.name.includes('Lines'))) return true;
   }
 
-  for (let node = object; node && node !== root; node = node.parent) {
-    const name = readableName(node.name);
-    if (RENDER_ONLY_PREFIXES.some((prefix) => name.startsWith(prefix))) return true;
-  }
   return false;
 }
 
 /**
- * Normalises an authored material toward the bowl's look, without repainting
- * the artist's work.
- *
- * Blender exports arrive with metalness the glTF spec defaults to 1.0 on
- * anything the artist did not explicitly set, which under a single key light
- * reads as wet plastic. Clamping metalness down and roughness up puts the court
- * in the same lighting regime as the lathe bowl. Colour, maps and transparency
- * are left exactly as authored — this adjusts how the surface answers light,
- * not what it is.
+ * Normalises authored Blender glTF materials so default metalness (1.0 in glTF)
+ * does not render court surfaces as reflective plastic under key lighting.
  *
  * @param {THREE.Material} material
  */

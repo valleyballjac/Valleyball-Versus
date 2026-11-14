@@ -1,30 +1,16 @@
 /**
- * PLAYTEST TELEMETRY — zero-allocation event capture + a pure sport-metrics
- * reducer for headless auto-playtests.
+ * MODULE HEADER — src/sim/playtestTelemetry.js
  *
- * This module is the sport report behind the rebuild's auto-playtest harness.
- * It has two halves with different discipline:
- *
- *   1. RECORDER (in-tick). A fixed-size pool of scalar event slots, allocated
- *      ONCE at match creation (a one-time setup cost, sized by `capacity`).
- *      `sampleUphill` and every `record*` helper write primitives into the
- *      next slot in place: no arrays, objects, closures, or THREE.Vector3 are
- *      allocated per tick BY THE RECORDER. Overflow is flagged, never thrown.
- *      NOTE: the surrounding fixed tick is NOT allocation-free. Pre-existing
- *      engine paths (Rapier translation()/linvel() wrappers, impulse vector
- *      literals, baseline hit/goal event arrays) allocate every tick; those
- *      are measured per tick by scripts/checkTelemetry.mjs. Whole-tick zero
- *      allocation is an unmet constraint that would require physics-binding
- *      changes, and is not claimed anywhere in this module.
- *
- *   2. REDUCER (post-match). `serializeEvents` and `reduceSportReport` run once
- *      after the match, when allocation is free, and turn the raw event stream
- *      into the structured sport report. The reducer is a pure function of its
- *      inputs, so it is unit-testable on hand-built event fixtures. It is also
- *      a FAIL-CLOSED boundary: `reduceSportReport` itself refuses (throws) on
- *      unverified court metadata or an overflowed event stream, so no public
- *      path can emit a sport report from an invalid run, and it clamps
- *      negative uphill gain to 0 (a descent is never a negative rise).
+ * Role: Zero-allocation fixed-pool event recorder (`createTelemetryRecorder`) and
+ *   fail-closed post-match sport metrics reducer (`reduceSportReport`,
+ *   `buildTelemetryDoc`, `serializeEvents`) for headless auto-playtests.
+ * Frame Phase: Fixed-step in-tick recording (zero allocation per event) and
+ *   post-match offline reduction.
+ * Active Architectural Laws:
+ *   - LAW 4 (Zero Hot-Loop Allocations): In-tick recording writes scalar primitives
+ *     into pre-allocated typed/object slots without allocating arrays or closures.
+ *   - FAIL-CLOSED BOUNDARY: Refuses to emit a sport report on unverified court
+ *     metadata or overflowed event streams.
  *
  * PARITY DISCLAIMER (mirrors the notice in headlessSim.js):
  *   This is a HEADLESS BOT PROXY, not the visual client's full motor, ghost or

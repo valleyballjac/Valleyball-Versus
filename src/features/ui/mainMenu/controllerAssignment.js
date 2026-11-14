@@ -1,7 +1,26 @@
+/**
+ * Module: features/ui/mainMenu/controllerAssignment
+ * Role: Interactive Controller Assignment screen for 1v1 and 2v2 matches (routing gamepads & keyboard keysets to Team 1 / Team 2 / Bench).
+ * Frame Phase: UI Event / Polling
+ * Active Architectural Laws:
+ *   - LAW 1 (Single Authority): Syncs slot device mappings to `inputRouter` (`setExplicitDeviceMappings`) and slot types/teams
+ *     to the shared 4-slot `state.playerConfigs` array without truncating it.
+ */
+
 import { soundManager } from '../../../audio/soundManager.js';
 import { state } from './state.js';
-import { setExplicitDeviceMappings } from '../../../input/inputRouter.js';
+import {
+  setExplicitDeviceMappings,
+  isPadFightingMode,
+  togglePadFightingMode,
+} from '../../../input/inputRouter.js';
 import { MENU_PAD } from '../../../input/menuPads.js';
+import {
+  getPlayerSlotTheme,
+  detectGamepadProfile,
+  renderCardinalDiamondSvg,
+  renderViewportBadgeHtml,
+} from './constants.js';
 
 let containerEl = null;
 let currentMode = '1v1'; // '1v1' or '2v2'
@@ -20,16 +39,11 @@ const assignmentState = {
 
 function getCleanGamepadName(pad) {
   if (!pad) return 'Gamepad';
-  const id = (pad.id || '').toLowerCase();
-  if (id.includes('xinput') || id.includes('xbox') || id.includes('045e')) {
-    return `Xbox Controller (Pad ${pad.index + 1})`;
-  }
-  if (id.includes('dualsense') || id.includes('wireless controller') || id.includes('playstation') || id.includes('054c')) {
-    return `PlayStation Controller (Pad ${pad.index + 1})`;
-  }
-  if (id.includes('nintendo') || id.includes('switch') || id.includes('057e')) {
-    return `Switch Controller (Pad ${pad.index + 1})`;
-  }
+  const profile = detectGamepadProfile(pad);
+  if (profile.brand === 'xbox') return `Xbox Controller (Pad ${pad.index + 1})`;
+  if (profile.brand === 'playstation') return `PlayStation Controller (Pad ${pad.index + 1})`;
+  if (profile.brand === 'switch') return `Switch Controller (Pad ${pad.index + 1})`;
+  if (profile.brand === 'fightpad') return `Fighting Pad / Stick (Pad ${pad.index + 1})`;
   return `Gamepad ${pad.index + 1}`;
 }
 
@@ -108,7 +122,7 @@ export function buildControllerAssignmentScreen(rootEl, callbacks = {}) {
   const subtitle = document.createElement('div');
   subtitle.id = 'assignment-subtitle';
   subtitle.style.cssText = 'font-size: 10px; font-weight: 700; color: #94a3b8; letter-spacing: 0.03em;';
-  subtitle.innerHTML = 'Controller: <b>◀ ▶</b> claim Team 1 / Team 2 &middot; <b>A</b> join / continue &middot; <b>B</b> bench / back &middot; Keyboard: <b>A / D</b> or <b>← →</b> switch side &middot; <b>Enter</b> join / continue';
+  subtitle.innerHTML = 'Gamepad / Fight Pad: <b>◀ ▶</b> claim Team 1 / Team 2 &middot; <b style="color:#4ade80;">✕/A (South)</b> join / continue &middot; <b style="color:#ff2e55;">○/B (East)</b> bench / back &middot; <b style="color:#00e5ff;">□/X (West)</b> all AI &middot; <b style="color:#fbb417;">LB/RB</b> Fight Pad D-Pad Move';
 
   header.appendChild(titleRow);
   header.appendChild(subtitle);
@@ -127,15 +141,16 @@ export function buildControllerAssignmentScreen(rootEl, callbacks = {}) {
     min-height: 0;
   `;
 
-  // Column 1: Team 1 (Home - Cyan)
+  // Column 1: Team 1 (Home - South Court)
   const colTeam1 = document.createElement('div');
   colTeam1.id = 'col-team1';
   colTeam1.style.cssText = `
     display: flex;
     flex-direction: column;
     gap: 8px;
-    background: rgba(11, 17, 26, 0.84);
-    border: 1.5px solid rgba(0, 229, 255, 0.45);
+    background: rgba(11, 17, 26, 0.86);
+    border: 1.5px solid rgba(0, 229, 255, 0.5);
+    border-top: 4px solid #00e5ff;
     border-radius: 10px;
     padding: 12px 14px;
     backdrop-filter: blur(8px);
@@ -144,7 +159,10 @@ export function buildControllerAssignmentScreen(rootEl, callbacks = {}) {
   `;
   colTeam1.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(0,229,255,0.22);padding-bottom:6px;">
-      <span style="font-size:13px;font-weight:900;letter-spacing:0.12em;color:#00e5ff;">TEAM 1 (P1 &amp; P3)</span>
+      <div style="display:flex;flex-direction:column;gap:1px;">
+        <span style="font-size:13px;font-weight:900;letter-spacing:0.12em;color:#00e5ff;">TEAM 1 · HOME (P1 &amp; P3)</span>
+        <span style="font-size:9px;font-weight:800;letter-spacing:0.06em;color:#94a3b8;">SOUTH COURT · ATTACKS NORTH</span>
+      </div>
       <span class="contextual-btn-badge" style="border-color:#00e5ff;color:#00e5ff;">◀ TILT LEFT</span>
     </div>
     <div id="team1-slots-container" style="display:flex;flex-direction:column;gap:8px;flex:1;"></div>
@@ -168,20 +186,21 @@ export function buildControllerAssignmentScreen(rootEl, callbacks = {}) {
   colBench.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,0.12);padding-bottom:6px;">
       <span style="font-size:13px;font-weight:900;letter-spacing:0.12em;color:#ffffff;">AVAILABLE CONTROLLERS</span>
-      <span style="font-size:10px;font-weight:700;color:#94a3b8;">[BENCH]</span>
+      <span style="font-size:10px;font-weight:700;color:#94a3b8;">[BENCH · TILT ◀ ▶]</span>
     </div>
     <div id="bench-slots-container" style="display:flex;flex-direction:column;gap:8px;flex:1;max-height:175px;overflow-y:auto;"></div>
   `;
 
-  // Column 3: Team 2 (Away - Coral)
+  // Column 3: Team 2 (Away - North Court)
   const colTeam2 = document.createElement('div');
   colTeam2.id = 'col-team2';
   colTeam2.style.cssText = `
     display: flex;
     flex-direction: column;
     gap: 8px;
-    background: rgba(11, 17, 26, 0.84);
-    border: 1.5px solid rgba(255, 46, 85, 0.45);
+    background: rgba(11, 17, 26, 0.86);
+    border: 1.5px solid rgba(255, 46, 85, 0.5);
+    border-top: 4px solid #ff2e55;
     border-radius: 10px;
     padding: 12px 14px;
     backdrop-filter: blur(8px);
@@ -190,7 +209,10 @@ export function buildControllerAssignmentScreen(rootEl, callbacks = {}) {
   `;
   colTeam2.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(255,46,85,0.22);padding-bottom:6px;">
-      <span style="font-size:13px;font-weight:900;letter-spacing:0.12em;color:#ff2e55;">TEAM 2 (P2 &amp; P4)</span>
+      <div style="display:flex;flex-direction:column;gap:1px;">
+        <span style="font-size:13px;font-weight:900;letter-spacing:0.12em;color:#ff2e55;">TEAM 2 · AWAY (P2 &amp; P4)</span>
+        <span style="font-size:9px;font-weight:800;letter-spacing:0.06em;color:#94a3b8;">NORTH COURT · ATTACKS SOUTH</span>
+      </div>
       <span class="contextual-btn-badge" style="border-color:#ff2e55;color:#ff2e55;">TILT RIGHT ▶</span>
     </div>
     <div id="team2-slots-container" style="display:flex;flex-direction:column;gap:8px;flex:1;"></div>
@@ -246,7 +268,7 @@ export function buildControllerAssignmentScreen(rootEl, callbacks = {}) {
     cursor: pointer;
     transition: all 0.15s ease;
   `;
-  btnBack.innerHTML = `<span class="contextual-btn-badge">B / ESC</span><span>TITLE</span>`;
+  btnBack.innerHTML = `<span class="contextual-btn-badge" style="display:inline-flex;align-items:center;gap:4px;border-color:#ff2e55;color:#ff2e55;">${renderCardinalDiamondSvg('east', 13)} ○ / B / ESC</span><span>TITLE</span>`;
   btnBack.onclick = () => {
     soundManager.playTone(330, 0.08, 'sine', 0.15);
     hideControllerAssignment();
@@ -272,7 +294,7 @@ export function buildControllerAssignmentScreen(rootEl, callbacks = {}) {
     box-shadow: 0 0 12px rgba(245, 158, 11, 0.2);
     transition: all 0.15s ease;
   `;
-  btnToggle.innerHTML = `<span class="contextual-btn-badge" style="border-color:#f59e0b;color:#f59e0b;">Y</span><span>SWITCH TO 2v2</span>`;
+  btnToggle.innerHTML = `<span class="contextual-btn-badge" style="display:inline-flex;align-items:center;gap:4px;border-color:#fbb417;color:#fbb417;">${renderCardinalDiamondSvg('north', 13)} △ / Y (NORTH)</span><span>SWITCH TO 2v2</span>`;
   btnToggle.onclick = () => toggleMode();
 
   const btnBothAI = document.createElement('button');
@@ -294,7 +316,7 @@ export function buildControllerAssignmentScreen(rootEl, callbacks = {}) {
     box-shadow: 0 0 12px rgba(0, 229, 255, 0.2);
     transition: all 0.15s ease;
   `;
-  btnBothAI.innerHTML = `<span class="contextual-btn-badge" style="border-color:#00e5ff;color:#00e5ff;">X</span><span>ALL AI</span>`;
+  btnBothAI.innerHTML = `<span class="contextual-btn-badge" style="display:inline-flex;align-items:center;gap:4px;border-color:#00e5ff;color:#00e5ff;">${renderCardinalDiamondSvg('west', 13)} □ / X (WEST)</span><span>ALL AI</span>`;
   btnBothAI.onclick = () => setBothAI();
 
   const btnProceed = document.createElement('button');
@@ -316,7 +338,7 @@ export function buildControllerAssignmentScreen(rootEl, callbacks = {}) {
     box-shadow: 0 0 18px rgba(16, 185, 129, 0.5);
     transition: all 0.15s ease;
   `;
-  btnProceed.innerHTML = `<span>CONTINUE</span><span class="contextual-btn-badge" style="background:#000;color:#fff;">START / A</span>`;
+  btnProceed.innerHTML = `<span>CONTINUE</span><span class="contextual-btn-badge" style="background:#000;color:#4ade80;border-color:#4ade80;display:inline-flex;align-items:center;gap:4px;">${renderCardinalDiamondSvg('south', 13)} START / ✕ / A</span>`;
   btnProceed.onclick = () => proceedToSetup();
 
   actionRow.appendChild(btnBack);
@@ -391,12 +413,28 @@ export function toggleMode() {
 }
 
 function makePadDevice(pad) {
+  const profile = detectGamepadProfile(pad);
   return {
     type: 'gamepad',
     padIndex: pad.index,
     name: getCleanGamepadName(pad),
     id: pad.id,
+    brand: profile.brand,
+    fightingPad: isPadFightingMode(pad),
   };
+}
+
+function toggleDeviceFightPadMode(device) {
+  if (!device || device.type !== 'gamepad') return;
+  let livePad = null;
+  if (typeof navigator !== 'undefined' && typeof navigator.getGamepads === 'function') {
+    const raw = navigator.getGamepads() || [];
+    livePad = raw[device.padIndex] || null;
+  }
+  const next = livePad ? togglePadFightingMode(livePad) : !device.fightingPad;
+  device.fightingPad = next;
+  soundManager.playTone(next ? 680 : 460, 0.06, 'sine', 0.2);
+  renderAssignmentUI();
 }
 
 function allDevices() {
@@ -407,8 +445,12 @@ function findPadDevice(padIndex) {
   return allDevices().find((d) => d.type === 'gamepad' && d.padIndex === padIndex) || null;
 }
 
-function findKeyboardDevice() {
-  return allDevices().find((d) => d.type === 'keyboard') || null;
+function findKeyboardDevice(keyId = 'kb1') {
+  return (
+    allDevices().find((d) => d.type === 'keyboard' && d.keyId === keyId) ||
+    allDevices().find((d) => d.type === 'keyboard') ||
+    null
+  );
 }
 
 function locateDevice(device) {
@@ -502,8 +544,8 @@ function syncConnectedPads(pads) {
  * device itself (not whichever card happens to be first on screen).
  * @param {'left' | 'right' | 'drop' | 'confirm'} action
  */
-export function handleAssignmentKey(action) {
-  const kb = findKeyboardDevice();
+export function handleAssignmentKey(action, keyId = 'kb1') {
+  const kb = findKeyboardDevice(keyId);
   if (action === 'left' || action === 'right') {
     if (kb) stepDevice(kb, action === 'left' ? -1 : 1);
   } else if (action === 'drop') {
@@ -529,11 +571,16 @@ function initDefaultAssignments() {
   // Create device representation
   const devices = pads.map(makePadDevice);
 
-  // Always make Keyboard 1 (WASD) available
+  // Always make Keyboard 1 (WASD) and Secondary Keyboard 2 (IJKL) available
   devices.push({
     type: 'keyboard',
     keyId: 'kb1',
-    name: 'Keyboard 1 (WASD + Space)',
+    name: 'Keyboard 1 (WASD + Mouse)',
+  });
+  devices.push({
+    type: 'keyboard',
+    keyId: 'kb2',
+    name: 'Keyboard 2 (IJKL + Arrows)',
   });
 
   // Default distribution:
@@ -572,12 +619,20 @@ export function renderAssignmentUI() {
   const modeBadge = document.getElementById('assignment-mode-badge');
   const btnToggle = document.getElementById('assignment-btn-toggle');
   if (modeBadge) {
-    modeBadge.innerHTML = `<span>MODE: ${currentMode === '1v1' ? '1v1 VERSUS' : '2v2 (4 ATHLETES)'}</span><span class="contextual-btn-badge" style="background:#000;color:#fff;font-size:9px;">Y / CLICK</span>`;
+    modeBadge.innerHTML = `<span>MODE: ${currentMode === '1v1' ? '1v1 VERSUS' : '2v2 (4 ATHLETES)'}</span><span class="contextual-btn-badge" style="background:#000;color:#fbb417;border-color:#fbb417;font-size:9px;display:inline-flex;align-items:center;gap:3px;">${renderCardinalDiamondSvg('north', 11)} △/Y · CLICK</span>`;
   }
   if (btnToggle) {
     btnToggle.innerHTML = currentMode === '1v1'
-      ? `<span class="contextual-btn-badge">Y</span><span>SWITCH TO 2v2 (4 ATHLETES)</span>`
-      : `<span class="contextual-btn-badge">Y</span><span>SWITCH TO 1v1 VERSUS</span>`;
+      ? `<span class="contextual-btn-badge" style="display:inline-flex;align-items:center;gap:4px;border-color:#fbb417;color:#fbb417;">${renderCardinalDiamondSvg('north', 13)} △ / Y (NORTH)</span><span>SWITCH TO 2v2 (4 ATHLETES)</span>`
+      : `<span class="contextual-btn-badge" style="display:inline-flex;align-items:center;gap:4px;border-color:#fbb417;color:#fbb417;">${renderCardinalDiamondSvg('north', 13)} △ / Y (NORTH)</span><span>SWITCH TO 1v1 VERSUS</span>`;
+  }
+
+  const activeHumanSlots = [];
+  if (assignmentState.team1[0]) activeHumanSlots.push(0);
+  if (assignmentState.team2[0]) activeHumanSlots.push(1);
+  if (currentMode === '2v2') {
+    if (assignmentState.team1[1]) activeHumanSlots.push(2);
+    if (assignmentState.team2[1]) activeHumanSlots.push(3);
   }
 
   const team1Container = document.getElementById('team1-slots-container');
@@ -587,24 +642,24 @@ export function renderAssignmentUI() {
   if (team1Container) {
     team1Container.innerHTML = '';
     // Slot 0 (P1 Captain)
-    team1Container.appendChild(createSlotCard('SLOT 1 &middot; CAPTAIN', assignmentState.team1[0], 'home', 0));
+    team1Container.appendChild(createSlotCard('P1 · TEAM 1 CAPTAIN', assignmentState.team1[0], 'home', 0, activeHumanSlots));
     // Slot 2 (P3 Teammate)
     if (currentMode === '2v2') {
-      team1Container.appendChild(createSlotCard('SLOT 2 &middot; TEAMMATE', assignmentState.team1[1], 'home', 2));
+      team1Container.appendChild(createSlotCard('P3 · TEAM 1 PARTNER', assignmentState.team1[1], 'home', 2, activeHumanSlots));
     } else {
-      team1Container.appendChild(createInactiveSlotCard('2v2 ONLY · INACTIVE IN 1v1'));
+      team1Container.appendChild(createInactiveSlotCard('P3 SLOT · 2v2 MODE ONLY'));
     }
   }
 
   if (team2Container) {
     team2Container.innerHTML = '';
     // Slot 1 (P2 Captain)
-    team2Container.appendChild(createSlotCard('SLOT 1 &middot; CAPTAIN', assignmentState.team2[0], 'away', 1));
+    team2Container.appendChild(createSlotCard('P2 · TEAM 2 CAPTAIN', assignmentState.team2[0], 'away', 1, activeHumanSlots));
     // Slot 3 (P4 Teammate)
     if (currentMode === '2v2') {
-      team2Container.appendChild(createSlotCard('SLOT 2 &middot; TEAMMATE', assignmentState.team2[1], 'away', 3));
+      team2Container.appendChild(createSlotCard('P4 · TEAM 2 PARTNER', assignmentState.team2[1], 'away', 3, activeHumanSlots));
     } else {
-      team2Container.appendChild(createInactiveSlotCard('2v2 ONLY · INACTIVE IN 1v1'));
+      team2Container.appendChild(createInactiveSlotCard('P4 SLOT · 2v2 MODE ONLY'));
     }
   }
 
@@ -623,28 +678,33 @@ export function renderAssignmentUI() {
   }
 }
 
-function createSlotCard(label, device, team, slotIdx) {
+function createSlotCard(label, device, _team, slotIdx, activeHumanSlots = []) {
   const card = document.createElement('div');
-  const isCyan = team === 'home';
-  const accent = isCyan ? '#00e5ff' : '#ff2e55';
+  const slotTheme = getPlayerSlotTheme(slotIdx);
+  const accent = slotTheme.hex;
 
   card.style.cssText = `
     display: flex;
     flex-direction: column;
     gap: 6px;
-    background: rgba(11, 17, 26, 0.7);
-    border: 1px solid ${device ? accent : 'rgba(255, 255, 255, 0.15)'};
+    background: ${device ? `linear-gradient(90deg, ${slotTheme.bg} 0%, rgba(11, 17, 26, 0.85) 65%)` : 'rgba(11, 17, 26, 0.7)'};
+    border: 1.5px solid ${device ? accent : 'rgba(255, 255, 255, 0.15)'};
+    border-left: 5px solid ${device ? accent : 'rgba(255, 255, 255, 0.25)'};
     border-radius: 8px;
-    padding: 12px;
-    box-shadow: ${device ? `0 0 16px ${isCyan ? 'rgba(0,229,255,0.3)' : 'rgba(255,46,85,0.3)'}` : 'none'};
+    padding: 10px 12px;
+    box-shadow: ${device ? `0 0 16px ${slotTheme.glow}` : 'none'};
     transition: all 0.15s ease;
   `;
 
   const header = document.createElement('div');
-  header.style.cssText = 'display: flex; justify-content: space-between; align-items: center;';
+  header.style.cssText = 'display: flex; justify-content: space-between; align-items: center; gap: 6px;';
+  const viewportBadge = renderViewportBadgeHtml(slotIdx, activeHumanSlots, 'match');
   header.innerHTML = `
-    <span style="font-size: 10px; font-weight: 800; letter-spacing: 0.08em; color: ${accent};">${label}</span>
-    <span style="font-size: 10px; font-weight: 700; color: #94a3b8;">${device ? (device.type === 'gamepad' ? '🎮 HUMAN' : '⌨ HUMAN') : '🤖 AI BOT'}</span>
+    <span style="display:inline-flex;align-items:center;gap:6px;">
+      <span style="padding:1px 6px;border-radius:4px;background:${accent};color:${slotTheme.textOnFill};font-size:10px;font-weight:900;letter-spacing:0.06em;">${slotTheme.label}</span>
+      <span style="font-size: 10px; font-weight: 800; letter-spacing: 0.08em; color: ${accent};">${label}</span>
+    </span>
+    ${viewportBadge}
   `;
   card.appendChild(header);
 
@@ -652,25 +712,38 @@ function createSlotCard(label, device, team, slotIdx) {
   content.style.cssText = 'display: flex; align-items: center; justify-content: space-between; gap: 8px;';
 
   if (device) {
+    const isFight = device.type === 'gamepad' && Boolean(device.fightingPad);
+    const devIcon = device.type === 'gamepad' ? (isFight ? '🕹️' : '🎮') : '⌨️';
+    const fightToggleHtml = device.type === 'gamepad'
+      ? `<button data-action="fight-mode" class="contextual-btn-badge" style="cursor:pointer;border-color:${isFight ? '#fbb417' : 'rgba(255,255,255,0.28)'};color:${isFight ? '#fbb417' : '#cbd5e1'};background:${isFight ? 'rgba(251,180,23,0.18)' : 'rgba(255,255,255,0.06)'};" title="Toggle Standard Stick vs Fighting Pad (D-Pad Movement) — LB / RB">
+          ${isFight ? '🕹️ FIGHT PAD (D-PAD)' : '🎮 STICK MOVE'}
+        </button>`
+      : '';
     content.innerHTML = `
-      <div style="display:flex;align-items:center;gap:8px;">
-        <span style="font-size:18px;">${device.type === 'gamepad' ? '🎮' : '⌨'}</span>
-        <span style="font-size:12px;font-weight:800;color:#ffffff;">${device.name}</span>
+      <div style="display:flex;align-items:center;gap:7px;min-width:0;flex:1;">
+        <span style="font-size:17px;flex-shrink:0;">${devIcon}</span>
+        <span style="font-size:11.5px;font-weight:800;color:#ffffff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${device.name}</span>
       </div>
-      <button class="contextual-btn-badge" style="cursor:pointer;background:rgba(255,255,255,0.1);color:#fff;" title="Drop to bench">
-        B &middot; UNASSIGN
-      </button>
+      <div style="display:flex;align-items:center;gap:5px;flex-shrink:0;">
+        ${fightToggleHtml}
+        <button data-action="unassign" class="contextual-btn-badge" style="cursor:pointer;background:rgba(255,46,85,0.14);border-color:#ff2e55;color:#ffccd5;display:inline-flex;align-items:center;gap:3px;" title="Drop to bench">
+          ${renderCardinalDiamondSvg('east', 11)} ○/B · BENCH
+        </button>
+      </div>
     `;
-    content.querySelector('button')?.addEventListener('click', () => {
+    content.querySelector('[data-action="fight-mode"]')?.addEventListener('click', () => {
+      toggleDeviceFightPadMode(device);
+    });
+    content.querySelector('[data-action="unassign"]')?.addEventListener('click', () => {
       unassignDevice(device);
     });
   } else {
     content.innerHTML = `
       <div style="display:flex;align-items:center;gap:8px;">
-        <span style="font-size:18px;">🤖</span>
-        <span style="font-size:12px;font-weight:700;color:#94a3b8;">AI ATHLETE (AUTO-PILOT)</span>
+        <span style="font-size:17px;">🤖</span>
+        <span style="font-size:11.5px;font-weight:700;color:#94a3b8;">AI ATHLETE (CPU BOT)</span>
       </div>
-      <span style="font-size:10px;color:#64748b;font-weight:700;">VACANT</span>
+      <span style="font-size:9.5px;color:#64748b;font-weight:800;">TILT ◀ ▶ TO CLAIM</span>
     `;
   }
   card.appendChild(content);
@@ -699,23 +772,33 @@ function createInactiveSlotCard(label) {
 
 function createBenchDeviceCard(device) {
   const card = document.createElement('div');
+  const isFight = device.type === 'gamepad' && Boolean(device.fightingPad);
+  const devIcon = device.type === 'gamepad' ? (isFight ? '🕹️' : '🎮') : '⌨️';
   card.style.cssText = `
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 10px 14px;
+    gap: 8px;
+    padding: 8px 12px;
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.18);
     border-radius: 8px;
     transition: all 0.15s ease;
   `;
 
+  const fightBtnHtml = device.type === 'gamepad'
+    ? `<button data-action="fight-mode" class="contextual-btn-badge" style="cursor:pointer;border-color:${isFight ? '#fbb417' : 'rgba(255,255,255,0.25)'};color:${isFight ? '#fbb417' : '#94a3b8'};" title="Toggle Fighting Pad D-Pad Movement (LB / RB)">
+        ${isFight ? '🕹️ D-PAD' : '🎮 STICK'}
+      </button>`
+    : '';
+
   card.innerHTML = `
-    <div style="display:flex;align-items:center;gap:10px;">
-      <span style="font-size:16px;">${device.type === 'gamepad' ? '🎮' : '⌨'}</span>
-      <span style="font-size:12px;font-weight:800;color:#ffffff;">${device.name}</span>
+    <div style="display:flex;align-items:center;gap:8px;min-width:0;flex:1;">
+      <span style="font-size:15px;flex-shrink:0;">${devIcon}</span>
+      <span style="font-size:11.5px;font-weight:800;color:#ffffff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${device.name}</span>
     </div>
-    <div style="display:flex;gap:6px;">
+    <div style="display:flex;gap:5px;align-items:center;flex-shrink:0;">
+      ${fightBtnHtml}
       <button data-claim="team1" class="contextual-btn-badge" style="cursor:pointer;border-color:#00e5ff;color:#00e5ff;">
         ◀ TEAM 1
       </button>
@@ -725,6 +808,9 @@ function createBenchDeviceCard(device) {
     </div>
   `;
 
+  card.querySelector('[data-action="fight-mode"]')?.addEventListener('click', () => {
+    toggleDeviceFightPadMode(device);
+  });
   card.querySelector('[data-claim="team1"]')?.addEventListener('click', () => {
     assignDeviceToTeam(device, 'team1');
   });
@@ -817,6 +903,12 @@ export function pollAssignmentGamepads(pads, menuPads) {
     if ((e & MENU_PAD.left) && stepDevice(device, -1)) triggerHaptic(pad);
     if ((e & MENU_PAD.right) && stepDevice(device, 1)) triggerHaptic(pad);
 
+    // LB / RB toggles Fighting Pad (D-Pad Movement) mode for this controller
+    if (e & (MENU_PAD.lb | MENU_PAD.rb)) {
+      toggleDeviceFightPadMode(device);
+      triggerHaptic(pad);
+    }
+
     // B drops a seated pad to the bench; pressing B again from the bench (or Back
     // from anywhere) returns cleanly to the Title Screen without trapping players.
     if (e & MENU_PAD.back) {
@@ -899,7 +991,7 @@ export function proceedToSetup() {
 
   setExplicitDeviceMappings(mappings);
 
-  // Sync state.playerConfigs
+  // Sync shared 4-slot state.playerConfigs without truncating length in 1v1 mode
   if (state.playerConfigs) {
     state.playerConfigs[0].type = assignmentState.team1[0] ? 'human' : 'ai';
     state.playerConfigs[0].team = 'home';
@@ -907,42 +999,14 @@ export function proceedToSetup() {
     state.playerConfigs[1].team = 'away';
 
     if (currentMode === '2v2') {
-      if (!state.playerConfigs[2]) {
-        state.playerConfigs.push({
-          name: 'Player 3',
-          type: assignmentState.team1[1] ? 'human' : 'ai',
-          difficulty: 'medium',
-          aggressiveness: 0.60,
-          team: 'home',
-          variant: 'classic',
-          primaryColor: 0xf59e0b,
-          cameraMode: 'chase',
-          assistPreset: 'standard',
-        });
-      } else {
+      if (state.playerConfigs[2]) {
         state.playerConfigs[2].type = assignmentState.team1[1] ? 'human' : 'ai';
         state.playerConfigs[2].team = 'home';
       }
-
-      if (!state.playerConfigs[3]) {
-        state.playerConfigs.push({
-          name: 'Player 4',
-          type: assignmentState.team2[1] ? 'human' : 'ai',
-          difficulty: 'medium',
-          aggressiveness: 0.60,
-          team: 'away',
-          variant: 'classic',
-          primaryColor: 0x06b6d4,
-          cameraMode: 'chase',
-          assistPreset: 'standard',
-        });
-      } else {
+      if (state.playerConfigs[3]) {
         state.playerConfigs[3].type = assignmentState.team2[1] ? 'human' : 'ai';
         state.playerConfigs[3].team = 'away';
       }
-    } else {
-      // 1v1 mode
-      state.playerConfigs.length = 2;
     }
   }
 

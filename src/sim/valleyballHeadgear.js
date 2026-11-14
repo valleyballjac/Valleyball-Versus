@@ -1,4 +1,16 @@
 /**
+ * MODULE HEADER — src/sim/valleyballHeadgear.js
+ *
+ * Role: Self-contained procedural Three.js builders for the 10 approved Locker
+ *   Headgear Pack roster pieces (`BUILDERS`, `ROSTER`, `KITS`, `PALETTES`,
+ *   `accentFor`, `resolveHeadwearPalette`, `recolorHeadgear`, `loadLeagueMark`).
+ * Frame Phase: Render-side mount/recolor only; never invoked inside the 60 Hz
+ *   fixed step.
+ * Active Architectural Laws:
+ *   - LAW 4 (Zero Hot-Loop Allocations): Constructed on mount only; recolored in place.
+ *   - LAW 6 / LAW 10 (Render-Only Cosmetics): Pure Three.js scene-graph geometry;
+ *     zero physics colliders, rigid bodies, or simulation state.
+ *
  * ============================================================================
  *  VALLEYBALL VERSUS: THE LOCKER HEADGEAR PACK (pass 7, approved 2026-10-17)
  * ============================================================================
@@ -250,13 +262,6 @@ export function resolveHeadwearPalette(options = {}) {
     accent,
     neutral,
   };
-}
-
-/** The full { primary, secondary, accent, neutral } palette for a roster athlete. */
-export function paletteFor(athleteId, kit = null) {
-  const entry = ROSTER[athleteId];
-  if (!entry) throw new Error(`[headgear] unknown athlete "${athleteId}"`);
-  return resolveHeadwearPalette({ athleteId, kit: kit || entry.kit });
 }
 
 /** The league mark as a 512px white-on-black alpha mask (PNG, base64). */
@@ -1146,14 +1151,6 @@ export const BUILDERS = {
   buildSilkRoadDiadem, buildWayfinderCord, buildStadiumHeadset, buildWingedCourierCap, buildBleacherHachimaki,
 };
 
-/** Builds a roster athlete's signature piece in their own palette (or another kit's). */
-export function buildForAthlete(THREE, athleteId, options = {}) {
-  const entry = ROSTER[athleteId];
-  if (!entry) throw new Error(`[headgear] unknown athlete "${athleteId}"`);
-  const palette = resolveHeadwearPalette({ athleteId, ...options });
-  return BUILDERS[entry.build](THREE, palette, { ...options, athleteId });
-}
-
 /** Re-tints a built piece in place for a new palette (kit change, Locker mix-and-match). */
 export function recolorHeadgear(group, palette) {
   if (!group || !palette) return;
@@ -1196,15 +1193,4 @@ export function recolorHeadgear(group, palette) {
     }
   });
   group.userData.palette = { ...resolved };
-}
-
-/** Frees a built piece's geometry and materials. */
-export function disposeHeadgear(group) {
-  group.traverse((o) => {
-    if (!o.isMesh) return;
-    o.geometry?.dispose();
-    if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose());
-    else o.material?.dispose();
-  });
-  group.removeFromParent();
 }

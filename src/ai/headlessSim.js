@@ -1,16 +1,15 @@
 /**
- * HEADLESS MATCH SIMULATION — a minimal physics simulation for AI training.
+ * @module headlessSim
+ * @description High-speed headless Rapier 3D match simulation for AI evolutionary training and playtest telemetry.
  *
- * Creates a simplified Rapier physics world with motor spheres and a ball,
- * runs the bot controller against it, and tracks scoring. No Three.js
- * rendering, no ragdolls, no animation — just the physics that matter
- * for training: movement, ball trajectory, and scoring.
- *
- * The simplified motor uses direct force application capped at real game
- * speeds (6 m/s sprint), and strikes apply impulses matching the real
- * game's launch velocities. ~80% fidelity at 100x speed.
- *
- * LAW 6 — all timing in integer ticks, deterministic given the same seed.
+ * - **Role**: Runs deterministic 60 Hz 1v1 bot matches against the real `arena.glb` `COL_*` trimeshes
+ *   using simplified sphere motors and real strike/block/slide/dive/hoop-crossing mechanics at ~100x real-time speed.
+ * - **Frame Phase**: Standalone fixed-timestep (`DT = 1/60s`) simulation loop (`stepHeadlessMatch`).
+ * - **Active Architectural Laws**:
+ *   - **LAW 1 (Single Physics Writer)**: Bots write only to synthetic `inputSlot`s; `applyMotorForces` and
+ *     `resolveStrikes` apply impulses to Rapier bodies prior to `world.step()`.
+ *   - **LAW 6 (Determinism & Zero Allocations)**: All timing uses integer `tick` counters and seeded PRNGs;
+ *     hot-path motor respawn and telemetry hooks allocate 0 per-tick heap objects.
  */
 
 import fs from 'fs';

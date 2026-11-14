@@ -4,19 +4,21 @@ import { Interpolated } from '../core/Interpolated.js';
 import { RAPIER, getWorld, ENVIRONMENT_RAY_GROUPS } from './physics.js';
 
 /**
- * The Sphere Motor.
+ * MODULE HEADER — src/sim/motor.js
  *
- * LAW L1 — physics owns momentum. The root is a dynamic sphere driven only by
- * torque and force. Nothing here writes a velocity or a position onto the body
- * during play. There is no kinematic override anywhere in this file.
- *
- * LAW L3 — no explicit damping. Rapier's built-in damping setters are never
- * called anywhere (they crash the WASM build), and their names are kept out of
- * this file entirely so the ban is checkable with a plain grep. All resistance
- * goes through applyClampedDamping below, the single implementation of the clamp.
- *
- * DIRECTORY RULE (src/sim/): nothing here names a wall-clock or scheduler API.
- * The only time this file knows about is the constant dt it is handed.
+ * Role: Dynamic sphere locomotion motor (`createMotor`, `updateMotor`,
+ *   `applyCleatAnchor`, `applyClampedDamping`, `syncMotorSnapshot`, `horizontalSpeed`).
+ * Frame Phase: Fixed-step pre-physics (`updateMotor`, `applyCleatAnchor`),
+ *   post-physics snapshot (`syncMotorSnapshot`).
+ * Active Architectural Laws:
+ *   - LAW L1 (Physics Owns Momentum): The root is a dynamic sphere driven only by
+ *     torque and force. Nothing here writes a velocity or position onto the body
+ *     during play.
+ *   - LAW L3 (Damping-Impulse Clamp): All rotational resistance goes through
+ *     `applyClampedDamping` so braking impulses clamp to exact zero-stop and can
+ *     never reverse spin direction on a discrete fixed step.
+ *   - LAW L6 (Determinism): Per-motor ray-fan coherence (`motor._lastHitRingIndex`)
+ *     and tick-based jump cooldowns; no wall-clock APIs.
  */
 
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
@@ -41,7 +43,6 @@ let _ray = null;
 let _cachedRingCount = -1;
 let _ringCos = null;
 let _ringSin = null;
-let _lastHitRingIndex = -1;
 
 function getRingOffsets(ringCount) {
   if (ringCount !== _cachedRingCount) {
@@ -119,68 +120,97 @@ export function applyClampedDamping(body, requestedImpulse, dt) {
  *
  * One ray from the body centre plus a ring of rays offset by the sphere radius,
  * all pointing straight down, all excluding the sphere's own body. The ring is
- * what keeps the flag true on the bowl's curved wall, where a centre ray alone
+ * what keeps the flag true on sloped court banks, where a centre ray alone
  * would start reporting nothing as the contact point slides off-centre.
+ * Also records the hit surface normal into `motor.groundNormal` for slope traction.
  *
- * @param {object} body
- * @param {number} radius
+ * @param {ReturnType<typeof createMotor>} motor
  * @returns {boolean}
  */
-function castGroundFan(body, radius) {
+function castGroundFan(motor) {
   const world = getWorld();
   if (!_ray) _ray = new RAPIER.Ray(_rayOrigin, STRAIGHT_DOWN);
 
+  const body = motor.body;
+  const radius = motor.radius;
   const origin = body.translation();
   const reach = radius + TUNING.motor.groundedEpsilon;
   const ringCount = Math.max(0, Math.round(TUNING.motor.groundRayCount));
+
+  const castWithNormal = (ray) => (
+    typeof world.castRayAndGetNormal === 'function'
+      ? world.castRayAndGetNormal(ray, reach, true, undefined, ENVIRONMENT_RAY_GROUPS, undefined, body)
+      : world.castRay(ray, reach, true, undefined, ENVIRONMENT_RAY_GROUPS, undefined, body)
+  );
+
+  const recordHitNormal = (hit) => {
+    if (hit && hit.normal) {
+      motor.groundNormal.x = hit.normal.x;
+      motor.groundNormal.y = hit.normal.y;
+      motor.groundNormal.z = hit.normal.z;
+    } else {
+      motor.groundNormal.x = 0;
+      motor.groundNormal.y = 1;
+      motor.groundNormal.z = 0;
+    }
+  };
 
   // 1 — Centre ray: on flat ground or gentle slopes, this hits immediately and early-exits.
   _rayOrigin.x = origin.x;
   _rayOrigin.y = origin.y;
   _rayOrigin.z = origin.z;
-  const centerHit = world.castRay(
-    _ray, reach, true, undefined, ENVIRONMENT_RAY_GROUPS, undefined, body,
-  );
+  const centerHit = castWithNormal(_ray);
   if (centerHit && centerHit.timeOfImpact <= reach) {
-    _lastHitRingIndex = -1;
+    motor._lastHitRingIndex = -1;
+    recordHitNormal(centerHit);
     return true;
   }
 
-  if (ringCount <= 0) return false;
+  if (ringCount <= 0) {
+    motor._lastHitRingIndex = -1;
+    motor.groundNormal.x = 0;
+    motor.groundNormal.y = 1;
+    motor.groundNormal.z = 0;
+    return false;
+  }
 
   const { cos, sin } = getRingOffsets(ringCount);
+  const lastIdx = motor._lastHitRingIndex;
 
   // 2 — Temporal coherence: if a perimeter ray hit on the previous step (e.g. while
   // rolling along a slope or mound), test that ray first before checking the rest.
-  if (_lastHitRingIndex >= 0 && _lastHitRingIndex < ringCount) {
-    _rayOrigin.x = origin.x + cos[_lastHitRingIndex] * radius;
+  if (lastIdx >= 0 && lastIdx < ringCount) {
+    _rayOrigin.x = origin.x + cos[lastIdx] * radius;
     _rayOrigin.y = origin.y;
-    _rayOrigin.z = origin.z + sin[_lastHitRingIndex] * radius;
-    const hit = world.castRay(
-      _ray, reach, true, undefined, ENVIRONMENT_RAY_GROUPS, undefined, body,
-    );
-    if (hit && hit.timeOfImpact <= reach) return true;
+    _rayOrigin.z = origin.z + sin[lastIdx] * radius;
+    const hit = castWithNormal(_ray);
+    if (hit && hit.timeOfImpact <= reach) {
+      recordHitNormal(hit);
+      return true;
+    }
   }
 
   // 3 — Check remaining ring rays
   for (let i = 0; i < ringCount; i++) {
-    if (i === _lastHitRingIndex) continue;
+    if (i === lastIdx) continue;
 
     _rayOrigin.x = origin.x + cos[i] * radius;
     _rayOrigin.y = origin.y;
     _rayOrigin.z = origin.z + sin[i] * radius;
 
-    const hit = world.castRay(
-      _ray, reach, true, undefined, ENVIRONMENT_RAY_GROUPS, undefined, body,
-    );
+    const hit = castWithNormal(_ray);
 
     if (hit && hit.timeOfImpact <= reach) {
-      _lastHitRingIndex = i;
+      motor._lastHitRingIndex = i;
+      recordHitNormal(hit);
       return true;
     }
   }
 
-  _lastHitRingIndex = -1;
+  motor._lastHitRingIndex = -1;
+  motor.groundNormal.x = 0;
+  motor.groundNormal.y = 1;
+  motor.groundNormal.z = 0;
   return false;
 }
 
@@ -228,6 +258,8 @@ export function createMotor() {
     lastJumpTick: -Infinity,
     appliedFriction: friction,
     appliedRestitution: restitution,
+    _lastHitRingIndex: -1,
+    groundNormal: { x: 0, y: 1, z: 0 },
   };
 }
 
@@ -278,7 +310,7 @@ export function updateMotor(motor, input, jumpQueued, dt, driveScale = 1, tick =
   syncSurfaceTuning(motor);
 
   // 1 — GROUNDED
-  motor.grounded = castGroundFan(body, motor.radius);
+  motor.grounded = castGroundFan(motor);
 
   const linear = body.linvel();
   const horizSpeed = Math.hypot(linear.x, linear.z);
@@ -472,32 +504,38 @@ export function applyCutImpulse(motor, direction, pushImpulse = 4.5, plantBrakeR
 /**
  * CLEAT ANCHOR — Enhanced slope traction during the cut window.
  *
- * Counteracts gravitational slope sliding on steep banks for ~0.33s.
+ * Counteracts gravitational slope sliding on steep valley court banks for ~0.33s
+ * using the actual ground surface normal captured by `castGroundFan`.
  *
  * @param {ReturnType<typeof createMotor>} motor
  * @param {number} dt timestep
  */
 export function applyCleatAnchor(motor, dt) {
-  const body = motor.body;
-  const translation = body.translation();
-  const rad = Math.hypot(translation.x, translation.z);
-  if (rad > 8.0) {
-    // 1. Firm normal adhesion into the turf (gravityY is negative, e.g. -12.0, so this pushes DOWN onto slope)
-    _impulse.x = 0;
-    _impulse.y = TUNING.physics.gravityY * body.mass() * 0.45;
-    _impulse.z = 0;
-    body.addForce(_impulse, true);
+  const gn = motor.groundNormal;
+  if (!gn || gn.y >= 0.995) return;
 
-    // 2. Downhill slope sliding resistance (cleats digging into the turf)
-    const lv = body.linvel();
-    const radialVel = (lv.x * translation.x + lv.z * translation.z) / rad;
-    if (radialVel < 0) { // sliding downhill toward center
-      const brakeMag = -radialVel * body.mass() * 10.0;
-      _impulse.x = (translation.x / rad) * brakeMag * dt;
-      _impulse.y = 0;
-      _impulse.z = (translation.z / rad) * brakeMag * dt;
-      body.applyImpulse(_impulse, true);
-    }
+  const horizLen = Math.hypot(gn.x, gn.z);
+  if (horizLen <= 1e-5) return;
+
+  const body = motor.body;
+  const downhillX = gn.x / horizLen;
+  const downhillZ = gn.z / horizLen;
+
+  // 1. Firm normal adhesion into the turf (gravityY is negative, e.g. -12.0, so this pushes DOWN onto slope)
+  _impulse.x = 0;
+  _impulse.y = TUNING.physics.gravityY * body.mass() * 0.45;
+  _impulse.z = 0;
+  body.addForce(_impulse, true);
+
+  // 2. Downhill slope sliding resistance (cleats digging into the turf)
+  const lv = body.linvel();
+  const downhillVel = lv.x * downhillX + lv.z * downhillZ;
+  if (downhillVel > 0.05) {
+    const brakeMag = downhillVel * body.mass() * 10.0;
+    _impulse.x = -downhillX * brakeMag * dt;
+    _impulse.y = 0;
+    _impulse.z = -downhillZ * brakeMag * dt;
+    body.applyImpulse(_impulse, true);
   }
 }
 

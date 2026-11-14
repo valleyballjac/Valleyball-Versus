@@ -6,35 +6,23 @@ import { RAPIER, getWorld, BALL_GROUPS, ENVIRONMENT_RAY_GROUPS } from './physics
 import { applyClampedLinearDamping, applyClampedAngularDamping, conservativeInertia } from './damping.js';
 
 /**
- * THE BALL. One body, created at boot, never destroyed, never pooled.
+ * MODULE HEADER — src/sim/ball.js
  *
- * WHAT IT IS ALLOWED TO DO TO ITSELF, and what it is not.
- *
- * LAW 1 — physics owns momentum. Nothing in this file writes the ball's
- * velocity or position during play. The only writes are in resetBall, which is
- * a SPAWN EVENT of exactly the same class as the athlete's respawn and the
- * out-of-bounds watchdog: consumed inside fixedUpdate, at the spawn-event slot,
- * unreachable from anywhere else. That is the one setTranslation this step adds
- * to the census, and it lives in one named function so it stays countable.
- *
- * LAW 3 — every gram of resistance goes through the clamped helpers in
- * damping.js. Rapier's own solver-damping setters are not used here, and their
- * names are deliberately not written in this file either, so the ban stays
- * checkable with one grep: a hit in ball.js should mean a violation, never a
- * comment about one.
- *
- * LAW 4 (GF-2.0) — there is no "in play" flag, no "served" boolean, no ball
- * state machine. What this module carries is a recorded tick, a recorded key
- * and three floats, all of the same class as motor.lastJumpTick. Nothing
- * anywhere branches on which state the ball is in, because it does not have
- * one.
- *
- * LESSON 15 — contact forces are INSTRUMENTED here and mapped to nothing. The
- * ball never costs the athlete tracking weight in G2. The numbers exist so the
- * thresholds a later step needs are measured rather than guessed.
- *
- * DIRECTORY RULE (src/sim/): nothing here names a wall-clock or scheduler API.
- * The clock is `tick`.
+ * Role: Creates and updates the three-ball Valleyball fixture (`createBalls`,
+ *   `createBall`, `updateBall`, `resetBall`, `snapshotBall`, `syncBallVisuals`,
+ *   `applyBallVisibility`), including clamped air/rolling resistance, Magnus
+ *   lift, out-of-bounds respawn, and contact telemetry.
+ * Frame Phase: Fixed-step pre-physics (`updateBall`, `resetBall`), post-physics
+ *   (`snapshotBall`), and render frame (`syncBallVisuals`).
+ * Active Architectural Laws:
+ *   - LAW 1 (Physics Owns Momentum): Nothing writes the ball's velocity or position
+ *     during active play; `resetBall` is the sole spawn-event exception.
+ *   - LAW 3 (Clamped Damping): All linear and angular resistance routes through
+ *     `applyClampedLinearDamping` and `applyClampedAngularDamping` in `damping.js`.
+ *   - LAW 4 (No Ball State Machine): Carries continuous telemetry floats and tick
+ *     stamps rather than boolean gameplay states.
+ *   - LAW 6 (Determinism): Balls are created in `TUNING.balls` array order; the
+ *     only clock is `tick`.
  */
 
 /** Scratch for the resistance impulses. Reused; never escapes a call. */

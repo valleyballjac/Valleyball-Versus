@@ -1,3 +1,13 @@
+/**
+ * Module: features/athletes/athleteManager
+ * Role: Roster lifecycle manager and stream-head spawn solver for 1v1 and 2v2 athletes.
+ * Frame Phase: Setup / Transition (spawn, stage, config, reset). Per-tick physics runs directly on Athlete instances.
+ * Active Architectural Laws:
+ *   - LAW 1 (Single Authority): Delegates physical state construction to `sim/athlete.js` (`createAthlete`).
+ *   - LAW 6 (Deterministic Match): `computeStreamHeadSpawns` preserves exact PRNG draw order (South first, North second)
+ *     so seeded `?fixture=` runs reproduce identical spawn coordinates and headings.
+ */
+
 import { TUNING } from '../../config/tuning.js';
 import { createAthlete } from '../../sim/athlete.js';
 import { resetStrikeState } from '../../mechanics/strikes.js';
@@ -6,6 +16,17 @@ import { resetStrikeState } from '../../mechanics/strikes.js';
  * Computes stream-head spawn positions, athlete facing yaws, and camera azimuths
  * so every athlete spawns on the stream head OPPOSITE their active target goal,
  * facing inward toward the valley court and their target goal.
+ *
+ * Why: Rulebook Section 3.2 mandates that athletes begin at the stream heads opposite
+ * the goal they are attacking, ensuring a full-court downhill approach into the valley.
+ *
+ * @param {object} [options]
+ * @param {Array<object>} [options.configs=[]] Per-slot player configurations (`{ team }`)
+ * @param {number} [options.athleteCount=2] Number of active athletes (1, 2, or 4)
+ * @param {'N'|'S'} [options.targetGoal='N'] Current Home team target goal ('N' or 'S')
+ * @param {object} [options.streamHeads] Map of `{ sw, se, nw, ne }` coordinates
+ * @param {() => number} [options.randomFn=Math.random] Deterministic or standard PRNG
+ * @returns {Array<{ pos: { x: number, y: number, z: number }, facingYaw: number, cameraAzimuth: number, targetGoal: 'N'|'S', side: 'north'|'south' }>}
  */
 export function computeStreamHeadSpawns({
   configs = [],
@@ -59,51 +80,75 @@ export function computeStreamHeadSpawns({
 
 /**
  * Manages the collection of active athletes, team assignments,
- * stream head spawning, 3D lobby staging, and per-tick physics updates.
- *
- * Supports 1v1 (2 athletes) and 2v2 (4 athletes) with zero GC allocation
- * on the 60Hz fixed update path.
+ * stream-head spawning, and 3D lobby staging.
  */
 class AthleteManager {
   constructor() {
-    /** @type {import('../../sim/athlete.js').createAthlete[]} */
+    /** @type {Array<ReturnType<typeof createAthlete>>} */
     this.athletes = [];
     this.scene = null;
-    this.characterSkeleton = null;
-    this.characterRoot = null;
-    this.clips = [];
     this.activeCount = 2;
-
-    // Pre-allocated empty input fallback to prevent allocations
-    this._defaultInput = Object.freeze({
-      moveX: 0,
-      moveZ: 0,
-      jump: false,
-      dive: false,
-      volley: false,
-      spike: false,
-      sprint: false,
-      hasAim: false,
-      aimYaw: 0,
-    });
+    this._assets = {
+      characterSkeleton: null,
+      characterRoot: null,
+      clips: [],
+    };
   }
 
   /**
    * Initializes the manager with Three.js scene and loaded skeleton/clips.
+   *
+   * @param {object} params
+   * @param {import('three').Scene} params.scene
+   * @param {import('three').Skeleton} [params.characterSkeleton]
+   * @param {import('three').Object3D} [params.characterRoot]
+   * @param {Array<import('three').AnimationClip>} [params.clips]
    */
-  init({ scene, characterSkeleton, characterRoot, clips }) {
+  init({ scene, characterSkeleton = null, characterRoot = null, clips = [] } = {}) {
     this.scene = scene;
-    this.characterSkeleton = characterSkeleton;
-    this.characterRoot = characterRoot;
-    this.clips = clips;
+    this._assets.characterSkeleton = characterSkeleton;
+    this._assets.characterRoot = characterRoot;
+    this._assets.clips = clips;
+  }
+
+  /**
+   * Spawns a single athlete slot and adds it to the roster.
+   *
+   * @param {number} idx Slot index (0..3)
+   * @param {object} [slotConfig={}] Slot configuration
+   * @returns {ReturnType<typeof createAthlete>}
+   */
+  spawnAthlete(idx, slotConfig = {}) {
+    const team = slotConfig.team || (idx % 2 === 0 ? 'home' : 'away');
+    const variant = slotConfig.variant || 'classic';
+    const primaryColor = slotConfig.primaryColor ?? (team === 'home' ? 0xd90429 : 0x1d4ed8);
+
+    const athlete = createAthlete({
+      id: `p${idx + 1}`,
+      athleteIndex: idx,
+      team,
+      variant,
+      primaryColor,
+      headwear: slotConfig.headwear,
+      assistPreset: slotConfig.assistPreset || 'standard',
+      spawn: slotConfig.spawn || { x: 0, y: 1.5, z: 0, yaw: 0 },
+      scene: this.scene,
+      characterSkeleton: this._assets.characterSkeleton,
+      characterRoot: this._assets.characterRoot,
+      clips: this._assets.clips,
+    });
+
+    this.athletes[idx] = athlete;
+    return athlete;
   }
 
   /**
    * Ensures the athlete array has at least `count` athletes instantiated.
    * Enables the first `count` athletes and disables any remaining.
    *
-   * @param {number} count 1 (practice), 2 (1v1 match), or 4 (2v2 match)
-   * @param {Array<object>} configs Player configuration objects
+   * @param {number} [count=2] 1 (practice), 2 (1v1 match), or 4 (2v2 match)
+   * @param {Array<object>} [configs=[]] Player configuration objects
+   * @returns {Array<ReturnType<typeof createAthlete>>}
    */
   ensureRoster(count = 2, configs = []) {
     this.activeCount = count;
@@ -111,29 +156,9 @@ class AthleteManager {
     while (this.athletes.length < count) {
       const idx = this.athletes.length;
       const slotConfig = configs[idx] || (TUNING.players && TUNING.players[idx]) || {};
-      const team = slotConfig.team || (idx % 2 === 0 ? 'home' : 'away');
-      const variant = slotConfig.variant || 'classic';
-      const primaryColor = slotConfig.primaryColor ?? (team === 'home' ? 0xd90429 : 0x1d4ed8);
-
-      const athlete = createAthlete({
-        id: `p${idx + 1}`,
-        athleteIndex: idx,
-        team,
-        variant,
-        primaryColor,
-        headwear: slotConfig.headwear,
-        assistPreset: slotConfig.assistPreset || 'standard',
-        spawn: { x: 0, y: 1.5, z: 0, yaw: 0 },
-        scene: this.scene,
-        characterSkeleton: this.characterSkeleton,
-        characterRoot: this.characterRoot,
-        clips: this.clips,
-      });
-
-      this.athletes.push(athlete);
+      this.spawnAthlete(idx, slotConfig);
     }
 
-    // Apply enabled states
     for (let i = 0; i < this.athletes.length; i++) {
       const shouldEnable = i < count;
       this.athletes[i].setEnabled(shouldEnable);
@@ -146,21 +171,70 @@ class AthleteManager {
   }
 
   /**
-   * Returns all active athlete instances.
+   * Alias for `ensureRoster` when spawning match athletes with configs.
+   *
+   * @param {number} [count=2]
+   * @param {Array<object>} [configs=[]]
+   * @returns {Array<ReturnType<typeof createAthlete>>}
+   */
+  spawnMatchAthletes(count = 2, configs = []) {
+    return this.ensureRoster(count, configs);
+  }
+
+  /**
+   * Returns all instantiated athlete instances.
+   *
+   * @returns {Array<ReturnType<typeof createAthlete>>}
    */
   getAthletes() {
     return this.athletes;
   }
 
   /**
+   * Alias for `getAthletes()`.
+   *
+   * @returns {Array<ReturnType<typeof createAthlete>>}
+   */
+  getAll() {
+    return this.athletes;
+  }
+
+  /**
    * Returns a specific athlete by slot index.
+   *
+   * @param {number} [index=0]
+   * @returns {ReturnType<typeof createAthlete>|null}
    */
   getAthlete(index = 0) {
     return this.athletes[index] || null;
   }
 
   /**
+   * Enables or disables all instantiated athletes.
+   *
+   * @param {boolean} enabled
+   */
+  setEnabledAll(enabled) {
+    for (let i = 0; i < this.athletes.length; i++) {
+      this.athletes[i]?.setEnabled(Boolean(enabled));
+    }
+  }
+
+  /**
+   * Disposes all instantiated athletes and clears the roster.
+   */
+  destroyAll() {
+    for (let i = 0; i < this.athletes.length; i++) {
+      this.athletes[i]?.dispose?.();
+    }
+    this.athletes.length = 0;
+  }
+
+  /**
    * Applies configuration to a specific athlete slot.
+   *
+   * @param {number} slotIndex
+   * @param {object} config
    */
   applyConfig(slotIndex, config) {
     const athlete = this.athletes[slotIndex];
@@ -168,38 +242,18 @@ class AthleteManager {
     const team = config.team || athlete.team;
     const variant = config.variant || athlete.variant;
     athlete.setTeamAndVariant(team, variant, { primaryColor: config.primaryColor });
-    if (config.headwear !== undefined && athlete.headwear !== config.headwear) athlete.setHeadwear(config.headwear);
+    if (config.headwear !== undefined && athlete.headwear !== config.headwear) {
+      athlete.setHeadwear(config.headwear);
+    }
     if (config.assistPreset && athlete.setAssistPreset) {
       athlete.setAssistPreset(config.assistPreset);
     }
   }
 
   /**
-   * Teleports athletes to designated stream head spawns opposite their target goal.
-   * Follows Rulebook Section 3.2.
+   * Positions P1 at center court for practice sandbox drill and disables other slots.
    *
-   * @param {'match' | 'practice'} mode
-   * @param {string} targetGoal 'N' | 'S'
-   * @param {function} randomFn
-   */
-  teleportToMatchSpawns(mode = 'match', targetGoal = 'N', randomFn = () => 0) {
-    const configs = this.athletes.map((a) => ({ team: a?.team }));
-    const spawns = computeStreamHeadSpawns({
-      configs,
-      athleteCount: Math.min(this.activeCount, this.athletes.length),
-      targetGoal,
-      randomFn,
-    });
-    for (let i = 0; i < spawns.length; i++) {
-      if (this.athletes[i]) {
-        this.athletes[i].teleportTo(spawns[i].pos, spawns[i].facingYaw);
-      }
-    }
-    return spawns;
-  }
-
-  /**
-   * Positions athlete at center court for practice sandbox drill.
+   * @param {object|null} [arenaPreset=null]
    */
   teleportToPracticeSpawn(arenaPreset = null) {
     const spawn = arenaPreset?.spawn || { x: 0, y: 1.2, z: 0 };
@@ -217,7 +271,7 @@ class AthleteManager {
    * Each character starts at a stratified random frame of the idle loop so
    * multiple preview athletes never sway in lockstep.
    *
-   * @param {'practice' | 'match' | 'match2v2'} mode
+   * @param {'practice' | 'match' | 'match2v2'} [mode='match']
    */
   stageForLobby(mode = 'match') {
     const randIdlePhase = (slot, total) => ((slot + 0.15 + Math.random() * 0.70) / total) % 1;
@@ -285,56 +339,6 @@ class AthleteManager {
     }
     for (let i = 2; i < this.athletes.length; i++) {
       this.athletes[i].setEnabled(false);
-    }
-  }
-
-  /**
-   * Executes pre-physics step updates for all active athletes.
-   * Zero heap allocations.
-   *
-   * @param {number} tick
-   * @param {number} dt
-   * @param {Array<object>} inputSlots
-   */
-  updatePrePhysics(tick, dt, inputSlots = []) {
-    for (let i = 0; i < this.athletes.length; i++) {
-      const athlete = this.athletes[i];
-      if (!athlete.isEnabled) continue;
-      const input = inputSlots[i] || this._defaultInput;
-      athlete.prePhysicsUpdate(input, tick, dt);
-    }
-  }
-
-  /**
-   * Executes post-physics step updates for all active athletes.
-   *
-   * @param {number} tick
-   * @param {number} dt
-   * @param {Array<object>} balls
-   * @returns {Array<object>} assist events produced this tick
-   */
-  updatePostPhysics(tick, dt, balls = []) {
-    const assistEvents = [];
-    for (let i = 0; i < this.athletes.length; i++) {
-      const athlete = this.athletes[i];
-      if (!athlete.isEnabled) continue;
-      const assist = athlete.postPhysicsUpdate(tick, dt, balls, this.athletes, i);
-      if (assist) assistEvents.push(assist);
-    }
-    return assistEvents;
-  }
-
-  /**
-   * Interpolates visual meshes between physics solver states for smooth rendering.
-   *
-   * @param {number} alpha
-   */
-  renderPoses(alpha) {
-    for (let i = 0; i < this.athletes.length; i++) {
-      const athlete = this.athletes[i];
-      if (athlete.isEnabled) {
-        athlete.renderPose(alpha);
-      }
     }
   }
 

@@ -1,17 +1,14 @@
-import * as THREE from 'three';
-
 /**
- * High-fidelity celestial galaxy skydome and precision starfield.
- *
- * Solves:
- * 1. ZERO SEAMS: A continuous 3D mathematical shader using unit direction vectors
- *    (dir.x, dir.y, dir.z) completely eliminates UV seams, cubemap edges, and pole pinch.
- * 2. ZERO PIXELATION: Stars are rendered via THREE.Points with sizeAttenuation: false,
- *    pinning each star to subpixel/native screen-space sharpness (1.0 to 1.8px) with
- *    soft Gaussian anti-aliased circular alpha.
- * 3. REALISTIC ASTRONOMICAL DYNAMICS: Accurate stellar temperatures (pure white, ice blue,
- *    pale gold) and astronomical magnitude distribution.
+ * @file skybox.js
+ * Responsibility: Seamless 3D procedural nebula skydome and subpixel anti-aliased celestial starfield.
+ * Upstream: Initialized by `src/visuals/arena.js` and centered on the active camera by `src/features/camera/viewportManager.js`.
+ * Downstream: Uses `three` shader materials and point clouds.
+ * Key invariants:
+ * - Uses continuous 3D unit direction vectors so there are zero UV seams or pole pinches.
+ * - `updateCelestialSkybox` keeps the skydome centered on the rendering camera across all splitscreen viewports.
  */
+
+import * as THREE from 'three';
 
 let skyboxGroup = null;
 

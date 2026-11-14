@@ -4,31 +4,20 @@ import { applyClampedLinearDamping, applyClampedAngularDamping } from './damping
 import { ARM_CHAIN_DAMPED, LEG_BODIES } from './autorig.js';
 
 /**
- * THE WORLD-SPACE PD TRACKER — and the one blend weight.
+ * MODULE HEADER — src/sim/tracker.js
  *
- * LAW L2: bodies chase WORLD-SPACE target transforms. There is not a single
- * joint motor, joint-space muscle or local-frame servo anywhere in this file or
- * in this project. Each body is pulled toward where the animation says it should
- * be, in world coordinates, and the joints built in Task 3 are left to sort out
- * the consequences. That is what makes a stumble emerge instead of being
- * authored.
- *
- * LAW L4: ONE BLEND WEIGHT. `weight` below is a single float. 0 is the Task 3
- * ragdoll with every gain at zero; 1 is full tracking. Ragdoll, Impact, Stumble
- * and Tracking are REGIONS of that float, not states — there is no enum, no
- * switch, no mode variable, and nothing in this file branches on a character
- * state. The only branch on weight at all is an early-out at exactly zero, and
- * that is an optimisation: the gains are already zero there, so skipping the
- * loop changes nothing about what the character does.
- *
- * LAW L1: momentum stays with the sphere. Nothing here touches the motor body.
- * Knock the character down at a sprint and the sphere keeps every bit of its
- * speed, because the character was never what was carrying it.
- *
- * LAW L3: every damping impulse goes through damping.js, against RELATIVE
- * velocity. See that file for why.
- *
- * DIRECTORY RULE (src/sim/): nothing here names a wall-clock or scheduler API.
+ * Role: World-space PD force/torque tracker (`createTracker`, `applyTracking`,
+ *   `applyImpacts`, `queueKnockdown`) that drives the 16 ragdoll bodies toward
+ *   the ghost target transforms modulated by a single scalar `tracker.weight`.
+ * Frame Phase: Fixed-step pre-physics (`applyTracking`) and post-physics (`applyImpacts`).
+ * Active Architectural Laws:
+ *   - LAW L1 (Physics Owns Momentum): Nothing here touches the sphere motor body.
+ *   - LAW L2 (World-Space Tracking): Bodies chase world-space target transforms;
+ *     no joint motors or local-frame servos exist.
+ *   - LAW L3 (Clamped Damping & Listed Exception): Relative-velocity damping uses
+ *     `damping.js`; `applyArmDamping` is the sole listed solver-damping exception.
+ *   - LAW L4 (One Blend Weight): `weight` in [0, 1] continuously spans ragdoll,
+ *     stumble, and active tracking with no boolean balance state machine.
  */
 
 /** Below this the error quaternion has no meaningful axis. */

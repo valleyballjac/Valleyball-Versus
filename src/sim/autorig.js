@@ -1,29 +1,20 @@
 import * as THREE from 'three';
 import { TUNING } from '../config/tuning.js';
-import { Interpolated } from '../core/Interpolated.js';
-import { RAPIER, getWorld, RAGDOLL_GROUPS, RAGDOLL_UPPER_GROUPS, MOTOR_GROUPS, getRagdollGroups } from './physics.js';
+import { RAPIER, getWorld, MOTOR_GROUPS, getRagdollGroups } from './physics.js';
 
 /**
- * The Auto-Rigger.
+ * MODULE HEADER — src/sim/autorig.js
  *
- * DERIVATION OVER AUTHORING. The only authored things in this file are the
- * BONE_MAP table below and the ratios it reads out of TUNING. There is not a
- * single position, size or transform literal anywhere else — every number that
- * reaches Rapier is measured off the skeleton at bind pose, in WORLD space.
- *
- * DIRECTORY RULE (src/sim/): nothing here names a wall-clock or scheduler API.
- *
- * THE SCALE TRAP. The armature root carries a 0.01 uniform scale (the rig is
- * authored in centimetres). Every geometric quantity in this file therefore
- * comes from getWorldPosition() or matrixWorld — never from a bone's local
- * .position. A local-space rigger silently builds a 100x oversized ragdoll that
- * looks plausible in the console and absurd on screen. The bind matrices this
- * module exports are stored as full Matrix4s and are never decomposed on the
- * assumption of unit scale: they legitimately contain that 0.01.
- *
- * LAW L1: this ragdoll owns no locomotion momentum. Nothing here reads input.
- * LAW L3: no damping setter is called, and none is named, anywhere in this file.
- * LAW L6: every body gets .setCanSleep(false).
+ * Role: Derives the 16-body ragdoll collider/joint rig from the glTF skeleton's
+ *   world-space bind pose (`buildRagdoll`, `destroyRagdoll`, `auditSkeleton`,
+ *   `BONE_MAP`, `LEG_BODIES`, `ARM_CHAIN_DAMPED`, `resolveBoneByName`, `rigSuffixForBodySide`).
+ * Frame Phase: Boot / character spawn and teardown (`buildRagdoll`, `destroyRagdoll`).
+ * Active Architectural Laws:
+ *   - DERIVATION OVER AUTHORING: Every segment dimension, anchor, and bind matrix is
+ *     measured from the skeleton in world space (preserving the 0.01 armature scale).
+ *   - LAW L1 (Physics Owns Momentum): Ragdoll bodies own no locomotion momentum.
+ *   - LAW L3 (No Uncontrolled Damping): No damping setters are called here.
+ *   - LAW L6 (Determinism): All bodies use `.setCanSleep(false)` and deterministic creation order.
  */
 
 /** The skeleton contract. A file that does not satisfy this is not our asset. */
@@ -207,9 +198,6 @@ export const ARM_CHAIN_DAMPED = new Set([
   'upperArmL', 'upperArmR', 'foreArmL', 'foreArmR', 'handL', 'handR',
 ]);
 
-/** Local axis a capsule body is built along. Rapier capsules are Y-aligned. */
-const BODY_AXIS = new THREE.Vector3(0, 1, 0);
-
 /**
  * Reference direction used to complete a segment's orientation basis, and the
  * fallback for segments that happen to run along it.
@@ -307,27 +295,28 @@ export function resolveBoneByName(skeleton, authoredName) {
  */
 export function auditSkeleton(skeleton) {
   const byName = indexBones(skeleton);
-  const rows = [];
 
-  for (const bone of skeleton.bones) {
-    bone.getWorldPosition(_scratch);
-    const head = _scratch.clone();
+  if (TUNING.debug?.logSkeletonAudit) {
+    const rows = [];
+    for (const bone of skeleton.bones) {
+      bone.getWorldPosition(_scratch);
+      const head = _scratch.clone();
 
-    const children = bone.children
-      .filter((child) => child.isBone)
-      .map((child) => `${child.name}: ${child.getWorldPosition(_scratch).distanceTo(head).toFixed(4)}`);
+      const children = bone.children
+        .filter((child) => child.isBone)
+        .map((child) => `${child.name}: ${child.getWorldPosition(_scratch).distanceTo(head).toFixed(4)}`);
 
-    rows.push({
-      bone: bone.name,
-      parent: bone.parent && bone.parent.isBone ? bone.parent.name : `(${bone.parent ? bone.parent.name : 'none'})`,
-      x: Number(head.x.toFixed(4)),
-      y: Number(head.y.toFixed(4)),
-      z: Number(head.z.toFixed(4)),
-      childDistances: children.length ? children.join('  |  ') : '(leaf)',
-    });
+      rows.push({
+        bone: bone.name,
+        parent: bone.parent && bone.parent.isBone ? bone.parent.name : `(${bone.parent ? bone.parent.name : 'none'})`,
+        x: Number(head.x.toFixed(4)),
+        y: Number(head.y.toFixed(4)),
+        z: Number(head.z.toFixed(4)),
+        childDistances: children.length ? children.join('  |  ') : '(leaf)',
+      });
+    }
+    console.table(rows);
   }
-
-  console.table(rows);
 
   const problems = [];
 
@@ -354,10 +343,12 @@ export function auditSkeleton(skeleton) {
     );
   }
 
-  console.log(
-    `[autorig] skeleton contract satisfied: ${skeleton.bones.length} joints, ` +
-      `all ${BONE_MAP.length * 2} BONE_MAP names resolved`,
-  );
+  if (TUNING.debug?.logSkeletonAudit) {
+    console.log(
+      `[autorig] skeleton contract satisfied: ${skeleton.bones.length} joints, ` +
+        `all ${BONE_MAP.length * 2} BONE_MAP names resolved`,
+    );
+  }
 
   return byName;
 }
@@ -627,14 +618,14 @@ function buildJoint(entry, rig, byName, spawn) {
 function worldPointToBodyLocal(body, point, out) {
   const t = body.translation();
   const r = body.rotation();
-  _inverse.makeRotationFromQuaternion(new THREE.Quaternion(r.x, r.y, r.z, r.w)).invert();
+  _inverse.makeRotationFromQuaternion(_quat.set(r.x, r.y, r.z, r.w)).invert();
   return out.set(point.x - t.x, point.y - t.y, point.z - t.z).applyMatrix4(_inverse);
 }
 
 /** World direction -> body local (no translation). */
 function worldDirToBodyLocal(body, dir, out) {
   const r = body.rotation();
-  _inverse.makeRotationFromQuaternion(new THREE.Quaternion(r.x, r.y, r.z, r.w)).invert();
+  _inverse.makeRotationFromQuaternion(_quat.set(r.x, r.y, r.z, r.w)).invert();
   return out.copy(dir).applyMatrix4(_inverse).normalize();
 }
 
@@ -663,11 +654,14 @@ export function buildRagdoll(skeleton, characterRoot, spawnTransform, athleteInd
     new THREE.Matrix4().makeTranslation(0, TUNING.ragdoll.spawnHeight, 0);
 
   const rig = new Map();
-  const summary = [];
+  const logAudit = !!TUNING.debug?.logSkeletonAudit;
+  const summary = logAudit ? [] : null;
 
   for (const entry of BONE_MAP) {
     const segment = buildSegment(entry, byName, characterHeight, spawn, athleteIndex);
     const bone = resolveBone(byName, entry.bone);
+    const bindBoneWorld = bone.matrixWorld.clone();
+    const bindBodyWorld = segment.bindBodyWorld;
 
     rig.set(entry.key, {
       key: entry.key,
@@ -682,8 +676,12 @@ export function buildRagdoll(skeleton, characterRoot, spawnTransform, athleteInd
       // Full matrices. They contain the armature's 0.01 scale and that is
       // correct — the sync divides it back out through the parent chain. Never
       // "fix" these by decomposing and dropping the scale.
-      bindBoneWorld: bone.matrixWorld.clone(),
-      bindBodyWorld: segment.bindBodyWorld,
+      bindBoneWorld,
+      bindBodyWorld,
+      // Pre-computed composite bind matrices so animtarget.js and ragdoll.js
+      // never need to invert bindBoneWorld or bindBodyWorld every tick/frame.
+      bindBoneToBody: bindBoneWorld.clone().invert().multiply(bindBodyWorld),
+      bindBodyToBone: bindBodyWorld.clone().invert().multiply(bindBoneWorld),
       shape: segment.shape,
       radius: segment.radius,
       halfHeight: segment.halfHeight,
@@ -692,15 +690,17 @@ export function buildRagdoll(skeleton, characterRoot, spawnTransform, athleteInd
       mesh: null,
     });
 
-    summary.push({
-      key: entry.key,
-      group: entry.group,
-      segment_m: Number(segment.length.toFixed(4)),
-      shape: segment.shape,
-      radius_m: Number(segment.radius.toFixed(4)),
-      halfHeight_m: Number(segment.halfHeight.toFixed(4)),
-      joint: entry.joint || '(root)',
-    });
+    if (summary) {
+      summary.push({
+        key: entry.key,
+        group: entry.group,
+        segment_m: Number(segment.length.toFixed(4)),
+        shape: segment.shape,
+        radius_m: Number(segment.radius.toFixed(4)),
+        halfHeight_m: Number(segment.halfHeight.toFixed(4)),
+        joint: entry.joint || '(root)',
+      });
+    }
   }
 
   const joints = [];
@@ -709,11 +709,13 @@ export function buildRagdoll(skeleton, characterRoot, spawnTransform, athleteInd
     joints.push(buildJoint(entry, rig, byName, spawn));
   }
 
-  console.table(summary);
-  console.log(
-    `[autorig] derived ${rig.size} bodies and ${joints.length} joints; ` +
-      `measured character height ${characterHeight.toFixed(4)} m`,
-  );
+  if (logAudit) {
+    console.table(summary);
+    console.log(
+      `[autorig] derived ${rig.size} bodies and ${joints.length} joints; ` +
+        `measured character height ${characterHeight.toFixed(4)} m`,
+    );
+  }
 
   return { rig, joints, characterHeight, order: hierarchyOrder(rig) };
 }

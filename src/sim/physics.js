@@ -2,35 +2,19 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { TUNING } from '../config/tuning.js';
 
 /**
- * The Rapier world.
+ * MODULE HEADER — src/sim/physics.js
  *
- * DIRECTORY RULE (src/sim/): nothing under this directory may name any
- * wall-clock or scheduler API — not in live code, and not in a comment either,
- * so the rule is checkable with a single grep. The simulation cannot perceive
- * real time. If it needs a clock, the clock is `tick`.
- *
- * LAW L3: all resistance is applied as clamped impulses — see
- * applyClampedDamping in motor.js and the two helpers in damping.js, which are
- * the implementations. Rapier's own damping setters are not used for any of it.
- *
- * ONE LISTED EXCEPTION, and one correction. The exception is `applyArmDamping`
- * in tracker.js — ONE FUNCTION, TWO SITES, FOUR SETTER CALLS, AND IT MAY NOT
- * GROW BY A LINE. The clamped helpers run before world.step and damp the
- * pre-step velocity relative to the target, so they cannot touch chatter the
- * solver injects during the step — measured, raising their gains fourfold moved
- * it under 3%. The two sites are the arm chain and the dive's leg parachute;
- * the second arrived with the dive work and this wording was corrected in G3.5
- * to say so, because it had said "two lines" while the census greps to four.
- *
- * The ban therefore greps to four lines in one function, all commented, all in
- * tracker.js. A hit anywhere else in src/ is a violation.
- *
- * The correction: this file used to claim explicit damping CRASHES the WASM
- * build. Tested directly against @dimforge/rapier3d-compat 0.19.3 — it does
- * not. setLinearDamping and setAngularDamping apply cleanly, and a ball dropped
- * with damping 2.0 reaches -5.9 m/s where free fall reaches -24.0. The reason
- * to keep resistance in one clamped implementation stands on its own; it never
- * needed the crash claim, and the claim was wrong.
+ * Role: Owns the Rapier 3D world (`initPhysics`, `getWorld`, `stepPhysics`,
+ *   `drainContactForces`), the single source of truth for collision group bitmasks
+ *   (`getRagdollGroups`, `ENVIRONMENT_GROUPS`, `MOTOR_GROUPS`, `BALL_GROUPS`,
+ *   `ENVIRONMENT_RAY_GROUPS`), and `logCollisionMatrix`.
+ * Frame Phase: Boot (`initPhysics`) and fixed-step (`stepPhysics`, `drainContactForces`).
+ * Active Architectural Laws:
+ *   - LAW L3 (Clamped Damping & Listed Exception): Resistance uses clamped impulses
+ *     (`motor.js`, `damping.js`), with the sole solver-damping exception in
+ *     `tracker.js` (`applyArmDamping`, 4 setter calls for arm-chain buzz and dive leg drag).
+ *   - LAW L6 (Determinism): Fixed `SOLVER_ITERATIONS = 16` and `world.timestep = fixedDt`;
+ *     no wall-clock APIs under `src/sim/`.
  */
 
 /**
@@ -148,12 +132,6 @@ export function getRagdollGroups(athleteIndex = 0, isUpper = false) {
 
 export const RAGDOLL_GROUPS = getRagdollGroups(0, false);
 export const RAGDOLL_UPPER_GROUPS = getRagdollGroups(0, true);
-export const RAGDOLL_P2_GROUPS = getRagdollGroups(1, false);
-export const RAGDOLL_UPPER_P2_GROUPS = getRagdollGroups(1, true);
-export const RAGDOLL_P3_GROUPS = getRagdollGroups(2, false);
-export const RAGDOLL_UPPER_P3_GROUPS = getRagdollGroups(2, true);
-export const RAGDOLL_P4_GROUPS = getRagdollGroups(3, false);
-export const RAGDOLL_UPPER_P4_GROUPS = getRagdollGroups(3, true);
 
 const ALL_RAGDOLLS =
   GROUP_RAGDOLL | GROUP_RAGDOLL_UPPER |

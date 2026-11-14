@@ -5,45 +5,18 @@ import { applyCutImpulse, applyCleatAnchor, applyDiveImpulse, horizontalSpeed } 
 import { queueKnockdown } from '../sim/tracker.js';
 
 /**
- * THE ACTION STATES — the slide and the dive.
+ * MODULE HEADER — src/mechanics/actions.js
  *
- * Lifted out of `fixedUpdate` whole in G3.5. Not a threshold, not a tunable and
- * not an order changed: the three blocks this file is made of ran in exactly
- * this sequence inside `fixedUpdate`, and they run in exactly this sequence
- * here. The comments came with them, at full length, because the reasoning in
- * them is the record of four mechanics that were built wrong first — the slide
- * timer that knocked down every fast slide, the dive that went limp on liftoff,
- * the linear dive ramp that landed the pose a third of the way through the
- * flight, and the `tracker.weight > 0.5` early-out that ended every dive before
- * it touched the floor.
- *
- * WHAT MOVED, AND WHAT IT COST. Three fragments of `fixedUpdate` that were
- * separated by a hundred lines of unrelated work are adjacent now:
- *
- *   1. the slide and dive mechanics themselves;
- *   2. the commitment flag and the skid resistance, which `updateMotor` takes;
- *   3. the ratchets that scrub the slide and dive clips.
- *
- * Between (1) and (2) `fixedUpdate` saved the ragdoll's previous transforms,
- * computed the drive and drag scales, ran the grounded debounce and applied the
- * limp brake. None of those touch the motor body, the slide clock or the dive
- * latch, so reading `motor.body.linvel().y` here rather than there is the same
- * read of the same number — and the determinism gate for this step is what
- * says so, not this comment.
- *
- * LAW 4 (GF-2.0) — THERE IS NO ACTION STATE MACHINE HERE. `slideTime` is a tick
- * count, `divePending` is a latch the cooldown bounds, `lastDiveTick` and
- * `diveStunUntil` are recorded ticks of exactly the same class as
- * `motor.lastJumpTick`. Nothing branches on "which phase of a slide are we in";
- * the phases are floats that ratchet.
- *
- * LAW 3 — NOTHING HERE DAMPS ANYTHING. The slide's braking is a MULTIPLIER on
- * the impulses `updateMotor` already applies through the clamped helpers. This
- * file names no Rapier damping setter, and it names none in a comment either,
- * so a grep hit in `mechanics/` means a violation rather than a mention.
- *
- * THE DIRECTORY RULE APPLIES HERE TOO (src/mechanics/): nothing in this file
- * names a wall clock or a scheduler. The clock is `tick`.
+ * Role: Evaluates per-athlete defensive and mobility actions (`createActionState`,
+ *   `runActions`): brace stance, slide commitment, directional dive, brace-dive
+ *   intercept (`solveBraceDiveIntercept`), and sprint cut impulse/cleat anchor.
+ * Frame Phase: Fixed-step pre-physics (`runActions`, called inside `athlete.prePhysicsUpdate`).
+ * Active Architectural Laws:
+ *   - LAW 3 (No Uncontrolled Damping): Slide resistance is a multiplier on `updateMotor`'s
+ *     clamped impulses; no Rapier damping setters are called here.
+ *   - LAW 4 (No Action State Machine & Zero Allocations): Uses tick counters,
+ *     latches, and monotone phase ratchets; reuses `state._result` every tick.
+ *   - LAW 6 (Determinism): All cooldowns and windows are counted in ticks (`tick`).
  */
 
 /**
@@ -174,6 +147,24 @@ export function createActionState() {
     lastInterceptDiveTick: -Infinity,
     /** Tick a ball redirect resolved during that dive; -Infinity means none (whiff). */
     interceptDiveContactTick: -Infinity,
+    /** Pre-allocated return object mutated in place by `runActions` (Law 4). */
+    _result: {
+      allowJump: false,
+      sliding: false,
+      diveSkidding: false,
+      diveStunned: false,
+      actionCommitted: false,
+      actionResistance: 1,
+      slideMix: null,
+      diveMix: null,
+      braceMix: null,
+      slidePhase: null,
+      divePhase: null,
+      lastDiveTick: -Infinity,
+      cutFired: false,
+      cutDir: null,
+      lastCutTick: -Infinity,
+    },
   };
 }
 
@@ -412,11 +403,13 @@ export function runActions({
     // poke into the ghost from a hundred and eighty lines above the ratchet
     // that reads it. Same tick, same value, one function.
     divePhaseRestart = true;
-    const _lv = motor.body.linvel();
-    console.log(
-      `[dive] launched at tick ${tick} — sphere ${speedNow.toFixed(2)} m/s horizontal, ` +
-        `vy ${_lv.y.toFixed(2)} m/s after the impulse (mass ${motor.body.mass().toFixed(3)} kg)`,
-    );
+    if (TUNING.debug?.logStrikes) {
+      const _lv = motor.body.linvel();
+      console.log(
+        `[dive] launched at tick ${tick} — sphere ${speedNow.toFixed(2)} m/s horizontal, ` +
+          `vy ${_lv.y.toFixed(2)} m/s after the impulse (mass ${motor.body.mass().toFixed(3)} kg)`,
+      );
+    }
   }
 
   // THE GROUNDED DIVE IS A SLIDE. Same shape, same exit, one number apart.
@@ -581,27 +574,21 @@ export function runActions({
   // reads it as "not yet expired" rather than as a state anything branches on.
   const diveStunned = tick < state.diveStunUntil;
 
-  return {
-    /** The jump the motor may actually fire — swallowed by a slide, locked by a dive. */
-    allowJump,
-    sliding,
-    diveSkidding,
-    diveStunned,
-    /** updateMotor's driveScale is zeroed by this, not multiplied. */
-    actionCommitted,
-    /** MULTIPLIES the knockdown drag; it never replaces it. */
-    actionResistance,
-    /** The ghost's four action inputs, or null before the first spawn. */
-    slideMix,
-    diveMix,
-    braceMix,
-    slidePhase,
-    divePhase,
-    /** The tick on which the most recent dive was launched. */
-    lastDiveTick: state.lastDiveTick,
-    /** Stage 3 Cut results. */
-    cutFired,
-    cutDir: state.cutDir,
-    lastCutTick: state.lastCutTick,
-  };
+  const out = state._result;
+  out.allowJump = allowJump;
+  out.sliding = sliding;
+  out.diveSkidding = diveSkidding;
+  out.diveStunned = diveStunned;
+  out.actionCommitted = actionCommitted;
+  out.actionResistance = actionResistance;
+  out.slideMix = slideMix;
+  out.diveMix = diveMix;
+  out.braceMix = braceMix;
+  out.slidePhase = slidePhase;
+  out.divePhase = divePhase;
+  out.lastDiveTick = state.lastDiveTick;
+  out.cutFired = cutFired;
+  out.cutDir = state.cutDir;
+  out.lastCutTick = state.lastCutTick;
+  return out;
 }

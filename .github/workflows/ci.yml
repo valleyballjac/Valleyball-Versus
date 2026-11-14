@@ -19,5 +19,5 @@ jobs:
           # CI never launches the desktop shell; skip the ~100 MB binary.
           ELECTRON_SKIP_BINARY_DOWNLOAD: 1
       - run: npm test
-      - run: node scripts/audit.mjs
+      - run: npm run audit
       - run: npm run build

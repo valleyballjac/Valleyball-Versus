@@ -1,3 +1,12 @@
+/**
+ * Module: visuals/turfParticles
+ * Role: Zero-allocation instanced turf/cleat particle emitter and pitch surface color resolver.
+ * Frame Phase: Render (visual particle integration) and Fixed Update (emission triggers on foot plants/slides/cuts).
+ * Active Architectural Laws:
+ *   - LAW 1 (Single Authority): Purely visual particle pool; never perturbs physics bodies.
+ *   - LAW 8 (60 FPS Frame-Time Budget): Pre-allocated TypedArrays (`MAX_PARTICLES = 256`) and conditional GPU color buffer uploads (`instanceColor.needsUpdate` only when particles spawn or compact).
+ */
+
 import * as THREE from 'three';
 
 const MAX_PARTICLES = 256;
@@ -341,6 +350,7 @@ export function createTurfParticleSystem(scene) {
 
     const gravity = 14.0;
     let alive = 0;
+    let colorCompacted = false;
 
     for (let i = 0; i < activeCount; i += 1) {
       life[i] -= dt;
@@ -379,6 +389,7 @@ export function createTurfParticleSystem(scene) {
 
         instancedMesh.getColorAt(i, _color);
         instancedMesh.setColorAt(alive, _color);
+        colorCompacted = true;
       }
 
       // Compute transform
@@ -396,7 +407,10 @@ export function createTurfParticleSystem(scene) {
     activeCount = alive;
     instancedMesh.count = activeCount;
     instancedMesh.instanceMatrix.needsUpdate = true;
-    instancedMesh.instanceColor.needsUpdate = true;
+    // Only re-upload the instance color buffer when dead-particle compaction moved a slot
+    if (colorCompacted) {
+      instancedMesh.instanceColor.needsUpdate = true;
+    }
   }
 
   function reset() {

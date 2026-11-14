@@ -1,8 +1,24 @@
 import { createBrandBall } from '../../../visuals/brandBall.js';
 import { state } from './state.js';
+import { renderCardinalDiamondSvg } from './constants.js';
 
 const QUIT_LABEL = 'QUIT TO DESKTOP';
 const QUIT_ARMED_LABEL = 'PRESS AGAIN TO QUIT';
+
+/**
+ * Reversed rainbow palette (Violet at top -> Red at bottom reserved for Quit).
+ * Every button shares a homogenized dark-glass base opacity and typography.
+ */
+const TITLE_RAINBOW_PALETTE = [
+  { hex: '#a855f7', rgb: '168, 85, 247' }, // 0: Practice Sandbox (Violet)
+  { hex: '#3b82f6', rgb: '59, 130, 246' }, // 1: Play Match 1v1 (Blue)
+  { hex: '#00e5ff', rgb: '0, 229, 255' },  // 2: Play Match 2v2 (Cyan)
+  { hex: '#10b981', rgb: '16, 185, 129' }, // 3: Settings (Emerald)
+  { hex: '#84cc16', rgb: '132, 204, 22' }, // 4: How To Play (Lime Green)
+  { hex: '#fbb417', rgb: '251, 180, 23' }, // 5: ValleyballVS.com (Gold)
+  { hex: '#ff6b35', rgb: '255, 107, 53' }, // 6: Valleyball.org (Orange)
+  { hex: '#ff2e55', rgb: '255, 46, 85' },  // 7: Quit to Desktop (Red)
+];
 
 /**
  * Main Menu Title Screen
@@ -119,29 +135,22 @@ export function buildTitleScreen(rootEl, navActions = {}) {
     width: clamp(340px, 28vw, 385px);
   `;
 
-  const btnPractice = createMenuButton('PRACTICE SANDBOX', 'rgba(255, 255, 255, 0.12)', () => {
+  const btnPractice = createMenuButton('PRACTICE SANDBOX', TITLE_RAINBOW_PALETTE[0], () => {
     navActions.onPractice?.();
   });
   btnPractice.id = 'btn-practice-sandbox';
 
-  const btnPlayMatch = createMenuButton('PLAY MATCH (1v1 VERSUS)', '#ffffff', () => {
+  const btnPlayMatch = createMenuButton('PLAY MATCH (1v1 VERSUS)', TITLE_RAINBOW_PALETTE[1], () => {
     navActions.onPlayMatch?.();
   });
   btnPlayMatch.id = 'btn-play-match';
-  btnPlayMatch.style.color = '#000000';
-  btnPlayMatch.style.fontWeight = '900';
-  btnPlayMatch.style.border = '2px solid #ffffff';
-  btnPlayMatch.style.boxShadow = '0 4px 20px rgba(255, 255, 255, 0.45), 0 0 25px rgba(0, 229, 255, 0.25)';
-  btnPlayMatch.onmouseleave = () => {
-    if (state.titleFocusIndex !== 1) {
-      btnPlayMatch.style.transform = 'translateX(0)';
-      btnPlayMatch.style.borderColor = '#ffffff';
-      btnPlayMatch.style.boxShadow = '0 4px 20px rgba(255, 255, 255, 0.45), 0 0 25px rgba(0, 229, 255, 0.25)';
-    }
-  };
+  btnPlayMatch.innerHTML = `
+    <span style="display:flex;align-items:center;gap:8px;">PLAY MATCH (1v1 VERSUS)</span>
+    <span class="contextual-btn-badge" style="background:rgba(59,130,246,0.22);color:#93c5fd;border:1px solid rgba(59,130,246,0.55);font-weight:900;">2 ATHLETES</span>
+  `;
 
   // 2v2 Versus Item (4 Athletes)
-  const btnMatch2v2 = createMenuButton('PLAY MATCH (2v2 VERSUS)', 'rgba(0, 229, 255, 0.14)', () => {
+  const btnMatch2v2 = createMenuButton('PLAY MATCH (2v2 VERSUS)', TITLE_RAINBOW_PALETTE[2], () => {
     navActions.onPlayMatch2v2?.();
   });
   btnMatch2v2.id = 'btn-play-match-2v2';
@@ -150,33 +159,33 @@ export function buildTitleScreen(rootEl, navActions = {}) {
     <span class="contextual-btn-badge" style="background:rgba(0,229,255,0.2);color:#00e5ff;border:1px solid rgba(0,229,255,0.5);font-weight:900;">4 ATHLETES</span>
   `;
 
-  const btnSettings = createMenuButton('SETTINGS', 'rgba(255, 255, 255, 0.08)', () => {
+  const btnSettings = createMenuButton('SETTINGS', TITLE_RAINBOW_PALETTE[3], () => {
     navActions.onSettings?.();
   });
   btnSettings.id = 'btn-title-settings';
 
-  const btnHowToPlay = createMenuButton('HOW TO PLAY', 'rgba(255, 255, 255, 0.08)', () => {
+  const btnHowToPlay = createMenuButton('HOW TO PLAY', TITLE_RAINBOW_PALETTE[4], () => {
     navActions.onHowToPlay?.();
   });
   btnHowToPlay.id = 'btn-title-how-to-play';
 
   // In-Browser Link Buttons
-  const btnValleyballVS = createMenuButton('VALLEYBALLVS.COM ↗', 'rgba(0, 229, 255, 0.08)', () => {
+  const btnValleyballVS = createMenuButton('VALLEYBALLVS.COM ↗', TITLE_RAINBOW_PALETTE[5], () => {
     window.open('https://ValleyballVS.com', '_blank');
   });
   btnValleyballVS.id = 'btn-link-valleyball-vs';
   btnValleyballVS.innerHTML = `
     <span style="display:flex;align-items:center;gap:8px;">VALLEYBALLVS.COM</span>
-    <span class="contextual-btn-badge" style="background:rgba(0,229,255,0.18);color:#00e5ff;border:1px solid rgba(0,229,255,0.45);">VISIT SITE ↗</span>
+    <span class="contextual-btn-badge" style="background:rgba(251,180,23,0.18);color:#fde047;border:1px solid rgba(251,180,23,0.48);">VISIT SITE ↗</span>
   `;
 
-  const btnValleyballOrg = createMenuButton('VALLEYBALL.ORG ↗', 'rgba(255, 255, 255, 0.08)', () => {
+  const btnValleyballOrg = createMenuButton('VALLEYBALL.ORG ↗', TITLE_RAINBOW_PALETTE[6], () => {
     window.open('https://Valleyball.org', '_blank');
   });
   btnValleyballOrg.id = 'btn-link-valleyball-org';
   btnValleyballOrg.innerHTML = `
     <span style="display:flex;align-items:center;gap:8px;">VALLEYBALL.ORG</span>
-    <span class="contextual-btn-badge" style="background:rgba(255,255,255,0.15);color:#ffffff;border:1px solid rgba(255,255,255,0.35);">ORGANIZATION ↗</span>
+    <span class="contextual-btn-badge" style="background:rgba(255,107,53,0.18);color:#fdba74;border:1px solid rgba(255,107,53,0.48);">ORGANIZATION ↗</span>
   `;
 
   menuList.appendChild(btnPractice);
@@ -202,7 +211,7 @@ export function buildTitleScreen(rootEl, navActions = {}) {
   // first press arms it and only a second press quits.
   const desktop = typeof window !== 'undefined' ? window.desktopAPI : undefined;
   if (desktop?.isDesktop) {
-    const btnQuit = createMenuButton(QUIT_LABEL, 'rgba(255, 46, 85, 0.10)', () => {
+    const btnQuit = createMenuButton(QUIT_LABEL, TITLE_RAINBOW_PALETTE[7], () => {
       if (btnQuit.dataset.armed === '1') {
         desktop.quit();
         return;
@@ -220,6 +229,9 @@ export function buildTitleScreen(rootEl, navActions = {}) {
       state.titleFocusIndex = idx;
       updateTitleFocusUI();
     };
+    btn.onmouseleave = () => {
+      updateTitleFocusUI();
+    };
   });
   updateTitleFocusUI();
 
@@ -229,26 +241,26 @@ export function buildTitleScreen(rootEl, navActions = {}) {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 10px;
-    padding: 8px 14px;
+    gap: 8px;
+    padding: 8px 12px;
     margin-top: 4px;
-    background: rgba(11, 17, 26, 0.78);
-    border: 1px solid rgba(255, 255, 255, 0.18);
+    background: rgba(11, 17, 26, 0.82);
+    border: 1px solid rgba(0, 229, 255, 0.35);
     border-radius: 8px;
-    font-size: 11px;
+    font-size: 10.5px;
     font-weight: 800;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.07em;
     color: #cbd5e1;
     width: 100%;
     box-sizing: border-box;
     user-select: none;
   `;
   promptBar.innerHTML = `
-    <span>🎮 ANY CONTROLLER</span>
+    <span style="color:#00e5ff;font-weight:900;">🎮 P1 CONTROL</span>
     <span style="color:#475569;">&middot;</span>
     <span><b style="color:#ffffff;">↕</b> NAVIGATE</span>
     <span style="color:#475569;">&middot;</span>
-    <span><b style="color:#00e5ff;">A / START / ENTER</b> SELECT</span>
+    <span style="display:inline-flex;align-items:center;gap:4px;">${renderCardinalDiamondSvg('south', 13)} <b style="color:#4ade80;">✕/A / START / ENTER</b> SELECT</span>
   `;
   menuList.appendChild(promptBar);
 
@@ -263,53 +275,60 @@ export function buildTitleScreen(rootEl, navActions = {}) {
 export function updateTitleFocusUI() {
   state.titleButtons.forEach((btn, idx) => {
     if (!btn) return;
-    const isPlayMatch = btn.id === 'btn-play-match';
-    if (idx === state.titleFocusIndex) {
-      btn.classList.add('rainbow-focused');
+    const palette = TITLE_RAINBOW_PALETTE[idx] || TITLE_RAINBOW_PALETTE[0];
+    const isFocused = idx === state.titleFocusIndex;
+    btn.classList.remove('rainbow-focused');
+    btn.style.outline = 'none';
+    if (isFocused) {
       btn.style.transform = 'translateX(-10px) scale(1.02)';
+      btn.style.background = `linear-gradient(90deg, rgba(${palette.rgb}, 0.28) 0%, rgba(15, 23, 42, 0.88) 100%)`;
+      btn.style.borderColor = palette.hex;
+      btn.style.borderLeft = `6px solid ${palette.hex}`;
+      btn.style.boxShadow = `0 0 20px rgba(${palette.rgb}, 0.48), 0 6px 20px rgba(0, 0, 0, 0.55)`;
       try { btn.focus(); } catch (_) {}
     } else {
       if (btn.dataset.armed) {
         delete btn.dataset.armed;
         btn.textContent = QUIT_LABEL;
       }
-      btn.classList.remove('rainbow-focused');
       btn.style.transform = 'translateX(0) scale(1)';
-      btn.style.borderColor = isPlayMatch ? '#ffffff' : 'rgba(255, 255, 255, 0.2)';
-      btn.style.boxShadow = isPlayMatch ? '0 4px 20px rgba(255, 255, 255, 0.45), 0 0 25px rgba(0, 229, 255, 0.25)' : '0 4px 16px rgba(0, 0, 0, 0.4)';
-      btn.style.outline = 'none';
+      btn.style.background = `linear-gradient(90deg, rgba(${palette.rgb}, 0.12) 0%, rgba(15, 23, 42, 0.78) 65%)`;
+      btn.style.borderColor = `rgba(${palette.rgb}, 0.42)`;
+      btn.style.borderLeft = `5px solid ${palette.hex}`;
+      btn.style.boxShadow = '0 4px 16px rgba(0, 0, 0, 0.45)';
     }
   });
 }
 
-export function createMenuButton(text, bg, onClick) {
+export function createMenuButton(text, paletteOrBg, onClick) {
+  const palette = (paletteOrBg && typeof paletteOrBg === 'object')
+    ? paletteOrBg
+    : { hex: '#00e5ff', rgb: '0, 229, 255' };
   const btn = document.createElement('button');
   btn.textContent = text;
+  btn.dataset.accentHex = palette.hex;
+  btn.dataset.accentRgb = palette.rgb;
   btn.style.cssText = `
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
     padding: 15px 22px;
     font-size: 14px;
     font-weight: 800;
     font-family: inherit;
     letter-spacing: 0.1em;
     color: #ffffff;
-    background: ${bg};
-    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: linear-gradient(90deg, rgba(${palette.rgb}, 0.12) 0%, rgba(15, 23, 42, 0.78) 65%);
+    border: 1.5px solid rgba(${palette.rgb}, 0.42);
+    border-left: 5px solid ${palette.hex};
     border-radius: 8px;
     cursor: pointer;
     text-align: left;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
     transition: all 0.15s ease;
   `;
-  btn.onmouseenter = () => {
-    btn.style.transform = 'translateX(-8px)';
-    btn.style.borderColor = '#ffffff';
-    btn.style.boxShadow = '0 6px 20px rgba(255, 255, 255, 0.2)';
-  };
-  btn.onmouseleave = () => {
-    btn.style.transform = 'translateX(0)';
-    btn.style.borderColor = 'rgba(255, 255, 255, 0.2)';
-    btn.style.boxShadow = '0 4px 16px rgba(0, 0, 0, 0.4)';
-  };
   btn.onclick = onClick;
   return btn;
 }

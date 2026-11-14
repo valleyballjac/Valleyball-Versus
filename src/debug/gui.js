@@ -1,8 +1,17 @@
+/**
+ * @module debug/gui
+ * Live developer tuning panel (`lil-gui`) mirroring the `TUNING` configuration
+ * tree, per-player camera/kit/headwear selectors, match state controls, and
+ * JSON export/reset actions.
+ */
+
 import GUI from 'lil-gui';
 import { TUNING, resetTuning, tuningJson } from '../config/tuning.js';
 import { SERIES_1_PLAYTEST_IDS } from '../config/cosmetics.js';
 import { activeArenaType, activeArenaPreset } from '../sim/arena.js';
 import { soundManager } from '../audio/soundManager.js';
+
+const CAMERA_DROPDOWN_MODES = ['chase', 'thirdPerson', 'firstPerson', 'ball', 'sports', 'broadcast', 'tactical'];
 
 /**
  * The tuning panel.
@@ -44,14 +53,16 @@ export function createGui({
   getScoreboards = () => null,
   clipNames = [],
   tracker,
+  getAthletes = () => null,
   // A GETTER, not the object: the GUI is built during boot and the match state
   // may not exist yet at that moment. Capturing the value would capture null
   // for the life of the session.
   getMatchState = () => null,
+  onResetMatch = null,
   // Series 1 headwear selector. headwearControls is a MAIN-OWNED mutable holder
-  // ({ p1, p2 }) so the hotkeys and this panel read and write the same state,
+  // ({ p1, p2, p3, p4 }) so the hotkeys and this panel read and write the same state,
   // and .listen() keeps the dropdown honest when the hotkey cycles it.
-  headwearControls = { p1: 'manager_cap', p2: 'manager_cap' },
+  headwearControls = { p1: 'manager_cap', p2: 'manager_cap', p3: 'manager_cap', p4: 'manager_cap' },
   onHeadwearChange = () => {},
 }) {
   const gui = new GUI({ title: 'VALLEYBALL / TUNING' });
@@ -91,7 +102,7 @@ export function createGui({
       if (window.__vb?.setPlayerConfig) window.__vb.setPlayerConfig(0, { variant: val });
       else onRagdollVisibilityChange();
     });
-    p1Folder.add(TUNING.players[0], 'cameraMode', ['chase', 'ball', 'sports', 'broadcast', 'tactical']).name('Camera [Tab]').listen().onChange((val) => {
+    p1Folder.add(TUNING.players[0], 'cameraMode', CAMERA_DROPDOWN_MODES).name('Camera [Tab]').listen().onChange((val) => {
       if (window.__vb?.setPlayerConfig) window.__vb.setPlayerConfig(0, { cameraMode: val });
     });
 
@@ -105,7 +116,7 @@ export function createGui({
       if (window.__vb?.setPlayerConfig) window.__vb.setPlayerConfig(1, { variant: val });
       else onRagdollVisibilityChange();
     });
-    p2Folder.add(TUNING.players[1], 'cameraMode', ['chase', 'ball', 'sports', 'broadcast', 'tactical']).name('Camera [ ] ]').listen().onChange((val) => {
+    p2Folder.add(TUNING.players[1], 'cameraMode', CAMERA_DROPDOWN_MODES).name('Camera [ ] ]').listen().onChange((val) => {
       if (window.__vb?.setPlayerConfig) window.__vb.setPlayerConfig(1, { cameraMode: val });
     });
   }
@@ -139,6 +150,18 @@ export function createGui({
     .name('P2 headwear [8]')
     .listen()
     .onChange((val) => onHeadwearChange(1, val));
+  if ('p3' in headwearControls) {
+    cosmeticsFolder.add(headwearControls, 'p3', SERIES_1_PLAYTEST_IDS)
+      .name('P3 headwear [6]')
+      .listen()
+      .onChange((val) => onHeadwearChange(2, val));
+  }
+  if ('p4' in headwearControls) {
+    cosmeticsFolder.add(headwearControls, 'p4', SERIES_1_PLAYTEST_IDS)
+      .name('P4 headwear [Shift+6]')
+      .listen()
+      .onChange((val) => onHeadwearChange(3, val));
+  }
   cosmeticsFolder.close();
 
   const physics = gui.addFolder('physics');
@@ -150,8 +173,7 @@ export function createGui({
   // read once at boot: the geometry, the colliders and every spawn point are
   // built from it, so a live toggle here would report a world that is not the
   // one on screen. Switch with ?arena=court / ?arena=bowl and reload.
-  locked(arena.add({ active: activeArenaType() }, 'active'), 'reload, ?arena=');
-  locked(arena.add(TUNING.arena, 'type'), 'reload');
+  locked(arena.add({ active: activeArenaType() }, 'active'), 'reload');
   locked(arena.add(TUNING.arena, 'modelUrl'), 'reload');
 
   // The kill plane belongs to the ACTIVE preset, so that is the one exposed —
@@ -189,7 +211,6 @@ export function createGui({
   // RULE is deliberately absent — it is Max in code and not a feel number.
   const ballCommon = gui.addFolder('ball (shared)');
   locked(ballCommon.add(TUNING.ball, 'eventThreshold'), 'reload');
-  locked(ballCommon.add(TUNING.ball, 'captureSpawnTick'), 'reload');
 
   for (const spec of TUNING.balls) {
     const folder = gui.addFolder(`ball: ${spec.label}`);
@@ -228,8 +249,6 @@ export function createGui({
   // "next R" rather than left looking live.
   const ragdoll = gui.addFolder('ragdoll (applies on next R-spawn)');
   locked(ragdoll.add(TUNING.ragdoll, 'spawnHeight'), 'next R');
-  locked(ragdoll.add(TUNING.ragdoll, 'tumbleImpulse'), 'next R');
-  locked(ragdoll.add(TUNING.ragdoll, 'captureSpawnTick'), 'next R');
   locked(ragdoll.add(TUNING.ragdoll, 'lengthFit'), 'next R');
 
   const ragdollRadius = ragdoll.addFolder('radiusRatio (x character height)');
@@ -290,8 +309,18 @@ export function createGui({
   // LAW L4 — the weight is simulation state with exactly two writers (the
   // recovery ramp and the T hook). A slider here would be a third, competing
   // with both, so it is a read-only readout that follows the sim.
-  if (tracker) {
-    locked(tracking.add(tracker, 'weight', 0, 1).listen(), 'live, T to knock down');
+  const trackerReadout = {
+    get weight() {
+      const liveTracker = getAthletes?.()?.[0]?.tracker || tracker;
+      return liveTracker ? liveTracker.weight : 1;
+    },
+    set weight(val) {
+      const liveTracker = getAthletes?.()?.[0]?.tracker || tracker;
+      if (liveTracker) liveTracker.weight = val;
+    },
+  };
+  if (tracker || getAthletes) {
+    locked(tracking.add(trackerReadout, 'weight', 0, 1).listen(), 'live, T to knock down');
   }
   locked(tracking.add(TUNING.tracking, 'startWeight'), 'next R');
   tracking.add(TUNING.tracking, 'linearKp', 0, 400, 1);
@@ -379,11 +408,6 @@ export function createGui({
     }
   }
 
-  const visual = gui.addFolder('visual');
-  locked(visual.add(TUNING.visual, 'boxWidth'), 'reload');
-  locked(visual.add(TUNING.visual, 'boxHeight'), 'reload');
-  locked(visual.add(TUNING.visual, 'boxDepth'), 'reload');
-
   // THE MATCH. Mode is a TUNING value so it survives a reset the way everything
   // else does; the live state it drives is main.js's, reached through the
   // getter so this folder never holds a stale reference to it.
@@ -418,6 +442,11 @@ export function createGui({
   matchFolder
     .add({
       reset: () => {
+        if (typeof onResetMatch === 'function') {
+          onResetMatch();
+          console.log('[match] score, clock and ball trackers reset');
+          return;
+        }
         const match = getMatchState();
         if (!match) return;
         match.scoreHome = 0;
@@ -426,14 +455,9 @@ export function createGui({
         match.ticksRemaining = TUNING.match.durationSeconds * 60;
         match.matchOver = false;
         match.events.length = 0;
-        // The celebration goes with it. Resetting mid-flash and leaving the
-        // counter running means the boards celebrate a goal that no longer
-        // exists in the events list.
         match.celebrationTicks = 0;
         match.lastScoredFor = null;
         match.lastGoalId = null;
-        // The per-ball trackers go too. Leaving them would carry a disarmed
-        // hoop across the reset and swallow the first goal of the next match.
         match.ballTrackers.clear();
         console.log('[match] score, clock and ball trackers reset');
       },
@@ -450,7 +474,7 @@ export function createGui({
       else onCameraChange();
     });
   cameraFolder
-    .add(TUNING.camera, 'mode', ['ball', 'chase', 'sports', 'broadcast', 'tactical'])
+    .add(TUNING.camera, 'mode', CAMERA_DROPDOWN_MODES)
     .name('viewing mode')
     .listen();
   cameraFolder.add(TUNING.camera, 'fov', 20, 110, 1).onChange(onCameraChange);

@@ -1,8 +1,10 @@
 /**
- * In-Game Settings & Pause Menu for Valleyball Versus.
- *
- * Designed to NOT pause the play clock or freeze physics:
- * match time and background simulation continue running while open.
+ * @file inGameMenu.js
+ * Responsibility: In-game pause/settings menu overlay (camera modes, render presets, controls reference, and live Hustle Board stats).
+ * Upstream: Initialized by `src/main.js` and toggled via `Escape` or Start button.
+ * Downstream: Calls `src/ui/mainMenu.js`, `src/config/tuning.js`, `src/audio/soundManager.js`, and `src/input/inputRouter.js`.
+ * Key invariants:
+ * - Opening the in-game menu does not freeze the simulation clock (`loop.paused` stays false).
  */
 
 import { getColorName } from './mainMenu.js';

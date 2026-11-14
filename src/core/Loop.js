@@ -1,61 +1,68 @@
-import { TUNING } from '../config/tuning.js';
-
 /**
- * The deterministic fixed-step loop.
+ * ============================================================================
+ * MODULE: src/core/Loop.js
+ * ============================================================================
+ * ROLE:
+ *   Deterministic fixed-timestep accumulator loop (60 Hz `fixedUpdate`) paired
+ *   with an uncapped display-refresh `render(alpha)` pass.
  *
- * This file is the ONLY place in the project that reads wall-clock time, and it
- * reads it from exactly one source: the timestamp the rAF callback is handed.
- * No other clock is sampled anywhere, so there is no chance of two clocks
- * disagreeing with each other.
+ * FRAME PHASE:
+ *   Top-level frame driver (`requestAnimationFrame`):
+ *     1. Samples wall-clock delta from the `rAF` timestamp only.
+ *     2. Runs `onFrame` listeners (e.g., input latching) once per display frame.
+ *     3. Drains `accumulator` in fixed `1 / 60` s increments (`savePrevious` ->
+ *        `fixedUpdate(dt, tick)` -> `tick++` -> `onTick` listeners).
+ *     4. Computes `alpha = accumulator / fixedDt` and invokes `render(alpha)`.
  *
- * `fixedUpdate` receives only the constant timestep and the integer tick. The
- * simulation cannot perceive real time — see the directory-level ban documented
- * in src/sim/.
- *
- * The loop knows nothing about files, names, images or the DOM. Everything an
- * external harness needs, it gets through `tick` and `onTick`.
+ * ARCHITECTURAL INVARIANTS:
+ *   - Law 6 (Absolute Determinism & Single Clock Authority): This module is the
+ *     ONLY place in the engine that reads wall-clock timestamps. `fixedUpdate`
+ *     receives only constant `fixedDt` (`1/60` s) and integer `tick`.
+ *   - No Catch-Up Spiral: Frame deltas exceeding `TUNING.loop.maxFrameTime` are
+ *     clamped so a background stall slows real-time playback rather than running
+ *     dozens of physics steps in a single frame.
+ *   - Zero Heap Allocation in `_onFrame`: Display-rate sample buffers are
+ *     pre-allocated `Float64Array`s.
+ * ============================================================================
  */
 
-/** How many raw frame times the display-Hz readout averages over. */
+import { TUNING } from '../config/tuning.js';
+
+/** Number of raw frame deltas averaged for the HUD display-Hz readout. */
 const DISPLAY_SAMPLE_COUNT = 30;
 
-/** Sentinel an onTick listener returns to stop the loop scheduling frames. */
+/** Sentinel returned by an `onTick` listener to halt further frame scheduling. */
 export const HALT = 'halt';
 
 export class Loop {
   /**
-   * @param {object}   handlers
-   * @param {(dt: number, tick: number) => void} handlers.fixedUpdate
-   * @param {(alpha: number) => void}            handlers.render
+   * @param {object} handlers
+   * @param {(dt: number, tick: number) => void} handlers.fixedUpdate 60 Hz simulation step.
+   * @param {(alpha: number) => void}            handlers.render      Visual render callback.
    */
   constructor({ fixedUpdate, render }) {
     this._fixedUpdate = fixedUpdate;
     this._render = render;
 
-    // LAW 6 — the fixed rate is bound ONCE, here. Rapier's integration
-    // parameters will be locked to this same value in Step 2. It is deliberately
-    // not parameterised at runtime.
+    // Law 6 — bound once at construction to match Rapier's integration dt.
     this.fixedHz = TUNING.loop.fixedHz;
     this.fixedDt = 1 / this.fixedHz;
 
-    /**
-     * The project's canonical clock. Monotonic integer, starts at 0.
-     * Incremented once per fixedUpdate and by nothing else, anywhere.
-     */
+    /** Canonical monotonic simulation tick counter (incremented once per fixed step). */
     this.tick = 0;
-    /** Unconsumed real time, in seconds. Always < fixedDt after a frame. */
+    /** Unconsumed real time in seconds (`0 <= accumulator < fixedDt` after step drain). */
     this.accumulator = 0;
-    /** Interpolation factor handed to render(). Always in [0, 1). */
+    /** Interpolation factor in `[0, 1)` passed to `render(alpha)`. */
     this.alpha = 0;
-    /** Steps taken during the most recent frame. Read by the HUD. */
+    /** Number of fixed simulation steps executed during the current display frame. */
     this.stepsThisFrame = 0;
 
-    // Wall-clock readouts, for the HUD only. The simulation never sees these.
+    // Wall-clock telemetry readouts for HUD/diagnostics only (never read by sim/).
     this.frameTimeMs = 0;
     this.displayHz = 0;
     this.wallClockElapsed = 0;
 
-    /** Registry of Interpolated instances; savePrevious() is called on each. */
+    /** Registry of `Interpolated` instances snapshotted before each fixed step. */
     this.interpolated = [];
 
     this._frameListeners = [];
@@ -63,7 +70,10 @@ export class Loop {
     this._startTime = 0;
     this._previousTime = 0;
     this._seeded = false;
-    this._displaySamples = [];
+
+    // Pre-allocated typed buffers for zero-allocation display-Hz median calculation.
+    this._displaySamples = new Float64Array(DISPLAY_SAMPLE_COUNT);
+    this._sortBuffer = new Float64Array(DISPLAY_SAMPLE_COUNT);
     this._displayCursor = 0;
 
     this._rafHandle = 0;
@@ -73,7 +83,7 @@ export class Loop {
   }
 
   /**
-   * Registers an Interpolated so the loop snapshots it before every step.
+   * Registers an `Interpolated` wrapper so `savePrevious()` runs before each step.
    * @template T
    * @param {T} interpolated
    * @returns {T}
@@ -84,16 +94,11 @@ export class Loop {
   }
 
   /**
-   * Registers a listener invoked once per rendered frame, before that frame's
-   * steps are drained. Whatever it latches is therefore seen identically by
-   * every step in the frame, which is what makes per-frame sampling safe to
-   * consume from inside a fixed step.
-   *
-   * The loop knows nothing about what is being latched. Return values are
-   * ignored — only onTick can halt.
+   * Registers a callback invoked once per display frame before fixed steps drain.
+   * Used to latch edge-triggered inputs so all steps in the frame see consistent state.
    *
    * @param {() => void} listener
-   * @returns {() => void} unregister
+   * @returns {() => void} Unregister callback.
    */
   onFrame(listener) {
     this._frameListeners.push(listener);
@@ -104,19 +109,11 @@ export class Loop {
   }
 
   /**
-   * Registers a listener invoked with the tick that fixedUpdate has just been
-   * called with, immediately after that call and before the frame's
-   * interpolated render.
-   *
-   * At the instant a listener runs, every registered Interpolated's `curr`
-   * holds exactly that tick's state, so a listener that wants the pure fixed
-   * state — with no interpolation remainder in it — renders at alpha 1.
-   *
-   * Every registered listener runs even when an earlier one halts. Returning
-   * HALT from any of them stops the loop scheduling further frames.
+   * Registers a callback invoked immediately after each `fixedUpdate(dt, tick)`.
+   * Returning `HALT` from any listener stops the loop cleanly after all listeners run.
    *
    * @param {(tick: number) => unknown} listener
-   * @returns {() => void} unregister
+   * @returns {() => void} Unregister callback.
    */
   onTick(listener) {
     this._tickListeners.push(listener);
@@ -140,11 +137,9 @@ export class Loop {
   }
 
   /**
-   * The determinism proof: simulated time minus real elapsed time, in ms.
-   *
-   * Hovers near zero while running normally. After a stall it steps by exactly
-   * the amount the MAX_FRAME_TIME clamp refused to simulate, and then stops
-   * growing. That is time dilation working as designed, not a bug.
+   * Simulated time minus real wall-clock elapsed time (ms).
+   * Remains near zero under normal load; steps negatively when `maxFrameTime`
+   * clamps a stall (intentional time dilation rather than spiral of death).
    */
   get driftMs() {
     return (this.tick * this.fixedDt - this.wallClockElapsed) * 1000;
@@ -153,8 +148,6 @@ export class Loop {
   _onFrame(now) {
     if (!this._running) return;
 
-    // Seed on the first frame so it yields a frameTime of exactly 0, rather than
-    // letting an uninitialised value produce one huge dt for the clamp to eat.
     if (!this._seeded) {
       this._seeded = true;
       this._startTime = now;
@@ -167,8 +160,6 @@ export class Loop {
     this.frameTimeMs = rawFrameTime * 1000;
     this._recordDisplaySample(rawFrameTime);
 
-    // The clamp. When a frame takes 3 seconds the simulation runs SLOW; it does
-    // not try to catch up. There is deliberately no catch-up logic here.
     const maxFrameTime = TUNING.loop.maxFrameTime;
     const frameTime = rawFrameTime > maxFrameTime ? maxFrameTime : rawFrameTime;
 
@@ -199,8 +190,6 @@ export class Loop {
       this.stepsThisFrame++;
 
       if (this._notify(steppedTick) === HALT) {
-        // Stop here. The frame is abandoned rather than finished, so no alpha
-        // is ever published from an accumulator the drain left over-full.
         this._running = false;
         return;
       }
@@ -225,10 +214,8 @@ export class Loop {
     if (!(frameTime > 0)) return;
     this._displaySamples[this._displayCursor % DISPLAY_SAMPLE_COUNT] = frameTime;
     this._displayCursor++;
-    // Update median displayHz every 15 frames to eliminate per-frame array allocations
-    if (this._displayCursor % 15 === 0 && this._displaySamples.length > 0) {
-      if (!this._sortBuffer) this._sortBuffer = new Float64Array(DISPLAY_SAMPLE_COUNT);
-      const len = this._displaySamples.length;
+    if (this._displayCursor % 15 === 0) {
+      const len = Math.min(this._displayCursor, DISPLAY_SAMPLE_COUNT);
       for (let i = 0; i < len; i++) this._sortBuffer[i] = this._displaySamples[i];
       for (let i = 1; i < len; i++) {
         const val = this._sortBuffer[i];

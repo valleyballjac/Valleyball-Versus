@@ -1,3 +1,12 @@
+/**
+ * Module: visuals/hustleBoards
+ * Role: Four diegetic in-arena stadium video screens displaying live solo practice or team/player match telemetry.
+ * Frame Phase: Render (throttled via dirty-signature gate and `displayCoordinator` upload budget).
+ * Active Architectural Laws:
+ *   - LAW 1 (Single Authority): Purely visual readout of practice/match telemetry; never mutates simulation state.
+ *   - LAW 8 (60 FPS Frame-Time Budget): Uses a fast input dirty-signature gate to skip `buildMatchStatsReport()` and object allocations when stats/celebration state have not changed, and shares 2 GPU textures across 4 meshes.
+ */
+
 import * as THREE from 'three';
 import { TUNING } from '../config/tuning.js';
 import { displayCoordinator } from './displayCoordinator.js';
@@ -169,12 +178,12 @@ export function createHustleBoards(scene) {
 }
 
 /**
- * Redraws the Hustle Boards if stats, time, or celebration state changed.
+ * Redraws the Hustle Boards if stats, team colors, or celebration state changed.
  */
 export function updateHustleBoards(
   handle,
   practiceStats = {},
-  sessionSeconds = 0,
+  _sessionSeconds = 0,
   isPracticeActive = false,
   celebrationTicks = 0,
   matchProbe = null,
@@ -194,145 +203,108 @@ export function updateHustleBoards(
   const practiceColor = p1CustomColor != null ? '#' + p1CustomColor.toString(16).padStart(6, '0') : getTeamHex(p1Team);
 
   const isMatch = !!(matchProbe && matchProbe.mode === 'match');
-  const matchReport = isMatch
-    ? buildMatchStatsReport({
-        match: matchProbe,
-        athletes: athletes || [],
-        athleteMatchStats: athleteMatchStats || [],
-        playerConfigs: TUNING.players || [],
-        activeCount: athletes ? athletes.length : 2,
-      })
-    : null;
 
-  // Assign materials to meshes based on mode
+  // Lightweight dirty/tick gate: compute a compact signature of inputs before running buildMatchStatsReport()
+  let inputSig = `${isPracticeActive ? 'P' : isMatch ? 'M' : 'S'}|${flashing ? 1 : 0}|${phase}|${homeColor}|${awayColor}|${practiceColor}`;
   if (isPracticeActive) {
-    for (const b of handle.boards) {
-      if (b.displayMesh.material !== handle.channels.home.material) {
-        b.displayMesh.material = handle.channels.home.material;
-      }
-    }
-  } else {
-    for (const b of handle.boards) {
-      const targetMat = b.spec.team === 'home' ? handle.channels.home.material : handle.channels.away.material;
-      if (b.displayMesh.material !== targetMat) {
-        b.displayMesh.material = targetMat;
-      }
+    inputSig += `|${practiceStats.goals || 0}:${practiceStats.hits || 0}:${practiceStats.whiffs || 0}:${practiceStats.sweetSpots || 0}:${practiceStats.spikes || 0}:${practiceStats.dives || 0}:${practiceStats.divingHits || 0}:${practiceStats.totalTouches || 0}`;
+  } else if (isMatch) {
+    const count = athletes ? athletes.length : 0;
+    inputSig += `|${matchProbe.scoreHome || 0}:${matchProbe.scoreAway || 0}:${count}`;
+    for (let i = 0; i < count; i++) {
+      const a = athletes[i];
+      const s = athleteMatchStats ? athleteMatchStats[i] : null;
+      inputSig += `|${a?.team || ''}:${a?.strikeState?.resolvedCount || 0}:${a?.strikeState?.whiffCount || 0}:${s?.goals || 0}:${s?.hits || 0}:${s?.whiffs || 0}:${s?.sweetSpotHits || 0}:${s?.spikes || 0}:${s?.dives || 0}:${s?.divingHits || 0}:${s?.totalTouches || 0}`;
     }
   }
 
-  // 1. Prepare data for home channel (Practice or Match Home or Standby)
-  let dataHome, outlineColorHome;
-  if (isPracticeActive) {
-    const goals = practiceStats.goals || 0;
-    const hits = practiceStats.hits || 0;
-    const whiffs = practiceStats.whiffs || 0;
-    const sweetSpots = practiceStats.sweetSpots || 0;
-    const spikes = practiceStats.spikes || 0;
-    const dives = practiceStats.dives || 0;
-    const divingHits = practiceStats.divingHits || 0;
-    const touches = practiceStats.totalTouches || 0;
-    const attempts = hits + whiffs;
-    const accuracy = attempts > 0 ? Math.round((hits / attempts) * 100) : 0;
+  if (handle._lastInputSig !== inputSig) {
+    handle._lastInputSig = inputSig;
 
-    dataHome = {
-      mode: 'practice',
-      titleBadge: 'SOLO PRACTICE TELEMETRY',
-      badgeText: 'SOLO PRACTICE',
-      goals,
-      accuracy,
-      hits,
-      whiffs,
-      sweetSpots,
-      spikes,
-      dives,
-      divingHits,
-      touches,
-      players: [],
-      flashing,
-      phase,
-    };
-    outlineColorHome = practiceColor;
-  } else if (isMatch && matchReport) {
-    const homeTeam = matchReport.teams.home;
-    const homeRoster = homeTeam.players.map((p) => p.shortLabel).join(' & ') || 'P1';
+    const matchReport = isMatch
+      ? buildMatchStatsReport({
+          match: matchProbe,
+          athletes: athletes || [],
+          athleteMatchStats: athleteMatchStats || [],
+          playerConfigs: TUNING.players || [],
+          activeCount: athletes ? athletes.length : 2,
+        })
+      : null;
 
-    dataHome = {
-      mode: 'match',
-      titleBadge: 'HOME TEAM TELEMETRY',
-      badgeText: `HOME TEAM (${homeRoster})`,
-      goals: homeTeam.goals || 0,
-      accuracy: homeTeam.accuracy || 0,
-      hits: homeTeam.hits || 0,
-      whiffs: homeTeam.whiffs || 0,
-      sweetSpots: homeTeam.sweetSpotHits || 0,
-      spikes: homeTeam.spikes || 0,
-      dives: homeTeam.dives || 0,
-      divingHits: homeTeam.divingHits || 0,
-      touches: homeTeam.totalTouches || 0,
-      players: homeTeam.players,
-      flashing,
-      phase,
-    };
-    outlineColorHome = homeColor;
-  } else {
-    dataHome = {
-      mode: 'standby',
-      titleBadge: 'HOME COURT SIGHTLINE',
-      badgeText: 'STANDBY',
-      goals: 0,
-      accuracy: 0,
-      hits: 0,
-      whiffs: 0,
-      sweetSpots: 0,
-      spikes: 0,
-      dives: 0,
-      divingHits: 0,
-      touches: 0,
-      players: [],
-      flashing: false,
-      phase: 0,
-    };
-    outlineColorHome = homeColor;
-  }
+    // Assign materials to meshes based on mode
+    if (isPracticeActive) {
+      for (const b of handle.boards) {
+        if (b.displayMesh.material !== handle.channels.home.material) {
+          b.displayMesh.material = handle.channels.home.material;
+        }
+      }
+    } else {
+      for (const b of handle.boards) {
+        const targetMat = b.spec.team === 'home' ? handle.channels.home.material : handle.channels.away.material;
+        if (b.displayMesh.material !== targetMat) {
+          b.displayMesh.material = targetMat;
+        }
+      }
+    }
 
-  const homePlayersSig = (dataHome.players || []).map((p) => `${p.shortLabel}:${p.goals}:${p.hits}:${p.whiffs}:${p.totalTouches}`).join(',');
-  const keyHome = `home|${dataHome.mode}|${outlineColorHome}|${dataHome.goals}|${dataHome.hits}|${dataHome.whiffs}|${dataHome.sweetSpots}|${dataHome.spikes}|${dataHome.dives}|${dataHome.divingHits}|${dataHome.touches}|${dataHome.badgeText}|${homePlayersSig}`;
-  handle.channels.home.pendingData = dataHome;
-  handle.channels.home.pendingOutlineColor = outlineColorHome;
-  handle.channels.home.pendingKey = keyHome;
-  if (handle.channels.home.lastKey !== keyHome) {
-    handle.channels.home.dirty = true;
-  }
+    // 1. Prepare data for home channel (Practice or Match Home or Standby)
+    let dataHome, outlineColorHome;
+    if (isPracticeActive) {
+      const goals = practiceStats.goals || 0;
+      const hits = practiceStats.hits || 0;
+      const whiffs = practiceStats.whiffs || 0;
+      const sweetSpots = practiceStats.sweetSpots || 0;
+      const spikes = practiceStats.spikes || 0;
+      const dives = practiceStats.dives || 0;
+      const divingHits = practiceStats.divingHits || 0;
+      const touches = practiceStats.totalTouches || 0;
+      const attempts = hits + whiffs;
+      const accuracy = attempts > 0 ? Math.round((hits / attempts) * 100) : 0;
 
-  // 2. Prepare data for away channel (only needed in Match mode or Standby)
-  if (isMatch || (!isPracticeActive && !isMatch)) {
-    let dataAway, outlineColorAway;
-    if (isMatch && matchReport) {
-      const awayTeam = matchReport.teams.away;
-      const awayRoster = awayTeam.players.map((p) => p.shortLabel).join(' & ') || 'P2';
-
-      dataAway = {
-        mode: 'match',
-        titleBadge: 'AWAY TEAM TELEMETRY',
-        badgeText: `AWAY TEAM (${awayRoster})`,
-        goals: awayTeam.goals || 0,
-        accuracy: awayTeam.accuracy || 0,
-        hits: awayTeam.hits || 0,
-        whiffs: awayTeam.whiffs || 0,
-        sweetSpots: awayTeam.sweetSpotHits || 0,
-        spikes: awayTeam.spikes || 0,
-        dives: awayTeam.dives || 0,
-        divingHits: awayTeam.divingHits || 0,
-        touches: awayTeam.totalTouches || 0,
-        players: awayTeam.players,
+      dataHome = {
+        mode: 'practice',
+        titleBadge: 'SOLO PRACTICE TELEMETRY',
+        badgeText: 'SOLO PRACTICE',
+        goals,
+        accuracy,
+        hits,
+        whiffs,
+        sweetSpots,
+        spikes,
+        dives,
+        divingHits,
+        touches,
+        players: [],
         flashing,
         phase,
       };
-      outlineColorAway = awayColor;
+      outlineColorHome = practiceColor;
+    } else if (isMatch && matchReport) {
+      const homeTeam = matchReport.teams.home;
+      const homeRoster = homeTeam.players.map((p) => p.shortLabel).join(' & ') || 'P1';
+
+      dataHome = {
+        mode: 'match',
+        titleBadge: 'HOME TEAM TELEMETRY',
+        badgeText: `HOME TEAM (${homeRoster})`,
+        goals: homeTeam.goals || 0,
+        accuracy: homeTeam.accuracy || 0,
+        hits: homeTeam.hits || 0,
+        whiffs: homeTeam.whiffs || 0,
+        sweetSpots: homeTeam.sweetSpotHits || 0,
+        spikes: homeTeam.spikes || 0,
+        dives: homeTeam.dives || 0,
+        divingHits: homeTeam.divingHits || 0,
+        touches: homeTeam.totalTouches || 0,
+        players: homeTeam.players,
+        flashing,
+        phase,
+      };
+      outlineColorHome = homeColor;
     } else {
-      dataAway = {
+      dataHome = {
         mode: 'standby',
-        titleBadge: 'AWAY COURT SIGHTLINE',
+        titleBadge: 'HOME COURT SIGHTLINE',
         badgeText: 'STANDBY',
         goals: 0,
         accuracy: 0,
@@ -347,34 +319,90 @@ export function updateHustleBoards(
         flashing: false,
         phase: 0,
       };
-      outlineColorAway = awayColor;
+      outlineColorHome = homeColor;
     }
 
-    const awayPlayersSig = (dataAway.players || []).map((p) => `${p.shortLabel}:${p.goals}:${p.hits}:${p.whiffs}:${p.totalTouches}`).join(',');
-    const keyAway = `away|${dataAway.mode}|${outlineColorAway}|${dataAway.goals}|${dataAway.hits}|${dataAway.whiffs}|${dataAway.sweetSpots}|${dataAway.spikes}|${dataAway.dives}|${dataAway.divingHits}|${dataAway.touches}|${dataAway.badgeText}|${awayPlayersSig}`;
-    handle.channels.away.pendingData = dataAway;
-    handle.channels.away.pendingOutlineColor = outlineColorAway;
-    handle.channels.away.pendingKey = keyAway;
-    if (handle.channels.away.lastKey !== keyAway) {
-      handle.channels.away.dirty = true;
+    const homePlayersSig = (dataHome.players || []).map((p) => `${p.shortLabel}:${p.goals}:${p.hits}:${p.whiffs}:${p.totalTouches}`).join(',');
+    const keyHome = `home|${dataHome.mode}|${outlineColorHome}|${dataHome.goals}|${dataHome.hits}|${dataHome.whiffs}|${dataHome.sweetSpots}|${dataHome.spikes}|${dataHome.dives}|${dataHome.divingHits}|${dataHome.touches}|${dataHome.badgeText}|${homePlayersSig}|${flashing ? 1 : 0}`;
+    handle.channels.home.pendingData = dataHome;
+    handle.channels.home.pendingOutlineColor = outlineColorHome;
+    handle.channels.home.pendingKey = keyHome;
+    if (handle.channels.home.lastKey !== keyHome) {
+      handle.channels.home.dirty = true;
     }
-  } else {
-    handle.channels.away.dirty = false;
-  }
 
-  // 3. MATERIAL UNIFORM-DRIVEN CELEBRATION FLASHING (Zero GPU texture uploads, LAW 8)
-  const flashChannels = [handle.channels.home, handle.channels.away];
-  for (const ch of flashChannels) {
-    if (ch?.material?.color) {
-      if (flashing) {
-        if (phase === 1) {
-          // Radiant gold flash pulse
-          ch.material.color.setRGB(1.65, 1.45, 0.45);
+    // 2. Prepare data for away channel (only needed in Match mode or Standby)
+    if (isMatch || (!isPracticeActive && !isMatch)) {
+      let dataAway, outlineColorAway;
+      if (isMatch && matchReport) {
+        const awayTeam = matchReport.teams.away;
+        const awayRoster = awayTeam.players.map((p) => p.shortLabel).join(' & ') || 'P2';
+
+        dataAway = {
+          mode: 'match',
+          titleBadge: 'AWAY TEAM TELEMETRY',
+          badgeText: `AWAY TEAM (${awayRoster})`,
+          goals: awayTeam.goals || 0,
+          accuracy: awayTeam.accuracy || 0,
+          hits: awayTeam.hits || 0,
+          whiffs: awayTeam.whiffs || 0,
+          sweetSpots: awayTeam.sweetSpotHits || 0,
+          spikes: awayTeam.spikes || 0,
+          dives: awayTeam.dives || 0,
+          divingHits: awayTeam.divingHits || 0,
+          touches: awayTeam.totalTouches || 0,
+          players: awayTeam.players,
+          flashing,
+          phase,
+        };
+        outlineColorAway = awayColor;
+      } else {
+        dataAway = {
+          mode: 'standby',
+          titleBadge: 'AWAY COURT SIGHTLINE',
+          badgeText: 'STANDBY',
+          goals: 0,
+          accuracy: 0,
+          hits: 0,
+          whiffs: 0,
+          sweetSpots: 0,
+          spikes: 0,
+          dives: 0,
+          divingHits: 0,
+          touches: 0,
+          players: [],
+          flashing: false,
+          phase: 0,
+        };
+        outlineColorAway = awayColor;
+      }
+
+      const awayPlayersSig = (dataAway.players || []).map((p) => `${p.shortLabel}:${p.goals}:${p.hits}:${p.whiffs}:${p.totalTouches}`).join(',');
+      const keyAway = `away|${dataAway.mode}|${outlineColorAway}|${dataAway.goals}|${dataAway.hits}|${dataAway.whiffs}|${dataAway.sweetSpots}|${dataAway.spikes}|${dataAway.dives}|${dataAway.divingHits}|${dataAway.touches}|${dataAway.badgeText}|${awayPlayersSig}|${flashing ? 1 : 0}`;
+      handle.channels.away.pendingData = dataAway;
+      handle.channels.away.pendingOutlineColor = outlineColorAway;
+      handle.channels.away.pendingKey = keyAway;
+      if (handle.channels.away.lastKey !== keyAway) {
+        handle.channels.away.dirty = true;
+      }
+    } else {
+      handle.channels.away.dirty = false;
+    }
+
+    // 3. MATERIAL UNIFORM-DRIVEN CELEBRATION FLASHING (Zero GPU texture uploads, LAW 8)
+    const flashChannels = [handle.channels.home, handle.channels.away];
+    for (const ch of flashChannels) {
+      if (ch?.material?.color) {
+        if (flashing) {
+          if (phase === 1) {
+            // Radiant gold flash pulse
+            ch.material.color.setRGB(1.65, 1.45, 0.45);
+          } else {
+            ch.material.color.setRGB(1.0, 1.0, 1.0);
+          }
         } else {
           ch.material.color.setRGB(1.0, 1.0, 1.0);
         }
-      } else {
-        ch.material.color.setRGB(1.0, 1.0, 1.0);
       }
     }
   }

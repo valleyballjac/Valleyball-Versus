@@ -249,3 +249,109 @@ test('a lobby match (no fixture) still reports, with a draw', () => {
   assert.equal(result.home.controller, 'human');
   assert.equal(result.away.controller, 'bot');
 });
+
+test('2v2 fixture: normalizes 4 sides (home, away, home2, away2) and builds 4 player configs', () => {
+  const { fixture, errors } = normalizeFixture({
+    id: '2v2-R1-M1',
+    mode: '2v2',
+    seed: 4242,
+    durationSeconds: 180,
+    ball: 'medium',
+    overtime: 'golden_goal',
+    home: { name: 'Alpha 1', controller: 'human', device: 'gamepad1', color: 'red' },
+    away: { name: 'Beta 1', controller: 'bot', difficulty: 'hard', color: 'blue' },
+    home2: { name: 'Alpha 2', controller: 'human', device: 'gamepad2', color: 'yellow' },
+    away2: { name: 'Beta 2', controller: 'bot', difficulty: 'medium', aggressiveness: 0.75, color: 'teal' },
+  });
+  assert.deepEqual(errors, []);
+  assert.equal(fixture.mode, '2v2');
+  assert.equal(fixture.overtime, 'golden_goal');
+  assert.equal(fixture.home2.name, 'Alpha 2');
+  assert.equal(fixture.away2.name, 'Beta 2');
+
+  const { configs, devices } = fixtureMatchSetup(fixture, createFixtureRandom(fixture.seed));
+  assert.equal(configs.length, 4);
+  assert.equal(configs[0].id, 'p1');
+  assert.equal(configs[0].team, 'home');
+  assert.equal(configs[1].id, 'p2');
+  assert.equal(configs[1].team, 'away');
+  assert.equal(configs[2].id, 'p3');
+  assert.equal(configs[2].team, 'home');
+  assert.equal(configs[3].id, 'p4');
+  assert.equal(configs[3].team, 'away');
+  assert.deepEqual(devices.mappings[0], { type: 'gamepad', padIndex: 0, name: 'Gamepad 1' });
+  assert.deepEqual(devices.mappings[2], { type: 'gamepad', padIndex: 1, name: 'Gamepad 2' });
+  assert.equal(devices.mappings[1], null);
+  assert.equal(devices.mappings[3], null);
+
+  // All 4 bot seeds are distinct for the same fixture seed
+  const seeds = new Set([0, 1, 2, 3].map((i) => fixtureBotSeed(fixture, i)));
+  assert.equal(seeds.size, 4);
+});
+
+test('2v2 fixture: accepts 4-element players array and rejects duplicate devices across all 4 slots', () => {
+  const { fixture, errors } = normalizeFixture({
+    mode: '2v2',
+    players: [
+      { name: 'P1', controller: 'human', device: 'keyboard1' },
+      { name: 'P2', controller: 'bot', difficulty: 'easy' },
+      { name: 'P3', controller: 'human', device: 'keyboard2' },
+      { name: 'P4', controller: 'bot', difficulty: 'hard' },
+    ],
+  });
+  assert.deepEqual(errors, []);
+  assert.equal(fixture.home.name, 'P1');
+  assert.equal(fixture.away.name, 'P2');
+  assert.equal(fixture.home2.name, 'P3');
+  assert.equal(fixture.away2.name, 'P4');
+
+  const dup = normalizeFixture({
+    mode: '2v2',
+    home: { controller: 'human', device: 'gamepad1' },
+    home2: { controller: 'human', device: 'gamepad1' },
+  });
+  assert.equal(dup.fixture, null);
+  assert.ok(dup.errors.some((e) => e.includes('home and home2 cannot both use gamepad1')));
+
+  const wrongMode = normalizeFixture({
+    mode: '1v1',
+    home2: { name: 'Extra' },
+  });
+  assert.equal(wrongMode.fixture, null);
+  assert.ok(wrongMode.errors.some((e) => e.includes('home2 only applies when mode is "2v2"')));
+});
+
+test('2v2 result: includes mode, home2, away2, and overtime metadata when present', () => {
+  const { fixture } = normalizeFixture({
+    id: '2v2-OT',
+    mode: '2v2',
+    overtime: 'timed',
+    overtimeDurationSeconds: 120,
+  });
+  const { configs } = fixtureMatchSetup(fixture, createFixtureRandom(fixture.seed));
+  const result = buildMatchResult({
+    fixture,
+    matchState: {
+      scoreHome: 3,
+      scoreAway: 2,
+      overtimeMode: 'timed',
+      overtimePeriod: 1,
+      events: [{ tick: 19500, scoredFor: 'home', goal: 'N' }],
+    },
+    sides: {
+      home: resultSide(configs[0], { hits: 5 }),
+      away: resultSide(configs[1], { hits: 4 }),
+      home2: resultSide(configs[2], { hits: 3 }),
+      away2: resultSide(configs[3], { hits: 2 }),
+    },
+    ball: 'medium',
+    durationSeconds: 300,
+    endedTick: 25200,
+  });
+  assert.equal(result.mode, '2v2');
+  assert.equal(result.winner, 'home');
+  assert.equal(result.home2.name, 'Home 2');
+  assert.equal(result.away2.name, 'Away 2');
+  assert.deepEqual(result.overtime, { mode: 'timed', periods: 1 });
+});
+

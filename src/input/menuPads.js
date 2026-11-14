@@ -34,8 +34,8 @@ function buttonDown(pad, index) {
 }
 
 function heldMask(pad) {
-  const ax = pad.axes[0] || 0;
-  const ay = pad.axes[1] || 0;
+  const ax = pad.axes?.[0] || 0;
+  const ay = pad.axes?.[1] || 0;
   let m = 0;
   if (buttonDown(pad, 12) || ay < -STICK_THRESHOLD) m |= MENU_PAD.up;
   if (buttonDown(pad, 13) || ay > STICK_THRESHOLD) m |= MENU_PAD.down;

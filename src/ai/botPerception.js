@@ -1,15 +1,28 @@
+/**
+ * @module botPerception
+ * @description Zero-allocation world-state sensor, 480-tick multi-bounce trajectory predictor, and 1v1/2v2 race-to-ball solver.
+ *
+ * - **Role**: Samples athlete, opponent, ball, hoop, stream-lane, and valley terrain state into a pre-allocated
+ *   perception struct (`createPerception()`), simulates the ball's 8-second multi-bounce trajectory across the
+ *   heightmap, and determines first-touch priority (`self` vs `opponent` vs `contested`).
+ * - **Frame Phase**: Fixed 60 Hz simulation step (AI perception phase, invoked by `updateBot` prior to strategy selection).
+ * - **Active Architectural Laws**:
+ *   - **LAW 1 (Single Physics Writer)**: Strictly read-only inspection of Rapier rigid bodies and match state.
+ *   - **LAW 6 (Determinism & Zero Allocations)**: Pre-allocates all `THREE.Vector3` fields, trajectory sample buffers,
+ *     and a module-level `(ball, tick)` trajectory cache so 1v1 and 2v2 perception runs with 0 heap allocations.
+ */
+
 import * as THREE from 'three';
 import { TUNING } from '../config/tuning.js';
 import { getCourtFloorY, getCourtSlopeNormal } from './courtHeightmap.js';
 
 export { getCourtFloorY, getCourtSlopeNormal };
 
-// Pre-allocated scratch objects for zero-allocation hot path
+// Pre-allocated scratch objects for zero-allocation hot path (LAW 6)
 const _vec1 = new THREE.Vector3();
 const _vec2 = new THREE.Vector3();
 const _vec3 = new THREE.Vector3();
 const _scratchPos = new THREE.Vector3();
-const _scratchVel = new THREE.Vector3();
 
 // Fixed values for hoops based on game rules
 const HOOP_RADIUS = 4.667;
@@ -72,7 +85,8 @@ export function createPerception() {
         opponent: {
             position: new THREE.Vector3(),
             velocity: new THREE.Vector3(),
-            speed: 0
+            speed: 0,
+            isKnockedDown: false,
         },
         match: {
             targetGoal: 'N',
@@ -169,20 +183,50 @@ export function createPerception() {
 // Fallback singleton for backwards compatibility
 const _defaultPerception = createPerception();
 
-/**
- * Predict ball position after a given number of ticks
- */
-export function projectBallPosition(ballPos, ballVel, ticks, gravityY, outVec = _vec1) {
-    const time = ticks * (1 / 60); // Assuming 60Hz tick rate
-    outVec.copy(ballPos);
-    outVec.x += ballVel.x * time;
-    outVec.y += ballVel.y * time + 0.5 * gravityY * time * time;
-    outVec.z += ballVel.z * time;
-    return outVec;
-}
+// ═══ MODULE-LEVEL 2v2 TRAJECTORY CACHE (Zero-Allocation Per-(Ball, Tick) Memoization) ═══
+// Why: In 2v2 matches, all 4 bots call `buildPerception` on the same simulation tick for the same ball.
+// Caching the 160-step trajectory avoids running 3 redundant 800-lookup heightmap integrations per tick.
+const _trajectoryCache = {
+    valid: false,
+    ballRef: null,
+    tick: -1,
+    posX: NaN,
+    posY: NaN,
+    posZ: NaN,
+    velX: NaN,
+    velY: NaN,
+    velZ: NaN,
+    radius: NaN,
+    ballId: '',
+    maxTicks: 480,
+    gravityY: NaN,
+    hasApex: false,
+    ticksToNextApex: 0,
+    nextApexPos: new THREE.Vector3(),
+    hasBounce: false,
+    ticksToNextBounce: 0,
+    nextBouncePos: new THREE.Vector3(),
+    samples: Array.from({ length: TRAJECTORY_SAMPLES_COUNT }, (_, i) => ({
+        tick: i * TRAJECTORY_STEP_TICKS,
+        time: i * TRAJECTORY_DT,
+        pos: new THREE.Vector3(),
+        vel: new THREE.Vector3(),
+        isGrounded: false,
+        isBounce: false,
+        isApex: false,
+        inStreamLane: false,
+        inHoopAperture: false,
+    })),
+};
 
 /**
- * Zero-allocation interpolation of the terrain-bounced trajectory buffer at an exact tick horizon.
+ * Zero-allocation linear interpolation of the terrain-bounced trajectory buffer at an exact tick horizon.
+ *
+ * @param {Object} trajectory - `perception.trajectory` struct containing `samples`
+ * @param {number} tickOffset - Lookahead offset in 60 Hz ticks (`ticks`, clamped to `[0, 477]`)
+ * @param {THREE.Vector3} [outPos=_vec1] - Scratch vector populated with interpolated 3D position (`m`)
+ * @param {THREE.Vector3|null} [outVel=null] - Optional scratch vector populated with interpolated 3D velocity (`m/s`)
+ * @returns {THREE.Vector3} Mutated `outPos` (caller must not retain across calls if using default `_vec1`)
  */
 export function sampleTrajectoryAtTick(trajectory, tickOffset, outPos = _vec1, outVel = null) {
     const samples = trajectory?.samples;
@@ -218,12 +262,77 @@ const _simNormal = new THREE.Vector3();
 /**
  * Simulates a long-horizon (480 ticks / 8.0 seconds) multi-bounce ballistic & rolling
  * trajectory across 3D terrain topography with restitution and quadratic drag.
+ *
+ * **Why**: Valleyball's sloped walls and valley floor redirect bounces inward; linear
+ * parabolic projection misses bank bounces and downhill rolls. Memoized per `(ball, tick)`
+ * so 2v2 matches share a single integration across all 4 bots on the same tick.
+ *
+ * @param {THREE.Vector3} ballPos - Current ball world position in meters (`m`)
+ * @param {THREE.Vector3} ballVel - Current ball linear velocity in `m/s`
+ * @param {number} ballRadius - Ball collider radius in meters (`m`)
+ * @param {string} ballId - Ball preset identifier (`'small'|'medium'|'large'`)
+ * @param {Object} [destTrajectory] - Destination `perception.trajectory` struct mutated in-place
+ * @param {number} [maxTicks=480] - Simulation horizon in ticks (`ticks`)
+ * @param {Object|null} [ballRef=null] - Optional ball object reference for `(ball, tick)` cache tagging
+ * @param {number} [tick=-1] - Optional simulation tick for `(ball, tick)` cache tagging
  */
-export function simulateLongHorizonTrajectory(ballPos, ballVel, ballRadius, ballId, destTrajectory, maxTicks = 480) {
+export function simulateLongHorizonTrajectory(
+    ballPos,
+    ballVel,
+    ballRadius,
+    ballId,
+    destTrajectory,
+    maxTicks = 480,
+    ballRef = null,
+    tick = -1
+) {
     const trajectory = destTrajectory || _defaultPerception.trajectory;
+    const gravityY = TUNING?.physics?.gravityY ?? -12.0;
+
+    // Fast path: reuse cached trajectory when called on the exact same ball state & tick
+    if (
+        _trajectoryCache.valid &&
+        (tick < 0 || _trajectoryCache.tick === tick) &&
+        (ballRef === null || _trajectoryCache.ballRef === ballRef) &&
+        _trajectoryCache.posX === ballPos.x &&
+        _trajectoryCache.posY === ballPos.y &&
+        _trajectoryCache.posZ === ballPos.z &&
+        _trajectoryCache.velX === ballVel.x &&
+        _trajectoryCache.velY === ballVel.y &&
+        _trajectoryCache.velZ === ballVel.z &&
+        _trajectoryCache.radius === ballRadius &&
+        _trajectoryCache.ballId === ballId &&
+        _trajectoryCache.maxTicks === maxTicks &&
+        _trajectoryCache.gravityY === gravityY
+    ) {
+        const srcSamples = _trajectoryCache.samples;
+        const dstSamples = trajectory.samples;
+        for (let i = 0; i < TRAJECTORY_SAMPLES_COUNT; i++) {
+            const src = srcSamples[i];
+            const dst = dstSamples[i];
+            dst.pos.copy(src.pos);
+            dst.vel.copy(src.vel);
+            dst.isGrounded = src.isGrounded;
+            dst.isBounce = src.isBounce;
+            dst.isApex = src.isApex;
+            dst.inStreamLane = src.inStreamLane;
+            dst.inHoopAperture = src.inHoopAperture;
+        }
+        trajectory.hasApex = _trajectoryCache.hasApex;
+        trajectory.ticksToNextApex = _trajectoryCache.ticksToNextApex;
+        if (_trajectoryCache.hasApex) {
+            trajectory.nextApexPos.copy(_trajectoryCache.nextApexPos);
+        }
+        trajectory.hasBounce = _trajectoryCache.hasBounce;
+        trajectory.ticksToNextBounce = _trajectoryCache.ticksToNextBounce;
+        if (_trajectoryCache.hasBounce) {
+            trajectory.nextBouncePos.copy(_trajectoryCache.nextBouncePos);
+        }
+        return;
+    }
+
     const restitution = ballId === 'large' ? 0.85 : 0.88;
     const linearDrag = ballId === 'large' ? 0.010 : (ballId === 'small' ? 0.015 : 0.012);
-    const gravityY = TUNING?.physics?.gravityY ?? -12.0;
 
     _simPos.copy(ballPos);
     _simVel.copy(ballVel);
@@ -232,9 +341,11 @@ export function simulateLongHorizonTrajectory(ballPos, ballVel, ballRadius, ball
     let nextApexTick = 0;
     let hasBounce = false;
     let nextBounceTick = 0;
+    const cacheSamples = _trajectoryCache.samples;
 
     for (let i = 0; i < TRAJECTORY_SAMPLES_COUNT; i++) {
         const sample = trajectory.samples[i];
+        const cSample = cacheSamples[i];
         sample.isBounce = false;
         sample.isApex = false;
         sample.isGrounded = false;
@@ -244,6 +355,14 @@ export function simulateLongHorizonTrajectory(ballPos, ballVel, ballRadius, ball
             sample.pos.copy(_simPos);
             sample.vel.copy(_simVel);
             sample.inStreamLane = Math.abs(Math.abs(_simPos.x) - 12.5) <= 3.0;
+
+            cSample.pos.copy(_simPos);
+            cSample.vel.copy(_simVel);
+            cSample.isBounce = false;
+            cSample.isApex = false;
+            cSample.isGrounded = false;
+            cSample.inHoopAperture = false;
+            cSample.inStreamLane = sample.inStreamLane;
             continue;
         }
 
@@ -302,6 +421,7 @@ export function simulateLongHorizonTrajectory(ballPos, ballVel, ballRadius, ball
                         hasBounce = true;
                         nextBounceTick = sample.tick;
                         trajectory.nextBouncePos.copy(_simPos);
+                        _trajectoryCache.nextBouncePos.copy(_simPos);
                     }
                 } else {
                     // Rolling contact along terrain
@@ -323,6 +443,7 @@ export function simulateLongHorizonTrajectory(ballPos, ballVel, ballRadius, ball
                 hasApex = true;
                 nextApexTick = sample.tick;
                 trajectory.nextApexPos.copy(_simPos);
+                _trajectoryCache.nextApexPos.copy(_simPos);
             }
         }
 
@@ -336,17 +457,54 @@ export function simulateLongHorizonTrajectory(ballPos, ballVel, ballRadius, ball
 
         sample.pos.copy(_simPos);
         sample.vel.copy(_simVel);
+
+        cSample.pos.copy(_simPos);
+        cSample.vel.copy(_simVel);
+        cSample.isBounce = sample.isBounce;
+        cSample.isApex = sample.isApex;
+        cSample.isGrounded = sample.isGrounded;
+        cSample.inStreamLane = sample.inStreamLane;
+        cSample.inHoopAperture = sample.inHoopAperture;
     }
 
     trajectory.hasApex = hasApex;
     trajectory.ticksToNextApex = nextApexTick;
     trajectory.hasBounce = hasBounce;
     trajectory.ticksToNextBounce = nextBounceTick;
+
+    _trajectoryCache.valid = true;
+    _trajectoryCache.ballRef = ballRef;
+    _trajectoryCache.tick = tick;
+    _trajectoryCache.posX = ballPos.x;
+    _trajectoryCache.posY = ballPos.y;
+    _trajectoryCache.posZ = ballPos.z;
+    _trajectoryCache.velX = ballVel.x;
+    _trajectoryCache.velY = ballVel.y;
+    _trajectoryCache.velZ = ballVel.z;
+    _trajectoryCache.radius = ballRadius;
+    _trajectoryCache.ballId = ballId;
+    _trajectoryCache.maxTicks = maxTicks;
+    _trajectoryCache.gravityY = gravityY;
+    _trajectoryCache.hasApex = hasApex;
+    _trajectoryCache.ticksToNextApex = nextApexTick;
+    _trajectoryCache.hasBounce = hasBounce;
+    _trajectoryCache.ticksToNextBounce = nextBounceTick;
 }
 
 /**
  * Game-Theoretic Reachability & Opponent Trajectory Mutation Solver.
- * Compares arrival times of self vs opponent along future trajectory nodes.
+ * Compares arrival times (`ticks`) of `self` vs `opponent` along future trajectory sample nodes.
+ *
+ * **Why**: Knowing which athlete reaches the ball first (and by what time margin `possessionWindow`)
+ * lets the bot decide whether to attack the ball directly or retreat early into a defensive shot-block lane.
+ *
+ * @param {THREE.Vector3} selfPos - Own athlete world position in meters (`m`)
+ * @param {THREE.Vector3} selfVel - Own athlete linear velocity in `m/s`
+ * @param {THREE.Vector3} oppPos - Opponent world position in meters (`m`)
+ * @param {THREE.Vector3} oppVel - Opponent linear velocity in `m/s`
+ * @param {THREE.Vector3} defendGoalPos - Defended hoop world position in meters (`m`)
+ * @param {Object} [destTrajectory] - `perception.trajectory` struct mutated in-place
+ * @param {boolean} [hasOpponent=true] - Whether an active opponent exists in the match
  */
 export function evaluateOpponentContest(selfPos, selfVel, oppPos, oppVel, defendGoalPos, destTrajectory, hasOpponent = true) {
     const trajectory = destTrajectory || _defaultPerception.trajectory;
@@ -453,6 +611,17 @@ export function evaluateOpponentContest(selfPos, selfVel, oppPos, oppVel, defend
     }
 }
 
+/**
+ * Populates a pre-allocated perception struct (`destPerception`) from live or headless world state.
+ *
+ * @param {Object} ownAthlete - Controlled athlete instance
+ * @param {Object|null} opponentAthlete - Nearest opponent athlete instance
+ * @param {Array<Object>} activeBalls - Active ball instances (`{ body, radius, id, mass }`)
+ * @param {Object|null} matchState - Current match state (`{ targetGoal, scoreHome, scoreAway, ticksRemaining }`)
+ * @param {number} tick - Current integer simulation tick (`ticks`)
+ * @param {Object} [destPerception=_defaultPerception] - Pre-allocated perception struct mutated in-place
+ * @returns {Object} Mutated `destPerception`
+ */
 export function buildPerception(ownAthlete, opponentAthlete, activeBalls, matchState, tick, destPerception = _defaultPerception) {
     const perception = destPerception || _defaultPerception;
 
@@ -482,10 +651,14 @@ export function buildPerception(ownAthlete, opponentAthlete, activeBalls, matchS
         perception.opponent.velocity.set(v.x, v.y, v.z);
         
         perception.opponent.speed = perception.opponent.velocity.length();
+        perception.opponent.isKnockedDown =
+            (opponentAthlete.tracker?.weight ?? 1.0) < 0.5 ||
+            Boolean(opponentAthlete.knockdownState?.active);
     } else {
         perception.opponent.position.set(0, 0, 0);
         perception.opponent.velocity.set(0, 0, 0);
         perception.opponent.speed = 0;
+        perception.opponent.isKnockedDown = false;
     }
 
     // Match State
@@ -586,7 +759,9 @@ export function buildPerception(ownAthlete, opponentAthlete, activeBalls, matchS
             perception.ball.radius,
             perception.ball.id,
             perception.trajectory,
-            480
+            480,
+            nearestBall,
+            tick
         );
 
         const hasOpponent = !!(opponentAthlete && opponentAthlete.motor && opponentAthlete.motor.body);

@@ -1,5 +1,27 @@
+/**
+ * ============================================================================
+ * MODULE: src/features/match/matchManager.js
+ * ============================================================================
+ * ROLE:
+ *   Authoritative match state lifecycle manager, team/slot grouping registry,
+ *   per-athlete match stat tracker, and telemetry report builder.
+ *
+ * FRAME PHASE:
+ *   Fixed Update (60 Hz match tick, goal scoring, overtime transitions) and
+ *   Match Setup / Rematch / Reset transitions.
+ *
+ * ARCHITECTURAL INVARIANTS:
+ *   - Law 1 (Single Authority): Single authority for resetting `matchState`
+ *     (`resetMatchState`, `startMatch`, `rematch`, `startPractice`,
+ *     `resetForTitle`, `startOvertime`) and aggregating `athleteMatchStats`.
+ *   - Law 6 (Deterministic Match): All match clock and countdown transitions
+ *     operate on deterministic 60 Hz tick counters (`ticksRemaining`,
+ *     `celebrationTicks`).
+ * ============================================================================
+ */
+
 import { TUNING } from '../../config/tuning.js';
-import { createMatchState, updateScoring } from '../../mechanics/scoring.js';
+import { createMatchState } from '../../mechanics/scoring.js';
 
 /**
  * Canonical Team Groups: hard-written distinction between a Collective Team
@@ -24,15 +46,22 @@ export const TEAM_GROUPS = Object.freeze([
   }),
 ]);
 
+/**
+ * Returns the canonical team group descriptor (`team1` or `team2`) for a player slot (`0..3`).
+ * @param {number} [slotIndex=0]
+ */
 export function getTeamGroupForSlot(slotIndex = 0) {
   return TEAM_GROUPS[slotIndex % 2 === 0 ? 0 : 1];
 }
 
 /**
  * Returns active player slot indices grouped by team rather than alternating:
- * - 1 player (Practice): [0]
- * - 2 players (1v1): [0, 1] (Team 1: P1, Team 2: P2)
- * - 4 players (2v2): [0, 2, 1, 3] (Team 1: P1, P3 | Team 2: P2, P4)
+ * - 1 player (Practice): `[0]`
+ * - 2 players (1v1): `[0, 1]` (Team 1: P1, Team 2: P2)
+ * - 4 players (2v2): `[0, 2, 1, 3]` (Team 1: P1, P3 | Team 2: P2, P4)
+ *
+ * @param {number} [activeCount=4]
+ * @returns {number[]}
  */
 export function getTeamOrderedSlots(activeCount = 4) {
   if (activeCount <= 1) return [0];
@@ -40,6 +69,10 @@ export function getTeamOrderedSlots(activeCount = 4) {
   return [0, 2, 1, 3].filter((s) => s < activeCount);
 }
 
+/**
+ * Creates a fresh zeroed per-player match stat bucket for `slotIndex`.
+ * @param {number} [slotIndex=0]
+ */
 export function createPlayerMatchStats(slotIndex = 0) {
   return {
     slotIndex,
@@ -58,6 +91,11 @@ export function createPlayerMatchStats(slotIndex = 0) {
   };
 }
 
+/**
+ * Resets an existing per-player match stat bucket in place without allocating.
+ * @param {object} stats
+ * @param {number} [slotIndex]
+ */
 export function resetPlayerMatchStats(stats, slotIndex = stats?.slotIndex ?? 0) {
   if (!stats) return;
   stats.slotIndex = slotIndex;
@@ -78,8 +116,16 @@ export function resetPlayerMatchStats(stats, slotIndex = stats?.slotIndex ?? 0) 
 /**
  * Builds a complete, structured Match Telemetry Report containing BOTH:
  * 1. Individual Player Stats (`report.players[0..N-1]`)
- * 2. Collective Team Aggregates (`report.teams.home`, `report.teams.away`, `report.teams.team1`, `report.teams.team2`)
- *    with each team's member `.players` grouped inside their team.
+ * 2. Collective Team Aggregates (`report.teams.home`, `report.teams.away`,
+ *    `report.teams.team1`, `report.teams.team2`) with each team's member
+ *    `.players` grouped inside their team.
+ *
+ * @param {object} [params={}]
+ * @param {object} [params.match={}]
+ * @param {Array<object>} [params.athletes=[]]
+ * @param {Array<object>} [params.athleteMatchStats=[]]
+ * @param {Array<object>} [params.playerConfigs=[]]
+ * @param {number|null} [params.activeCount=null]
  */
 export function buildMatchStatsReport({
   match = {},
@@ -90,7 +136,9 @@ export function buildMatchStatsReport({
 } = {}) {
   let count = activeCount;
   if (!count) {
-    const enabledAthletes = Array.isArray(athletes) ? athletes.filter((a) => a && a.isEnabled !== false).length : 0;
+    const enabledAthletes = Array.isArray(athletes)
+      ? athletes.filter((a) => a && a.isEnabled !== false).length
+      : 0;
     if (enabledAthletes >= 4 || (Array.isArray(playerConfigs) && playerConfigs.length >= 4)) {
       count = 4;
     } else {
@@ -111,8 +159,8 @@ export function buildMatchStatsReport({
     const team = cfg.team || ath?.team || (i % 2 === 0 ? 'home' : 'away');
     const group = getTeamGroupForSlot(i);
     const primaryColor = cfg.primaryColor ?? (team === 'home' ? homePrimary : awayPrimary);
-    const hits = raw.hits !== undefined ? raw.hits : (strike.hits || 0);
-    const whiffs = raw.whiffs !== undefined ? raw.whiffs : (strike.whiffs || 0);
+    const hits = raw.hits !== undefined ? raw.hits : (strike.hits ?? ath?.strikeState?.resolvedCount ?? 0);
+    const whiffs = raw.whiffs !== undefined ? raw.whiffs : (strike.whiffs ?? ath?.strikeState?.whiffCount ?? 0);
     const accuracy = raw.accuracy !== undefined
       ? raw.accuracy
       : (hits + whiffs > 0 ? Math.round((hits / (hits + whiffs)) * 100) : 0);
@@ -193,8 +241,11 @@ export function buildMatchStatsReport({
   const away = team1Kit === 'away' ? team1 : team2;
 
   return {
+    format: count > 2 ? '2v2' : '1v1',
     activeCount: count,
     is2v2: count >= 4,
+    scoreHome: match?.scoreHome ?? home.goals,
+    scoreAway: match?.scoreAway ?? away.goals,
     players,
     teams: {
       home,
@@ -206,140 +257,216 @@ export function buildMatchStatsReport({
 }
 
 /**
- * Manages match lifecycle, scoring rules, countdown clock,
- * practice drills, flyover cutscenes, and match transitions.
+ * Manages the Match / Practice state machine, pre-match countdown,
+ * goal scoring, overtime transitions, and per-athlete match stats.
  */
 class MatchManager {
   constructor() {
-    /** @type {import('../../mechanics/scoring.js').createMatchState} */
-    this.matchState = createMatchState();
+    this.matchState = createMatchState(TUNING);
+    this.gameState = 'menu'; // 'menu' | 'flyover' | 'match' | 'practice' | 'victory' | 'overtime_menu'
+    this.preMatchCountdownRemaining = 0; // seconds (float)
+
+    // Per-athlete match stats (indexed 0 to 3)
+    this.athleteMatchStats = [
+      createPlayerMatchStats(0),
+      createPlayerMatchStats(1),
+      createPlayerMatchStats(2),
+      createPlayerMatchStats(3),
+    ];
+
     this.callbacks = {
       onGoalScored: null,
-      onMatchOver: null,
-      onCountdownTick: null,
-      onCountdownEnd: null,
-      onFlyoverStart: null,
-      onFlyoverEnd: null,
+      onMatchEnd: null,
+      onPreMatchCountdownDone: null,
     };
-    this._wasCountingDown = false;
   }
 
   /**
-   * Initializes the manager with event callbacks.
+   * Registers lifecycle callbacks for goal and match events.
+   * @param {object} [cbs={}]
    */
-  init(callbacks = {}) {
-    this.callbacks = { ...this.callbacks, ...callbacks };
+  init(cbs = {}) {
+    Object.assign(this.callbacks, cbs);
   }
 
-  /**
-   * Returns current match state.
-   */
+  /** Returns the current authoritative `matchState` object. */
   getState() {
     return this.matchState;
   }
 
-  /**
-   * Starts a 1v1 or 2v2 competitive match.
-   *
-   * @param {Array<object>} configs Player configuration array
-   * @param {object} rules Match rules (duration, ball, arena)
-   */
-  startMatch(configs, rules = {}) {
-    const duration = rules.durationSeconds || rules.duration || TUNING.match.durationSeconds || 300;
-    TUNING.match.durationSeconds = duration;
-    TUNING.match.mode = 'match';
+  /** Replaces or binds the authoritative `matchState` reference. */
+  setState(stateObj) {
+    if (stateObj) {
+      this.matchState = stateObj;
+    }
+    return this.matchState;
+  }
 
-    this.matchState.mode = 'match';
-    this.matchState.matchOver = false;
+  /** Resets all 4 per-athlete match stat buckets to zero. */
+  resetAthleteStats() {
+    for (let i = 0; i < 4; i++) {
+      resetPlayerMatchStats(this.athleteMatchStats[i], i);
+    }
+  }
+
+  /**
+   * Resets `this.matchState` fields cleanly in a single authoritative place.
+   *
+   * @param {object} [options={}]
+   * @param {'match'|'practice'} [options.mode]
+   * @param {number} [options.durationSeconds]
+   * @param {'N'|'S'} [options.targetGoal='N']
+   * @param {boolean} [options.isCountingDown=false]
+   * @param {number} [options.countdownSeconds]
+   */
+  resetMatchState({
+    mode = this.matchState.mode || 'match',
+    durationSeconds = TUNING.match.durationSeconds,
+    targetGoal = 'N',
+    isCountingDown = false,
+    countdownSeconds = TUNING.match?.countdownSeconds ?? 3,
+  } = {}) {
+    const fixedHz = TUNING.loop?.fixedHz || 60;
+    this.matchState.mode = mode;
     this.matchState.scoreHome = 0;
     this.matchState.scoreAway = 0;
-    this.matchState.celebrationTicks = 0;
-    this.matchState.targetGoal = 'north';
-    this.matchState.matchDurationTicks = duration * TUNING.loop.fixedHz;
-    this.matchState.matchTicksRemaining = this.matchState.matchDurationTicks;
-    this.matchState.isCountingDown = true;
-    this.matchState.countdownTicksRemaining = TUNING.match.countdownSeconds * TUNING.loop.fixedHz;
-
-    this._wasCountingDown = true;
-
-    if (this.callbacks.onFlyoverStart) {
-      this.callbacks.onFlyoverStart(configs, rules);
-    }
-  }
-
-  /**
-   * Skips flyover cutscene and transitions directly to countdown.
-   */
-  skipFlyover() {
-    this.matchState.mode = 'match';
-    TUNING.match.mode = 'match';
-    this.matchState.isCountingDown = true;
-    this.matchState.countdownTicksRemaining = TUNING.match.countdownSeconds * TUNING.loop.fixedHz;
-
-    if (this.callbacks.onFlyoverEnd) {
-      this.callbacks.onFlyoverEnd();
-    }
-  }
-
-  /**
-   * Starts a practice sandbox session.
-   */
-  startPractice(playerConfig, rules = {}) {
-    TUNING.match.mode = 'practice';
-    this.matchState.mode = 'practice';
+    this.matchState.targetGoal = targetGoal;
+    this.matchState.ticksRemaining = Math.round((durationSeconds || 300) * fixedHz);
     this.matchState.matchOver = false;
-    this.matchState.isCountingDown = false;
-    this.matchState.countdownTicksRemaining = 0;
+    this.matchState.lastGoalId = null;
+    this.matchState.lastScoredFor = null;
     this.matchState.celebrationTicks = 0;
-    this.matchState.scoreHome = 0;
-    this.matchState.scoreAway = 0;
-    this.matchState.matchTicksRemaining = 0;
-    this._wasCountingDown = false;
-  }
-
-  /**
-   * Advances match scoring and clock logic per fixed step.
-   * Zero heap allocations.
-   *
-   * @param {number} tick Current engine tick
-   * @param {number} dt Fixed timestep
-   * @param {Array<object>} balls Active physics balls
-   * @returns {object} Updated match state
-   */
-  update(tick, dt, balls = []) {
-    updateScoring(this.matchState, balls, tick);
-
-    // Track countdown transition
-    if (this._wasCountingDown && !this.matchState.isCountingDown) {
-      this._wasCountingDown = false;
-      if (this.callbacks.onCountdownEnd) {
-        this.callbacks.onCountdownEnd();
-      }
+    this.matchState.isCountingDown = Boolean(isCountingDown);
+    this.matchState.countdownSecondsRemaining = isCountingDown ? Math.ceil(countdownSeconds) : 0;
+    this.matchState.countdownTicksRemaining = isCountingDown ? Math.round(countdownSeconds * fixedHz) : 0;
+    this.matchState._buzzerPlayed = false;
+    this.matchState.overtimeMode = null;
+    this.matchState.isGoldenGoal = false;
+    this.matchState.overtimePeriod = 0;
+    if (this.matchState.ballTrackers && typeof this.matchState.ballTrackers.clear === 'function') {
+      this.matchState.ballTrackers.clear();
     }
-
-    // Check match completion
-    if (this.matchState.mode === 'match' && this.matchState.matchOver) {
-      if (this.callbacks.onMatchOver) {
-        this.callbacks.onMatchOver(this.matchState);
-      }
+    if (Array.isArray(this.matchState.events)) {
+      this.matchState.events.length = 0;
     }
-
+    this.matchState.dropState = {
+      pending: false,
+      countdownTicks: 0,
+      spawnPosition: { ...TUNING.match.ballDropPosition },
+    };
     return this.matchState;
   }
 
   /**
-   * Resets match state for title screen.
+   * Starts a 1v1 or 2v2 match with optional pre-match countdown.
    */
-  resetForTitle() {
-    TUNING.match.mode = 'practice';
-    this.matchState.mode = 'practice';
+  startMatch(configsOrOptions = {}, maybeOptions = {}) {
+    const opts = Array.isArray(configsOrOptions) ? maybeOptions : (configsOrOptions || {});
+    const durationSeconds = opts.durationSeconds ?? TUNING.match.durationSeconds;
+    const countdownSeconds = opts.countdownSeconds ?? TUNING.match.countdownSeconds ?? 3;
+    if (durationSeconds) {
+      TUNING.match.durationSeconds = durationSeconds;
+    }
+
+    this.gameState = 'match';
+    this.resetMatchState({
+      mode: 'match',
+      durationSeconds,
+      targetGoal: 'N',
+      isCountingDown: countdownSeconds > 0,
+      countdownSeconds,
+    });
+    this.preMatchCountdownRemaining = Math.max(0, countdownSeconds);
+    this.resetAthleteStats();
+    return this.matchState;
+  }
+
+  /** Transitions from the pre-match flyover cutscene into the active match countdown. */
+  skipFlyover() {
+    const fixedHz = TUNING.loop?.fixedHz || 60;
+    const countdownSeconds = TUNING.match?.countdownSeconds ?? 3;
+    this.gameState = 'match';
+    this.matchState.mode = 'match';
+    this.preMatchCountdownRemaining = countdownSeconds;
+    this.matchState.isCountingDown = true;
+    this.matchState.countdownSecondsRemaining = Math.ceil(countdownSeconds);
+    this.matchState.countdownTicksRemaining = Math.round(countdownSeconds * fixedHz);
+    return this.matchState;
+  }
+
+  /** Resets match scores and timer for a rematch. */
+  rematch(countdownSeconds = TUNING.match?.countdownSeconds ?? 3) {
+    this.gameState = 'match';
+    this.resetMatchState({
+      mode: 'match',
+      durationSeconds: TUNING.match.durationSeconds,
+      targetGoal: 'N',
+      isCountingDown: countdownSeconds > 0,
+      countdownSeconds,
+    });
+    this.preMatchCountdownRemaining = Math.max(0, countdownSeconds);
+    this.resetAthleteStats();
+    return this.matchState;
+  }
+
+  /** Configures `matchState` for Overtime (`golden_goal`, `timed`, or `draw`). */
+  startOvertime({ format = 'golden_goal', durationSeconds = 120 } = {}) {
+    const fixedHz = TUNING.loop?.fixedHz || 60;
+    this.matchState.overtimeMode = format;
+    if (format === 'draw') {
+      this.matchState.isGoldenGoal = false;
+      this.matchState.matchOver = true;
+      this.matchState.ticksRemaining = 0;
+      this.gameState = 'victory';
+      return;
+    }
+
+    this.gameState = 'match';
+    this.matchState.overtimePeriod = (this.matchState.overtimePeriod || 0) + 1;
     this.matchState.matchOver = false;
-    this.matchState.isCountingDown = false;
-    this.matchState.countdownTicksRemaining = 0;
     this.matchState.celebrationTicks = 0;
-    this.matchState.scoreHome = 0;
-    this.matchState.scoreAway = 0;
-    this._wasCountingDown = false;
+
+    if (format === 'golden_goal') {
+      this.matchState.isGoldenGoal = true;
+      this.matchState.ticksRemaining = 0;
+    } else {
+      this.matchState.isGoldenGoal = false;
+      this.matchState.ticksRemaining = Math.max(60, Math.round((durationSeconds || 120) * fixedHz));
+    }
+  }
+
+  /** Starts solo practice sandbox mode. */
+  startPractice() {
+    this.gameState = 'practice';
+    this.resetMatchState({
+      mode: 'practice',
+      durationSeconds: TUNING.match.durationSeconds,
+      targetGoal: 'N',
+    });
+    this.preMatchCountdownRemaining = 0;
+    this.resetAthleteStats();
+  }
+
+  /** Resets to Title / Menu state. */
+  resetForTitle() {
+    this.gameState = 'menu';
+    this.resetMatchState({
+      mode: 'practice',
+      durationSeconds: TUNING.match.durationSeconds,
+      targetGoal: 'N',
+    });
+    this.preMatchCountdownRemaining = 0;
+  }
+
+  /** Compiles the current match telemetry report for HUD/HustleBoards/VictoryScreen. */
+  getStatsReport({ athletes = [], playerConfigs = TUNING.players || [], activeCount } = {}) {
+    return buildMatchStatsReport({
+      match: this.matchState,
+      athletes,
+      athleteMatchStats: this.athleteMatchStats,
+      playerConfigs,
+      activeCount,
+    });
   }
 }
 

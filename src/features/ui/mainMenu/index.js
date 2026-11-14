@@ -1,37 +1,30 @@
-import {
-  PALETTE_SWATCHES,
-  getColorName,
-  PHYSIQUE_OPTIONS,
-  CAMERA_OPTIONS,
-  MATCH_BALL_OPTIONS,
-  MATCH_DURATION_OPTIONS,
-  ARENA_OPTIONS,
-  PRACTICE_BALL_OPTIONS,
-  BALL_OPTIONS,
-} from './constants.js';
+/**
+ * Module: features/ui/mainMenu/index
+ * Role: Main Menu orchestrator mounting the Title Screen, Controller Assignment, Player Setup, Settings, How to Play, and Flyover overlays.
+ * Frame Phase: UI Event / Transition
+ * Active Architectural Laws:
+ *   - LAW 1 (Single Authority): Delegates screen state to `state.js` and `playerSetup.js` while exposing a unified facade for `src/ui/mainMenu.js`.
+ */
 
-import { showToast } from './toast.js';
+import {
+  MATCH_BALL_OPTIONS,
+  PRACTICE_BALL_OPTIONS,
+} from './constants.js';
 import { initMobileNotice } from './mobileNotice.js';
 import {
   buildFlyoverOverlay,
-  showFlyoverOverlay,
-  hideFlyoverOverlay,
   getFlyoverOverlayEl,
 } from './flyoverOverlay.js';
 import {
   buildMainMenuSettingsModal,
   showMainMenuSettingsModal,
   hideMainMenuSettingsModal,
-  getMainMenuSettingsModalEl,
 } from './settingsModal.js';
 import {
   buildHowToPlayModal,
   showHowToPlayModal,
   hideHowToPlayModal,
-  showControlsModal,
   hideControlsModal,
-  buildControlsModal,
-  getControlsModalEl,
 } from './howToPlayModal.js';
 import {
   buildControllerAssignmentScreen,
@@ -42,7 +35,6 @@ import {
 import {
   buildTitleScreen,
   updateTitleFocusUI,
-  createMenuButton,
 } from './titleScreen.js';
 import { state } from './state.js';
 import {
@@ -50,8 +42,6 @@ import {
   playerSetup,
   getPlayerConfigs,
   getSelectedMatchBall,
-  getSelectedMatchDuration,
-  getSelectedMatchArena,
   getAggressivenessBadge,
   setPlayerAggressiveness,
   updateAggressivenessUI,
@@ -68,7 +58,6 @@ import {
   getLobbyTitleEl,
   getLobbySubtitleEl,
   getLobbyBadgeEl,
-  getColumnsBoxEl,
   getCol1HeaderLabelEl,
   getCol2El,
   getCol3El,
@@ -243,7 +232,6 @@ export function showPlayerSetup(mode = 'match', options = {}) {
   const lobbyTitleEl = getLobbyTitleEl();
   const lobbySubtitleEl = getLobbySubtitleEl();
   const lobbyBadgeEl = getLobbyBadgeEl();
-  const columnsBoxEl = getColumnsBoxEl();
   const col1HeaderLabelEl = getCol1HeaderLabelEl();
   const col2El = getCol2El();
   const col3El = getCol3El();
@@ -359,11 +347,14 @@ export function showPlayerSetup(mode = 'match', options = {}) {
   const firstHuman = cfgs.slice(0, activeCount).findIndex((c) => c.type === 'human');
   setFocusedColumn(mode === 'match' && firstHuman >= 0 ? firstHuman : 0);
 
+  // Default focus rows:
+  // - P1 (Slot 0) starts at the top on Team Color (Row 1 in Match, Row 2 in Practice), or Row 6 (CTRL) if AI.
+  // - P2, P3, P4 start on Hat (Row 2) when human, or Row 6 (CTRL) if AI.
   const focusRows = getPlayerFocusRow();
-  focusRows[0] = (mode === 'practice') ? 1 : (cfgs[0]?.type === 'human' ? 4 : 2);
-  focusRows[1] = cfgs[1]?.type === 'human' ? 4 : 2;
-  focusRows[2] = cfgs[2]?.type === 'human' ? 4 : 2;
-  focusRows[3] = cfgs[3]?.type === 'human' ? 4 : 2;
+  focusRows[0] = (mode === 'practice') ? 2 : (cfgs[0]?.type === 'human' ? 1 : 6);
+  focusRows[1] = cfgs[1]?.type === 'human' ? 2 : 6;
+  focusRows[2] = cfgs[2]?.type === 'human' ? 2 : 6;
+  focusRows[3] = cfgs[3]?.type === 'human' ? 2 : 6;
 
   if (window._updateSetupPage) window._updateSetupPage();
   updateReadyUI();

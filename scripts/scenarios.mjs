@@ -9,7 +9,7 @@
  *           not close over anything here. Keyed on the LOOP tick. Presses are
  *           RANGES. ONE set() PER BUTTON PER FRAME (it assigns, it does not OR).
  *           Pad indices: 0 South/jump, 1 East/volley-kick, 2 West/dive,
- *           3 North/spike, 6 LT/sprint, 7 RT/slide. Axes [lx, ly, rx, ry].
+ *           3 North/spike, 4 LB/brace, 5 RB/cut, 6 LT/sprint, 7 RT/slide. Axes [lx, ly, rx, ry].
  *   expect  what MUST happen. { log } counts bracketed console lines containing
  *           that text; { when } evaluates a predicate over the per-tick facts
  *           row (see trace.mjs); all: true means every row in the window. A
@@ -98,7 +98,7 @@ export const SCENARIOS = {
     query: 'balls=1',
     script: `(tick, pad, set) => {
       pad.axes = tick >= 36 && tick < 165 ? [0, -1, 0, 0] : [0, 0, 0, 0];
-      set(5, tick >= 60 && tick < 145);
+      set(4, tick >= 60 && tick < 145);
     }`,
     expect: [
       { label: 'brace pose reaches a visible share', when: 'f => f.bracePose > 0.35', from: 90, to: 130, all: true },
@@ -113,7 +113,7 @@ export const SCENARIOS = {
   braceContact: {
     end: 110,
     query: 'balls=1&serve=1:0,1.8,-3:0,0,12@65',
-    script: `(tick, pad, set) => { set(5, tick >= 40 && tick < 105); }`,
+    script: `(tick, pad, set) => { set(4, tick >= 40 && tick < 105); }`,
     expect: [
       { label: 'brace is visibly held at contact', when: 'f => f.bracePose > 0.35', from: 78, to: 90, all: true },
       { label: 'exactly one brace redirect resolves on contact tick', log: '[brace] redirect', from: 78, to: 78, min: 1, max: 1 },

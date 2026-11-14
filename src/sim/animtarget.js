@@ -4,36 +4,21 @@ import { TUNING } from '../config/tuning.js';
 import { BONE_MAP, resolveBoneByName, rigSuffixForBodySide } from './autorig.js';
 
 /**
- * THE ANIMATION TARGET.
+ * MODULE HEADER — src/sim/animtarget.js
  *
- * A second, invisible copy of the character that plays the LOCOMOTION BLEND
- * SPACE — now two-dimensional, plus an airborne overlay. It is never
- * rendered and never appears in a capture; its only product is, per fixed step,
- * a world-space target transform for each of the sixteen physics bodies. The
- * tracker then drives the real bodies toward those transforms with forces.
- *
- * The separation is the whole point of the architecture. The animation is
- * allowed to be a perfect, unphysical thing that never stumbles; the physics is
- * allowed to be a real thing that does. Nothing writes a pose onto a body, and
- * nothing writes a force onto the target.
- *
- * RULING GF-2.0 — THE SCOPE OF LAW 4, verbatim:
- *
- *   "Law 4 bans balance state machines. Mechanics-phase floats are legal and
- *   precedented (jumpQueued, locomotionPhase, standUpProgress): an edge may
- *   LATCH a float or start a monotone ratchet; no boolean of character state
- *   may exist and nothing may branch on 'which state we are in'."
- *
- * Everything the committed jump adds below is on the legal side of that line.
- * `jumpClipMix` is a float latched by an edge. `jumpPhase` is a monotone
- * ratchet reset by that same edge. `airborneMix` is a continuous ease. Nothing
- * asks which state the character is in, and there is no enum to ask about.
- *
- * DIRECTORY RULE (src/sim/): nothing here names a wall-clock or scheduler API.
- * LAW L6: the mixer is advanced by the CONSTANT dt from inside fixedUpdate and
- * by nothing else. An AnimationMixer ticked from the render clock would make the
- * pose a function of frame pacing, and the anchored capture would stop being
- * reproducible — which is the one thing Task 1 exists to guarantee.
+ * Role: Evaluates the invisible kinematic ghost skeleton across the 2D locomotion
+ *   blend space, jump arc, action overlays (brace/slide/dive), and strike clips to
+ *   produce 16 world-space target body transforms per tick (`createAnimationTarget`,
+ *   `updateAnimationTarget`, `destroyAnimationTarget`).
+ * Frame Phase: Fixed-step pre-physics (`updateAnimationTarget`, called before `updateTracker`).
+ * Active Architectural Laws:
+ *   - LAW L1 (Physics Owns Momentum): The ghost skeleton is unphysical and writes
+ *     no poses or velocities onto Rapier bodies; it only produces target transforms
+ *     for the PD tracker.
+ *   - RULING GF-2.0 (Law 4 Scope): No boolean character-state machines; all blend
+ *     overlays use continuous mechanics-phase floats or monotone ratchets.
+ *   - LAW L6 (Determinism): The `THREE.AnimationMixer` is stepped strictly by the
+ *     constant `dt` inside `fixedUpdate`, never by wall-clock time.
  */
 
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
@@ -41,8 +26,6 @@ const TWO_PI = Math.PI * 2;
 
 /** Below this the quaternion delta has no meaningful axis. */
 const MIN_ANGLE = 1e-8;
-
-const _bindBoneInverse = new THREE.Matrix4();
 const _targetBody = new THREE.Matrix4();
 const _basisX = new THREE.Vector3();
 const _basisY = new THREE.Vector3();
@@ -473,13 +456,13 @@ function buildBlendNodes(state) {
     return clip;
   };
 
-  const make = (id, clip, timeScale, reversed = false) => {
+  const make = (id, clip, timeScale) => {
     const action = state.mixer.clipAction(clip);
     action.reset();
     action.timeScale = timeScale;
     action.setEffectiveWeight(0);
     action.play();
-    return { id, action, duration: clip.duration, name: clip.name, reversed };
+    return { id, action, duration: clip.duration, name: clip.name };
   };
 
   const idle = make('idle', requireClip(TUNING.anim.blend.idleClip), 1);
@@ -525,10 +508,10 @@ function buildBlendNodes(state) {
   // action. It is also why the fallback CLONES rather than reusing walkForward.
   const makeBack = (id, ring, wanted) => {
     const clip = wanted ? findClip(state, wanted) : null;
-    if (clip) return { node: make(id, clip, 0, false), fallback: false };
+    if (clip) return { node: make(id, clip, 0), fallback: false };
     const stand = walkForward.clone();
     stand.name = `${walkForward.name} (stand-in for ${ring} backpedal)`;
-    return { node: make(id, stand, 0, false), fallback: true };
+    return { node: make(id, stand, 0), fallback: true };
   };
 
   const walkBack = makeBack('walkB', 'walk', rings.walkClips.b);
@@ -1258,8 +1241,7 @@ function writeClipTimes(state) {
   // read it backwards; see the measured table at their construction for why they
   // no longer do.
   for (const node of state.cycleNodes) {
-    const phase = node.reversed ? 1 - state.locomotionPhase : state.locomotionPhase;
-    node.action.time = phase * node.duration;
+    node.action.time = state.locomotionPhase * node.duration;
   }
 
   // THE JUMP — the arc, mapped into the usable window of each clip.
@@ -1839,13 +1821,10 @@ export function updateAnimTarget(
 
     // targetBodyWorld = targetBoneWorld * inverse(bindBoneWorld) * bindBodyWorld
     //
-    // The bind matrices are the ones autorig captured off the ORIGINAL rig. The
-    // clone is the same asset with the same bind pose, so they are its bind too
-    // — cloning does not change a local transform. Re-deriving them here would
-    // be a second source of truth for the same numbers.
-    _bindBoneInverse.copy(item.bindBoneWorld).invert();
-    _targetBody.multiplyMatrices(state.bones.get(key).matrixWorld, _bindBoneInverse);
-    _targetBody.multiply(item.bindBodyWorld);
+    // `item.bindBoneToBody` pre-multiplies `inverse(bindBoneWorld) * bindBodyWorld`
+    // once at ragdoll construction time in autorig.js so no matrix inversion is
+    // performed in the 60 Hz tick loop.
+    _targetBody.multiplyMatrices(state.bones.get(key).matrixWorld, item.bindBoneToBody);
 
     decomposeRigid(_targetBody, _pos, _quat);
     target.currPos.copy(_pos);

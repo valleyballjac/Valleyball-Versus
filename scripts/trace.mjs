@@ -163,6 +163,7 @@ function shim({ scriptSource, probeEvery }) {
   window.requestAnimationFrame = (cb) => (!isLoopFrame(cb) ? foreignRaf(cb) : realRaf(() => {
     if (!registered && window.__vb && window.__vb.loop) {
       registered = true;
+      if (window.TUNING && window.TUNING.debug) window.TUNING.debug.logStrikes = true;
       window.__vb.loop.onTick((tick) => {
         const a = window.__vb.athletes && window.__vb.athletes[0];
         if (!a) return;

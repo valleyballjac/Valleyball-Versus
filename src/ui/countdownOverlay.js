@@ -1,8 +1,10 @@
 /**
- * Arcade Countdown Overlay for Valleyball Versus Match Mode.
- *
- * Renders a bold, pulsing 5... 4... 3... 2... 1... GO! sequence
- * during pre-match positioning so players can get their bearings.
+ * Module: ui/countdownOverlay
+ * Role: Pre-match and post-goal 3-2-1-GO! countdown overlay plus splitscreen viewport border frames and player watermarks.
+ * Frame Phase: Render (UI Update)
+ * Active Architectural Laws:
+ *   - LAW 8 (60 FPS Frame-Time Budget): Caches the splitscreen frame layout signature (`mode`, `w`, `h`, team hexes/names, watermark opacity)
+ *     to skip redundant DOM style writes and string allocations on unchanged frames.
  */
 
 let overlayEl = null;
@@ -13,6 +15,18 @@ let goTimer = 0;
 let splitFramesContainerEl = null;
 let splitFrameEls = [];
 let watermarkHoldTimer = 0;
+let lastSplitFramesSig = '';
+const _humanSlots = [];
+const VIEWPORTS_QUAD = [
+  { slot: 0, top: '0%', left: '0%', width: '50%', height: '50%' },
+  { slot: 1, top: '0%', left: '50%', width: '50%', height: '50%' },
+  { slot: 2, top: '50%', left: '0%', width: '50%', height: '50%' },
+  { slot: 3, top: '50%', left: '50%', width: '50%', height: '50%' },
+];
+const _viewportsDual = [
+  { slot: 0, top: '0%', left: '0%', width: '50%', height: '100%' },
+  { slot: 1, top: '0%', left: '50%', width: '50%', height: '100%' },
+];
 
 function toHexColor(num, fallback = '#ff2e55') {
   if (typeof num === 'string' && num.startsWith('#')) return num;
@@ -160,26 +174,32 @@ function updateSplitscreenFrames(isCountingDown, delta) {
   const isSplitscreen = gameState === 'match' && !isVictoryVisible && (isSplitDividerActive || Boolean(tuning?.camera?.splitscreen));
 
   if (!isSplitscreen) {
-    splitFramesContainerEl.style.display = 'none';
+    if (lastSplitFramesSig !== 'hidden') {
+      lastSplitFramesSig = 'hidden';
+      splitFramesContainerEl.style.display = 'none';
+    }
     return;
   }
 
   const athletes = vb?.athletes || [];
   const configs = vb?.getPlayerConfigs?.() || tuning?.players || [];
-  const humanSlots = [];
+  _humanSlots.length = 0;
   for (let i = 0; i < athletes.length; i++) {
     if (!athletes[i]?.isEnabled) continue;
     const cfg = configs[i] || tuning?.players?.[i];
-    if (cfg?.type === 'human') humanSlots.push(i);
+    if (cfg?.type === 'human') _humanSlots.push(i);
   }
-  if (humanSlots.length < 2) {
-    humanSlots.length = 0;
+  if (_humanSlots.length < 2) {
+    _humanSlots.length = 0;
     for (let i = 0; i < athletes.length; i++) {
-      if (athletes[i]?.isEnabled) humanSlots.push(i);
+      if (athletes[i]?.isEnabled) _humanSlots.push(i);
     }
   }
-  if (humanSlots.length < 2) {
-    splitFramesContainerEl.style.display = 'none';
+  if (_humanSlots.length < 2) {
+    if (lastSplitFramesSig !== 'hidden') {
+      lastSplitFramesSig = 'hidden';
+      splitFramesContainerEl.style.display = 'none';
+    }
     return;
   }
 
@@ -197,20 +217,39 @@ function updateSplitscreenFrames(isCountingDown, delta) {
   }
   const showWatermark = isCountingDown || watermarkHoldTimer > 0;
   const watermarkOpacity = isCountingDown ? 1 : Math.min(1, watermarkHoldTimer / 0.8);
+  const opacityKey = showWatermark && watermarkOpacity > 0.01 ? watermarkOpacity.toFixed(3) : '0';
+
+  const isQuad = _humanSlots.length > 2;
+  let viewports;
+  if (isQuad) {
+    viewports = VIEWPORTS_QUAD;
+  } else {
+    _viewportsDual[0].slot = _humanSlots[0] ?? 0;
+    _viewportsDual[1].slot = _humanSlots[1] ?? 1;
+    viewports = _viewportsDual;
+  }
+
+  // Build layout + team color cache signature to skip redundant DOM mutations
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  let sig = `${isQuad ? '4' : '2'}|${w}x${h}|${opacityKey}`;
+  for (let i = 0; i < viewports.length; i++) {
+    const slot = viewports[i].slot;
+    const ath = athletes[slot];
+    const cfg = configs[slot] || tuning?.players?.[slot] || {};
+    const team = ath?.team || cfg?.team || ((slot === 0 || slot === 2) ? 'home' : 'away');
+    const rawColor = ath?.primaryColor ?? cfg?.primaryColor ?? (
+      team === 'away'
+        ? (tuning?.athlete?.palette?.awayPrimary ?? 0x1d4ed8)
+        : (tuning?.athlete?.palette?.homePrimary ?? 0xd90429)
+    );
+    sig += `|${slot}:${team}:${rawColor}`;
+  }
+
+  if (sig === lastSplitFramesSig) return;
+  lastSplitFramesSig = sig;
 
   splitFramesContainerEl.style.display = 'block';
-  const isQuad = humanSlots.length > 2;
-  const viewports = isQuad
-    ? [
-        { slot: 0, top: '0%', left: '0%', width: '50%', height: '50%' },
-        { slot: 1, top: '0%', left: '50%', width: '50%', height: '50%' },
-        { slot: 2, top: '50%', left: '0%', width: '50%', height: '50%' },
-        { slot: 3, top: '50%', left: '50%', width: '50%', height: '50%' },
-      ]
-    : [
-        { slot: humanSlots[0] ?? 0, top: '0%', left: '0%', width: '50%', height: '100%' },
-        { slot: humanSlots[1] ?? 1, top: '0%', left: '50%', width: '50%', height: '100%' },
-      ];
 
   for (let i = 0; i < splitFrameEls.length; i++) {
     const item = splitFrameEls[i];
@@ -244,7 +283,7 @@ function updateSplitscreenFrames(isCountingDown, delta) {
 
     if (showWatermark && watermarkOpacity > 0.01) {
       item.badge.style.display = 'inline-flex';
-      item.badge.style.opacity = watermarkOpacity.toFixed(3);
+      item.badge.style.opacity = opacityKey;
       item.badge.style.border = `1.5px solid ${teamHex}`;
       item.dot.style.background = teamHex;
       item.dot.style.boxShadow = `0 0 8px ${teamHex}`;

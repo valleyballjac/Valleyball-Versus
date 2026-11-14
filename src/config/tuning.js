@@ -1,4 +1,19 @@
 /**
+ * MODULE HEADER — src/config/tuning.js
+ *
+ * Role: Single source of truth for all simulation, mechanics, camera, audio,
+ *   and debug tuning parameters (`TUNING`), plus `assetUrl`, `resetTuning`,
+ *   and `tuningJson`.
+ * Frame Phase: Read across all fixed-step (`stepSimulation`) and render-frame
+ *   phases; mutated live by the debug GUI (`gui.js`) or restored via `resetTuning()`.
+ * Active Architectural Laws:
+ *   - LAW 4 (One Source of Truth): Every tunable constant lives in `DEFAULTS` / `TUNING`
+ *     and is read live each tick rather than cached at module import time.
+ *   - LAW 6 (Determinism): Array ordering (`balls`, `players`) and construction-time
+ *     constants (`loop.fixedHz`) are load-bearing for deterministic handle creation.
+ */
+
+/**
  * AN ASSET URL THAT SURVIVES A NON-ROOT `base`.
  *
  * `vite.config.js` sets `base: '/Valleyball-Versus/'` for the deployed build,
@@ -49,12 +64,11 @@ const DEFAULTS = {
     showCharacterMesh: false,
     showCapsuleAthlete: true,
     showBallWireframe: false,
+    logSkeletonAudit: false,
+    logStrikes: false,
   },
 
   athlete: {
-    model: 'capsule', // 'capsule' | 'skinned'
-    team: 'home',     // 'home' | 'away'
-    variant: 'classic', // 'masculine' | 'feminine' | 'classic'
     palette: {
       homePrimary: 0xd90429,    // Royal Scarlet Crimson (Classic Red Rivalry)
       awayPrimary: 0x1d4ed8,    // Electric Cobalt Blue (Classic Blue Rivalry)
@@ -136,13 +150,8 @@ const DEFAULTS = {
   // still shipped -20 and every fresh load undid the finding.
   physics: { gravityY: -12 },
 
-  // THE TWO ARENAS. All construction-time: whichever one is selected is built
-  // once at boot and never rebuilt on the fly.
+  // THE ARENA. Construction-time: built once at boot and never rebuilt on the fly.
   arena: {
-    // 'court' | 'bowl'. Read ONCE at boot and overridable per run with the
-    // query parameter ?arena=bowl — same reasoning as ?captureTick, which is
-    // that harness configuration must not require editing saved tuning state.
-    type: 'court',
     modelUrl: assetUrl('models/arena.glb'),
 
     // Visual configuration for translucent perimeter glass barriers.
@@ -174,9 +183,8 @@ const DEFAULTS = {
     },
   },
 
-  // SETTINGS SHARED BY EVERY BALL. Not per-spec, because neither is a property
-  // of any one ball: the threshold is about what the instrumentation should
-  // bother reporting, and the capture tick is harness timing.
+  // SETTINGS SHARED BY EVERY BALL. Not per-spec, because the contact threshold
+  // is a global Rapier instrumentation cutoff rather than a property of any one ball.
   ball: {
     // N — below this Rapier raises no contact event AT ALL, so the strike
     // resolver never sees the touch even though the collision still happens.
@@ -707,23 +715,17 @@ const DEFAULTS = {
     // INTERCEPT DIVE (GF-2.1) — Dive + Brace combo.
     // A short, fast dive toward the ball with a more upright body.
     interceptDiveForwardImpulse: 6.0,
-        interceptDiveUpImpulse: 2.8,
-        // How long (ticks) after a brace-dive launches that a ball redirect still
-        // counts as "connected" rather than a whiff.
-        interceptDiveWindowTicks: 20,
-        // THE FORWARD CONE for the intercept decision: the half-angle, in degrees,
-        // around the athlete's facing within which the nearest ball qualifies for
-        // the brace-dive intercept. 45 gives a 90-degree total forward cone. A ball
-        // outside this cone, or behind, falls back to the standard directional dive.
-        interceptDiveMaxRedirectAngleDeg: 45.0,
-        // More upright hold phase than a normal dive, so the athlete stays ready to block.
-        interceptDiveHoldPhase: 0.45,
-        // Shares the normal dive cooldown by default. Override here if design wants a
-        // separate gate.
-        interceptDiveCooldownTicks: 150,
-        // RECOVERY TRADE-OFF: a brace-dive that never touches a ball is a whiff, and
-        // the landing commits this many EXTRA stun ticks on top of diveStunTicks.
-        interceptDiveWhiffStunTicks: 30,
+    interceptDiveUpImpulse: 2.8,
+    // THE FORWARD CONE for the intercept decision: the half-angle, in degrees,
+    // around the athlete's facing within which the nearest ball qualifies for
+    // the brace-dive intercept. 45 gives a 90-degree total forward cone. A ball
+    // outside this cone, or behind, falls back to the standard directional dive.
+    interceptDiveMaxRedirectAngleDeg: 45.0,
+    // More upright hold phase than a normal dive, so the athlete stays ready to block.
+    interceptDiveHoldPhase: 0.45,
+    // RECOVERY TRADE-OFF: a brace-dive that never touches a ball is a whiff, and
+    // the landing commits this many EXTRA stun ticks on top of diveStunTicks.
+    interceptDiveWhiffStunTicks: 30,
 
     // THE PELVIS'S CLAMP, BOOSTED WHILE SLIDING. At speed the whole body is
     // dragging on the floor, and the tracker's mass-proportional impulse cap is
@@ -804,15 +806,11 @@ const DEFAULTS = {
 
     // THE DIVE LATCH'S FLOOR, in ticks.
     //
-    // The latch clears on `tracker.weight > 0.5` — "he is back on his feet, the
-    // dive is over". queueKnockdown only QUEUES the collapse; the tracker
-    // consumes it later in the same step, so on the launch tick itself weight
-    // is still whatever it was while running, ~1.0, and the clear fired on the
-    // tick the latch was set. Measured: diveMix never left 0 and the dive clip
-    // never played once in a five-second trace. This floor holds the latch
-    // until the knockdown has actually landed. Weight reaches 0.01 within one
-    // tracker update, so anything above a couple of ticks is enough; 6 is
-    // 0.1 s of margin and still far below the shortest real dive.
+    // Minimum airborne/skid tick floor after launch before landing or low-speed
+    // skid termination in actions.js can clear `divePending`. On the launch tick
+    // itself the athlete may still register grounded or low horizontal speed
+    // before the dive impulse steps the physics world; 6 ticks (0.1 s) guarantees
+    // the dive state commits into flight before termination checks run.
     diveLatchMinTicks: 6,
 
     // THE SLIDE.
@@ -996,9 +994,6 @@ const DEFAULTS = {
     // quarter of their resistance and land as a body instead of exploding.
     // See queueKnockdown in tracker.js for the measurements.
     crashMuscleTone: 0.2,
-    // The clip the crash reaches for. Absent from the asset today, so it falls
-    // back to the held airborne pose through the same path slide and dive use.
-    crashClip: 'Crash',
 
     // THE DIVE. Absolute impulses in N·s, the same convention as jump.impulse —
     // NOT scaled by mass. Forward is along the input direction, or along the
@@ -1309,7 +1304,6 @@ const DEFAULTS = {
   // Changing any of them takes effect on the NEXT spawn, and the GUI says so.
   ragdoll: {
     spawnHeight: 6,
-    tumbleImpulse: 0.5,
     // The tick the deterministic capture spawns the ragdoll on, so an anchored
     // run contains a character in a repeatable pose rather than an empty bowl.
     captureSpawnTick: 30,
@@ -1440,17 +1434,6 @@ const DEFAULTS = {
     // to shorten a dive.
     limpBrakeBelow: 0.1,
     limpBrake: 6.0,
-  },
-
-  visual: {
-    // turnSpeedThreshold retired here with the velocity-heading facing path in
-    // GF-2: facing is camera-locked now and the camera's yaw is always
-    // meaningful, so there is no vanishing velocity vector left to guard
-    // against. Removed rather than left as a live-looking slider that does
-    // nothing.
-    boxWidth: 0.8,
-    boxHeight: 1.8,
-    boxDepth: 0.8,
   },
 
   // THE SPRING ARM. One owner for the camera: main.js holds azimuth, pitch and
@@ -1840,7 +1823,13 @@ export const TUNING = structuredClone(DEFAULTS);
  */
 export function resetTuning() {
   for (const group of Object.keys(DEFAULTS)) {
-    Object.assign(TUNING[group], DEFAULTS[group]);
+    const cloned = structuredClone(DEFAULTS[group]);
+    if (Array.isArray(TUNING[group])) {
+      TUNING[group].length = 0;
+      TUNING[group].push(...cloned);
+    } else {
+      Object.assign(TUNING[group], cloned);
+    }
   }
 }
 

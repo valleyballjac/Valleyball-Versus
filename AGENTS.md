@@ -15,7 +15,7 @@ This document provides mandatory operational context, architectural invariants, 
 - **Core Concept**: Pure physics sports simulation featuring physical active ragdolls, mass-normal strikes, zero artificial ball magnetism, dynamic target goal switching, and locked 60+ FPS performance.
 - **Working Root**: This repository. On Jac's laptop that is `C:\Users\portt\Dev\Valleyball\Valleyball-Versus-AI`.
 - **Canonical Arena**: The **Valley Court** (`public/models/arena.glb`) is the sole canonical arena. The procedural test bowl is **permanently retired**.
-- **Arena Source of Truth**: `arena.glb` itself. Since v11.1, collider fixes have been scripted patches to the GLB (`scripts/flip_inverted_corners.mjs`, `scripts/weld_barrier_tjunctions.mjs`, `scripts/arena_*.mjs`), and the Blender sources for v10.0 and later are not in this repo. **Never re-export the arena from a `.blend` without porting those fixes**, or they will be silently undone.
+- **Arena Source of Truth**: `arena.glb` itself. Since v11.1, collider fixes have been scripted patches to the GLB (`scripts/arena-patches/flip_inverted_corners.mjs`, `scripts/arena-patches/weld_barrier_tjunctions.mjs`, `scripts/arena-patches/arena_*.mjs`), and the Blender sources for v10.0 and later are not in this repo. **Never re-export the arena from a `.blend` without porting those fixes**, or they will be silently undone.
 - **Roadmap**: [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ---
@@ -147,6 +147,14 @@ npm run desktop
 
 # Desktop app: Windows installer and portable exe in release/desktop/
 npm run desktop:dist
+
+# Desktop app: Mac (.dmg, .zip) and Linux (.AppImage, .tar.gz). Each must run on
+# its own OS, so use the "Desktop builds" GitHub Actions workflow from Windows
+npm run desktop:dist:mac
+npm run desktop:dist:linux
+
+# Desktop app: launch this platform's packaged build and check it boots
+npm run desktop:smoke
 ```
 
 The desktop exe accepts `--windowed` (default is borderless fullscreen; F11 toggles) and `--uncapped` (vsync off, for benchmarking only). Rendering already runs at the display's refresh rate without it.
@@ -170,6 +178,6 @@ The desktop exe accepts `--windowed` (default is borderless fullscreen; F11 togg
 ### Release checklist
 
 1. Run `npm version <x.y.z> --no-git-tag-version`, then update the badge in `index.html`, `titleScreen.js`, `inGameMenu.js`, and the title in this file. `test/version.test.mjs` fails if one is missed.
-2. Run `npm test`, `npm run audit`, `npm run determinism`, and `npm run build`. `npm run audit` currently stops on a known corner-fan failure (see the roadmap), so `node scripts/audit.mjs` is the part to pass. If its size ratchet fails because of intended growth, run `node scripts/audit.mjs --update` and say so in the commit.
+2. Run `npm test`, `npm run audit`, `npm run determinism`, and `npm run build`. If the size ratchet in `scripts/audit.mjs` fails because of intended growth, run `node scripts/audit.mjs --update` and say so in the commit.
 3. Play-test anything that touches input with a real controller.
 4. With Jac's go-ahead: merge to `main`, tag, push, `npm run deploy`, and `npm run package:itch` for the itch.io upload.

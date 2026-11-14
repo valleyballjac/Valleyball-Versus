@@ -1,9 +1,17 @@
+/**
+ * @module main
+ * Top-level application orchestrator for Valleyball Versus AI:
+ * scene/renderer boot, fixed-timestep simulation loop sequencing,
+ * multi-athlete match/overtime/practice lifecycle, and debug probe wiring.
+ */
+
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 import { TUNING, assetUrl } from './config/tuning.js';
-import { getNextHeadwearId, getHeadwearLabel } from './config/cosmetics.js';
+import { getHeadwearLabel } from './config/cosmetics.js';
 import { Loop } from './core/Loop.js';
+import { WorldSnapshotRingBuffer, packInputFrame, unpackInputFrame } from './core/snapshot.js';
 import {
   initPhysics, stepPhysics, getWorld, drainContactForces, RAPIER,
   ENVIRONMENT_RAY_GROUPS, logCollisionMatrix,
@@ -12,42 +20,38 @@ import { createArena, activeArenaType, activeArenaPreset, getArenaColliderType }
 import {
   createBall, resetBall, getCourtBallDropSpawn, applyBallResistance, noteBallContact, syncBallSnapshot, ballProbe,
 } from './sim/ball.js';
-import { createMotor, updateMotor, syncMotorSnapshot, horizontalSpeed } from './sim/motor.js';
 import {
-  createAnimTarget,
-  updateAnimTarget,
-  resetAnimTarget,
-  mountMatrix,
   weightAudit,
   strafeSignViolation,
   flailViolation,
-  clipResolvesOnSkeleton,
 } from './sim/animtarget.js';
-import { createTracker, applyTracking, applyImpacts, queueKnockdown } from './sim/tracker.js';
+import { applyImpacts, queueKnockdown } from './sim/tracker.js';
 import {
-  buildRagdoll, destroyRagdoll, detachMotorFromRagdoll, BONE_MAP, resolveBoneByName,
-} from './sim/autorig.js';
-import {
-  createRagdollVisuals,
-  disposeRagdollVisuals,
-  saveRagdollPrevious,
-  snapshotRagdoll,
-  syncRagdollPose,
   findNonFinite,
   applyRagdollVisibility,
-  updateAthletePalette,
-  updateAthleteVariant,
 } from './sim/ragdoll.js';
-import { applyClampedLinearDamping } from './sim/damping.js';
-import { createAthlete } from './sim/athlete.js';
 import { athleteManager, computeStreamHeadSpawns } from './features/athletes/athleteManager.js';
 import { resolveAthleteCollision } from './features/athletes/athleteCollisions.js';
+import {
+  viewportManager,
+  showCameraNotification,
+  showHeadwearToast,
+} from './features/camera/viewportManager.js';
 import {
   matchManager,
   createPlayerMatchStats,
   resetPlayerMatchStats,
   buildMatchStatsReport,
 } from './features/match/matchManager.js';
+import {
+  practiceStats,
+  resetPracticeStats,
+  syncPracticeStrikeStats,
+  incrementPracticeSessionTicks,
+  getPracticeSessionSeconds,
+  getSelectedPracticeBallType,
+  setSelectedPracticeBallType,
+} from './features/match/practiceMode.js';
 import {
   readFixtureFromSearch, fixtureMatchSetup, createFixtureRandom, fixtureBotSeed, resultSide, buildMatchResult,
 } from './features/match/matchFixture.js';
@@ -77,11 +81,11 @@ import {
 import { createMenuPadTracker, MENU_PAD } from './input/menuPads.js';
 import { updateSportsCamera } from './visuals/sportsCamera.js';
 import { createBotController, updateBot } from './ai/botController.js';
-import { PlayerCamera } from './visuals/playerCamera.js';
-import { CinematicCamera } from './visuals/cinematicCamera.js';
 import { createTurfParticleSystem, getPitchSurfaceColor } from './visuals/turfParticles.js';
 import { createGoalCelebrationSystem } from './visuals/goalCelebration.js';
 import { createGoalIndicators } from './visuals/goalIndicators.js';
+import { setHudVisible, updateHud } from './ui/hudOverlay.js';
+import { initOvertimeMenu, showOvertimeMenu, hideOvertimeMenu, isOvertimeMenuOpen } from './ui/overtimeMenu.js';
 import { initVictoryScreen, showVictoryScreen, hideVictoryScreen, showPracticeSummary, isVictoryScreenVisible } from './ui/victoryScreen.js';
 import { initControlsOverlay, updateControlsOverlay, setControlsOverlayEnabled, hideControlsOverlay } from './ui/controlsOverlay.js';
 import { initCountdownOverlay, updateCountdownOverlay, resetCountdownOverlay } from './ui/countdownOverlay.js';
@@ -100,145 +104,32 @@ import {
   getSelectedMatchBall,
   getColorName,
 } from './features/ui/mainMenu/index.js';
-import { createMountFollowerState, runMountFollower } from './mechanics/mountFollower.js';
-import { createActionState, runActions } from './mechanics/actions.js';
 import {
-  createStrikeState, runStrikes, resolveStrikeContact, resolveBraceRedirect, strikeProbe,
-  checkStrikeAssist, KIND_NAME,
+  resolveStrikeContact, resolveBraceRedirect, strikeProbe, KIND_NAME,
 } from './mechanics/strikes.js';
-import { createMatchState, updateScoring, matchProbe } from './mechanics/scoring.js';
+import { updateScoring, matchProbe } from './mechanics/scoring.js';
 import { createScoreboards, updateScoreboards, loadDisplayFont } from './visuals/scoreboards.js';
 import { createHustleBoards, updateHustleBoards } from './visuals/hustleBoards.js';
 import { displayCoordinator } from './visuals/displayCoordinator.js';
-import { initCelestialSkybox, updateCelestialSkybox } from './visuals/skybox.js';
+import { initCelestialSkybox } from './visuals/skybox.js';
 import { soundManager } from './audio/soundManager.js';
 import { createGui } from './debug/gui.js';
+import { installHotkeys } from './debug/hotkeys.js';
 import { initCapture } from './debug/capture.js';
 import { initStateTrace } from './debug/stateTrace.js';
 import { readFixture, applyFixtureServes, fixtureParksBall } from './debug/fixture.js';
 
-/**
- * Scene construction, wiring, and the render pass.
- *
- * There is no simulation logic in this file. fixedUpdate only sequences the
- * modules under src/sim/; every force, every step and every snapshot happens in
- * there.
- */
+export { showCameraNotification, showHeadwearToast, practiceStats };
 
-const MAX_LIVE_PIXEL_RATIO = 2;
-
-/** The axis the gamepad orbit's azimuth turns about. */
-const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const _zeroVector = new THREE.Vector3(0, 0, 0);
 
-/**
- * The collision group layout lives in sim/physics.js, because the motor's ground
- * fan needs the same filter word and motor.js cannot import this file. The
- * arena stamps its own membership now that arena.js is no longer frozen, so this
- * file imports only the RAY word it casts with.
- */
-
-/**
- * The spring arm's environment probe. Allocation-free, built lazily because
- * RAPIER is not initialised at module-eval time.
- *
- * IT USED TO BE SHARED with the mount follower's two casts, with these two
- * objects rewritten in place before each. That was safe only because every
- * caller happened to set all six fields first — not a property anyone could
- * check. The mount follower owns its own now (mechanics/mountFollower.js), at
- * the cost of one Ray object for the life of the process.
- */
-let _envRay = null;
-const _rayFrom = { x: 0, y: 0, z: 0 };
-const _rayDir = { x: 0, y: 0, z: 0 };
-
-/** Consecutive ticks the ground fan has reported contact. Mechanics counter. */
-let groundedRun = 0;
-/** Previous grounded state, for landing sound detection. */
-let wasGrounded = true;
-let lastFootstepSlot = -1;
-/** Scratch for the limp brake's relative velocity. */
-const _limpVel = new THREE.Vector3();
 /** Slack on the weight-sum assertion, for the easings' floating-point residue. */
 const WEIGHT_SUM_TOLERANCE = 1e-3;
 
-/**
- * Served straight out of public/. Not a tunable: it is the asset's identity.
- *
- * THE NAME IS THE ROLE NOW, NOT THE ASSET'S HISTORY. This file was shipped as
- * YBOT30Animations.glb and renamed to character.glb once it stopped being a
- * candidate and became the character — the same bytes under a name that will
- * still be true after the next clip is added to it. The two predecessors that
- * had been sitting unloaded in public/models were deleted at the same time, so
- * "character.glb" is unambiguous again: there is exactly one of them, and it is
- * the thirty-clip asset described below.
- *
- * ITS CONTENT REPLACES the fifteen-clip predecessor, which in turn replaced the
- * original. It is not a different character, and this is not a re-rig. Parsed
- * accessor-for-accessor against its predecessor,
- * the skin joint list (65 joints, "mixamorig:" prefix, Hips root, same order),
- * every joint's local translation / rotation / scale, all 65 inverse bind
- * matrices, both SkinnedMeshes — Alpha_Joints and Alpha_Surface, POSITION,
- * NORMAL, UV, JOINTS_0, WEIGHTS_0 and indices — and the armature root
- * "Master Actor" (+90 degrees X, scale 0.01) are BYTE-IDENTICAL: max absolute
- * difference 0.0 on every accessor. Same exporter, Khronos glTF Blender I/O.
- *
- * That is why the switch is safe, and it is the same reason the last one was:
- * the auto-rigger derives every collider from the bind pose, and a bind pose
- * that cannot move cannot move the colliders. BONE_MAP needs no edit, the
- * masses and capsule radii cannot have moved, and the L5 axis derivation
- * answers the same question about the same armature.
- *
- * THE 15 CLIPS ALREADY SHIPPING ARE BYTE-IDENTICAL TOO, under the same names,
- * so every measured clip window in TUNING — jump.clipStart/End, standUp's
- * window, action.diveClipStart/End, the slide window — stays valid without
- * re-measurement.
- *
- * IT ADDS EXACTLY FIFTEEN CLIPS: Walk Backwards, Jog Backwards, Stop Walking,
- * Backwards Right Move, Backwards Left Move, Idle Kick Right, Idle Kick Left,
- * Idle Low Kick Left, Idle Low Kick Right, Bash Hit Right, Bash Hit Left,
- * Running Jump Kick Right, Idle Two Hand Volley, Standing Spike Left and
- * Standing Spike Right. Two of them are registered: "Walk Backwards" on the
- * walk ring and "Jog Backwards" on the run ring, named in TUNING.blend2d's
- * per-ring node tables, which together retire the backpedal placeholder. The
- * other thirteen are present, listed by the clip inventory logged in
- * loadCharacter, and referenced by nothing.
- *
- * BOTH PREDECESSOR ASSETS WERE DELETED IN G3.5. They had sat in public/models
- * unloaded since the swap, surviving five deletion orders because nothing ever
- * broke by leaving them there. Nothing loads them and nothing names them.
- *
- * A NOTE FOR THE NEXT CENSUS: G3.5's zombie grep included "character.glb"
- * because that WAS one of the deleted predecessors. After the rename that
- * string means the LIVE asset, so grepping for it proves nothing. Grep the
- * other two deleted names instead — the rider module under src/sim/ and the
- * fifteen-clip GLB — and they are zero. The shipped name of this file survives
- * on two comment lines in this block, deliberately: it is the only record of
- * where the asset came from, and no code path names it.
- */
+/** Served straight out of public/. The 30-clip character asset. */
 const CHARACTER_URL = assetUrl('models/character.glb');
-/** OPTIONAL. Absent today; extra clips beyond the character asset go here. */
-const ACTIONS_URL = assetUrl('models/actions.glb');
 
-/** Scratch for the mount transform. Built fresh on every spawn. */
-const _mount = new THREE.Matrix4();
-/**
- * Scratch for the athlete's boot-time placement onto the arena's spawn point.
- * The watchdog's own respawn point moved to mechanics/watchdog.js with it; this
- * is used exactly once, in boot(), before the loop starts.
- */
-const _bootSpawnPoint = new THREE.Vector3();
-
-// Degrees between the pelvis body's own up axis and world up. The armature is
-// Z-up inside a Y-up root, so the spine runs along the body frame's +Y — see
-// hipsAxisRoles in animtarget.js for where that fact is derived.
-const _jBind = new Map();
-const _jA = new THREE.Quaternion();
-const _jB = new THREE.Quaternion();
-const _jRel = new THREE.Quaternion();
-const _jDelta = new THREE.Quaternion();
-const _jAxis = new THREE.Vector3();
-const _jVec = new THREE.Vector3();
+// Degrees between the pelvis body's own up axis and world up.
 const _tiltQuat = new THREE.Quaternion();
 const _tiltAxis = new THREE.Vector3();
 const pelvisTilt = (q) => {
@@ -246,149 +137,6 @@ const pelvisTilt = (q) => {
   _tiltAxis.set(0, 1, 0).applyQuaternion(_tiltQuat);
   return (Math.acos(Math.max(-1, Math.min(1, _tiltAxis.y))) * 180) / Math.PI;
 };
-
-/** Set by "T", consumed at the top of the next fixed step. */
-let knockdownRequested = false;
-
-/**
- * THE PER-ATHLETE MECHANICS STATE, one object per mechanic.
- *
- * These were eight module-level `let`s and three scratch vectors in this file
- * until G3.5. They are the same values with the same lifetimes — created once,
- * never reset by a respawn — but they belong to a factory now, because G5
- * instantiates N athletes and a module-level slide clock is one clock for all
- * of them. Nothing outside this file reaches them; the HUD reads them here.
- */
-const mountFollowerState = createMountFollowerState();
-const actionState = createActionState();
-const strikeState = createStrikeState();
-
-/** Extra clips from the optional actions.glb, empty if it is not there. */
-let actionClips = [];
-
-/** Last computed resistance multiplier, for the HUD. Never fed back in. */
-let lastResistanceScale = 1;
-
-/**
- * Hermite smoothstep on [0, 1], clamped. Local because it is used in exactly
- * one place and a shared maths module for one curve is a module nobody reads.
- *
- * The reason the drag uses a smoothstep rather than a threshold is that a
- * threshold would be a state: the ball would behave one way on one side of a
- * number and another way on the other, and a weight hovering near it would
- * chatter between the two. A smoothstep has zero derivative at both ends, so
- * the drag arrives and leaves without a seam.
- */
-function smoothstep01(t) {
-  const x = Math.min(1, Math.max(0, t));
-  return x * x * (3 - 2 * x);
-}
-
-/** Shared guard: a hotkey must not fire while the user is typing in a tuning
- *  field, and auto-repeat must not fire it sixty times a second. */
-function isHotkey(event, code) {
-  if (event.code !== code || event.repeat) return false;
-  const target = event.target;
-  if (target && target.tagName) {
-    const tag = target.tagName.toLowerCase();
-    if (tag === 'input' || tag === 'textarea' || tag === 'select' || target.isContentEditable) {
-      return false;
-    }
-  }
-  return true;
-}
-
-/**
- * "R" (re)spawns the ragdoll. Guarded against text entry so typing an R into a
- * tuning field does not drop a character on the arena, and against auto-repeat
- * so holding the key does not rebuild the rig sixty times a second.
- */
-function installRespawnHotkey() {
-  window.addEventListener('keydown', (event) => {
-    // BACKSPACE, NOT R (G4). `R` became the spike, and a debug teleport should
-    // not be one slip of a finger away from a gameplay verb. The hotkey moved
-    // rather than the strike, because the strike is the thing a player's hand
-    // has to find without looking.
-    if (isHotkey(event, 'Backspace')) requestRagdollSpawn();
-    // "T" — THE KNOCKDOWN. The only writer of the blend weight besides the
-    // recovery ramp. It queues a flag; fixedUpdate consumes it, so the weight
-    // is never written from outside the fixed step.
-    if (isHotkey(event, 'KeyT')) {
-      for (const a of athletes) a.requestKnockdown();
-    }
-    // "Shift+H" or F3 — TOGGLE DEVELOPER TELEMETRY HUD
-    if (isHotkey(event, 'F3') || (isHotkey(event, 'KeyH') && event.shiftKey)) {
-      TUNING.debug.showHud = !TUNING.debug.showHud;
-      setHudVisible(TUNING.debug.showHud);
-    }
-    // "1" — TOGGLE TEAM JERSEY (Home <-> Away) for P1
-    if (isHotkey(event, 'Digit1')) {
-      const p = TUNING.players[0] || TUNING.athlete;
-      p.team = p.team === 'home' ? 'away' : 'home';
-      TUNING.athlete.team = p.team;
-      if (athletes[0]) athletes[0].setTeamAndVariant(p.team, null);
-      if (guiInstance) guiInstance.controllersRecursive().forEach((c) => c.updateDisplay());
-    }
-    // "2" — CYCLE SILHOUETTE VARIANT (masculine -> feminine -> classic) for P1
-    if (isHotkey(event, 'Digit2')) {
-      const p = TUNING.players[0] || TUNING.athlete;
-      const variants = ['masculine', 'feminine', 'classic'];
-      const nextIdx = (variants.indexOf(p.variant) + 1) % variants.length;
-      p.variant = variants[nextIdx];
-      TUNING.athlete.variant = variants[nextIdx];
-      if (athletes[0]) athletes[0].setTeamAndVariant(null, p.variant);
-      if (guiInstance) guiInstance.controllersRecursive().forEach((c) => c.updateDisplay());
-    }
-    // "9" — TOGGLE TEAM JERSEY (Home <-> Away) for P2
-    if (isHotkey(event, 'Digit9')) {
-      if (TUNING.players[1]) {
-        TUNING.players[1].team = TUNING.players[1].team === 'home' ? 'away' : 'home';
-        if (athletes[1]) athletes[1].setTeamAndVariant(TUNING.players[1].team, null);
-        if (guiInstance) guiInstance.controllersRecursive().forEach((c) => c.updateDisplay());
-      }
-    }
-    // "0" — CYCLE SILHOUETTE VARIANT for P2
-    if (isHotkey(event, 'Digit0')) {
-      if (TUNING.players[1]) {
-        const variants = ['masculine', 'feminine', 'classic'];
-        const nextIdx = (variants.indexOf(TUNING.players[1].variant) + 1) % variants.length;
-        TUNING.players[1].variant = variants[nextIdx];
-        if (athletes[1]) athletes[1].setTeamAndVariant(null, TUNING.players[1].variant);
-        if (guiInstance) guiInstance.controllersRecursive().forEach((c) => c.updateDisplay());
-      }
-    }
-    // "3" — CYCLE HEADWEAR (Series 1 live preview) for P1
-    if (isHotkey(event, 'Digit3') && athletes[0]) {
-      const next = getNextHeadwearId(athletes[0].headwear);
-      athletes[0].setHeadwear(next);
-      headwearControls.p1 = next;
-      showHeadwearToast(getHeadwearLabel(next));
-    }
-    // "8" — CYCLE HEADWEAR (Series 1 live preview) for P2
-    if (isHotkey(event, 'Digit8') && athletes[1]) {
-      const next = getNextHeadwearId(athletes[1].headwear);
-      athletes[1].setHeadwear(next);
-      headwearControls.p2 = next;
-      showHeadwearToast(getHeadwearLabel(next));
-    }
-    // "V" — TOGGLE SPLITSCREEN MODE (Shift+V or F8 to avoid conflict with P1 Cut 'KeyV')
-    if (isHotkey(event, 'F8') || (isHotkey(event, 'KeyV') && event.shiftKey)) {
-      TUNING.camera.splitscreen = !TUNING.camera.splitscreen;
-      applyViewportSize();
-      if (guiInstance) guiInstance.controllersRecursive().forEach((c) => c.updateDisplay());
-    }
-    // Skip flyover cutscene with Space, Enter, or Escape
-    if (gameState === 'flyover' && (isHotkey(event, 'Space') || isHotkey(event, 'Enter') || isHotkey(event, 'Escape'))) {
-      skipFlyover();
-      return;
-    }
-    // "Escape" — TOGGLE IN-GAME SETTINGS & PAUSE MENU (continuous play clock)
-    // In menus, onMenuKeyDown owns Escape, one screen at a time.
-    if (isHotkey(event, 'Escape') && gameState !== 'menu') {
-      toggleInGameMenu();
-    }
-  });
-}
 
 // ---------------------------------------------------------------------------
 // Renderer
@@ -458,111 +206,9 @@ for (const tower of stadiumTowers) {
 scene.add(new THREE.AmbientLight(0x8fb4d6, 0.45));
 
 /**
- * PLAYER CAMERAS — independent rigs for splitscreen and single screen.
+ * PLAYER & CINEMATIC CAMERAS — owned by viewportManager.
  */
-const playerCameras = [
-  new PlayerCamera(0, TUNING.players[0]?.cameraMode || 'chase'),
-  new PlayerCamera(1, TUNING.players[1]?.cameraMode || 'chase'),
-  new PlayerCamera(2, TUNING.players[2]?.cameraMode || 'chase'),
-  new PlayerCamera(3, TUNING.players[3]?.cameraMode || 'chase'),
-];
-
-const CAMERA_MODE_DISPLAY_NAMES = {
-  firstPerson: '1ST PERSON (POV)',
-  thirdPerson: '3RD PERSON (BALL TRACK)',
-  ball: '3RD PERSON (BALL TRACK)',
-  chase: 'CHASE (ACTION)',
-  tactical: 'TACTICAL (OVERHEAD)',
-  broadcast: 'BROADCAST (SIDELINE)',
-  sports: 'BROADCAST (DYNAMIC)',
-};
-
-let cameraToastTimeout = null;
-let cameraToastFadeTimeout = null;
-let headwearToastTimeout = null;
-let headwearToastFadeTimeout = null;
-
-export function showCameraNotification(playerIndex, mode) {
-  if (typeof document === 'undefined') return;
-  const loadingScreen = document.getElementById('loading-screen');
-  if (loadingScreen && loadingScreen.style.display !== 'none') return;
-
-  let toast = document.getElementById('camera-toast');
-  if (!toast) {
-    toast = document.createElement('div');
-    toast.id = 'camera-toast';
-    document.body.appendChild(toast);
-  }
-
-  const isSplitscreen = (gameState === 'match') && !!TUNING.camera.splitscreen && athletes.length >= 2;
-  const displayName = CAMERA_MODE_DISPLAY_NAMES[mode] || mode.toUpperCase();
-  const playerPrefix = isSplitscreen
-    ? `<span style="color: ${playerIndex === 0 ? '#ef4444' : '#3b82f6'}; font-weight: 800; margin-right: 6px;">P${playerIndex + 1}</span>`
-    : '';
-
-  toast.innerHTML = `${playerPrefix}<span style="color: #7dd3fc; margin-right: 6px;">CAMERA:</span><span style="color: #ffffff; font-weight: 800;">${displayName}</span>`;
-
-  if (isSplitscreen) {
-    toast.style.left = playerIndex === 0 ? '25%' : '75%';
-  } else {
-    toast.style.left = '50%';
-  }
-
-  toast.style.display = 'block';
-  void toast.offsetWidth;
-  toast.classList.remove('fade-out');
-  toast.classList.add('visible');
-
-  if (cameraToastTimeout) clearTimeout(cameraToastTimeout);
-  if (cameraToastFadeTimeout) clearTimeout(cameraToastFadeTimeout);
-
-  cameraToastTimeout = setTimeout(() => {
-    toast.classList.remove('visible');
-    toast.classList.add('fade-out');
-    cameraToastFadeTimeout = setTimeout(() => {
-      toast.style.display = 'none';
-      cameraToastFadeTimeout = null;
-    }, 350);
-  }, 1300);
-}
-
-export function showHeadwearToast(headwearLabel) {
-  if (typeof document === 'undefined') return;
-  const loadingScreen = document.getElementById('loading-screen');
-  if (loadingScreen && loadingScreen.style.display !== 'none') return;
-
-  let toast = document.getElementById('headwear-toast');
-  if (!toast) {
-    toast = document.createElement('div');
-    toast.id = 'headwear-toast';
-    document.body.appendChild(toast);
-  }
-
-  toast.innerHTML = `<span style="color: #f0abfc; margin-right: 6px;">HEADWEAR:</span><span style="color: #ffffff; font-weight: 800;">${headwearLabel}</span>`;
-  toast.style.left = '50%';
-  toast.style.display = 'block';
-  void toast.offsetWidth;
-  toast.classList.remove('fade-out');
-  toast.classList.add('visible');
-
-  if (headwearToastTimeout) clearTimeout(headwearToastTimeout);
-  if (headwearToastFadeTimeout) clearTimeout(headwearToastFadeTimeout);
-
-  headwearToastTimeout = setTimeout(() => {
-    toast.classList.remove('visible');
-    toast.classList.add('fade-out');
-    headwearToastFadeTimeout = setTimeout(() => {
-      toast.style.display = 'none';
-      headwearToastFadeTimeout = null;
-    }, 350);
-  }, 1300);
-}
-
-playerCameras.forEach((pc) => {
-  pc.onModeChange = (newMode, prevMode, playerIndex) => {
-    showCameraNotification(playerIndex, newMode);
-  };
-});
+const { playerCameras, spectatorCamera, cinematicCamera } = viewportManager;
 
 const turfParticles = createTurfParticleSystem(scene);
 const goalCelebration = createGoalCelebrationSystem(scene);
@@ -587,34 +233,62 @@ function queryPitchSurfaceY(x, z, refY = 1.0) {
   }
   return Math.max(0, refY - 0.5);
 }
+
 const camera = playerCameras[0].camera;
 const cameraRig = playerCameras[0]; // backward compatibility for debug capture & telemetry
 
-const spectatorCamera = new THREE.PerspectiveCamera(
-  TUNING.camera.fov,
-  window.innerWidth / window.innerHeight,
-  TUNING.camera.near,
-  TUNING.camera.far,
-);
-
-const cinematicCamera = new CinematicCamera();
 const flyoverPads = createMenuPadTracker();
-let gameState = 'menu'; // 'menu' | 'flyover' | 'match' | 'practice'
+let gameState = 'menu'; // 'menu' | 'flyover' | 'match' | 'overtime_menu' | 'practice'
 let victoryCameraActive = false;
 
-const _camTarget = new THREE.Vector3();
-const _camOffset = new THREE.Vector3();
-const _camDir = new THREE.Vector3();
-const _camDesired = new THREE.Vector3();
+let athletes = [];
+/**
+ * Mutable holder for the lil-gui headwear dropdowns ({ p1, p2, p3, p4 }). Owned here so
+ * the headwear hotkeys and the gui panel read and write the same live state.
+ */
+const headwearControls = { p1: 'manager_cap', p2: 'manager_cap', p3: 'manager_cap', p4: 'manager_cap' };
+let botControllers = [];
+let activeBotSlots = [];
+const athleteMatchStats = [0, 1, 2, 3].map((i) => createPlayerMatchStats(i));
+let activeFixture = null;
+let fixtureRandom = null;
+let fixtureFlyoverEndTick = -1;
+let lastMatchConfigs = null;
+let balls = [];
+let allBalls = [];
+let currentMatchBallType = 'random';
+let matchState = null;
+let scoreboards = null;
+let hustleBoards = null;
+let ball = null;
+const ballByHandle = new Map();
+let arenaPreset = null;
+let armedCaptureTick = null;
+let captureFixture = null;
+let characterClips = [];
+let characterRoot = null;
+let characterSkeleton = null;
+let guiInstance = null;
+let respawnRequested = false;
+let baselineCounts = null;
 
 function getActiveHumanSlots() {
-  if (gameState === 'practice') return [0];
-  const humanSlots = [];
-  for (let i = 0; i < athletes.length; i++) {
-    if (athletes[i]?.isEnabled && !activeBotSlots.includes(i)) humanSlots.push(i);
-  }
-  return humanSlots;
+  return viewportManager.getActiveHumanSlots();
 }
+
+viewportManager.init({
+  renderer,
+  scene,
+  stadiumLights,
+  getActiveBotSlots: () => activeBotSlots,
+  getAthletes: () => athletes,
+  getGameState: () => gameState,
+  onControlsOverlayChange: (visible) => {
+    setControlsOverlayEnabled(visible);
+    if (!visible) hideControlsOverlay();
+  },
+  getGuiInstance: () => guiInstance,
+});
 
 function ensureAthletesRegistered(count, configs) {
   athletes = athleteManager.ensureRoster(count, configs);
@@ -627,415 +301,39 @@ function ensureAthletesRegistered(count, configs) {
 }
 
 function syncPlayerCameraMode(playerIndex, mode) {
-  const p = TUNING.players[playerIndex];
-  if (p) p.cameraMode = mode;
-  if (playerIndex === 0) TUNING.camera.mode = mode;
+  viewportManager.syncPlayerCameraMode(playerIndex, mode);
 }
 
 function leaveSharedCameraForOtherSlot(changedPlayerIndex) {
-  if (!TUNING.camera.splitscreen) return;
-  for (let otherIdx = 0; otherIdx < playerCameras.length; otherIdx++) {
-    if (otherIdx === changedPlayerIndex) continue;
-    const otherCam = playerCameras[otherIdx];
-    if (otherCam && (otherCam.mode === 'broadcast' || otherCam.mode === 'sports')) {
-      const fallback = otherCam._lastPlayerMode || 'chase';
-      otherCam.setMode(fallback, true);
-      syncPlayerCameraMode(otherIdx, otherCam.mode);
-    }
-  }
-}
-
-function cycleCameraMode(playerIndex = 0) {
-  const pc = playerCameras[playerIndex] || playerCameras[0];
-  const isSplitscreen = (gameState === 'match') && !!TUNING.camera.splitscreen && getActiveHumanSlots().length >= 2;
-  const mode = pc.cycleMode(isSplitscreen);
-  syncPlayerCameraMode(playerIndex, mode);
-  if (mode !== 'broadcast' && mode !== 'sports') leaveSharedCameraForOtherSlot(playerIndex);
-  applyViewportSize();
+  viewportManager.leaveSharedCameraForOtherSlot(changedPlayerIndex);
 }
 
 function cyclePlayerCameraView(playerIndex = 0, delta = 1) {
-  const pc = playerCameras[playerIndex] || playerCameras[0];
-  const mode = pc.cyclePlayerView(delta);
-  syncPlayerCameraMode(playerIndex, mode);
-  leaveSharedCameraForOtherSlot(playerIndex);
-  applyViewportSize();
+  viewportManager.cyclePlayerCameraView(playerIndex, delta);
 }
 
 function cycleArenaCameraView(playerIndex = 0, delta = 1) {
-  const pc = playerCameras[playerIndex] || playerCameras[0];
-  const humanSlots = getActiveHumanSlots();
-  const wasShared = humanSlots.length > 0 && humanSlots.every((s) => playerCameras[s]?.mode === 'broadcast');
-  const isSplitscreen = (gameState === 'match') && !!TUNING.camera.splitscreen && humanSlots.length >= 2 && !wasShared;
-  const mode = pc.cycleArenaView(delta, isSplitscreen);
-  syncPlayerCameraMode(playerIndex, mode);
-  if (mode === 'broadcast' && TUNING.camera.splitscreen) {
-    for (const s of humanSlots) {
-      if (s === playerIndex) continue;
-      playerCameras[s]?.setMode('broadcast', false);
-      syncPlayerCameraMode(s, 'broadcast');
-    }
-  } else if (mode !== 'broadcast' && mode !== 'sports') {
-    leaveSharedCameraForOtherSlot(playerIndex);
-  }
-  applyViewportSize();
+  viewportManager.cycleArenaCameraView(playerIndex, delta);
 }
 
-/** Applied at boot and from the GUI. Never from the render pass. */
 function applyCameraTuning() {
-  for (const pc of playerCameras) {
-    pc.camera.fov = TUNING.camera.fov;
-    pc.camera.updateProjectionMatrix();
-  }
-  cinematicCamera.camera.fov = TUNING.camera.fov;
-  cinematicCamera.camera.updateProjectionMatrix();
-  spectatorCamera.fov = TUNING.camera.fov;
-  spectatorCamera.updateProjectionMatrix();
+  viewportManager.applyCameraTuning();
 }
 
-/**
- * Sizes the renderer and the camera projection to the window.
- */
 function applyViewportSize() {
-  const width = window.innerWidth;
-  const height = window.innerHeight;
-
-  let ratio = Math.min(window.devicePixelRatio || 1, MAX_LIVE_PIXEL_RATIO);
-  const preset = TUNING.render?.pixelRatioPreset;
-  if (preset === '1.0') {
-    ratio = 1.0;
-  } else if (preset === '1.25') {
-    ratio = Math.min(1.25, window.devicePixelRatio || 1);
-  } else if (preset === 'native') {
-    ratio = Math.min(window.devicePixelRatio || 1, MAX_LIVE_PIXEL_RATIO);
-  }
-
-  renderer.setPixelRatio(ratio);
-  renderer.setSize(width, height);
-
-  cinematicCamera.camera.aspect = width / height;
-  cinematicCamera.camera.updateProjectionMatrix();
-
-  spectatorCamera.aspect = width / height;
-  spectatorCamera.updateProjectionMatrix();
-
-  const humanSlots = getActiveHumanSlots();
-  const isSharedCam = humanSlots.length > 0 && humanSlots.every(
-    (s) => playerCameras[s]?.mode === 'broadcast' || playerCameras[s]?.mode === 'sports',
-  );
-  const isSplitscreen = (gameState === 'match') && !!TUNING.camera.splitscreen && (humanSlots.length >= 2 || (athletes.length >= 2 && !!TUNING.camera.forceQuadSplitscreen)) && !isSharedCam;
-
-  // Broadcast and Sports cameras are full-screen only: if in individual splitscreen, revert them to chase.
-  if (isSplitscreen) {
-    const slotsToCheck = humanSlots.length > 0 ? humanSlots : [0, 1, 2, 3];
-    for (const s of slotsToCheck) {
-      if (playerCameras[s] && (playerCameras[s].mode === 'sports' || playerCameras[s].mode === 'broadcast')) {
-        playerCameras[s].setMode('chase');
-        syncPlayerCameraMode(s, 'chase');
-      }
-    }
-  }
-
-  const isQuadSplit = isSplitscreen && (humanSlots.length > 2 || (athletes.length >= 4 && !!TUNING.camera.forceQuadSplitscreen));
-  const aspect = isQuadSplit
-    ? (width / 2) / (height / 2)
-    : (isSplitscreen ? (width / 2) / height : width / height);
-
-  for (const pc of playerCameras) {
-    pc.camera.aspect = aspect;
-    pc.camera.updateProjectionMatrix();
-  }
+  viewportManager.applyViewportSize();
 }
 
 function applyShadowSettings() {
-  const quality = TUNING.render?.shadowQuality || 'high';
-  if (quality === 'off') {
-    renderer.shadowMap.enabled = false;
-    for (const light of stadiumLights) {
-      light.castShadow = false;
-    }
-  } else if (quality === 'balanced') {
-    renderer.shadowMap.enabled = true;
-    if (stadiumLights.length > 0) {
-      stadiumLights[0].castShadow = true;
-    }
-    for (let i = 1; i < stadiumLights.length; i++) {
-      stadiumLights[i].castShadow = false;
-    }
-  } else {
-    // 'high' - all 4 towers cast shadows
-    renderer.shadowMap.enabled = true;
-    for (const light of stadiumLights) {
-      light.castShadow = true;
-    }
-  }
-  renderer.shadowMap.needsUpdate = true;
+  viewportManager.applyShadowSettings();
 }
 applyShadowSettings();
 
 function applyRenderSettings(settings = {}) {
-  if (settings.pixelRatioPreset) {
-    if (!TUNING.render) TUNING.render = {};
-    TUNING.render.pixelRatioPreset = settings.pixelRatioPreset;
-    applyViewportSize();
-  }
-  if (settings.shadowQuality) {
-    if (!TUNING.render) TUNING.render = {};
-    TUNING.render.shadowQuality = settings.shadowQuality;
-    applyShadowSettings();
-  }
-  if (settings.showControlsOverlay !== undefined) {
-    setControlsOverlayEnabled(settings.showControlsOverlay);
-    if (!settings.showControlsOverlay) hideControlsOverlay();
-  }
-  if (settings.showTuningGui !== undefined && guiInstance) {
-    if (settings.showTuningGui) {
-      guiInstance.show();
-    } else {
-      guiInstance.hide();
-    }
-  }
-  if (guiInstance) {
-    guiInstance.controllersRecursive().forEach((c) => c.updateDisplay());
-  }
+  viewportManager.applyRenderSettings(settings);
 }
 
 window.addEventListener('resize', applyViewportSize);
-
-// ---------------------------------------------------------------------------
-// HUD
-// ---------------------------------------------------------------------------
-
-const hud = document.getElementById('hud');
-const hudTick = document.getElementById('hud-tick');
-const hudAlpha = document.getElementById('hud-alpha');
-const hudSteps = document.getElementById('hud-steps');
-const hudFrameTime = document.getElementById('hud-frametime');
-const hudDisplayHz = document.getElementById('hud-displayhz');
-const hudDrift = document.getElementById('hud-drift');
-const hudSpeed = document.getElementById('hud-speed');
-const hudGrounded = document.getElementById('hud-grounded');
-const hudWeight = document.getElementById('hud-weight');
-const hudAnimSpeed = document.getElementById('hud-animspeed');
-const hudBlend = document.getElementById('hud-blend');
-const hudDirection = document.getElementById('hud-direction');
-const hudBackNode = document.getElementById('hud-backnode');
-const hudLocalVel = document.getElementById('hud-localvel');
-const hudSprint = document.getElementById('hud-sprint');
-const hudAirborne = document.getElementById('hud-airborne');
-const hudImpact = document.getElementById('hud-impact');
-const hudStandUp = document.getElementById('hud-standup');
-const hudBall = document.getElementById('hud-ball');
-const hudBallTouch = document.getElementById('hud-balltouch');
-const hudBallPeak = document.getElementById('hud-ballpeak');
-const hudStrike = document.getElementById('hud-strike');
-const hudStrikeHit = document.getElementById('hud-strikehit');
-const hudStrikeRate = document.getElementById('hud-strikerate');
-const hudCamMode = document.getElementById('hud-cammode');
-const hudScore = document.getElementById('hud-score');
-const hudDrag = document.getElementById('hud-drag');
-const hudLoco = document.getElementById('hud-loco');
-const hudArm = document.getElementById('hud-arm');
-const hudAction = document.getElementById('hud-action');
-const hudShares = document.getElementById('hud-shares');
-
-/** Init- and GUI-time only. Never called from the render pass. */
-function setHudVisible(visible) {
-  hud.style.display = visible ? '' : 'none';
-}
-
-/**
- * @param {object|null} match this frame's matchProbe snapshot, or null before
- *   the match state exists.
- */
-function updateHud(match) {
-  if (!TUNING.debug.showHud) return;
-
-  const a0 = athletes[0];
-  const mtr = a0 ? a0.motor : motor;
-  const trk = a0 ? a0.tracker : tracker;
-  const tgt = a0 ? a0.animTarget : animTarget;
-  const act = a0 ? a0.actionState : actionState;
-  const stk = a0 ? a0.strikeState : strikeState;
-
-  hudTick.textContent = String(loop.tick);
-  hudAlpha.textContent = loop.alpha.toFixed(2);
-  hudSteps.textContent = String(loop.stepsThisFrame);
-  hudFrameTime.textContent = `${loop.frameTimeMs.toFixed(2)} ms`;
-  hudDisplayHz.textContent = `${loop.displayHz.toFixed(1)} Hz`;
-  hudDrift.textContent = `${loop.driftMs.toFixed(1)} ms`;
-  hudSpeed.textContent = mtr ? `${horizontalSpeed(mtr).toFixed(2)} m/s` : '—';
-  hudGrounded.textContent = mtr ? String(mtr.grounded) : '—';
-  hudWeight.textContent = trk ? trk.weight.toFixed(2) : '—';
-  hudAnimSpeed.textContent = tgt ? tgt.smoothedSpeed.toFixed(2) : '—';
-  hudBlend.textContent = tgt
-    ? `${tgt.gait.idle.toFixed(2)} ${tgt.gait.walk.toFixed(2)} ` +
-      `${tgt.gait.run.toFixed(2)} ${tgt.gait.sprint.toFixed(2)}`
-    : '—';
-  hudDirection.textContent = tgt
-    ? tgt.direction.map((d) => d.toFixed(2)).join(' ')
-    : '—';
-  hudBackNode.textContent = tgt
-    ? `${tgt.weights.walkB.toFixed(2)} ${tgt.nodes.walk.b.name} / ` +
-      `${tgt.weights.runB.toFixed(2)} ${tgt.nodes.run.b.name}`
-    : '—';
-  hudLocalVel.textContent = tgt
-    ? `${tgt.localVelX.toFixed(2)} / ${tgt.localVelZ.toFixed(2)}`
-    : '—';
-  hudSprint.textContent = getInputSlot(0).sprintHeld ? 'SPRINT' : '—';
-  hudAirborne.textContent = tgt
-    ? `${tgt.airborneMix.toFixed(2)} / ${tgt.jumpPhase.toFixed(2)} / ${tgt.jumpClipMix.toFixed(2)}`
-    : '—';
-  hudDrag.textContent = lastResistanceScale.toFixed(2);
-  hudArm.textContent =
-    `${cameraRig.currentDistance.toFixed(3)} / ${cameraRig.azimuth.toFixed(2)} / ${cameraRig.pitch.toFixed(2)}`;
-
-  const diveReady = act
-    ? Math.max(0, TUNING.action.diveCooldownTicks - (loop.tick - act.lastDiveTick))
-    : 0;
-  hudAction.textContent = act
-    ? `${act.slideTime} / ${act.divePending ? 'DIVE' : '—'} / cd ${Number.isFinite(diveReady) ? Math.round(diveReady) : 0}`
-    : '—';
-
-  if (tgt) {
-    const sh = tgt.shares;
-    hudShares.textContent =
-      `${sh.stand.toFixed(2)} ${sh.action.toFixed(2)} ${sh.air.toFixed(2)} ${sh.loco.toFixed(2)}`;
-  } else {
-    hudShares.textContent = '—';
-  }
-  hudLoco.textContent = tgt
-    ? tgt.shares.loco < 0.005
-      ? '0.00'
-      : tgt.shares.loco.toFixed(2)
-    : '—';
-
-  const age = trk ? loop.tick - trk.lastImpactTick : Infinity;
-  hudImpact.textContent =
-    trk && trk.lastImpactKey && age <= TUNING.impact.hudHoldTicks
-      ? `${trk.lastImpactKey} ${Math.round(trk.lastImpactExcess)}`
-      : '—';
-
-  hudStandUp.textContent = tgt
-    ? `${tgt.standUpNeed.toFixed(2)} / ${tgt.standUpProgress.toFixed(2)} / ${tgt.pelvisDownness.toFixed(2)}`
-    : '—';
-
-  if (ball) {
-    const b = ballProbe(ball);
-    hudBall.textContent = `${b.label}  ${b.speed.toFixed(2)} m/s / ${
-      Number.isFinite(b.heightAboveFloor) ? b.heightAboveFloor.toFixed(3) : '—'
-    } m`;
-    let latest = null;
-    for (const other of balls) {
-      if (other.lastTouchKey && (!latest || other.lastTouchTick > latest.lastTouchTick)) {
-        latest = other;
-      }
-    }
-    hudBallTouch.textContent = latest
-      ? `${latest.id}:${latest.lastTouchKey} @${latest.lastTouchTick} ${latest.lastTouchForce.toFixed(1)} N`
-      : '—';
-    let motorContacts = 0;
-    let peakAcross = 0;
-    for (const other of balls) {
-      motorContacts += other.motorContactCount;
-      if (other.peakTouchForce > peakAcross) peakAcross = other.peakTouchForce;
-    }
-    hudBallPeak.textContent = `${peakAcross.toFixed(1)} N / ${motorContacts}`;
-  } else {
-    hudBall.textContent = '—';
-    hudBallTouch.textContent = '—';
-    hudBallPeak.textContent = '—';
-  }
-
-  const st = stk ? strikeProbe(stk) : strikeProbe(strikeState);
-  const row = st.kind === 'spike'
-    ? TUNING.strike.spike
-    : (st.kind === 'kick' ? TUNING.strike.kick : TUNING.strike.volley);
-  const since = loop.tick - st.lastStrikeTick;
-  const open = Number.isFinite(since) && since >= row.windowOpen && since <= row.windowClose;
-  hudStrike.textContent = st.lastStrikeTick === -Infinity
-    ? '—'
-    : `${st.kind}${st.kind === 'spike' ? (st.side >= 0 ? ' R' : ' L') : ''} ` +
-      `ph ${st.phase.toFixed(2)} mix ${st.mix.toFixed(2)} ` +
-      `w ${Number.isFinite(since) ? since : '—'}${open ? ' OPEN' : ''}`;
-  hudStrikeHit.textContent = st.lastContactKey
-    ? `${st.lastContactKey} @${st.lastContactTick} q ${st.lastContactQuality.toFixed(2)} ` +
-      `${st.lastContactForce.toFixed(0)} N -> ${st.lastLaunchSpeed.toFixed(1)} m/s`
-    : '—';
-  const attempts = st.attempts || (st.resolvedCount + st.whiffCount);
-  const assisted = st.assistedCount || 0;
-  const assistTag = assisted > 0 ? ` (${assisted} assisted)` : '';
-  hudStrikeRate.textContent = `${st.resolvedCount}${assistTag} / ${attempts}` +
-    (Number.isFinite(st.hitRate) ? `  (${(st.hitRate * 100).toFixed(0)}%)` : '');
-
-  // Guarded rather than assumed: the span is new, and a stale index.html should
-  // cost the mode readout and nothing else.
-  if (hudCamMode) hudCamMode.textContent = `${TUNING.camera.mode.toUpperCase()} [Tab / D-Pad]`;
-
-  // THE FLOATING SCORE LINE STAYS, and stays exactly as gated as it already
-  // was. setHudVisible() hides the whole #hud block, so switching the HUD off
-  // for a clean diegetic view already takes this line with it — there is
-  // nothing to remove, and removing it would cost the debug readout its clock.
-  if (hudScore && match) {
-    const m = match;
-    const mins = Math.floor(m.ticksRemaining / 3600);
-    const secs = Math.floor((m.ticksRemaining % 3600) / 60);
-    const clock = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-    hudScore.textContent =
-      `${m.scoreHome} - ${m.scoreAway}  ->goal ${m.targetGoal}  ` +
-      `${m.mode === 'match' ? clock : 'practice'}${m.matchOver ? '  FULL TIME' : ''}`;
-  }
-
-}
-
-// ---------------------------------------------------------------------------
-// Loop
-// ---------------------------------------------------------------------------
-
-let athletes = [];
-/**
- * Mutable holder for the lil-gui headwear dropdowns ({ p1, p2 }). Owned here so
- * the Digit3/Digit8 hotkeys and the gui panel read and write the same live state;
- * the gui's .listen() keeps each dropdown honest after a hotkey cycle.
- */
-const headwearControls = { p1: 'manager_cap', p2: 'manager_cap' };
-/**
- * BOT CONTROLLERS — one per AI-controlled slot. Empty means all human.
- * Created by handleStartMatch when a player is configured as 'ai'.
- */
-let botControllers = [];
-/** Which input slot indices are bot-controlled (passed to sampleAllInputs). */
-let activeBotSlots = [];
-const athleteMatchStats = [0, 1, 2, 3].map((i) => createPlayerMatchStats(i));
-/**
- * THE FIXTURE MATCH (?fixture=, see features/match/matchFixture.js). Set by
- * startFixtureMatch, cleared once its result is reported, so a rematch or a
- * later lobby match is never filed under it. While it is set, every setup
- * choice draws from fixtureRandom, ball drops take the deterministic path, and
- * the flyover ends on fixtureFlyoverEndTick instead of the camera's timer.
- */
-let activeFixture = null;
-let fixtureRandom = null;
-let fixtureFlyoverEndTick = -1;
-/** The configs the current match started with, for its result. */
-let lastMatchConfigs = null;
-let motor = null;
-
-/** The invisible clip-playing rig, and the PD tracker that chases it. */
-let animTarget = null;
-
-/**
- * THE BALL FIXTURE. Three of them, created at boot in TUNING.balls order,
- * never destroyed, never pooled.
- *
- * `ball` is balls[1] — the 1 m medium — and exists so the HUD and the probe
- * have one primary to report without three copies of every row. It is an ALIAS,
- * not a special case: nothing in the simulation treats it differently, and
- * every per-step call below iterates the array.
- */
-let balls = [];
-let allBalls = [];
-let currentMatchBallType = 'random';
 
 function setActiveMatchBall(typeOrIndex = 'random') {
   if (allBalls.length === 0) return null;
@@ -1061,7 +359,6 @@ function setActiveMatchBall(typeOrIndex = 'random') {
   } else if (typeOrIndex === 'large') {
     chosenIdx = 2;
   } else {
-    // 'random'
     chosenIdx = Math.floor(Math.random() * allBalls.length);
   }
 
@@ -1084,89 +381,6 @@ function setActiveMatchBall(typeOrIndex = 'random') {
   console.log(`[ball] active match ball set to ${chosenBall.label} (index ${chosenIdx})`);
   return chosenBall;
 }
-/** The match: score, target end and clock. Created in boot, one per session. */
-let matchState = null;
-/**
- * THE FOUR BOUNDARY SCOREBOARDS. Render-side only: no body, no collider, no
- * entry in loop.interpolated. Built in boot after the arena, so its measured
- * wall positions are already on screen when the boards mount to them.
- */
-let scoreboards = null;
-let hustleBoards = null;
-export const practiceStats = {
-  goals: 0,
-  hits: 0,
-  whiffs: 0,
-  sweetSpots: 0,
-  spikes: 0,
-  dives: 0,
-  divingHits: 0,
-  defensiveBlocks: 0,
-  totalTouches: 0,
-};
-let practiceSessionTicks = 0;
-let selectedPracticeBallType = 'all';
-let ball = null;
-/** collider handle -> ball, so the drain callback can name which one was hit. */
-const ballByHandle = new Map();
-
-/**
- * THE ACTIVE ARENA'S PRESET, resolved once at boot and read everywhere after.
- *
- * Everything that differs between the bowl and the court — where the athlete
- * lands, where the balls drop, how far down "out of the world" is — comes from
- * here rather than from a branch on the arena's name. Nothing in the simulation
- * asks "am I on the court"; it asks the preset for a number.
- */
-let arenaPreset = null;
-
-/**
- * The tick `?captureTick=N` armed, or null in a normal run.
- *
- * READ from initCapture's own return value rather than re-parsed from the URL,
- * so there is one authority on whether a run is armed and it is the capture
- * module. The ragdoll's spawn seam lives inside capture.js and calls back into
- * main.js; the ball cannot get a second callback without editing capture.js,
- * which is frozen — so it reads the armed tick here and gates on it itself.
- */
-let armedCaptureTick = null;
-/** Harness-only ball fixture (?balls=, ?serve=), read at boot for armed runs. See debug/fixture.js. */
-let captureFixture = null;
-const tracker = createTracker();
-
-/** gltf.animations, kept so the GUI can offer the clip list. */
-let characterClips = [];
-
-/** The loaded glTF scene and its one shared skeleton. Null if the load failed. */
-let characterRoot = null;
-let characterSkeleton = null;
-
-/** The live ragdoll, or null. Rebuilt wholesale on every spawn. */
-let ragdoll = null;
-
-/** The lil-gui instance, for live display sync. */
-let guiInstance = null;
-
-/**
- * Set by the "R" key and by the capture seam; consumed at the top of the next
- * fixed step. Nothing spawns a body outside fixedUpdate.
- */
-let respawnRequested = false;
-
-/** Body/collider/joint counts before any ragdoll existed — the hygiene baseline. */
-let baselineCounts = null;
-
-/**
- * collider handle -> { key, group }, rebuilt on every spawn.
- *
- * Contact-force events name colliders, not bodies. This is how an event becomes
- * "the chest was hit" rather than "handle 27 was hit".
- */
-const impactByHandle = new Map();
-/** The group each rig key belongs to, read straight off the authored table. */
-const groupByKey = new Map(BONE_MAP.map((entry) => [entry.key, entry.group]));
-/** Reused per step so the drain allocates nothing. */
-const impactEvents = [];
 
 export function requestRagdollSpawn() {
   respawnRequested = true;
@@ -1182,243 +396,11 @@ function worldCounts() {
   };
 }
 
-/**
- * Tears down any existing ragdoll and derives a fresh one. Physics mutation, so
- * this is only ever called from inside fixedUpdate.
- */
-function spawnRagdoll() {
-  if (!characterSkeleton) {
-    console.warn('[ragdoll] no character loaded; R does nothing');
-    return;
-  }
-
-  if (ragdoll) {
-    destroyRagdoll(ragdoll);
-    disposeRagdollVisuals(ragdoll.group);
-    ragdoll = null;
-  }
-
-  // The rig is derived from the BIND pose, so the skeleton has to be back in it
-  // before measuring. A respawn measured off the previous flop would compound
-  // its own error every time R was pressed.
-  restoreBindPose();
-
-  // MOUNTED SPAWN. Task 3 dropped the ragdoll from spawnHeight; Task 4 spawns it
-  // already standing on the sphere, so the tracker has something plausible to
-  // hold from tick one instead of catching a body mid-fall. spawnHeight no
-  // longer applies to this path — it stays in TUNING because the free-drop
-  // derivation still reads it when no mount is supplied.
-  mountMatrix(motor, animTarget ? animTarget.yaw : 0, _mount);
-
-  const built = buildRagdoll(characterSkeleton, characterRoot, _mount);
-  built.group = createRagdollVisuals(built.rig);
-  built.characterRoot = characterRoot;
-
-  scene.add(built.group);
-  ragdoll = built;
-
-  applyRagdollVisibility(ragdoll, characterRoot);
-
-  // ARM THE COLLIDERS FOR CONTACT-FORCE EVENTS, and index them by handle.
-  //
-  // The eventThreshold is Rapier's own pre-filter: contacts below it never
-  // become events, which keeps the per-step drain to the handful of contacts
-  // that could possibly matter instead of every foot resting on the floor.
-  impactByHandle.clear();
-  for (const [key, item] of ragdoll.rig) {
-    item.collider.setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS);
-    item.collider.setContactForceEventThreshold(1.0);
-    impactByHandle.set(item.collider.handle, { key, group: groupByKey.get(key) });
-  }
-
-  // The target rig is rebuilt with the fresh RigMap and re-seeded, so the first
-  // finite difference after a respawn is zero rather than a teleport-sized
-  // velocity spike.
-  animTarget = createAnimTarget(characterRoot, characterClips, ragdoll.rig);
-  // ghostInputs is null here on purpose: this is the seeding call against a
-  // freshly built state, and the mechanics have not run for this tick yet.
-  updateAnimTarget(
-    animTarget, motor, ragdoll.rig, input.cameraYaw, false, NaN, true, loop.fixedDt, null,
-  );
-  resetAnimTarget(animTarget);
-
-  // ONCE PER SESSION, not once per respawn. The answer is a property of the
-  // asset and the armature, neither of which R can change, and thirty lines on
-  // every press of R would bury the log the readout exists to be read from.
-  if (!l5ResidualLogged) {
-    l5ResidualLogged = true;
-    logL5Residuals(animTarget);
-  }
-
-  const counts = worldCounts();
-  console.log(
-    `[ragdoll] spawned. world now ${counts.bodies} bodies / ${counts.colliders} colliders / ` +
-      `${counts.joints} joints (baseline ${baselineCounts.bodies}/${baselineCounts.colliders}/${baselineCounts.joints})`,
-  );
-}
-
-/**
- * Puts every bone back to the local transform it had at load. Captured once,
- * before anything posed the skeleton.
- */
-let bindLocals = null;
-function captureBindPose() {
-  bindLocals = characterSkeleton.bones.map((bone) => ({
-    bone,
-    position: bone.position.clone(),
-    quaternion: bone.quaternion.clone(),
-    scale: bone.scale.clone(),
-  }));
-}
-function restoreBindPose() {
-  for (const entry of bindLocals) {
-    entry.bone.position.copy(entry.position);
-    entry.bone.quaternion.copy(entry.quaternion);
-    entry.bone.scale.copy(entry.scale);
-  }
-  characterRoot.updateMatrixWorld(true);
-}
-
-/**
- * ═══ THE ORCHESTRATOR'S OWN HELPERS ═══
- *
- * Seven blocks that used to sit inline in `fixedUpdate`, lifted into named
- * functions in G3.5 so the ordering contract is the whole of that function's
- * body. They did NOT move to `src/mechanics/` and they were not meant to: they
- * are not mechanics an athlete owns, they are the orchestrator's own arithmetic
- * and its once-a-second alarms. A module per paragraph is how a god file
- * becomes a god package. They stayed in this file, out of that function.
- *
- * Every one is the same code in the same order with the same comments. The only
- * edits are the ones a function boundary forces: a `return` where the value
- * used to fall through, and `dt`/`tick` as parameters where they were in scope.
- */
-
-// DRIVE ATTENUATION. tracker.weight squared: a stumbling athlete steers, a
-// downed one does not. RULING 6.1 — this scales torque, never velocity.
-function driveAttenuation() {
-  return tracker.weight * tracker.weight;
-}
-
-// THE KNOCKDOWN DRAG (GF-1 Part 4A). A sphere whose rider is face down on the
-// floor should not keep rolling as if nothing happened — the body is a
-// hundred and sixty pounds of dead weight ploughing along beside it. This is
-// that, as one multiplier on the braking impulses the motor already applies.
-//
-// NOT A THRESHOLD. The smoothstep is exactly 1 at weight >= dragOnset and
-// climbs from there as the weight craters, so clean play never feels it and a
-// weight hovering near the onset cannot chatter between two behaviours. And
-// because the multiplier lands on the REQUESTED impulse, which then goes
-// through the L3 clamp, a boost of forty cannot reverse the ball — it can
-// only bring it to a stop sooner.
-function knockdownDrag() {
-  const resistanceScale =
-    1 +
-    TUNING.motor.downedDragBoost *
-      smoothstep01((TUNING.impact.dragOnset - tracker.weight) / TUNING.impact.dragOnset);
-  lastResistanceScale = resistanceScale;
-  return resistanceScale;
-}
-
-// ── THE GROUNDED DEBOUNCE ──
-//
-// motor.grounded is the raw ray fan and it can flash true for a single tick
-// when the sphere grazes a steep wall in mid-flight. That one tick was enough
-// to do real damage: airborneMix eases at 18/s, so a single frame of false
-// contact pulls it down by a quarter in one step, and with a jump queued it
-// also let a fresh liftoff register in mid-air and re-latch the clip mix.
-//
-// Asymmetric, deliberately. LEAVING the ground is believed immediately — the
-// character is airborne the instant the rays miss, and delaying that would
-// make jumps feel late. ARRIVING takes groundedDebounceTicks of agreement.
-// The physics still uses the raw flag; this is the animation's view only, so
-// nothing here can change what the motor does.
-function advanceGroundedDebounce() {
-  groundedRun = motor.grounded ? groundedRun + 1 : 0;
-  const stableGrounded = groundedRun >= TUNING.jump.groundedDebounceTicks;
-  return stableGrounded;
-}
-
-// ── THE LIMP BRAKE ──
-//
-// While the character is fully limp the tracker's own damping is scaled by
-// the weight and is therefore switched off at exactly the moment the body is
-// sliding across the floor on pure momentum — which is why a dive landing
-// skated like ice. This brakes the ragdoll bodies directly, ramped in over
-// the last tenth of the weight range so nothing steps, and routed through the
-// one L3 clamped helper so it can only cancel motion, never reverse it.
-function applyLimpBrake(dt) {
-  if (ragdoll && tracker.weight < TUNING.ragdoll.limpBrakeBelow) {
-    const limpness = 1 - tracker.weight / TUNING.ragdoll.limpBrakeBelow;
-    const request = TUNING.ragdoll.limpBrake * limpness * dt;
-    for (const item of ragdoll.rig.values()) {
-      const v = item.body.linvel();
-      _limpVel.set(v.x, 0, v.z);
-      applyClampedLinearDamping(item.body, request * _limpVel.length(), _limpVel, dt);
-    }
-  }
-}
-
-// ONE OBJECT, ONE HANDOFF (G3.5). main.js used to poke the ghost's fields by
-// name from three places inside fixedUpdate — a write channel with no signature
-// and nothing to grep for. Same fields, same semantics, SAME ORDER; they travel
-// as an argument now and `readGhostInputs` is where they land. G4 appends four
-// more after the six, and the order below is the order they are read in.
-function buildGhostInputs(actions, strikes) {
-  return {
-    // THE RECOVERY CLOCK, handed over the same way slideMix is. The ghost drives
-    // the stand-up take off this and not off the pelvis: a scrub anchored to the
-    // body cannot haul the body, because the body only moves by being hauled
-    // toward the scrub. See advanceStandUp.
-    recoveryWeight: tracker.weight,
-    // Stick magnitude, for the coasting facing check. Handed over rather than
-    // read, so the ghost still touches no input of its own.
-    steerInput: Math.hypot(input.moveWorld.x, input.moveWorld.z),
-    slideMix: actions.slideMix,
-    diveMix: actions.diveMix,
-    braceMix: actions.braceMix,
-    slidePhase: actions.slidePhase,
-    divePhase: actions.divePhase,
-    // The strike's share and scrub, plus the two recorded values that pick
-    // which of its three clips carries the share.
-    strikeMix: strikes.strikeMix,
-    strikePhase: strikes.strikePhase,
-    strikeKind: strikes.strikeKind,
-    strikeSide: strikes.strikeSide,
-    // IS THE CAMERA BEHIND HIM? The ghost needs to know, because "face the
-    // camera when you stop" is right under a chase shot and turns the athlete
-    // to face the stands under a sideline one. It comes through HERE rather
-    // than sim/ reading TUNING.camera, for the same reason everything else
-    // does: the fixed step may not read render state.
-    //
-    // LISTED POSITIVELY, so a mode added later and forgotten gets the fixed-shot
-    // behaviour — facing its own travel heading, which is wrong in no camera —
-    // rather than silently inheriting camera-relative facing, which is wrong in
-    // every camera but these two.
-    facingFollowsCamera:
-      TUNING.camera.mode === 'chase' || TUNING.camera.mode === 'ball' || TUNING.camera.mode === 'thirdPerson' || TUNING.camera.mode === 'firstPerson',
-    hasAim: input.hasAim || false,
-    aimYaw: input.aimYaw || 0,
-    moveWorldX: input.moveWorld ? input.moveWorld.x : 0,
-    moveWorldZ: input.moveWorld ? input.moveWorld.z : 0,
-  };
-}
-
-// THE RECOVERY RAMP IS HELD OFF for two reasons, and they go in through the
-// same door because the tracker only has one. A limp body still sliding fast
-// has not finished falling; and a dive has just been paid for, and the stun
-// is the price. The second is a tick comparison, not a state — the recorded
-// expiry is the same class of thing as lastDiveTick beside it.
-function isTumbling(actions) {
-  return actions.diveStunned || (ragdoll &&
-    tracker.weight < TUNING.impact.mountRecoverBelow &&
-    Math.hypot(ragdoll.rig.get('pelvis').body.linvel().x, ragdoll.rig.get('pelvis').body.linvel().z) > 2.0);
-}
-
 // Impacts are read from the step just taken and spent on the SAME tick, so a
 // hit and its cost are never a frame apart. The queue auto-drains at the next
 // step, so anything not taken here is gone — an impact belongs to its tick.
 function drainImpacts(tick, dt) {
+  if (gameState === 'menu' || gameState === 'flyover') { drainContactForces(() => {}); return; }
   drainContactForces((handle1, handle2, totalForce) => {
     const hitBall = ballByHandle.get(handle1) || ballByHandle.get(handle2);
     if (hitBall) {
@@ -1678,13 +660,6 @@ function drainImpacts(tick, dt) {
 function assertInvariants(tick) {
   if (balls.length && tick % TUNING.loop.fixedHz === 0) {
     for (const b of balls) {
-    // THE SPEC, ASSERTED. The sphere is filtered out of the ball's interaction
-    // word, so this counter can only leave zero if that filter has been broken —
-    // at which point the athlete is knocking the ball with an invisible
-    // half-metre sphere centred on his hips instead of with his shins, which is
-    // the exact failure the designer's spec exists to prevent. console.error
-    // rather than a warning, because the determinism script fails the pair on
-    // an error and this must not be able to ship quietly.
       if (b.motorContactCount !== 0) {
         console.error(
           `[ball:${b.id}] motorContactCount is ${b.motorContactCount} at tick ${tick} — the ` +
@@ -1700,116 +675,88 @@ function assertInvariants(tick) {
     }
   }
 
-  if (ragdoll && tick % TUNING.loop.fixedHz === 0) {
-    const bad = findNonFinite(ragdoll);
-    if (bad) console.error(`[ragdoll] non-finite transform on "${bad}" at tick ${tick}`);
+  if (tick % TUNING.loop.fixedHz === 0) {
+    for (const a of athletes) {
+      if (!a?.isEnabled || !a.ragdoll || !a.animTarget) continue;
+      const bad = findNonFinite(a.ragdoll);
+      if (bad) console.error(`[ragdoll] non-finite transform on "${bad}" at tick ${tick}`);
 
-    // CRITERION GF-2.5 — the shares and the blend targets must each partition
-    // to exactly 1, in every regime. Checked once a second rather than every
-    // step: these are invariants of the arithmetic, so if either is going to
-    // break it breaks continuously.
-    //
-    // The APPLIED total is deliberately not asserted — see weightAudit. It is
-    // logged instead, at the same cadence, so a real divergence is still
-    // visible without a spawn's ease-in raising a false alarm.
-    const audit = weightAudit(animTarget);
-    if (Math.abs(audit.shares - 1) > WEIGHT_SUM_TOLERANCE ||
-        Math.abs(audit.targets - 1) > WEIGHT_SUM_TOLERANCE) {
-      console.error(
-        `[animtarget] weight partition broken at tick ${tick}: ` +
-          `shares ${audit.shares.toFixed(5)}, targets ${audit.targets.toFixed(5)}`,
-      );
-    }
+      const audit = weightAudit(a.animTarget);
+      if (Math.abs(audit.shares - 1) > WEIGHT_SUM_TOLERANCE ||
+          Math.abs(audit.targets - 1) > WEIGHT_SUM_TOLERANCE) {
+        console.error(
+          `[animtarget] weight partition broken at tick ${tick}: ` +
+            `shares ${audit.shares.toFixed(5)}, targets ${audit.targets.toFixed(5)}`,
+        );
+      }
 
-    // THE STRAFE-SIGN ALARM (GF-3.1). A sign error here is invisible in every
-    // number except which clip plays, and it cost a whole task to spot once.
-    const strafe = strafeSignViolation(animTarget);
-    if (strafe) console.error(`[animtarget] strafe sign wrong at tick ${tick}: ${strafe}`);
+      const strafe = strafeSignViolation(a.animTarget);
+      if (strafe) console.error(`[animtarget] strafe sign wrong at tick ${tick}: ${strafe}`);
 
-    // THE FLAIL ALARM (GF-3.3). Full airborne with the locomotion group still
-    // audible means the run blend is driving the arms through the jump.
-    const flail = flailViolation(animTarget);
-    if (flail !== null) {
-      console.error(
-        `[animtarget] flail at tick ${tick}: airborneMix ${animTarget.airborneMix.toFixed(2)} ` +
-          `but locomotion weight is ${flail.toFixed(3)}`,
-      );
+      const flail = flailViolation(a.animTarget);
+      if (flail !== null) {
+        console.error(
+          `[animtarget] flail at tick ${tick}: airborneMix ${a.animTarget.airborneMix.toFixed(2)} ` +
+            `but locomotion weight is ${flail.toFixed(3)}`,
+        );
+      }
     }
   }
 }
 
+function getWinningAthlete() {
+  const homeScore = matchState?.scoreHome || 0;
+  const awayScore = matchState?.scoreAway || 0;
+  const winningTeam = awayScore > homeScore ? 'away' : 'home';
+  return athletes.find((a) => a?.isEnabled && a.team === winningTeam) || athletes[0] || null;
+}
+
+function finishMatchAndReport(tick) {
+  if (!matchState || matchState._buzzerPlayed) return;
+  hideControlsOverlay();
+  hideOvertimeMenu();
+  matchState.matchOver = true;
+  matchState._buzzerPlayed = true;
+  soundManager.playSample('arena_buzzer', 0.95, 1.0, null, soundManager.uiGain);
+
+  const slotStats = athletes.map((ath, idx) => ({
+    ...(ath?.getStrikeStats() || { hits: 0, whiffs: 0, accuracy: 0 }),
+    ...(athleteMatchStats[idx] || {}),
+  }));
+  const statsReport = buildMatchStatsReport({
+    match: matchProbe(matchState),
+    athletes,
+    athleteMatchStats,
+    playerConfigs: lastMatchConfigs || TUNING.players,
+    activeCount: athletes.length,
+  });
+  window.__vb.lastMatchStatsReport = statsReport;
+
+  const winnerAthlete = getWinningAthlete();
+  const winnerPos = winnerAthlete?.motor?.body?.translation() || { x: 0, y: 0, z: 0 };
+  cinematicCamera.startVictoryPresentation(new THREE.Vector3(winnerPos.x, winnerPos.y, winnerPos.z), 12.0);
+  victoryCameraActive = true;
+
+  setTimeout(() => {
+    showVictoryScreen(
+      matchProbe(matchState),
+      slotStats[0],
+      slotStats[1],
+      statsReport,
+    );
+  }, 1200);
+
+  reportMatchResult(tick, slotStats, statsReport);
+}
+
 /**
- * THE SIMULATION, AND NOTHING BUT ITS ORDER.
- *
- * Sees only the constant timestep and the integer tick. After G3.5 the body of
- * this function IS the ordering contract below: one call per numbered step, in
- * order, and nothing else. Every mechanic it sequences lives in a module or in
- * a named helper above, and the reason is that G4 adds strikes — more
- * mechanics than any step so far — and a seven-hundred-line fixedUpdate is
- * where an ordering bug goes to hide.
- *
- * ORDER. Task 3's save/step/snapshot bracket is preserved exactly: curr goes to
- * prev BEFORE anything moves, and curr is rewritten AFTER the world steps. Task
- * 4 inserts the target and the tracker between the motor and the step, because
- * both only apply forces and every force has to land before the one
- * stepPhysics() that consumes them.
- *
- * THE ORDERING, in full, because several steps only work in this order:
- *
- *   1. respawn        — creates bodies/colliders/joints; must precede any read
- *                       of the rig.
- *   2. watchdogs      — SPAWN EVENTS, in mechanics/watchdog.js. The athlete's
- *                       kill plane and the balls' own, plus the serve and the
- *                       armed-run seed. Reads body positions only.
- *   3. mount recovery — SPAWN EVENT, in mechanics/mountFollower.js. Must run
- *                       BEFORE the ghost updates, so the ghost's mount and its
- *                       mountSlack easing see the snapped sphere on the SAME
- *                       step. Run after, and the ghost spends a step reaching
- *                       for where the sphere used to be and the stand-up starts
- *                       with a backward lurch. Returns the pelvis floor height,
- *                       cast once and used twice.
- *   4. knockdown      — consumes the T flag onto this tick.
- *   5. consumes       — clears the queued jump and dive whether or not they fire.
- *   5b. actions       — mechanics/actions.js. The slide and the dive: the
- *                       clocks, the latches, the two scales updateMotor takes
- *                       and the four numbers the ghost is handed. Runs before
- *                       the motor because the motor is given its output.
- *   6. saveRagdollPrevious — curr -> prev BEFORE anything moves.
- *   7. updateMotor    — applies drive/brake/jump forces; may set lastJumpTick.
- *                       The drive attenuation, the knockdown drag, the grounded
- *                       debounce and the limp brake are its preparation.
- *   7b. ball resistance — clamped air drag and spin decay, before the step so
- *                       it lands in the same one.
- *   8. liftoff edge   — read from lastJumpTick CHANGING across step 7, and the
- *                       ghostInputs object built from it and from step 5b.
- *   9. updateAnimTarget — the ghost, which consumes that edge, the latched
- *                       camera yaw and ghostInputs.
- *  10. applyTracking  — PD forces toward the ghost.
- *  11. stepPhysics    — the ONE world step; every force above lands in it.
- *  12. impacts        — drained from the step just taken, spent on this tick.
- *                       Ball contacts are RECORDED here and spent on nothing.
- *  13. snapshots      — curr rewritten AFTER the world moved, motor then ball.
- *  14. asserts        — once a second, on what the step just produced.
- *
- * THE setTranslation CENSUS, in one place because LAW 1 is counted rather than
- * argued. FOUR PLAY-CODE SITES, all of them spawn events consumed on a tick
- * boundary and none of them reachable from input:
- *
- *   1. spawnRagdoll        — this file, step 1 (through autorig's builders)
- *   2. the out-of-bounds watchdog — mechanics/watchdog.js, step 2
- *   3. the mount follower  — mechanics/mountFollower.js, step 3
- *   4. resetBall           — sim/ball.js, called from step 2
- *
- * And the CONSTRUCTION-CLASS exceptions, which are not play code and cannot be
- * reached once the loop is running: the three `RigidBodyDesc` builders in
- * motor.js, autorig.js and ball.js, and the athlete's boot-time placement onto
- * the active arena's spawn point in `boot()`.
+ * Fixed-timestep simulation step (60 Hz).
  *
  * @param {number} dt
  * @param {number} tick
  */
 function fixedUpdate(dt, tick) {
-  if (athletes.length === 0) return;
+  if (athletes.length === 0 || gameState === 'overtime_menu') return;
 
   // 0 — A fixture's flyover ends on a tick, so its countdown starts on the same
   // tick every run, however the frames happened to fall.
@@ -1827,15 +774,13 @@ function fixedUpdate(dt, tick) {
   }
 
   // 2 — BALL WATCHDOG & SERVE (B / Start or fall out of bounds)
-  // The serve is a practice tool. The pads only queue it in practice; the
-  // keyboard queues it in any mode, so it is gated here too, or P1 could
-  // re-serve the ball mid-match.
   const serveQueued = consumeAthleteBallReset(0) && gameState === 'practice';
   const armedBallSpawn = armedCaptureTick !== null && tick === TUNING.ball.captureSpawnTick;
   const isDeterministic = armedCaptureTick !== null || activeFixture !== null;
 
   for (let i = 0; i < balls.length; i += 1) {
     const b = balls[i];
+    if (!b?.body || (typeof b.body.isEnabled === 'function' && !b.body.isEnabled())) continue;
     if (captureFixture && fixtureParksBall(captureFixture, i)) continue;
     const belowWorld = b.body.translation().y < arenaPreset.killPlaneY;
     if (serveQueued || armedBallSpawn || belowWorld) {
@@ -1983,7 +928,7 @@ function fixedUpdate(dt, tick) {
         });
       }
 
-      // 3. Slide continuous turf spray (satisfying lateral spray & increased particle count)
+      // 3. Slide continuous turf spray
       if (act.sliding && athlete.motor?.body && pos) {
         const vel = athlete.motor.body.linvel();
         const spd = Math.hypot(vel.x, vel.z);
@@ -2012,7 +957,7 @@ function fixedUpdate(dt, tick) {
         }
       }
 
-      // 4. Locomotion turf kick: sparse, clean, and strictly 1 particle per puff at high speeds
+      // 4. Locomotion turf kick
       if (athlete.motor?.grounded && !act.sliding && athlete.motor?.body && pos) {
         const vel = athlete.motor.body.linvel();
         const spd = Math.hypot(vel.x, vel.z);
@@ -2046,7 +991,7 @@ function fixedUpdate(dt, tick) {
       }
     }
 
-    // Single-fire knockdown haptic feedback (slide exhaustion, crash, or hard impact)
+    // Single-fire knockdown haptic feedback
     if (athlete.tracker?.knockdownQueued && !athlete._knockdownHapticPlayed) {
       athlete._knockdownHapticPlayed = true;
       triggerHaptic(i, {
@@ -2112,9 +1057,12 @@ function fixedUpdate(dt, tick) {
   // 12 — IMPACTS
   drainImpacts(tick, dt);
 
-  // 12b — SCORING
+  // 12b — SCORING & OVERTIME
   if (matchState && (gameState === 'match' || gameState === 'practice')) {
     const goalsBefore = matchState.events.length;
+    if (matchState.isGoldenGoal && !matchState.matchOver) {
+      matchState.ticksRemaining = Math.max(matchState.ticksRemaining || 600, 600);
+    }
     updateScoring(matchState, balls, tick);
     if (matchState.events.length > goalsBefore) {
       const lastGoal = matchState.events[matchState.events.length - 1];
@@ -2142,51 +1090,50 @@ function fixedUpdate(dt, tick) {
           scoringBall._lastTouchByTeam = { home: null, away: null };
           scoringBall._prevTouchByTeam = { home: null, away: null };
         }
+        // Golden Goal sudden death: first goal immediately wins the match!
+        if (matchState.isGoldenGoal) {
+          matchState.matchOver = true;
+        }
       }
     }
-    if (gameState === 'match') {
-      if (matchState.matchOver && !matchState._buzzerPlayed) {
-        hideControlsOverlay();
-        matchState._buzzerPlayed = true;
-        soundManager.playSample('arena_buzzer', 0.95, 1.0, null, soundManager.uiGain);
-        const slotStats = athletes.map((ath, idx) => ({
-          ...(ath?.getStrikeStats() || { hits: 0, whiffs: 0, accuracy: 0 }),
-          ...(athleteMatchStats[idx] || {}),
-        }));
-        const statsReport = buildMatchStatsReport({
-          match: matchProbe(matchState),
-          athletes,
-          athleteMatchStats,
-          playerConfigs: lastMatchConfigs || TUNING.players,
-          activeCount: athletes.length,
-        });
-        window.__vb.lastMatchStatsReport = statsReport;
-
-        // Post-match victory presentation camera & ceremony
-        const homeScore = matchState.scoreHome || 0;
-        const awayScore = matchState.scoreAway || 0;
-        const winnerIdx = (awayScore > homeScore && athletes[1]) ? 1 : 0;
-        const winnerAthlete = athletes[winnerIdx];
-        const winnerPos = winnerAthlete?.motor?.body?.translation() || { x: 0, y: 0, z: 0 };
-        cinematicCamera.startVictoryPresentation(new THREE.Vector3(winnerPos.x, winnerPos.y, winnerPos.z), 12.0);
-        victoryCameraActive = true;
-
-        setTimeout(() => {
-          showVictoryScreen(
-            matchProbe(matchState),
-            slotStats[0],
-            slotStats[1],
-            statsReport,
-          );
-        }, 1200);
-
-        reportMatchResult(tick, slotStats, statsReport);
+    if (gameState === 'match' && matchState.matchOver && !matchState._buzzerPlayed) {
+      const isTied = (matchState.scoreHome || 0) === (matchState.scoreAway || 0);
+      if (isTied && !matchState._agreedDraw) {
+        if (activeFixture) {
+          const otRule = activeFixture.overtime || 'draw';
+          if (otRule === 'golden_goal' || otRule === 'timed') {
+            matchState.matchOver = false;
+            applyOvertimeAgreement({
+              format: otRule,
+              durationSeconds: activeFixture.overtimeDurationSeconds || 120,
+              positionMode: 'respawn',
+            });
+          } else {
+            matchState._agreedDraw = true;
+            finishMatchAndReport(tick);
+          }
+        } else {
+          // Interactive match ended regulation or timed overtime in a tie -> open Overtime Menu
+          matchState.matchOver = false;
+          soundManager.playSample('arena_buzzer', 0.95, 1.0, null, soundManager.uiGain);
+          hideControlsOverlay();
+          hideInGameMenu();
+          exitGamePointerLock();
+          gameState = 'overtime_menu';
+          showOvertimeMenu({
+            scoreHome: matchState.scoreHome || 0,
+            scoreAway: matchState.scoreAway || 0,
+            overtimePeriod: (matchState.overtimePeriod || 0) + 1,
+          });
+        }
+      } else {
+        finishMatchAndReport(tick);
       }
     }
   }
 
   if (gameState === 'practice') {
-    practiceSessionTicks++;
+    incrementPracticeSessionTicks();
   }
 
   // 13 — POST-PHYSICS (Snapshots, strike assist, and player combat)
@@ -2257,7 +1204,6 @@ function updateCameras() {
   const frameDelta = Math.min(loop.frameTimeMs / 1000, TUNING.loop.maxFrameTime);
   const activeBall = ball || (balls && balls[0]) || null;
 
-  // Check per-player camera cycle triggers (Dual-axis D-pad & keys)
   for (let i = 0; i < athletes.length; i++) {
     const pDelta = consumeCameraCyclePlayer(i);
     if (pDelta !== 0) {
@@ -2272,8 +1218,6 @@ function updateCameras() {
   const hoopCenterY = TUNING.match?.hoopCenterY ?? 10.0;
   const hoopNorthZ = TUNING.match?.hoopNorthZ ?? -40.0;
   const hoopSouthZ = TUNING.match?.hoopSouthZ ?? 40.0;
-
-  // Mouse look follows the WASD keyset, which may be assigned to either player
   const mouseSlot = getMouseSlot();
 
   for (let i = 0; i < athletes.length; i++) {
@@ -2294,7 +1238,6 @@ function updateCameras() {
     });
   }
 
-  // Update spectator sports camera when no humans are playing
   if (getActiveHumanSlots().length === 0) {
     updateSportsCamera(spectatorCamera, athletes, activeBall, frameDelta);
   }
@@ -2304,7 +1247,7 @@ const updateSpringArm = updateCameras;
 let renderFrameCount = 0;
 
 /**
- * The render pass. Supports vertical splitscreen and single-viewport modes.
+ * The render pass. Supports single-viewport, 2-way splitscreen, and 4-way quad splitscreen modes.
  *
  * @param {number} alpha
  */
@@ -2351,14 +1294,12 @@ function render(alpha) {
   }
 
   // Pre-match pause: freezes simulation and match clock only during the pre-match countdown stage.
-  // During live match play post-countdown, opening pause menu does not freeze simulation.
   loop.paused = isInGameMenuOpen() && (gameState === 'match' && !!(matchState && matchState.isCountingDown));
 
   const isVictoryActive = (gameState === 'match') && !!(matchState && matchState.matchOver) && victoryCameraActive;
 
   if (gameState === 'flyover') {
     cinematicCamera.update(frameDelta);
-    // A fresh A / Cross press skips the flyover; an A still held from starting the match does not
     const pads = (navigator.getGamepads ? navigator.getGamepads() : []) || [];
     flyoverPads.update(pads);
     for (const pad of pads) {
@@ -2367,41 +1308,39 @@ function render(alpha) {
         break;
       }
     }
-    // A fixture's flyover ends on its tick in fixedUpdate, not on this timer.
     if (cinematicCamera.isComplete && fixtureFlyoverEndTick < 0) {
       skipFlyover();
     }
   } else if (gameState === 'menu' || isVictoryActive) {
     if (isVictoryActive && athletes) {
-      const homeScore = matchState ? (matchState.scoreHome || 0) : 0;
-      const awayScore = matchState ? (matchState.scoreAway || 0) : 0;
-      const winnerIdx = (awayScore > homeScore && athletes[1]) ? 1 : 0;
-      const wt = athletes[winnerIdx]?.motor?.body?.translation();
+      const winnerAthlete = getWinningAthlete();
+      const wt = winnerAthlete?.motor?.body?.translation();
       if (wt) cinematicCamera.winnerPos.set(wt.x, wt.y, wt.z);
     }
     cinematicCamera.update(frameDelta);
-  } else {
+  } else if (gameState !== 'overtime_menu') {
     updateCameras();
   }
 
-  if (consumeMenuToggle() && gameState !== 'menu' && gameState !== 'flyover' && !isInGameMenuOpen()) {
+  if (consumeMenuToggle() && gameState !== 'menu' && gameState !== 'flyover' && gameState !== 'overtime_menu' && !isInGameMenuOpen()) {
     toggleInGameMenu();
   }
 
   const match = matchState ? matchProbe(matchState) : null;
+  if (match && matchState) {
+    match.isGoldenGoal = Boolean(matchState.isGoldenGoal);
+    match.overtimeMode = matchState.overtimeMode || null;
+    match.overtimePeriod = matchState.overtimePeriod || 0;
+  }
 
   const isPracticeActive = (gameState === 'practice');
-  const a0Strike = athletes[0]?.getStrikeStats();
-  if (a0Strike) {
-    practiceStats.hits = a0Strike.hits;
-    practiceStats.whiffs = a0Strike.whiffs;
-  }
+  syncPracticeStrikeStats(athletes[0]);
 
   const callScoreboards = () => updateScoreboards(scoreboards, match);
   const callHustleBoards = () => updateHustleBoards(
     hustleBoards,
     practiceStats,
-    practiceSessionTicks / 60,
+    getPracticeSessionSeconds(),
     isPracticeActive,
     matchState?.celebrationTicks || 0,
     match,
@@ -2425,119 +1364,22 @@ function render(alpha) {
     updateInGameMenuBanner(match);
   }
 
-  const humanSlots = getActiveHumanSlots();
-  const isSharedCam = humanSlots.length > 0 && humanSlots.every(
-    (s) => playerCameras[s]?.mode === 'broadcast' || playerCameras[s]?.mode === 'sports',
-  );
-  const isSplitscreen = (gameState === 'match') && !!TUNING.camera.splitscreen && (humanSlots.length >= 2 || (athletes.length >= 2 && !!TUNING.camera.forceQuadSplitscreen)) && !isSharedCam && !isVictoryActive;
-  const dividerEl = document.getElementById('splitscreen-divider');
-  if (dividerEl) {
-    dividerEl.style.display = isSplitscreen ? 'block' : 'none';
-  }
   goalIndicators.update({
     gameState,
     matchState,
     tick: loop.tick,
   });
-  const width = window.innerWidth;
-  const height = window.innerHeight;
 
-  // Render stadium shadow maps once per frame across all viewports
-  renderer.shadowMap.needsUpdate = true;
+  const humanSlots = getActiveHumanSlots();
+  viewportManager.renderScene({
+    gameState: gameState === 'overtime_menu' ? 'match' : gameState,
+    matchState,
+    victoryCameraActive,
+    athletes,
+    humanSlots,
+  });
 
-  if (gameState === 'menu' || gameState === 'flyover' || isVictoryActive) {
-    cinematicCamera.camera.aspect = width / height;
-    cinematicCamera.camera.updateProjectionMatrix();
-    renderer.setViewport(0, 0, width, height);
-    renderer.render(scene, cinematicCamera.camera);
-  } else if (isSplitscreen && (humanSlots.length > 2 || (athletes.length >= 4 && !!TUNING.camera.forceQuadSplitscreen))) {
-    // 4-Way Quad Splitscreen (2x2 Grid: Top-Left P1, Top-Right P2, Bottom-Left P3, Bottom-Right P4)
-    const halfW = Math.floor(width / 2);
-    const halfH = Math.floor(height / 2);
-    const quads = [
-      { slot: 0, x: 0, y: halfH, w: halfW, h: height - halfH },
-      { slot: 1, x: halfW, y: halfH, w: width - halfW, h: height - halfH },
-      { slot: 2, x: 0, y: 0, w: halfW, h: halfH },
-      { slot: 3, x: halfW, y: 0, w: width - halfW, h: halfH },
-    ];
-    renderer.setScissorTest(true);
-    for (const q of quads) {
-      const pc = playerCameras[q.slot] || playerCameras[0];
-      for (let i = 0; i < athletes.length; i++) {
-        athletes[i]?.setHeadVisible?.(i === q.slot ? pc.mode !== 'firstPerson' : true);
-      }
-      pc.camera.aspect = q.w / Math.max(1, q.h);
-      pc.camera.updateProjectionMatrix();
-      renderer.setViewport(q.x, q.y, q.w, q.h);
-      renderer.setScissor(q.x, q.y, q.w, q.h);
-      renderer.render(scene, pc.camera);
-    }
-    for (let i = 0; i < athletes.length; i++) athletes[i]?.setHeadVisible?.(true);
-    renderer.setScissorTest(false);
-    renderer.setViewport(0, 0, width, height);
-  } else if (isSplitscreen) {
-    const halfW = Math.floor(width / 2);
-    const leftSlot = humanSlots[0] ?? 0;
-    const rightSlot = humanSlots[1] ?? 1;
-
-    renderer.setScissorTest(true);
-
-    // Left Viewport
-    for (let i = 0; i < athletes.length; i++) {
-      athletes[i]?.setHeadVisible?.(i === leftSlot ? playerCameras[leftSlot].mode !== 'firstPerson' : true);
-    }
-    playerCameras[leftSlot].camera.aspect = halfW / height;
-    playerCameras[leftSlot].camera.updateProjectionMatrix();
-    renderer.setViewport(0, 0, halfW, height);
-    renderer.setScissor(0, 0, halfW, height);
-    renderer.render(scene, playerCameras[leftSlot].camera);
-
-    // Right Viewport
-    for (let i = 0; i < athletes.length; i++) {
-      athletes[i]?.setHeadVisible?.(i === rightSlot ? playerCameras[rightSlot].mode !== 'firstPerson' : true);
-    }
-    playerCameras[rightSlot].camera.aspect = (width - halfW) / height;
-    playerCameras[rightSlot].camera.updateProjectionMatrix();
-    renderer.setViewport(halfW, 0, width - halfW, height);
-    renderer.setScissor(halfW, 0, width - halfW, height);
-    renderer.render(scene, playerCameras[rightSlot].camera);
-
-    // Restore head visibility after viewports
-    for (let i = 0; i < athletes.length; i++) athletes[i]?.setHeadVisible?.(true);
-
-    renderer.setScissorTest(false);
-    renderer.setViewport(0, 0, width, height);
-  } else {
-    // Single Viewport (Practice, 1 human vs AI, AI vs AI spectator, or shared camera)
-    let activeRenderCamera = playerCameras[0].camera;
-    let activeAthleteSlot = 0;
-    if (humanSlots.length === 0) {
-      // All-AI spectator broadcast camera
-      activeRenderCamera = spectatorCamera;
-      activeAthleteSlot = -1;
-    } else if (humanSlots.length === 1) {
-      // Single human vs AI: ensure the camera renders the human player's viewport
-      activeAthleteSlot = humanSlots[0];
-      activeRenderCamera = playerCameras[activeAthleteSlot].camera;
-    }
-
-    const isFp = activeAthleteSlot >= 0 && playerCameras[activeAthleteSlot]?.mode === 'firstPerson';
-    if (activeAthleteSlot >= 0 && athletes[activeAthleteSlot]?.setHeadVisible) {
-      athletes[activeAthleteSlot].setHeadVisible(!isFp);
-    }
-
-    activeRenderCamera.aspect = width / height;
-    activeRenderCamera.updateProjectionMatrix();
-    updateCelestialSkybox(activeRenderCamera);
-    renderer.setViewport(0, 0, width, height);
-    renderer.render(scene, activeRenderCamera);
-
-    if (activeAthleteSlot >= 0 && athletes[activeAthleteSlot]?.setHeadVisible) {
-      athletes[activeAthleteSlot].setHeadVisible(true);
-    }
-  }
-
-  updateHud(match);
+  updateHud({ match, athletes, ball, balls, loop, cameraRig });
 }
 
 const loop = new Loop({ fixedUpdate, render });
@@ -2572,10 +1414,6 @@ async function loadCharacter() {
 
   characterSkeleton = skinned.skeleton;
   characterClips = gltf.animations;
-  captureBindPose();
-
-  await loadActionClips();
-  if (actionClips.length) characterClips = characterClips.concat(actionClips);
 
   scene.add(characterRoot);
   console.log(
@@ -2637,122 +1475,6 @@ function tuningClipFields() {
   return fields;
 }
 
-/** The L5 residual readout is a load-time proof, not a per-respawn one. */
-let l5ResidualLogged = false;
-
-/**
- * LAW L5 — THE PER-CLIP ROOT-MOTION RESIDUAL, MEASURED FOR EVERY CLIP.
- *
- * The strip in animtarget.js pins the two ARMATURE-LOCAL axes that are
- * world-horizontal back to their bind values on every step and keeps the third.
- * WHICH two those are is derived at construction from the armature itself
- * (hipsAxisRoles) and published on the target state. This reads those axes off
- * the state rather than assuming them, so a re-export that reorients the
- * armature moves the readout WITH the strip instead of against it — which is
- * the whole reason the derivation exists. Lesson 22 again: readouts read.
- *
- * For every clip in the asset set it walks the Hips position track and reports
- * two numbers, both in world metres, both the largest value reached over the
- * clip, both measured from the bind hips:
- *
- *   UNSTRIPPED — how far the hips travel horizontally AS AUTHORED. This is the
- *     number that says "this clip carries root motion", and several of the new
- *     clips carry metres of it: Running Jump Kick Right and the two spikes walk
- *     the athlete across the court if nothing removes it.
- *   STRIPPED — the same measurement with the strip's own two axes pinned to
- *     bind. This is what the ghost actually does, and IT MUST READ 0.0000 m.
- *
- * A non-zero stripped residual means the derived axes do not cover the axes the
- * clip animates: the strip would be pinning the wrong pair and the ghost would
- * walk out from under the sphere, which is locomotion coming from the animation
- * instead of from input. That is a stop condition and a report, not something
- * to patch here — the strip is not this file's to edit.
- *
- * Nothing in here touches the target. The tracks are sampled straight out of
- * the clips, the mixer is never advanced, no bone is written, and the world
- * matrix is only read. Running it changes no simulation state.
- */
-function logL5Residuals(target) {
-  const hips = target.hips;
-  if (!hips.parent) {
-    console.warn('[L5] the ghost hips have no parent — residual not measured');
-    return;
-  }
-  // Composed by updateAnimTarget immediately above this call: mount * armature.
-  // The mount is a yaw and a translation, so it cannot change a horizontal
-  // length, and both points below go through the same matrix anyway.
-  const toWorld = hips.parent.matrixWorld;
-
-  const axisA = target.hipsAxisA;
-  const axisB = target.hipsAxisB;
-  const axisUp = target.hipsUpAxis;
-
-  // The bind hips, rebuilt from the three published components rather than read
-  // off the live bone — the bone has been posed by the update call above.
-  const bindLocal = new THREE.Vector3();
-  bindLocal[axisA] = target.hipsBindA;
-  bindLocal[axisB] = target.hipsBindB;
-  bindLocal[axisUp] = target.hipsBindUp;
-  const bindWorld = bindLocal.clone().applyMatrix4(toWorld);
-
-  const sample = new THREE.Vector3();
-  const world = new THREE.Vector3();
-  const horizontal = () => Math.hypot(world.x - bindWorld.x, world.z - bindWorld.z);
-
-  console.log(
-    `[L5] root-motion residual, per clip. Armature-local ${axisA}/${axisB} pinned as ` +
-      `horizontal, ${axisUp} kept as vertical. STRIPPED MUST READ 0.0000 m on every clip.`,
-  );
-
-  // Resolved the same way every other bone lookup in the project is, so a
-  // sanitized "mixamorigHips" and a raw "mixamorig:Hips" both land — memoised
-  // because resolveBoneByName reindexes the skeleton on every call and thirty
-  // clips of 195 tracks would ask it the same question thousands of times.
-  const isHipsNode = new Map();
-  const nodeIsHips = (nodeName) => {
-    let answer = isHipsNode.get(nodeName);
-    if (answer === undefined) {
-      answer = resolveBoneByName(target.skeleton, nodeName) === hips;
-      isHipsNode.set(nodeName, answer);
-    }
-    return answer;
-  };
-
-  const width = Math.max(4, ...target.clips.map((clip) => clip.name.length));
-  for (const clip of target.clips) {
-    let track = null;
-    for (const candidate of clip.tracks) {
-      const dot = candidate.name.lastIndexOf('.');
-      if (dot < 0 || candidate.name.slice(dot + 1) !== 'position') continue;
-      if (!nodeIsHips(candidate.name.slice(0, dot))) continue;
-      track = candidate;
-      break;
-    }
-
-    if (!track) {
-      console.log(`[L5] ${clip.name.padEnd(width)}  no hips position track — nothing to strip`);
-      continue;
-    }
-
-    let unstripped = 0;
-    let stripped = 0;
-    for (let i = 0; i + 2 < track.values.length; i += 3) {
-      sample.set(track.values[i], track.values[i + 1], track.values[i + 2]);
-      world.copy(sample).applyMatrix4(toWorld);
-      unstripped = Math.max(unstripped, horizontal());
-      sample[axisA] = bindLocal[axisA];
-      sample[axisB] = bindLocal[axisB];
-      world.copy(sample).applyMatrix4(toWorld);
-      stripped = Math.max(stripped, horizontal());
-    }
-
-    console.log(
-      `[L5] ${clip.name.padEnd(width)}  unstripped ${unstripped.toFixed(4).padStart(8)} m   ` +
-        `stripped ${stripped.toFixed(4).padStart(8)} m`,
-    );
-  }
-}
-
 /**
  * THE CLIP INVENTORY — every clip in the asset set, once, at load.
  *
@@ -2804,53 +1526,6 @@ function logClipInventory() {
   }
 }
 
-/**
- * THE OPTIONAL ACTION CLIPS.
- *
- * actions.glb is a place to drop FURTHER clips later without reauthoring the
- * character asset, and it does not exist today. The slide and dive now ship in
- * the character asset itself, so its absence is a normal condition, not an
- * error: the fetch failure is caught and logged at info level and the game
- * carries on with whatever the character asset provided.
- *
- * EVERY CLIP IS VALIDATED BEFORE IT IS REGISTERED. A clip whose tracks address
- * bones the ghost does not have is worse than no clip: the mixer binds the
- * tracks it can and silently drops the rest, so the character plays a half
- * animation with the unbound limbs sagging toward bind, and nothing anywhere
- * reports a problem. Checking first turns that into a named rejection.
- */
-async function loadActionClips() {
-  if (!TUNING.anim?.loadOptionalActionsGlb) return;
-  let gltf;
-  try {
-    gltf = await new GLTFLoader().loadAsync(ACTIONS_URL);
-  } catch {
-    console.log(
-      `[actions] ${ACTIONS_URL} not present — the character asset is the only ` +
-        `clip source. This is the normal configuration.`,
-    );
-    return;
-  }
-
-  const accepted = [];
-  for (const clip of gltf.animations || []) {
-    const check = clipResolvesOnSkeleton(clip, characterSkeleton);
-    if (check.ok) {
-      accepted.push(clip);
-      console.log(`[actions] accepted "${clip.name}" (${clip.tracks.length} tracks)`);
-    } else {
-      console.warn(
-        `[actions] REJECTED "${clip.name}" — ${check.missing.length} bone(s) do not ` +
-          `resolve on the character: ${check.missing.slice(0, 6).join(', ')}`,
-      );
-    }
-  }
-  actionClips = accepted;
-  console.log(
-    `[actions] ${ACTIONS_URL}: ${accepted.length} of ${(gltf.animations || []).length} clips accepted`,
-  );
-}
-
 function spawnMatchAthletesAndCameras(configs, targetGoal = 'N', randomFn = Math.random) {
   if (athletes.length < 2) return;
   const count = Math.min(athletes.length, Math.max(2, configs?.length || 2));
@@ -2872,26 +1547,56 @@ function spawnMatchAthletesAndCameras(configs, targetGoal = 'N', randomFn = Math
   }
 }
 
+/**
+ * Applies a tied-match overtime decision from the Overtime Agreement Menu or a URL fixture.
+ * @param {{ format: 'draw' | 'golden_goal' | 'timed', durationSeconds?: number, positionMode?: 'in_place' | 'respawn' }} agreement
+ */
+function applyOvertimeAgreement({ format, durationSeconds = 120, positionMode = 'in_place' } = {}) {
+  hideOvertimeMenu();
+  if (format === 'draw') {
+    gameState = 'match';
+    if (matchState) matchState._agreedDraw = true;
+    finishMatchAndReport(loop.tick);
+    return;
+  }
+
+  matchManager.startOvertime({ format, durationSeconds, positionMode });
+  matchState = matchManager.getState();
+  gameState = 'match';
+  victoryCameraActive = false;
+
+  if (positionMode === 'respawn') {
+    clearGameplayInputQueues();
+    spawnMatchAthletesAndCameras(lastMatchConfigs || TUNING.players, matchState.targetGoal, fixtureRandom || Math.random);
+    if (balls.length > 0) {
+      const dropPos = getCourtBallDropSpawn(0, 1, loop.tick, activeFixture !== null);
+      resetBall(balls[0], loop.tick, dropPos);
+      balls[0]._preMatchSpawnPos = { x: dropPos.x, y: dropPos.y, z: dropPos.z };
+      matchState.preMatchSpawnPos = balls[0]._preMatchSpawnPos;
+    }
+    resetCountdownOverlay();
+    cinematicCamera.startKickoffRitual(TUNING.match.countdownSeconds || 4.0);
+  } else {
+    matchState.isCountingDown = false;
+    matchState.countdownTicksRemaining = 0;
+  }
+
+  if (scoreboards) {
+    updateScoreboards(scoreboards, matchProbe(matchState));
+  }
+  applyViewportSize();
+  updateCameras();
+  console.log(`[overtime] started (${format}, ${positionMode})`);
+}
+
 function handleRematch() {
   if (!matchState) return;
   clearGameplayInputQueues();
+  hideOvertimeMenu();
 
-  // 1. Reset match clock, target goal, countdown, celebration, and score
-  matchState.scoreHome = 0;
-  matchState.scoreAway = 0;
-  matchState.targetGoal = 'N';
-  matchState.celebrationTicks = 0;
-  matchState.lastScoredFor = null;
-  matchState.lastGoalId = null;
-  if (matchState.ballTrackers && typeof matchState.ballTrackers.clear === 'function') {
-    matchState.ballTrackers.clear();
-  }
-  matchState.ticksRemaining = TUNING.match.durationSeconds * TUNING.loop.fixedHz;
-  matchState.countdownTicksRemaining = TUNING.match.countdownSeconds * TUNING.loop.fixedHz;
-  matchState.isCountingDown = true;
-  matchState.matchOver = false;
-  matchState._buzzerPlayed = false;
-  matchState.events.length = 0;
+  matchManager.rematch(lastMatchConfigs || TUNING.players);
+  matchState = matchManager.getState();
+  gameState = 'match';
 
   // Reset athlete strike/action/tracker stats, particles, celebrations, and extended match stats
   athleteManager.resetStats();
@@ -2899,10 +1604,10 @@ function handleRematch() {
   goalCelebration.reset();
   athleteMatchStats.forEach((s, idx) => resetPlayerMatchStats(s, idx));
 
-  // 2. Spawn athletes on the stream heads opposite their target goals
+  // Spawn athletes on the stream heads opposite their target goals
   spawnMatchAthletesAndCameras(lastMatchConfigs || TUNING.players, matchState.targetGoal, Math.random);
 
-  // 3. Ensure match ball is refreshed (respecting random or specific selection)
+  // Ensure match ball is refreshed (respecting random or specific selection)
   setActiveMatchBall(currentMatchBallType);
   if (balls.length > 0) {
     const dropPos = getCourtBallDropSpawn(0, 1, loop.tick, false);
@@ -2948,8 +1653,8 @@ function skipFlyover() {
 /**
  * Starts the match a ?fixture= names, straight past the menus. A human side
  * with a named device gets it mapped; an 'auto' side keeps the router's
- * default routing. The fixture's assist rule goes on BOTH athletes after
- * setup, so neither side can carry a different one.
+ * default routing. The fixture's assist rule goes on ALL active athletes after
+ * setup, so no side can carry a different one.
  */
 function startFixtureMatch(fixture) {
   activeFixture = fixture;
@@ -2965,7 +1670,7 @@ function startFixtureMatch(fixture) {
   for (const a of athletes) a.setAssistPreset?.(fixture.assist);
 
   console.log(
-    `[fixture] ${fixture.id} (seed ${fixture.seed}): ${fixture.home.name} [${fixture.home.controller}] vs ` +
+    `[fixture] ${fixture.id} (seed ${fixture.seed}, ${fixture.mode || '1v1'}): ${fixture.home.name} [${fixture.home.controller}] vs ` +
       `${fixture.away.name} [${fixture.away.controller}], ${rules.ball} ball, ${fixture.durationSeconds}s, ${fixture.assist}`,
   );
   if (!fixture.flyover) skipFlyover();
@@ -2978,14 +1683,17 @@ function startFixtureMatch(fixture) {
  * record. Clears the fixture, so a rematch is never filed under it.
  * @param {number} tick the tick the match ended on
  * @param {object[]} slotStats strike and match stats, by athlete slot
+ * @param {object} [statsReport] optional aggregate stats report
  */
 function reportMatchResult(tick, slotStats, statsReport = null) {
+  const sideKeys = ['home', 'away', 'home2', 'away2'];
+  const slotCount = (lastMatchConfigs && lastMatchConfigs.length >= 4) ? 4 : 2;
   const sides = { home: null, away: null };
-  for (let i = 0; i < 2; i++) {
+  for (let i = 0; i < slotCount; i++) {
     const config = lastMatchConfigs?.[i];
-    const team = config?.team || (i === 0 ? 'home' : 'away');
-    const fixtureSide = activeFixture ? (i === 0 ? activeFixture.home : activeFixture.away) : null;
-    sides[team] = resultSide(config, slotStats[i], fixtureSide?.device ?? null);
+    const key = i < 2 ? (config?.team || sideKeys[i]) : sideKeys[i];
+    const fixtureSide = activeFixture ? activeFixture[key] : null;
+    sides[key] = resultSide(config, slotStats[i], fixtureSide?.device ?? null);
   }
   const result = buildMatchResult({
     fixture: activeFixture,
@@ -3033,6 +1741,7 @@ function handleStartMatch(configs, matchRulesOrBall = {}) {
   }
 
   hideMainMenu();
+  hideOvertimeMenu();
   clearGameplayInputQueues();
   lastMatchConfigs = configs;
   // Only startFixtureMatch passes its fixture. Any other start (the lobby, a
@@ -3129,19 +1838,6 @@ function handleStartMatch(configs, matchRulesOrBall = {}) {
 
   matchManager.startMatch(configs, { durationSeconds, ballPreference, arenaType });
   matchState = matchManager.getState();
-  matchState.targetGoal = 'N';
-  matchState.celebrationTicks = 0;
-  matchState.lastScoredFor = null;
-  matchState.lastGoalId = null;
-  if (matchState.ballTrackers && typeof matchState.ballTrackers.clear === 'function') {
-    matchState.ballTrackers.clear();
-  }
-  matchState.ticksRemaining = TUNING.match.durationSeconds * TUNING.loop.fixedHz;
-  matchState.countdownTicksRemaining = TUNING.match.countdownSeconds * TUNING.loop.fixedHz;
-  matchState.isCountingDown = true;
-  matchState.matchOver = false;
-  matchState._buzzerPlayed = false;
-  matchState.events.length = 0;
 
   // Clear strike stats and visual turf particles
   athleteManager.resetStats();
@@ -3191,13 +1887,13 @@ function handleStartPractice(playerConfig = null, ballChoice = 'all') {
   hideMainMenu();
   hideInGameMenu();
   hideVictoryScreen();
+  hideOvertimeMenu();
   clearGameplayInputQueues();
   turfParticles.reset();
   goalCelebration.reset();
   victoryCameraActive = false;
   gameState = 'practice';
-  TUNING.match.mode = 'practice';
-  selectedPracticeBallType = ballChoice;
+  setSelectedPracticeBallType(ballChoice);
 
   // Practice is one human athlete. Drop any bots the last match left running:
   // after a match where P1 was the AI, the practice athlete was still bot-driven.
@@ -3205,17 +1901,7 @@ function handleStartPractice(playerConfig = null, ballChoice = 'all') {
   activeBotSlots = [];
 
   // Reset practice drill stats
-  practiceStats.goals = 0;
-  practiceStats.hits = 0;
-  practiceStats.whiffs = 0;
-  practiceStats.sweetSpots = 0;
-  practiceStats.spikes = 0;
-  practiceStats.dives = 0;
-  practiceStats.divingHits = 0;
-  practiceStats.defensiveBlocks = 0;
-  practiceStats.totalTouches = 0;
-  practiceSessionTicks = 0;
-
+  resetPracticeStats();
   if (athletes[0]?.strikeState) {
     athletes[0].strikeState.resolvedCount = 0;
     athletes[0].strikeState.whiffCount = 0;
@@ -3246,77 +1932,14 @@ function handleStartPractice(playerConfig = null, ballChoice = 'all') {
   athleteManager.ensureRoster(1);
   athleteManager.teleportToPracticeSpawn(arenaPreset);
 
-  if (matchState) {
-    matchState.mode = 'practice';
-    matchState.scoreHome = 0;
-    matchState.scoreAway = 0;
-    matchState.targetGoal = 'N';
-    matchState.celebrationTicks = 0;
-    matchState.lastScoredFor = null;
-    matchState.lastGoalId = null;
-    matchState.isCountingDown = false;
-    matchState.matchOver = false;
-    matchState.events.length = 0;
-  }
+  matchManager.startPractice(playerConfig, ballChoice);
+  matchState = matchManager.getState();
 
   // 3. Configure ball(s) according to user selection
-  if (ballChoice === 'small') {
-    for (let i = 0; i < allBalls.length; i++) {
-      const b = allBalls[i];
-      if (i === 0) {
-        b.mesh.visible = true;
-        b.body.setEnabled(true);
-      } else {
-        b.mesh.visible = false;
-        b.body.setTranslation({ x: 0, y: -200, z: 0 }, true);
-        b.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
-        b.body.setEnabled(false);
-      }
-    }
-    balls = [allBalls[0]];
-    ball = allBalls[0];
-  } else if (ballChoice === 'medium') {
-    for (let i = 0; i < allBalls.length; i++) {
-      const b = allBalls[i];
-      if (i === 1) {
-        b.mesh.visible = true;
-        b.body.setEnabled(true);
-      } else {
-        b.mesh.visible = false;
-        b.body.setTranslation({ x: 0, y: -200, z: 0 }, true);
-        b.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
-        b.body.setEnabled(false);
-      }
-    }
-    balls = [allBalls[1]];
-    ball = allBalls[1];
-  } else if (ballChoice === 'large') {
-    for (let i = 0; i < allBalls.length; i++) {
-      const b = allBalls[i];
-      if (i === 2) {
-        b.mesh.visible = true;
-        b.body.setEnabled(true);
-      } else {
-        b.mesh.visible = false;
-        b.body.setTranslation({ x: 0, y: -200, z: 0 }, true);
-        b.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
-        b.body.setEnabled(false);
-      }
-    }
-    balls = [allBalls[2]];
-    ball = allBalls[2];
-  } else {
-    // 'all' / multi-ball sandbox default
-    balls = [...allBalls];
-    ball = allBalls[1] || allBalls[0] || null;
-    for (const b of allBalls) {
-      b.mesh.visible = true;
-      b.body.setEnabled(true);
-    }
-  }
+  setActiveMatchBall(ballChoice);
 
   // Spawn P1 cleanly at center court facing North (-Z)
-  const isDeterministic = armedCaptureTick !== null; // read boot-local `urlParams` before: threw on every practice start since v0.2.0
+  const isDeterministic = armedCaptureTick !== null;
   if (athletes[0]) {
     const spawnPos = (arenaPreset && arenaPreset.spawn) || { x: 0, y: 1.5, z: 0 };
     athletes[0].teleportTo({ x: spawnPos.x, y: Math.max(1.5, spawnPos.y), z: spawnPos.z }, Math.PI);
@@ -3338,14 +1961,10 @@ function handleStartPractice(playerConfig = null, ballChoice = 'all') {
 
 function handleFinishPractice() {
   hideInGameMenu();
-  const a0Strike = athletes[0]?.getStrikeStats();
-  if (a0Strike) {
-    practiceStats.hits = a0Strike.hits;
-    practiceStats.whiffs = a0Strike.whiffs;
-  }
-  showPracticeSummary(practiceStats, practiceSessionTicks / 60, {
+  syncPracticeStrikeStats(athletes[0]);
+  showPracticeSummary(practiceStats, getPracticeSessionSeconds(), {
     onPracticeAgain: () => {
-      handleStartPractice(practicePlayerConfig(), selectedPracticeBallType);
+      handleStartPractice(practicePlayerConfig(), getSelectedPracticeBallType());
     },
     onCustomize: () => {
       hideVictoryScreen();
@@ -3388,6 +2007,7 @@ function returnToMainMenu() {
   exitGamePointerLock();
   hideInGameMenu();
   hideVictoryScreen();
+  hideOvertimeMenu();
   resetCountdownOverlay();
   hideFlyoverOverlay();
 
@@ -3404,17 +2024,7 @@ function returnToMainMenu() {
   matchState.mode = 'menu';
 
   // 2. Reset practice drill stats
-  practiceStats.goals = 0;
-  practiceStats.hits = 0;
-  practiceStats.whiffs = 0;
-  practiceStats.sweetSpots = 0;
-  practiceStats.spikes = 0;
-  practiceStats.dives = 0;
-  practiceStats.divingHits = 0;
-  practiceStats.defensiveBlocks = 0;
-  practiceStats.totalTouches = 0;
-  practiceSessionTicks = 0;
-
+  resetPracticeStats();
   athleteMatchStats.forEach((s, idx) => resetPlayerMatchStats(s, idx));
 
   // 3. Reset athletes, physics velocities, trackers and knockdowns
@@ -3460,26 +2070,16 @@ function returnToMainMenu() {
   console.log('[mainMenu] returned to title screen (all parameters reset cleanly)');
 }
 
-let currentSetupMode = 'match';
-let setupAthleteYaw = [Math.PI * 0.40, -Math.PI * 0.40];
-
 function handleEnterSetup(mode = 'match') {
-  currentSetupMode = mode;
-  // Move balls out of player preview viewport
   for (const b of allBalls) {
-    if (b?.body) {
-      b.body.setTranslation({ x: 0, y: -200, z: 0 }, true);
-      b.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
-    }
+    if (b?.mesh) b.mesh.visible = false;
+    if (b?.body) { b.body.setTranslation({ x: 0, y: -200, z: 0 }, true); b.body.setLinvel({ x: 0, y: 0, z: 0 }, true); b.body.setEnabled(false); }
   }
-
   const setupCfgs = getPlayerConfigs();
   const count = mode === 'match2v2' ? 4 : 2;
   ensureAthletesRegistered(count, setupCfgs);
   athleteManager.stageForLobby(mode);
-  for (let i = 0; i < count; i++) {
-    if (setupCfgs[i]) handlePlayerConfigChange(i, setupCfgs[i]);
-  }
+  for (let i = 0; i < count; i++) { if (setupCfgs[i]) handlePlayerConfigChange(i, setupCfgs[i]); }
   cinematicCamera.startSetupPreview();
   console.log(`[mainMenu] entered setup (${mode}) -> 3D athlete staging active`);
 }
@@ -3585,10 +2185,6 @@ async function boot() {
     loop.register(a.motor.interpolated);
   }
 
-  motor = athletes[0].motor;
-  ragdoll = athletes[0].ragdoll;
-  animTarget = athletes[0].animTarget;
-
   // 2. CREATE BALLS (Pre-create all 3 sizes: small, medium, large)
   const registryBefore = loop.interpolated.length;
   for (let i = 0; i < TUNING.balls.length; i += 1) {
@@ -3613,7 +2209,11 @@ async function boot() {
   initInputRouter(canvas);
   initControlsOverlay();
   loop.onFrame(() => {
-    const isGameplayActive = (gameState === 'match' || gameState === 'practice') && !isInGameMenuOpen() && !isMainMenuActive() && !isVictoryScreenVisible();
+    const isGameplayActive = (gameState === 'match' || gameState === 'practice')
+      && !isInGameMenuOpen()
+      && !isMainMenuActive()
+      && !isVictoryScreenVisible()
+      && !isOvertimeMenuOpen();
     sampleAllInputs(playerCameras.map((pc) => pc.camera), gameState === 'practice' ? 1 : athletes.length, TUNING.match.mode, activeBotSlots, isGameplayActive);
     updateControlsOverlay(getControlsSnapshot(), gameState, isInGameMenuOpen(), isVictoryScreenVisible(), !!matchState?.matchOver, !!matchState?.isCountingDown, isMainMenuActive());
   });
@@ -3628,10 +2228,13 @@ async function boot() {
   );
 
   initCountdownOverlay();
+  initOvertimeMenu({
+    onConfirm: applyOvertimeAgreement,
+  });
 
   initVictoryScreen({
     onRematch: handleRematch,
-    onPracticeMode: () => handleStartPractice(practicePlayerConfig(), selectedPracticeBallType),
+    onPracticeMode: () => handleStartPractice(practicePlayerConfig(), getSelectedPracticeBallType()),
     onMainMenu: returnToMainMenu,
   });
 
@@ -3639,7 +2242,7 @@ async function boot() {
     onResume: () => {},
     onOpen: hideControlsOverlay,
     onRematch: handleRematch,
-    onPracticeMode: () => handleStartPractice(practicePlayerConfig(), selectedPracticeBallType),
+    onPracticeMode: () => handleStartPractice(practicePlayerConfig(), getSelectedPracticeBallType()),
     onFinishPractice: handleFinishPractice,
     onMainMenu: returnToMainMenu,
     onRenderSettingsChange: (settings) => {
@@ -3687,7 +2290,18 @@ async function boot() {
 
   applyShadowSettings();
 
-  installRespawnHotkey();
+  installHotkeys({
+    getAthletes: () => athletes,
+    getGameState: () => gameState,
+    getGui: () => guiInstance,
+    headwearControls,
+    onRequestRespawn: requestRagdollSpawn,
+    onHudToggle: setHudVisible,
+    onSplitscreenToggle: applyViewportSize,
+    onSkipFlyover: skipFlyover,
+    onToggleInGameMenu: toggleInGameMenu,
+    onShowHeadwearToast: showHeadwearToast,
+  });
 
   armedCaptureTick = initCapture({
     renderer,
@@ -3727,6 +2341,12 @@ async function boot() {
   window.__vb.toggleInGameMenu = toggleInGameMenu;
   window.__vb.hideInGameMenu = hideInGameMenu;
   window.__vb.isInGameMenuOpen = isInGameMenuOpen;
+  window.__vb.overtimeMenu = {
+    show: showOvertimeMenu,
+    hide: hideOvertimeMenu,
+    isOpen: isOvertimeMenuOpen,
+    applyAgreement: applyOvertimeAgreement,
+  };
   window.__vb.getInputSlot = getInputSlot;
   window.__vb.applyRenderSettings = applyRenderSettings;
   window.__vb.showMainMenu = showTitleScreen;
@@ -3749,7 +2369,7 @@ async function boot() {
   window.__vb.finishPractice = handleFinishPractice;
   window.__vb.startPractice = handleStartPractice;
   Object.defineProperty(window.__vb, 'practiceSessionSeconds', {
-    get: () => practiceSessionTicks / 60,
+    get: () => getPracticeSessionSeconds(),
     configurable: true,
   });
 
@@ -3794,9 +2414,13 @@ async function boot() {
     if (guiInstance) guiInstance.controllersRecursive().forEach((c) => c.updateDisplay());
   };
 
-  Object.defineProperty(window.__vb, 'ragdoll', { get: () => athletes[0]?.ragdoll || ragdoll, configurable: true });
-  Object.defineProperty(window.__vb, 'motor', { get: () => athletes[0]?.motor || motor, configurable: true });
-  Object.defineProperty(window.__vb, 'animTarget', { get: () => athletes[0]?.animTarget || animTarget, configurable: true });
+  window.__vb.snapshotRing = new WorldSnapshotRingBuffer(360);
+  window.__vb.packInputFrame = packInputFrame;
+  window.__vb.unpackInputFrame = unpackInputFrame;
+
+  Object.defineProperty(window.__vb, 'ragdoll', { get: () => athletes[0]?.ragdoll || null, configurable: true });
+  Object.defineProperty(window.__vb, 'motor', { get: () => athletes[0]?.motor || null, configurable: true });
+  Object.defineProperty(window.__vb, 'animTarget', { get: () => athletes[0]?.animTarget || null, configurable: true });
   window.__vb.updateAthletePalette = () => {
     for (const a of athletes) {
       if (a.ragdoll) a.refreshVisuals();
@@ -3881,6 +2505,8 @@ async function boot() {
   guiInstance = createGui({
     getMatchState: () => matchState,
     getScoreboards: () => scoreboards,
+    getAthletes: () => athletes,
+    onResetMatch: () => matchManager.resetMatchState(matchState),
     onShowHudChange: setHudVisible,
     onShowSphereWireframeChange: (visible) => {
       for (const a of athletes) {
@@ -3902,7 +2528,7 @@ async function boot() {
       }
     },
     clipNames: characterClips.map((clip) => clip.name),
-    tracker: athletes[0]?.tracker || tracker,
+    tracker: athletes[0]?.tracker || null,
     headwearControls,
     onHeadwearChange: (playerIndex, headwearId) => {
       const a = athletes[playerIndex];

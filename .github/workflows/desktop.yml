@@ -1,0 +1,66 @@
+name: Desktop builds
+
+# Builds the desktop app on each OS's own runner (a Mac app can only be built on
+# macOS, and Linux file permissions do not survive a Windows build), launches
+# each build once, and uploads the installers as run artifacts.
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+  pull_request:
+    paths:
+      - 'electron/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'scripts/desktop_smoke.mjs'
+      - '.github/workflows/desktop.yml'
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            dist: desktop:dist
+          - name: macOS
+            os: macos-latest
+            dist: desktop:dist:mac
+          - name: Linux
+            os: ubuntu-latest
+            dist: desktop:dist:linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run ${{ matrix.dist }} -- --publish never
+
+      # Ubuntu 24.04 blocks the unprivileged user namespaces Chromium's sandbox
+      # uses, and the runner has no display. Players on stock Ubuntu 24.04 hit
+      # the first one too; see the roadmap.
+      - name: Smoke test (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          xvfb-run -a npm run desktop:smoke
+      - name: Smoke test
+        if: runner.os != 'Linux'
+        run: npm run desktop:smoke
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: valleyball-versus-${{ runner.os }}
+          if-no-files-found: error
+          path: |
+            release/desktop/*.exe
+            release/desktop/*.dmg
+            release/desktop/*.zip
+            release/desktop/*.AppImage
+            release/desktop/*.tar.gz

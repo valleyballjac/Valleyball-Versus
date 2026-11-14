@@ -1,32 +1,27 @@
 import { TUNING } from '../config/tuning.js';
 
 /**
- * SCORING — the goal hoops, the target end, and the match clock.
+ * MODULE HEADER — src/mechanics/scoring.js
  *
- * A goal is a BALL CENTRE crossing the x = 0 plane inside a hoop's aperture.
- * That is a segment-vs-disc test between the ball's previous tick position and
- * its current one, which is the only formulation that survives a spiked ball:
- * at 22 m/s a ball moves 0.37 m per tick, so a test that asked "is the ball
- * inside the hoop right now" would miss the frame it was inside on roughly
- * every other shot. Nothing here is a trigger volume and nothing polls.
- *
- * LAW 1 — NOTHING HERE TOUCHES THE BALL. It reads translations and writes
- * integers. A goal does not stop, freeze, teleport or re-serve the ball; it
- * scores and the ball carries on with whatever momentum it had, which is what
- * makes the rebound goal below a real thing that can happen rather than a
- * special case somebody has to write.
- *
- * LAW 6 — no wall clock. The match clock is a tick counter, decremented once
- * per fixed step, so it runs at the same rate on every machine and pauses with
- * the simulation rather than with the frame rate.
- *
- * THE DIRECTORY RULE (src/mechanics/): no scheduler is named here. The clock is
- * `tick`, and the match clock is ticks.
+ * Role: Evaluates segment-vs-disc goal hoop crossings (`testHoopCrossing`),
+ *   updates match scores, target-goal flips, and tick-based countdown/match
+ *   clocks (`createMatchState`, `updateScoring`, `resetScoringState`).
+ * Frame Phase: Fixed-step post-physics (`updateScoring`, called after `stepPhysics`).
+ * Active Architectural Laws:
+ *   - LAW 1 (Physics Owns Momentum): Scoring reads ball positions and never
+ *     modifies ball velocity or position; balls pass through hoops unimpeded.
+ *   - LAW 4 (Zero Hot-Loop Allocations): Reuses module-scoped `_missResult` and
+ *     `_pPrev` scratch objects during per-tick hoop crossing checks.
+ *   - LAW 6 (Determinism): Match and celebration clocks count fixed ticks (`tick`),
+ *     never wall-clock seconds.
  */
 
 /** North and south, as the goal ids appear in the events and the HUD. */
 const GOAL_N = 'N';
 const GOAL_S = 'S';
+
+const _missResult = Object.freeze({ hit: false, entrySide: 0, y: 0, z: 0 });
+const _pPrev = { x: 0, y: 0, z: 0 };
 
 /** The goal at the other end. One place, so no call site spells the flip out. */
 function oppositeGoal(goalId) {
@@ -89,15 +84,13 @@ export function createMatchState() {
  * @returns {{hit: boolean, entrySide: number, y: number, z: number}}
  */
 export function testHoopCrossing(pPrev, pCurr, hoopZ, hoopY, radius) {
-  const miss = { hit: false, entrySide: 0, y: 0, z: 0 };
-
   // STRICT ON ONE SIDE, INCLUSIVE ON THE OTHER, so a ball that lands exactly on
   // x = 0 is counted as having crossed once and not again on the way out.
   const crosses = (pPrev.x < 0 && pCurr.x >= 0) || (pPrev.x > 0 && pCurr.x <= 0);
-  if (!crosses) return miss;
+  if (!crosses) return _missResult;
 
   const dx = pCurr.x - pPrev.x;
-  if (Math.abs(dx) < 1e-6) return miss;
+  if (Math.abs(dx) < 1e-6) return _missResult;
 
   const alpha = -pPrev.x / dx;
   const yInt = pPrev.y + alpha * (pCurr.y - pPrev.y);
@@ -105,7 +98,7 @@ export function testHoopCrossing(pPrev, pCurr, hoopZ, hoopY, radius) {
 
   const dy = yInt - hoopY;
   const dz = zInt - hoopZ;
-  if (dy * dy + dz * dz > radius * radius) return miss;
+  if (dy * dy + dz * dz > radius * radius) return _missResult;
 
   // +1 arriving from the east (+x), -1 from the west. Recorded for the log; the
   // arming latch below is what actually gates a repeat.
@@ -168,7 +161,10 @@ export function updateScoring(state, balls, tick) {
       continue;
     }
 
-    const pPrev = { x: tracker.prevX, y: tracker.prevY, z: tracker.prevZ };
+    _pPrev.x = tracker.prevX;
+    _pPrev.y = tracker.prevY;
+    _pPrev.z = tracker.prevZ;
+    const pPrev = _pPrev;
 
     // ═══ THE ARMING LATCH ═══
     //

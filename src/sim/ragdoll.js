@@ -6,20 +6,20 @@ import { accentFor } from './valleyballHeadgear.js';
 import { resolveHeadwearSpec } from '../config/cosmetics.js';
 
 /**
- * Physics -> pose sync, and the ragdoll's debug skin.
+ * MODULE HEADER — src/sim/ragdoll.js
  *
- * This is the PERMANENT render path for the character: the skinned meshes are
- * posed FROM the bodies, never the other way round. Nothing in this file writes
- * to a body, a velocity or a force — it only reads transforms that fixedUpdate
- * has already snapshotted.
- *
- * DIRECTORY RULE (src/sim/): nothing here names a wall-clock or scheduler API.
- *
- * THE AGREEMENT IS THE PROOF. If the derivation in autorig.js is right, the
- * skinned mesh sits inside the wireframe capsules and stays there through the
- * entire flop. If it is wrong — a local-space read, a dropped 0.01, a decomposed
- * bind matrix — the mesh separates from the capsules immediately and obviously.
- * That is the whole reason both are drawn.
+ * Role: Builds the PBR capsule athlete visuals, debug collider wireframes, and
+ *   modular headwear slot (`buildDebugMeshes`, `setAthleteHeadwear`, `updateAthleteVariant`,
+ *   `updateAthletePalette`, `applyRagdollVisibility`, `disposeRagdollVisuals`), snapshots
+ *   stepped body transforms through the 4-tick buzz filter (`saveRagdollPrevious`,
+ *   `snapshotRagdoll`, `findNonFinite`), and interpolates render-frame poses
+ *   (`syncRagdollPose`).
+ * Frame Phase: Fixed-step pre-physics (`saveRagdollPrevious`), post-physics
+ *   (`snapshotRagdoll`), and render frame (`syncRagdollPose`).
+ * Active Architectural Laws:
+ *   - LAW 5 (Render Interpolation Only): Filtered and interpolated transforms live
+ *     strictly on `Interpolated` / Three.js meshes and never feed back into Rapier bodies.
+ *   - LAW 6 (Determinism): No wall-clock APIs; zero allocations in fixed/render loops.
  */
 
 /** Chosen so a limb reads as a limb rather than a faceted lozenge. */
@@ -34,26 +34,12 @@ const _bodyWorld = new THREE.Matrix4();
 const _desired = new THREE.Matrix4();
 const _local = new THREE.Matrix4();
 const _parentInverse = new THREE.Matrix4();
-const _bindBodyInverse = new THREE.Matrix4();
-const _pos = new THREE.Vector3();
-const _quat = new THREE.Quaternion();
 
-/**
- * Wireframe capsules and balls at each body's derived shape, plus the
- * Interpolated wrapper that carries prev/curr for it.
- *
- * The debug mesh doubles as the interpolation target, so there is exactly one
- * interpolated transform per body rather than a visual copy that can drift out
- * of step with the one the bones read.
- *
- * @param {Map<string, object>} rig
- * @returns {THREE.Group}
- */
 /**
  * Visual palette and styling for the Capsule Athlete.
  */
 function getAthleteColors(options = null) {
-  const teamKey = options?.team ?? TUNING.athlete?.team ?? 'home';
+  const teamKey = options?.team ?? 'home';
   const teamConfig = TUNING.teams?.[teamKey];
   const p = TUNING.athlete?.palette || {};
   const isHome = teamKey !== 'away';
@@ -84,120 +70,6 @@ function getAthleteColors(options = null) {
     roughness: p.roughness ?? 0.82,
     metalness: p.metalness ?? 0.04,
   };
-}
-
-/**
- * Generates an authentic old-style curved baseball cap visor geometry.
- * Curves seamlessly from the crown rim with downward curl at temples and downward rake.
- */
-function createCurvedBaseballVisorGeo(radius, crownRadius, phiRim, thetaMax = Math.PI * 0.38, billLength = null, thickness = null) {
-  const L0 = billLength ?? (radius * 0.68);
-  const thick = thickness ?? (radius * 0.035);
-  const pitch = 0.26; // ~15 deg downward slope
-  const curl = radius * 0.10; // classic downward curl at sides
-
-  const yRim = crownRadius * Math.cos(phiRim);
-  const rRim = crownRadius * Math.sin(phiRim);
-
-  const uSteps = 24;
-  const tSteps = 12;
-  const positions = [];
-  const indices = [];
-
-  function getPoint(u, tNorm, layer) {
-    const theta = u * thetaMax;
-    const profile = Math.max(0, Math.cos(u * Math.PI * 0.5));
-
-    // Base point on rim circle
-    const bx = rRim * Math.sin(theta);
-    const bz = -rRim * Math.cos(theta);
-    const by = yRim;
-
-    let x, y, z;
-    if (tNorm <= 0) {
-      // Penetrate slightly inside the crown to ensure seamless union
-      x = bx * 0.96;
-      z = bz * 0.96;
-      y = by + (layer === 'top' ? thick * 0.5 : -thick * 0.5);
-    } else {
-      const Lt = L0 * Math.pow(profile, 0.72) * tNorm;
-      const dirX = Math.sin(theta * 0.70);
-      const dirZ = -Math.cos(theta * 0.70);
-      x = bx + dirX * Lt * Math.cos(pitch);
-      z = bz + dirZ * Lt * Math.cos(pitch);
-      const yCurl = -curl * (u * u) * tNorm;
-      const yPitch = -Lt * Math.sin(pitch);
-      const yOffset = layer === 'top' ? thick * 0.5 : -thick * 0.5;
-      y = by + yPitch + yCurl + yOffset;
-    }
-    return [x, y, z];
-  }
-
-  // Top surface grid
-  const topStart = 0;
-  for (let j = 0; j <= tSteps; j++) {
-    const tNorm = j === 0 ? -0.15 : j / tSteps;
-    for (let i = 0; i <= uSteps; i++) {
-      const u = (i / uSteps) * 2 - 1;
-      const [x, y, z] = getPoint(u, tNorm, 'top');
-      positions.push(x, y, z);
-    }
-  }
-
-  // Bottom surface grid
-  const bottomStart = positions.length / 3;
-  for (let j = 0; j <= tSteps; j++) {
-    const tNorm = j === 0 ? -0.15 : j / tSteps;
-    for (let i = 0; i <= uSteps; i++) {
-      const u = (i / uSteps) * 2 - 1;
-      const [x, y, z] = getPoint(u, tNorm, 'bottom');
-      positions.push(x, y, z);
-    }
-  }
-
-  const rowLen = uSteps + 1;
-  // Top indices (facing up)
-  for (let j = 0; j < tSteps; j++) {
-    for (let i = 0; i < uSteps; i++) {
-      const a = topStart + j * rowLen + i;
-      const b = a + 1;
-      const c = a + rowLen;
-      const d = c + 1;
-      indices.push(a, d, b);
-      indices.push(a, c, d);
-    }
-  }
-  // Bottom indices (facing down)
-  for (let j = 0; j < tSteps; j++) {
-    for (let i = 0; i < uSteps; i++) {
-      const a = bottomStart + j * rowLen + i;
-      const b = a + 1;
-      const c = a + rowLen;
-      const d = c + 1;
-      indices.push(a, b, d);
-      indices.push(a, d, c);
-    }
-  }
-  // Outer rim skirt (j = tSteps)
-  for (let i = 0; i < uSteps; i++) {
-    const topIdx = topStart + tSteps * rowLen + i;
-    const botIdx = bottomStart + tSteps * rowLen + i;
-    indices.push(topIdx, topIdx + 1, botIdx + 1);
-    indices.push(topIdx, botIdx + 1, botIdx);
-  }
-  // Inner rim skirt (j = 0)
-  for (let i = 0; i < uSteps; i++) {
-    const topIdx = topStart + i;
-    const botIdx = bottomStart + i;
-    indices.push(topIdx, botIdx + 1, topIdx + 1);
-    indices.push(topIdx, botIdx, botIdx + 1);
-  }
-
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  geo.setIndex(indices);
-  geo.computeVertexNormals();
-  return geo;
 }
 
 /**
@@ -588,18 +460,6 @@ export function snapshotRagdoll(state) {
 }
 
 /**
- * The deterministic opening nudge, so the drop is a tumble rather than a rigid
- * T-pose belly-flop. A pure world-X torque impulse on the pelvis: one basis
- * direction and one TUNING scalar, so it is identical on every run.
- *
- * Called from inside fixedUpdate, on the step that spawns the ragdoll.
- */
-export function applyTumble(state) {
-  const pelvis = state.rig.get('pelvis');
-  pelvis.body.applyTorqueImpulse({ x: TUNING.ragdoll.tumbleImpulse, y: 0, z: 0 }, true);
-}
-
-/**
  * Once-a-second guard against a joint or contact having produced a non-finite
  * transform. A NaN in one body propagates through the joint graph within a
  * handful of steps and then the whole character silently vanishes, so it is
@@ -650,38 +510,38 @@ export function syncRagdollPose(state, alpha) {
 
   for (const key of state.order) {
     const item = state.rig.get(key);
-
-    // Interpolated body transform. Interpolated.apply writes it onto the debug
-    // mesh; reading it back from there keeps the capsules and the bones reading
-    // from one number rather than two that can disagree.
     item.interpolated.apply(alpha);
-    _bodyWorld.compose(item.mesh.position, item.mesh.quaternion, UNIT_SCALE);
-
-    _bindBodyInverse.copy(item.bindBodyWorld).invert();
-    _desired.multiplyMatrices(_bodyWorld, _bindBodyInverse);
-    _desired.multiply(item.bindBoneWorld);
-
-    const parent = item.bone.parent;
-
-    // Refresh the ancestor chain from locals. Mapped ancestors already have
-    // their new locals from earlier in this loop; unmapped ones still hold bind
-    // locals. Either way the result is this parent's world matrix as of now.
-    parent.updateWorldMatrix(true, false);
-
-    _parentInverse.copy(parent.matrixWorld).invert();
-    _local.multiplyMatrices(_parentInverse, _desired);
-
-    // Decomposed into the bone's own TRS because three drives skinning from
-    // those. The scale that comes out is whatever the bind chain implies; it is
-    // written through untouched rather than forced to 1.
-    _local.decompose(item.bone.position, item.bone.quaternion, item.bone.scale);
-    item.bone.updateMatrix();
-    item.bone.matrixWorld.multiplyMatrices(parent.matrixWorld, item.bone.matrix);
   }
 
-  // Unmapped descendants — fingers, toes, Neck, the End leaves — inherit from
-  // the mapped bones that just moved.
-  if (state.characterRoot) {
+  // Only pay the 16-bone matrix decomposition and 65-bone scene-graph traversal
+  // when the debug skinned character mesh is actually visible.
+  if (state.characterRoot && state.characterRoot.visible) {
+    for (const key of state.order) {
+      const item = state.rig.get(key);
+
+      _bodyWorld.compose(item.mesh.position, item.mesh.quaternion, UNIT_SCALE);
+      _desired.multiplyMatrices(_bodyWorld, item.bindBodyToBone);
+
+      const parent = item.bone.parent;
+
+      // Refresh the ancestor chain from locals. Mapped ancestors already have
+      // their new locals from earlier in this loop; unmapped ones still hold bind
+      // locals. Either way the result is this parent's world matrix as of now.
+      parent.updateWorldMatrix(true, false);
+
+      _parentInverse.copy(parent.matrixWorld).invert();
+      _local.multiplyMatrices(_parentInverse, _desired);
+
+      // Decomposed into the bone's own TRS because three drives skinning from
+      // those. The scale that comes out is whatever the bind chain implies; it is
+      // written through untouched rather than forced to 1.
+      _local.decompose(item.bone.position, item.bone.quaternion, item.bone.scale);
+      item.bone.updateMatrix();
+      item.bone.matrixWorld.multiplyMatrices(parent.matrixWorld, item.bone.matrix);
+    }
+
+    // Unmapped descendants — fingers, toes, Neck, the End leaves — inherit from
+    // the mapped bones that just moved.
     state.characterRoot.updateMatrixWorld(true);
   }
 }
@@ -759,7 +619,7 @@ function createPonytailGroup(radius, colors) {
  */
 export function updateAthleteVariant(state, options = null) {
   if (!state || !state.rig) return;
-  const variant = options?.variant ?? state.variant ?? TUNING.athlete.variant ?? 'masculine';
+  const variant = options?.variant ?? state.variant ?? 'classic';
   const colors = getAthleteColors(options ?? state);
 
   const pelvis = state.rig.get('pelvis');
@@ -794,7 +654,6 @@ export function updateAthleteVariant(state, options = null) {
     }
 
   const limbKeys = ['upperArmL', 'upperArmR', 'foreArmL', 'foreArmR', 'thighL', 'thighR', 'calfL', 'calfR'];
-  const handKeys = ['handL', 'handR'];
 
   if (variant === 'masculine') {
     // ATHLETIC V-TAPER (Masculine / Heroic):
@@ -907,5 +766,3 @@ export function applyRagdollVisibility(state, characterRoot) {
   }
   if (characterRoot) characterRoot.visible = !!TUNING.debug.showCharacterMesh;
 }
-
-export { UNIT_SCALE };

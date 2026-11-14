@@ -1,32 +1,17 @@
 import * as THREE from 'three';
 
 /**
- * LAW L3 — THE CLAMPED DAMPING HELPERS. One linear, one angular, both here.
+ * MODULE HEADER — src/sim/damping.js
  *
- * Rapier's built-in damping setters crash the WASM build, and their names are
- * kept out of this codebase entirely so the ban greps clean. Every braking or
- * resistance impulse in the tracker goes through one of these two functions and
- * through nothing else.
- *
- * THE CLAMP. The applied impulse points exactly opposite the velocity it is
- * given and has magnitude min(requested, maximum), where `maximum` is the
- * impulse that brings that velocity exactly to zero. It can therefore cancel
- * motion and can never reverse it. A PD derivative term that overshoots zero is
- * not damping, it is a spring with the sign flipped, and it is what turns a
- * tracked character into a strobing blur on the first frame the gains are a
- * little too high.
- *
- * THE VELOCITY IS RELATIVE. Callers hand in (bodyVelocity - targetVelocity),
- * not the body's absolute velocity. Damping the absolute velocity would brake
- * the character against its own locomotion: the sphere carries it forward at
- * 9 m/s, the tracker sees 9 m/s of "error" and spends every step fighting it.
- * A character that tracks a moving target must be free to move WITH it.
- *
- * The canonical form divides by dt and multiplies by dt again; the two cancel.
- * That is deliberate, kept in the shape the law states, and sound only because
- * dt is a genuine constant.
- *
- * DIRECTORY RULE (src/sim/): nothing here names a wall-clock or scheduler API.
+ * Role: Clamped linear and angular damping impulse helpers (`applyClampedLinearDamping`,
+ *   `applyClampedAngularDamping`, `conservativeInertia`).
+ * Frame Phase: Fixed-step pre-physics (called by `tracker.js`, `ball.js`, and `athlete.js`).
+ * Active Architectural Laws:
+ *   - LAW L3 (Damping-Impulse Clamp): Every linear or angular resistance impulse
+ *     points strictly opposite the given relative velocity and is clamped to
+ *     `min(requested, maximum)` where `maximum` brings that velocity exactly to zero.
+ *     This prevents discrete-step derivative overshoot and velocity sign reversal.
+ *   - LAW L6 (Determinism): Operates strictly on the constant `dt`; no wall-clock APIs.
  */
 
 /** Below this there is no meaningful direction left to oppose. */

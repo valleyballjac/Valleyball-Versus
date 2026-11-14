@@ -29,7 +29,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const GLB_PATH = path.join(ROOT, 'public', 'models', 'arena.glb');
 const MESH_NAME = 'COL_Barriers';
 const DO_WRITE = process.argv.includes('--write');

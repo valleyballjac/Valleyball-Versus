@@ -1,7 +1,24 @@
+/**
+ * MODULE HEADER — src/sim/athlete.js
+ *
+ * Role: Encapsulates a single Athlete entity (`createAthlete`) combining its
+ *   locomotion sphere motor, 16-body ragdoll, kinematic ghost target, PD tracker,
+ *   mount follower, defensive actions, and strike system.
+ * Frame Phase: Fixed-step pre-physics (`prePhysicsUpdate`), post-physics
+ *   (`postPhysicsUpdate`, `resolveAthletePairSeparation`), and render frame
+ *   (`renderPose`, `refreshVisuals`).
+ * Active Architectural Laws:
+ *   - LAW L1 (Physics Owns Momentum): Locomotion and tracking apply forces/impulses
+ *     only; no kinematic velocity overrides during active play.
+ *   - LAW 4 (Zero Hot-Loop Allocations): Reuses per-athlete scratch structures
+ *     (`_ghostInputs`, `_prePhysicsResult`, `_sepImpulse`) every tick.
+ *   - LAW L6 (Determinism): Fixed-step updates run in deterministic athlete order.
+ */
+
 import * as THREE from 'three';
 import { TUNING } from '../config/tuning.js';
-import { RAPIER, getWorld, ENVIRONMENT_RAY_GROUPS } from './physics.js';
-import { createMotor, updateMotor, syncMotorSnapshot, horizontalSpeed } from './motor.js';
+import { RAPIER, getWorld } from './physics.js';
+import { createMotor, updateMotor, syncMotorSnapshot } from './motor.js';
 import {
   createAnimTarget,
   updateAnimTarget,
@@ -31,7 +48,6 @@ import { createActionState, runActions } from '../mechanics/actions.js';
 import {
   createStrikeState,
   runStrikes,
-  resolveStrikeContact,
   checkStrikeAssist,
   applyStrikeAssistPreset,
   KIND_NAME,
@@ -234,25 +250,44 @@ export function createAthlete({
     }
   }
 
+  const _ghostInputs = {
+    recoveryWeight: 1,
+    steerInput: 0,
+    slideMix: 0,
+    diveMix: 0,
+    braceMix: 0,
+    slidePhase: 0,
+    divePhase: 0,
+    strikeMix: 0,
+    strikePhase: 0,
+    strikeKind: 0,
+    strikeSide: 0,
+    facingFollowsCamera: false,
+    hasAim: false,
+    aimYaw: 0,
+    moveWorldX: 0,
+    moveWorldZ: 0,
+  };
+  const _prePhysicsResult = { actions: null, strikes: null };
+
   function buildGhostInputs(actions, strikes, inputSnapshot, facingFollowsCamera) {
-    return {
-      recoveryWeight: tracker.weight,
-      steerInput: Math.hypot(inputSnapshot.moveWorld.x, inputSnapshot.moveWorld.z),
-      slideMix: actions.slideMix,
-      diveMix: actions.diveMix,
-      braceMix: actions.braceMix,
-      slidePhase: actions.slidePhase,
-      divePhase: actions.divePhase,
-      strikeMix: strikes.strikeMix,
-      strikePhase: strikes.strikePhase,
-      strikeKind: strikes.strikeKind,
-      strikeSide: strikes.strikeSide,
-      facingFollowsCamera,
-      hasAim: inputSnapshot.hasAim || false,
-      aimYaw: inputSnapshot.aimYaw || 0,
-      moveWorldX: inputSnapshot.moveWorld.x,
-      moveWorldZ: inputSnapshot.moveWorld.z,
-    };
+    _ghostInputs.recoveryWeight = tracker.weight;
+    _ghostInputs.steerInput = Math.hypot(inputSnapshot.moveWorld.x, inputSnapshot.moveWorld.z);
+    _ghostInputs.slideMix = actions.slideMix;
+    _ghostInputs.diveMix = actions.diveMix;
+    _ghostInputs.braceMix = actions.braceMix;
+    _ghostInputs.slidePhase = actions.slidePhase;
+    _ghostInputs.divePhase = actions.divePhase;
+    _ghostInputs.strikeMix = strikes.strikeMix;
+    _ghostInputs.strikePhase = strikes.strikePhase;
+    _ghostInputs.strikeKind = strikes.strikeKind;
+    _ghostInputs.strikeSide = strikes.strikeSide;
+    _ghostInputs.facingFollowsCamera = facingFollowsCamera;
+    _ghostInputs.hasAim = inputSnapshot.hasAim || false;
+    _ghostInputs.aimYaw = inputSnapshot.aimYaw || 0;
+    _ghostInputs.moveWorldX = inputSnapshot.moveWorld.x;
+    _ghostInputs.moveWorldZ = inputSnapshot.moveWorld.z;
+    return _ghostInputs;
   }
 
   function isTumbling(actions) {
@@ -526,7 +561,9 @@ export function createAthlete({
       // Tracking forces
       applyTracking(tracker, ragdoll && ragdoll.rig, animTarget, motor, dt, isTumbling(actions));
 
-      return { actions, strikes };
+      _prePhysicsResult.actions = actions;
+      _prePhysicsResult.strikes = strikes;
+      return _prePhysicsResult;
     },
 
     /**
@@ -617,22 +654,6 @@ export function createAthlete({
         attempts,
         accuracy: attempts > 0 ? Math.round((strikeState.resolvedCount / attempts) * 100) : 0,
       };
-    },
-
-    get team() {
-      return currentTeam;
-    },
-
-    get variant() {
-      return currentVariant;
-    },
-
-    get strikeState() {
-      return strikeState;
-    },
-
-    get actionState() {
-      return actionState;
     },
 
     renderPose(alpha) {

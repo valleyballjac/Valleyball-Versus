@@ -1,7 +1,15 @@
+/**
+ * @file controlsOverlay.js
+ * Responsibility: Live on-screen control strip HUD showing keyboard and gamepad bindings and active button highlights.
+ * Upstream: Initialized and updated per frame by `src/main.js`.
+ * Downstream: Reads `CONTROL_BITS` from `src/input/inputRouter.js` and `TUNING` from `src/config/tuning.js`.
+ * Key invariants:
+ * - DOM-only presentation; reads bitmask snapshots from `inputRouter` without consuming gameplay actions.
+ * - Mutates DOM classes only when the active bitmask or layout changes.
+ */
+
 import { CONTROL_BITS } from '../input/inputRouter.js';
 import { TUNING } from '../config/tuning.js';
-
-// DOM-only presentation. The router owns the snapshot; this module never consumes an action.
 const actions = [
   ['move', 'Move'], ['look', 'Look'], ['sprint', 'Sprint'], ['slide', 'Slide'],
   ['jump', 'Jump'], ['dive', 'Dive'], ['cut', 'Cut'], ['volley', 'Volley'],

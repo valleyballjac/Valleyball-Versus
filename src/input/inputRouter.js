@@ -1,8 +1,19 @@
+/**
+ * Module: input/inputRouter
+ * Role: Hardware input router mapping keyboard keysets (WASD, IJKL), mouse look/clicks, and up to 4 gamepads to athlete input slots (0..3).
+ * Frame Phase: Input Sampling (called once per render frame via `sampleAllInputs`, consumed inside 60 Hz `fixedUpdate`).
+ * Active Architectural Laws:
+ *   - LAW 1 (Single Authority): Single authoritative input slot table (`slots[0..3]`) for both human devices and AI bot injection.
+ *   - LAW 6 (Deterministic Match): Samples hardware once per frame outside `fixedUpdate`; `fixedUpdate` only reads latched slot values.
+ *   - LAW 8 (60 FPS Frame-Time Budget): Uses pre-allocated `_sampledInputs` and scratch `THREE.Vector3` instances (`camForward`, `camRight`) with zero per-frame allocations.
+ */
+
 import * as THREE from 'three';
 import { TUNING } from '../config/tuning.js';
 import { showToast, isMainMenuActive } from '../ui/mainMenu.js';
 import { isInGameMenuOpen } from '../ui/inGameMenu.js';
 import { isVictoryScreenVisible } from '../ui/victoryScreen.js';
+import { isOvertimeMenuOpen } from '../ui/overtimeMenu.js';
 
 /**
  * Input Router for Valleyball Versus.
@@ -66,6 +77,44 @@ const keysetSlot = [0, 1];
 const slotKeyset = [0, 1, 0, 1];
 const slotPads = [null, null, null, null];
 let arrowLookSlot = -1;
+
+// Per-gamepad Fighting Pad / D-Pad Movement mode overrides (padIndex -> boolean).
+// Auto-enabled when hardware identifies as a fighting stick / hitbox / leverless or has < 2 analog axes.
+const fightingPadOverrides = new Map();
+
+export function isFightingPadHardware(pad) {
+  if (!pad) return false;
+  const raw = pad.id || '';
+  const axesCount = Array.isArray(pad.axes) ? pad.axes.length : 4;
+  return /fighting|arcade|hitbox|fightstick|hori|qanba|victrix|mayflash|mad\s*catz|kitsune|snack\s*box|m30|octa|leverless/i.test(raw) || axesCount < 2;
+}
+
+export function isPadFightingMode(pad) {
+  if (!pad) return false;
+  if (fightingPadOverrides.has(pad.index)) {
+    return fightingPadOverrides.get(pad.index);
+  }
+  return isFightingPadHardware(pad);
+}
+
+export function setPadFightingMode(padIndex, enabled) {
+  fightingPadOverrides.set(padIndex, Boolean(enabled));
+  if (explicitDeviceMappings) {
+    for (let s = 0; s < 4; s++) {
+      const m = explicitDeviceMappings[s];
+      if (m && m.type === 'gamepad' && m.padIndex === padIndex) {
+        m.fightingPad = Boolean(enabled);
+      }
+    }
+  }
+}
+
+export function togglePadFightingMode(pad) {
+  if (!pad) return false;
+  const next = !isPadFightingMode(pad);
+  setPadFightingMode(pad.index, next);
+  return next;
+}
 
 const GAMEPAD_BUTTONS = {
   jump: 0,        // A / Cross
@@ -180,7 +229,9 @@ function updateUiSlot(index, pad, athleteCount, botSlots, mode) {
   const keyboard = keyboardHeld(index, mode, pad);
   let padMask = 0;
   if (pad) {
+    const fightMode = isPadFightingMode(pad) || Boolean(mapping?.fightingPad);
     if (Math.hypot(pad.axes[0] || 0, pad.axes[1] || 0) > TUNING.motor.stickDeadzone) padMask |= CONTROL_BITS.move;
+    if (fightMode && (padDown(pad, 12) || padDown(pad, 13) || padDown(pad, 14) || padDown(pad, 15))) padMask |= CONTROL_BITS.move;
     if (Math.hypot(pad.axes[2] || 0, pad.axes[3] || 0) > TUNING.motor.stickDeadzone) padMask |= CONTROL_BITS.look;
     if (padDown(pad, GAMEPAD_BUTTONS.sprint)) padMask |= CONTROL_BITS.sprint;
     if (padDown(pad, GAMEPAD_BUTTONS.slide)) padMask |= CONTROL_BITS.slide;
@@ -232,10 +283,6 @@ export function consumeCameraCycleArena(slotIdx = 0) {
   return val;
 }
 
-export function consumeCameraCycle(slotIdx = 0) {
-  return consumeCameraCyclePlayer(slotIdx) !== 0;
-}
-
 // Mouse drag state
 let dragging = false;
 let dragPointerId = -1;
@@ -256,12 +303,12 @@ const slots = [
   createInputSlot(),
 ];
 
-// Previous button states for edge-detection per pad
+// Previous button states for edge-detection per player slot: slotIdx (0..3) -> button state object
 const padPrevStates = new Map();
 
-function getPadPrev(padIndex) {
-  if (!padPrevStates.has(padIndex)) {
-    padPrevStates.set(padIndex, {
+function getPadPrev(slotIdx) {
+  if (!padPrevStates.has(slotIdx)) {
+    padPrevStates.set(slotIdx, {
       jump: false,
       dive: false,
       cut: false,
@@ -275,7 +322,7 @@ function getPadPrev(padIndex) {
       dpadDown: false,
     });
   }
-  return padPrevStates.get(padIndex);
+  return padPrevStates.get(slotIdx);
 }
 
 function isTextEntry(target) {
@@ -288,7 +335,7 @@ let currentBotSlots = [];
 let gameplayInputActive = false;
 
 function isUiBlockingGameplayInput() {
-  return !gameplayInputActive || isInGameMenuOpen() || isMainMenuActive() || isVictoryScreenVisible();
+  return !gameplayInputActive || isInGameMenuOpen() || isMainMenuActive() || isVictoryScreenVisible() || isOvertimeMenuOpen();
 }
 
 export function clearGameplayInputQueues() {
@@ -480,7 +527,7 @@ export function initInputRouter(surface) {
 
   window.addEventListener('click', (e) => {
     if (isTextEntry(e.target)) return;
-    if (e.target.closest && (e.target.closest('#main-menu-root') || e.target.closest('#in-game-menu-container') || e.target.closest('.how-to-play-modal') || e.target.closest('.victory-overlay'))) {
+    if (e.target.closest && (e.target.closest('#main-menu-root') || e.target.closest('#in-game-menu-container') || e.target.closest('#overtime-menu-overlay') || e.target.closest('.how-to-play-modal') || e.target.closest('.victory-overlay'))) {
       return;
     }
     const isGameplay = window.__vb?.getGameState ? (window.__vb.getGameState() === 'match' || window.__vb.getGameState() === 'practice') : true;
@@ -577,6 +624,7 @@ export function assignDefaultDeviceForSlot(slotIndex) {
       padIndex: freePad.index,
       name: `Gamepad ${freePad.index + 1}`,
       id: freePad.id,
+      fightingPad: isPadFightingMode(freePad),
     };
   } else {
     // Two slots on one keyset would leave one of them with no keys at all.
@@ -633,11 +681,14 @@ export function assignPadToSlot(slotIndex, padIndex, padId = '') {
       delete explicitDeviceMappings[s];
     }
   }
+  const pads = getConnectedGamepads();
+  const matchedPad = pads.find((p) => p && p.index === padIndex) || null;
   explicitDeviceMappings[slotIndex] = {
     type: 'gamepad',
     padIndex,
     name: `Gamepad ${padIndex + 1}`,
-    id: padId || `Gamepad ${padIndex + 1}`,
+    id: padId || matchedPad?.id || `Gamepad ${padIndex + 1}`,
+    fightingPad: matchedPad ? isPadFightingMode(matchedPad) : Boolean(fightingPadOverrides.get(padIndex)),
   };
 }
 
@@ -702,28 +753,54 @@ export function getControllerAssignments(athleteCount = 2, mode = 'match') {
 
 const lastGoodYaw = [0, 0, 0, 0];
 
+// Pre-allocated 4-slot camera basis cache to avoid per-frame Vector3 and array allocations
+const _sampledInputs = [0, 1, 2, 3].map(() => {
+  const camForward = new THREE.Vector3(0, 0, 1);
+  const camRight = new THREE.Vector3(1, 0, 0);
+  return {
+    yaw: 0,
+    camForward,
+    camRight,
+    forward: camForward,
+    right: camRight,
+    valid: false,
+  };
+});
+
 function getCamVectors(cam, slotIdx = 0) {
-  if (!cam) return { yaw: lastGoodYaw[slotIdx] || 0, forward: new THREE.Vector3(0, 0, 1), right: new THREE.Vector3(1, 0, 0), valid: false };
-  const fwd = new THREE.Vector3();
-  const rgt = new THREE.Vector3();
-  cam.getWorldDirection(fwd);
-  fwd.y = 0;
-  if (fwd.lengthSq() > 1e-8) {
-    fwd.normalize();
-    rgt.crossVectors(fwd, WORLD_UP).normalize();
-    const yaw = Math.atan2(fwd.x, fwd.z);
-    lastGoodYaw[slotIdx] = yaw;
-    return { yaw, forward: fwd, right: rgt, valid: true };
+  const out = _sampledInputs[slotIdx] || _sampledInputs[0];
+  if (!cam) {
+    out.yaw = lastGoodYaw[slotIdx] || 0;
+    out.camForward.set(0, 0, 1);
+    out.camRight.set(1, 0, 0);
+    out.valid = false;
+    return out;
   }
-  return { yaw: lastGoodYaw[slotIdx] || 0, forward: new THREE.Vector3(0, 0, 1), right: new THREE.Vector3(1, 0, 0), valid: false };
+  cam.getWorldDirection(out.camForward);
+  out.camForward.y = 0;
+  if (out.camForward.lengthSq() > 1e-8) {
+    out.camForward.normalize();
+    out.camRight.crossVectors(out.camForward, WORLD_UP).normalize();
+    const yaw = Math.atan2(out.camForward.x, out.camForward.z);
+    lastGoodYaw[slotIdx] = yaw;
+    out.yaw = yaw;
+    out.valid = true;
+    return out;
+  }
+  out.yaw = lastGoodYaw[slotIdx] || 0;
+  out.camForward.set(0, 0, 1);
+  out.camRight.set(1, 0, 0);
+  out.valid = false;
+  return out;
 }
 
 /**
  * Samples all inputs once per frame.
- * @param {THREE.Camera|THREE.Camera[]} cameras Single camera or array [cam1, cam2]
+ * @param {THREE.Camera|THREE.Camera[]} cameras Single camera or array [cam1, cam2, ...]
  * @param {number} athleteCount
  * @param {'practice' | 'match'} mode
  * @param {number[]} botSlots  slot indices controlled by bots (skip device polling)
+ * @param {boolean} [isGameplayActive=true]
  */
 export function sampleAllInputs(cameras, athleteCount = 2, mode = 'match', botSlots = [], isGameplayActive = true) {
   currentBotSlots = botSlots;
@@ -778,13 +855,13 @@ export function sampleAllInputs(cameras, athleteCount = 2, mode = 'match', botSl
   accumDX = 0;
   accumDY = 0;
 
-  // Resolve camera(s)
+  // Resolve camera(s) into pre-allocated _sampledInputs
   const isCamArray = Array.isArray(cameras);
   const p1Cam = isCamArray ? (cameras[0]?.camera || cameras[0]) : (cameras?.camera || cameras);
-  const camDatas = [0, 1, 2, 3].map((idx) => {
+  for (let idx = 0; idx < 4; idx++) {
     const rawCam = isCamArray ? (cameras[idx]?.camera || cameras[idx] || p1Cam) : p1Cam;
-    return getCamVectors(rawCam, idx);
-  });
+    getCamVectors(rawCam, idx);
+  }
 
   const pads = getConnectedGamepads();
   resolveDeviceRouting(pads, athleteCount, mode, botSlots);
@@ -792,7 +869,7 @@ export function sampleAllInputs(cameras, athleteCount = 2, mode = 'match', botSl
   const maxSlots = Math.min(4, Math.max(2, athleteCount));
   for (let i = 0; i < maxSlots; i++) {
     if (i >= athleteCount || botSlots.includes(i)) continue;
-    sampleHumanSlot(i, slotPads[i], camDatas[i] || camDatas[0], mode);
+    sampleHumanSlot(i, slotPads[i], _sampledInputs[i] || _sampledInputs[0], mode);
   }
   const activeCount = mode === 'practice' ? 1 : athleteCount;
   for (let i = 0; i < 4; i++) {
@@ -887,10 +964,25 @@ function sampleHumanSlot(i, pad, camData, mode) {
   }
 
   if (pad) {
+    const fightMode = isPadFightingMode(pad) || Boolean(explicitDeviceMappings?.[i]?.fightingPad);
     const stick = applyDeadzone(pad.axes[0] || 0, pad.axes[1] || 0, TUNING.motor.stickDeadzone);
     if (stick.x !== 0 || stick.y !== 0) {
       x = stick.x;
       z = -stick.y;
+    }
+
+    const dLeft = padDown(pad, 14);
+    const dRight = padDown(pad, 15);
+    const dUp = padDown(pad, 12);
+    const dDown = padDown(pad, 13);
+
+    if (fightMode) {
+      const dx = (dRight ? 1 : 0) - (dLeft ? 1 : 0);
+      const dz = (dUp ? 1 : 0) - (dDown ? 1 : 0);
+      if (dx !== 0 || dz !== 0) {
+        x = dx;
+        z = dz;
+      }
     }
 
     const look = applyDeadzone(pad.axes[2] || 0, pad.axes[3] || 0, TUNING.motor.stickDeadzone);
@@ -934,18 +1026,19 @@ function sampleHumanSlot(i, pad, camData, mode) {
     if (ballResetDown && !prev.ballReset) {
       if (mode === 'practice') {
         slot.ballResetQueued = true;
+      } else if (fightMode) {
+        // Fighting pads use D-Pad for movement, so Select/Back cycles player camera in matches.
+        cameraCyclePlayerQueued[i] = 1;
       }
     }
     prev.ballReset = ballResetDown;
 
-    const dLeft = padDown(pad, 14);
-    const dRight = padDown(pad, 15);
-    const dUp = padDown(pad, 12);
-    const dDown = padDown(pad, 13);
-    if (dLeft && !prev.dpadLeft) cameraCyclePlayerQueued[i] = -1;
-    if (dRight && !prev.dpadRight) cameraCyclePlayerQueued[i] = 1;
-    if (dUp && !prev.dpadUp) cameraCycleArenaQueued[i] = -1;
-    if (dDown && !prev.dpadDown) cameraCycleArenaQueued[i] = 1;
+    if (!fightMode) {
+      if (dLeft && !prev.dpadLeft) cameraCyclePlayerQueued[i] = -1;
+      if (dRight && !prev.dpadRight) cameraCyclePlayerQueued[i] = 1;
+      if (dUp && !prev.dpadUp) cameraCycleArenaQueued[i] = -1;
+      if (dDown && !prev.dpadDown) cameraCycleArenaQueued[i] = 1;
+    }
     prev.dpadLeft = dLeft;
     prev.dpadRight = dRight;
     prev.dpadUp = dUp;
@@ -982,7 +1075,11 @@ function sampleHumanSlot(i, pad, camData, mode) {
 /** The controls that cycle a slot's camera, as routed last sample, for on-screen hints. */
 export function getCameraCycleHint(slotIdx) {
   const parts = [];
-  if (slotPads[slotIdx]) parts.push('D-PAD');
+  const pad = slotPads[slotIdx];
+  if (pad) {
+    const fightMode = isPadFightingMode(pad) || Boolean(explicitDeviceMappings?.[slotIdx]?.fightingPad);
+    parts.push(fightMode ? 'SELECT' : 'D-PAD');
+  }
   if (keysetSlot[0] === slotIdx) parts.push('TAB');
   if (keysetSlot[1] === slotIdx) parts.push('] KEY');
   return parts.join(' / ');

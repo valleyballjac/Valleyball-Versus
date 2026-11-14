@@ -1,3 +1,13 @@
+/**
+ * Module: visuals/scoreboards
+ * Role: Four recessed stadium jumbotron scoreboards (North/South end walls and East/West sidelines) with a shared decoupled 256x64 micro-clock overlay.
+ * Frame Phase: Render (throttled via `displayCoordinator` upload budget).
+ * Active Architectural Laws:
+ *   - LAW 1 (Single Authority): Purely visual readout of `matchState` (`scoreHome`, `scoreAway`, `targetGoal`, `ticksRemaining`, `celebrationTicks`).
+ *   - LAW 6 (Deterministic Match): Driven solely by simulation tick counters (`ticksRemaining`, `celebrationTicks`); never reads wall-clock `Date` or `performance.now()`.
+ *   - LAW 8 (60 FPS Frame-Time Budget): Decouples the 65 KB clock texture from the 1024x512 / 2048x512 backplates and uses material color uniforms for celebration flashing.
+ */
+
 import * as THREE from 'three';
 import { TUNING, assetUrl } from '../config/tuning.js';
 import { displayCoordinator } from './displayCoordinator.js';
@@ -131,7 +141,7 @@ function drawMicroClock(ctx, W, H, text, isMatchOver) {
   ctx.clearRect(0, 0, W, H);
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  const fontSize = text.length > 7 ? 34 : 44;
+  const fontSize = text.length > 12 ? 22 : (text.length > 7 ? 34 : 44);
   ctx.font = `900 ${fontSize}px ${ATHLETIC_FONT}`;
   ctx.fillStyle = isMatchOver ? INK.away : INK.value;
   ctx.fillText(text, W / 2, H / 2 + 1);
@@ -338,9 +348,19 @@ export function updateScoreboards(handle, probe) {
 
   const isMatchMode = probe.mode === 'match';
   const seconds = Math.floor(probe.ticksRemaining / 60);
-  const clockText = !isMatchMode
-    ? 'PRACTICE'
-    : (probe.matchOver ? 'FULL TIME' : `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`);
+  const mmss = `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+  let clockText;
+  if (!isMatchMode) {
+    clockText = 'PRACTICE';
+  } else if (probe.matchOver) {
+    clockText = 'FULL TIME';
+  } else if (probe.isGoldenGoal) {
+    clockText = 'OT · GOLDEN GOAL';
+  } else if (probe.overtimePeriod > 0) {
+    clockText = `OT ${mmss}`;
+  } else {
+    clockText = mmss;
+  }
 
   // 1. DECOUPLED MICRO-CLOCK OVERLAY UPDATE (65 KB payload shared across all 4 boards)
   // Only updates when clock string or celebration flashing changes

@@ -4,44 +4,21 @@ import { TUNING } from '../config/tuning.js';
 import { RAPIER, getWorld, ENVIRONMENT_RAY_GROUPS } from '../sim/physics.js';
 
 /**
- * THE MOUNT FOLLOWER — the floor probe under the pelvis, and the held
- * constraint that keeps the sphere beneath a downed athlete.
+ * MODULE HEADER — src/mechanics/mountFollower.js
  *
- * Lifted out of `fixedUpdate` whole in G3.5. Every line and every comment
- * travelled with it; nothing was rewritten, reordered or shortened, because the
- * gate for this step is a byte-identical determinism hash and the reasoning in
- * these comments is the only record of why two earlier attempts at this
- * mechanic failed.
- *
- * IT RETURNS `pelvisFloorY` RATHER THAN SETTING IT. That value was a
- * module-level `let` in main.js, written here and read two hundred lines later
- * by the ghost — a channel with no declaration and no owner. It is a return
- * value now, which is the same number travelling the same distance with its
- * route written down.
- *
- * THE RAY IS THIS MODULE'S OWN. main.js used to keep ONE lazily-built
- * `RAPIER.Ray` shared between this mechanic and the camera's spring arm, with
- * the origin and direction objects rewritten in place before each cast. That
- * sharing was safe only because every caller happened to set all six fields
- * first; it is not a property anyone could check. Each owner now has its own,
- * which costs one Ray object for the life of the process and removes an
- * invariant that was being maintained by luck.
- *
- * THE DIRECTORY RULE APPLIES HERE TOO (src/mechanics/): nothing in this file
- * names a wall clock or a scheduler. The clock is `tick`.
+ * Role: Probes the court floor beneath the pelvis (`pelvisFloorY`) and smoothly
+ *   pulls the sphere motor underneath a downed/detached ragdoll (`createMountFollowerState`,
+ *   `runMountFollower`) so recovery stand-ups pull straight upward.
+ * Frame Phase: Fixed-step pre-physics (`runMountFollower`, called inside `athlete.prePhysicsUpdate`).
+ * Active Architectural Laws:
+ *   - RULING GF-1.4 (Sanctioned Spawn/Mount Family): Evaluates simulation state only
+ *     (`tracker.weight`, `animTarget.pelvisDownness`, pelvis-to-sphere separation) and
+ *     is unreachable while tracking is healthy.
+ *   - LAW 4 (Zero Hot-Loop Allocations): Reuses `state.envRay`, `state.rayFrom`,
+ *     `state.rayDir`, and `state.mountPoint` in place.
+ *   - LAW 6 (Determinism): No wall-clock APIs; uses constant `dt` and `tick`.
  */
 
-/**
- * Mount-hold gates that are not feel knobs and must not become sliders.
- *
- * pelvisDownness past this means the pelvis is genuinely on the floor rather
- * than dipped; the speed gate means the drag has already done its work and the
- * ball is no longer travelling. Both are statements about when the hold is SAFE, not
- * about how it should feel, so they live here beside the ruling rather than in
- * TUNING where a slider would invite tuning an invariant. Both were relaxed for
- * Task 7 (0.8 -> 0.7, 0.2 -> 0.5) so the held window opens while the weight
- * gate is still open — see the measured table at the constraint itself.
- */
 /**
  * How far the pelvis must have dropped before the sphere starts following it.
  *
@@ -102,8 +79,6 @@ export function createMountFollowerState() {
     rayDir: { x: 0, y: 0, z: 0 },
     /** Scratch for the sphere's new position, so a follow allocates nothing. */
     mountPoint: new THREE.Vector3(),
-    /** Rate-limits the follow log to once a second. A recorded tick, not a state. */
-    lastMountLogTick: -1e9,
   };
 }
 
@@ -226,7 +201,6 @@ export function runMountFollower({ state, motor, ragdoll, animTarget, tracker, t
           const dirX = gapX * invSep;
           const dirZ = gapZ * invSep;
 
-          if (!state.envRay) state.envRay = new RAPIER.Ray(state.rayFrom, state.rayDir);
           state.rayFrom.x = sphere.x; state.rayFrom.y = sphere.y; state.rayFrom.z = sphere.z;
           state.rayDir.x = dirX; state.rayDir.y = 0; state.rayDir.z = dirZ;
           const reach = move + TUNING.motor.radius;
@@ -259,14 +233,7 @@ export function runMountFollower({ state, motor, ragdoll, animTarget, tracker, t
             sphere.y + gapY * Math.min(1, TUNING.impact.mountFollowRate * dt),
             sphere.z + dirZ * move,
           );
-          motor.body.setTranslation(
-            { x: state.mountPoint.x, y: state.mountPoint.y, z: state.mountPoint.z },
-            true,
-          );
-
-          if (tick - state.lastMountLogTick >= TUNING.loop.fixedHz) {
-            state.lastMountLogTick = tick;
-          }
+          motor.body.setTranslation(state.mountPoint, true);
         }
       }
     }

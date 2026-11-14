@@ -1,27 +1,29 @@
-import { MATCH_BALL_OPTIONS } from './constants.js';
+/**
+ * Module: features/ui/mainMenu/state
+ * Role: Shared cross-screen state for the Main Menu subsystem (Title Screen, Controller Assignment, Player Setup, and Menu Navigation).
+ * Frame Phase: UI Event / Polling
+ * Active Architectural Laws:
+ *   - LAW 1 (Single Authority): `state.playerConfigs` (length 4) is the single source of truth for P1–P4 lobby configuration
+ *     across Controller Assignment and Player Setup.
+ */
 
+/**
+ * Shared mutable state container for the Main Menu screens.
+ */
 export const state = {
+  /** @type {HTMLElement|null} Root overlay element (`#main-menu-root`) */
   rootEl: null,
+  /** @type {HTMLElement|null} Title Screen container element */
   titleScreenEl: null,
-  playerSetupEl: null,
-  playerSetupContainerEl: null,
-  flyoverOverlayEl: null,
-  controlsModalEl: null,
-  mainMenuSettingsModalEl: null,
+  /** @type {HTMLElement|null} Controller Assignment screen container element */
   controllerAssignmentEl: null,
+  /** @type {object|null} Interactive 3D brand ball instance on the Title Screen */
   titleBrandBall: null,
 
-  callbacks: {
-    onStartMatch: null,
-    onStartPractice: null,
-    onPlayerConfigChange: null,
-    onOpenSettings: null,
-    onSkipFlyover: null,
-    onEnterSetup: null,
-    onExitSetup: null,
-    onRenderSettingsChange: null,
-  },
-
+  /**
+   * Canonical 4-slot player configuration array shared between Controller Assignment and Player Setup.
+   * Never truncated below length 4 so 2v2 slot settings persist across format switches.
+   */
   playerConfigs: [
     {
       name: 'Player 1',
@@ -73,51 +75,10 @@ export const state = {
     },
   ],
 
-  currentSetupMode: 'match',
-  setupPage: 1,
-  currentBallOptions: MATCH_BALL_OPTIONS,
-  selectedMatchBall: 'random',
-  selectedMatchDuration: 300,
-  selectedMatchArena: 'court',
-  matchBallCards: [],
-  matchDurationButtons: [],
-  arenaButtons: [],
-  matchRulesBoxEl: null,
-  matchRulesFocusRow: 0, // 0: ball, 1: duration, 2: arena, 3: ready, 4: start
-
-  lobbyTitleEl: null,
-  lobbySubtitleEl: null,
-  lobbyBadgeEl: null,
-  columnsBoxEl: null,
-  col1El: null,
-  col2El: null,
-  col1HeaderLabelEl: null,
-  matchBallCardsRowEl: null,
-  matchBallHeaderTitleEl: null,
-  matchBallHeaderDescEl: null,
-
-  playerTypeButtons: [[], []],
-  playerTeamButtons: [[], []],
-  playerSwatchButtons: [[], []],
-  playerPhysiqueButtons: [[], []],
-  playerCameraSelects: [null, null],
-  playerReadyButtons: [null, null],
-  playerInputBadges: [null, null],
-  playerRowElements: [[], []],
-  playerFocusRow: [0, 0],
-  focusedColumn: 0, // 0 for Player 1, 1 for Player 2
-  btnStartMatch: null,
-  btnNext: null,
-  btnBack: null,
-  btnReadyP1: null,
-  btnReadyP2: null,
-  playerReadyState: [false, false],
-  matchCountdownInterval: null,
-  matchCountdownSecs: 0,
-  matchCountdownActive: false,
-  readyBannerEls: [null, null],
-  ctrlTagEls: [null, null],
+  /** @type {HTMLElement[]} Focusable buttons on the Title Screen */
   titleButtons: [],
+  /** @type {number} Active focus index on the Title Screen */
   titleFocusIndex: 1,
+  /** @type {number|null} Interval ID for menu gamepad polling */
   gamepadPollHandle: null,
 };

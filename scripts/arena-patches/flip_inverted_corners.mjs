@@ -12,7 +12,7 @@ if (typeof globalThis.FileReader === 'undefined') {
   };
 }
 
-const ROOT = fileURLToPath(new URL('..', import.meta.url));
+const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const IN = path.join(ROOT, 'public', 'models', 'arena.glb');
 const DO_FLIP = process.argv.includes('--flip');
 

@@ -1,3 +1,16 @@
+/**
+ * @module evolutionarySearch
+ * @description Genetic algorithm and genome parameterization for offline AI tuning (`train_ai.mjs`).
+ *
+ * - **Role**: Defines the 22-parameter AI tuning `GENOME` (ranges, quantization steps, defaults) and
+ *   provides deterministic selection, uniform crossover, and Box-Muller Gaussian mutation operators.
+ * - **Frame Phase**: Offline training harness only (between headless match evaluations; never called
+ *   during live 60 Hz gameplay).
+ * - **Active Architectural Laws**:
+ *   - **LAW 6 (Determinism)**: All stochastic operations (genome initialization, crossover, mutation)
+ *     consume an explicit xorshift32 `rng` closure (`createRNG(seed)`), never `Math.random()`.
+ */
+
 export const GENOME = {
   reactionDelayTicks:     { min: 0,   max: 20,  step: 1,    default: 4 },
   aimAccuracy:            { min: 0.3, max: 1.0, step: 0.05, default: 0.85 },
@@ -5,6 +18,7 @@ export const GENOME = {
   strikeTimingJitter:     { min: 0,   max: 10,  step: 1,    default: 2 },
   sprintUsage:            { min: 0.3, max: 1.0, step: 0.05, default: 0.85 },
   diveAccuracy:           { min: 0.0, max: 1.0, step: 0.05, default: 0.7 },
+  diveCooldownTicks:      { min: 90,  max: 360, step: 10,   default: 180 },
   spikeAccuracy:          { min: 0.0, max: 1.0, step: 0.05, default: 0.75 },
   defensiveAwareness:     { min: 0.2, max: 1.0, step: 0.05, default: 0.75 },
   strategyUpdateInterval: { min: 2,   max: 14,  step: 1,    default: 6 },

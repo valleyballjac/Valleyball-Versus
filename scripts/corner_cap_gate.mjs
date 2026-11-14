@@ -314,7 +314,10 @@ export function cornerCapWinding(meshes) {
         upPerQuadrant[q]++;
         if (s.maxY >= FAN_APEX_MIN_Y) apexPerQuadrant[q] = true;
         if (s.minY <= FAN_RIM_MAX_Y) rimPerQuadrant[q] = true;
-      } else {
+      } else if (Math.abs(s.avgX) < 24.95 && Math.abs(s.avgZ) < 59.95) {
+        // Ignore outer perimeter boundary glass faces at |x| = 25 or |z| = 60
+        // added by the arena-v11.1 boundary seal; only flag interior vertical
+        // faces (resurrected corner curtains).
         verticalInBand++;
         if (verticalInBand <= 8) {
           failures.push({ kind: 'vertical-in-fan-band', quadrant: q, x: +s.avgX.toFixed(2), z: +s.avgZ.toFixed(2), ny: +s.ny.toFixed(2) });
