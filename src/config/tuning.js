@@ -54,8 +54,8 @@ export function assetUrl(path) {
  */
 
 const DEFAULTS = {
-  // Construction-time: the loop binds fixedHz once. LAW 6.
-  loop: { fixedHz: 60, maxFrameTime: 0.25 },
+  // Construction-time: the loop binds fixedHz once (maxFrameTime capped at 4 steps). LAW 6.
+  loop: { fixedHz: 60, maxFrameTime: 0.067 },
 
   debug: {
     showHud: false,
@@ -1548,10 +1548,10 @@ const DEFAULTS = {
     sideX: 24.98, // 2cm in front of |x|=25 wall: perfectly flush / recessed
 
     /** Texture resolutions */
-    endCanvasWidth: 1024,
-    endCanvasHeight: 512,
-    sideCanvasWidth: 2048,
-    sideCanvasHeight: 512,
+    endCanvasWidth: 512,
+    endCanvasHeight: 256,
+    sideCanvasWidth: 1024,
+    sideCanvasHeight: 256,
 
     /** Ticks per celebration flash half-cycle. 15 ticks = four flashes/second. */
     flashTicks: 15,
@@ -1559,8 +1559,8 @@ const DEFAULTS = {
 
   hustleBoard: {
     enabled: true,
-    canvasWidth: 1024,
-    canvasHeight: 640,
+    canvasWidth: 512,
+    canvasHeight: 320,
     posX: 24.98,
     centerZSouth: 25.0,
     centerZNorth: -25.0,
@@ -1806,7 +1806,7 @@ const DEFAULTS = {
 
   render: {
     // 'native' | '1.25' | '1.0'
-    pixelRatioPreset: 'native',
+    pixelRatioPreset: '1.25',
     // 'high' (4 stadium towers) | 'balanced' (1 key tower) | 'off'
     shadowQuality: 'balanced',
   },

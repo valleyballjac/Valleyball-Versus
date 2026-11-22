@@ -663,6 +663,13 @@ export function buildRagdoll(skeleton, characterRoot, spawnTransform, athleteInd
     const bindBoneWorld = bone.matrixWorld.clone();
     const bindBodyWorld = segment.bindBodyWorld;
 
+    const cachedMass = segment.body.mass();
+    const pI = typeof segment.body.principalInertia === 'function' ? segment.body.principalInertia() : null;
+    const fr = typeof segment.body.principalInertiaLocalFrame === 'function' ? segment.body.principalInertiaLocalFrame() : null;
+    const cachedPrincipalInertia = pI ? { x: pI.x, y: pI.y, z: pI.z } : null;
+    const cachedPrincipalFrameInv = fr ? new THREE.Quaternion(fr.x, fr.y, fr.z, fr.w).invert() : null;
+    const cachedConservativeInertia = pI ? Math.min(pI.x, pI.y, pI.z) : null;
+
     rig.set(entry.key, {
       key: entry.key,
       entry,
@@ -673,6 +680,10 @@ export function buildRagdoll(skeleton, characterRoot, spawnTransform, athleteInd
       body: segment.body,
       collider: segment.collider,
       bone,
+      cachedMass,
+      cachedPrincipalInertia,
+      cachedPrincipalFrameInv,
+      cachedConservativeInertia,
       // Full matrices. They contain the armature's 0.01 scale and that is
       // correct — the sync divides it back out through the parent chain. Never
       // "fix" these by decomposing and dropping the scale.

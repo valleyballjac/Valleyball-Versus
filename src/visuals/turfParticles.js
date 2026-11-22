@@ -181,6 +181,7 @@ export function createTurfParticleSystem(scene) {
   const groundY = new Float32Array(MAX_PARTICLES);
 
   let activeCount = 0;
+  let maxActiveBudget = MAX_PARTICLES;
 
   /**
    * Spawns a spray of turf particles kicking back from an action.
@@ -222,7 +223,7 @@ export function createTurfParticleSystem(scene) {
     const originZ = position.z + kickZ * trailOffset;
     const originY = position.y;
 
-    const spawnN = Math.min(count, MAX_PARTICLES - activeCount);
+    const spawnN = Math.min(count, Math.max(0, maxActiveBudget - activeCount));
     for (let i = 0; i < spawnN; i += 1) {
       const idx = activeCount;
       activeCount += 1;
@@ -300,7 +301,7 @@ export function createTurfParticleSystem(scene) {
     const originZ = position.z + kickZ * trailOffset;
     const originY = position.y;
 
-    const spawnN = Math.min(count, MAX_PARTICLES - activeCount);
+    const spawnN = Math.min(count, Math.max(0, maxActiveBudget - activeCount));
     for (let i = 0; i < spawnN; i += 1) {
       const idx = activeCount;
       activeCount += 1;
@@ -419,11 +420,21 @@ export function createTurfParticleSystem(scene) {
     instancedMesh.instanceMatrix.needsUpdate = true;
   }
 
+  function setMaxParticles(limit) {
+    maxActiveBudget = Math.max(16, Math.min(MAX_PARTICLES, Math.floor(limit || MAX_PARTICLES)));
+    if (activeCount > maxActiveBudget) {
+      activeCount = maxActiveBudget;
+      instancedMesh.count = activeCount;
+    }
+  }
+
   return {
     group: instancedMesh,
+    instancedMesh,
     spawnTurfPuff,
     spawnCutSpray,
     update,
     reset,
+    setMaxParticles,
   };
 }

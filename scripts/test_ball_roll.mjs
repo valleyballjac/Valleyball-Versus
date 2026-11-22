@@ -26,7 +26,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { TUNING } from '../src/config/tuning.js';
-import { toTrimeshArrays } from '../src/sim/arena.js';
+import { toTrimeshArrays, createCourtTrimeshColliderDesc, createCornerFanRimSkirtDesc, attachUpperStadiumContainment } from '../src/sim/arena.js';
 import { mutateCap } from './corner_cap_gate.mjs';
 
 // ═══ CONSTANTS (card spec) ═══
@@ -164,13 +164,25 @@ export async function buildWorld(options = {}) {
       const w = new RAPIER.World({ x: 0, y: TUNING.physics.gravityY, z: 0 });
       const groundBody = w.createRigidBody(RAPIER.RigidBodyDesc.fixed());
       for (const m of meshesFinal) {
-        const flags = m.isCourtSurface ? RAPIER.TriMeshFlags.FIX_INTERNAL_EDGES : 0;
-        const desc = flags
-          ? RAPIER.ColliderDesc.trimesh(m.vertices, m.indices, flags)
-          : RAPIER.ColliderDesc.trimesh(m.vertices, m.indices);
+        const isCourtFloor = m.name === 'COL_Court';
+        const flags = isCourtFloor ? RAPIER.TriMeshFlags.FIX_INTERNAL_EDGES : 0;
+        const desc =
+          (isCourtFloor && createCourtTrimeshColliderDesc(RAPIER, m.vertices, m.indices)) ||
+          (flags
+            ? RAPIER.ColliderDesc.trimesh(m.vertices, m.indices, flags)
+            : RAPIER.ColliderDesc.trimesh(m.vertices, m.indices));
         if (!gameFlags) desc.setFriction(0.3).setRestitution(0.75);
         w.createCollider(desc, groundBody);
+
+        if (m.name.includes('Barrier')) {
+          const skirtDesc = createCornerFanRimSkirtDesc(RAPIER, m.vertices, m.indices);
+          if (skirtDesc) {
+            if (!gameFlags) skirtDesc.setFriction(0.3).setRestitution(0.75);
+            w.createCollider(skirtDesc, groundBody);
+          }
+        }
       }
+      attachUpperStadiumContainment(RAPIER, w, groundBody, gameFlags ? {} : { friction: 0.3, restitution: 0.75 });
       w.step();
       return w;
     };

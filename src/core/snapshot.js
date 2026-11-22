@@ -126,18 +126,23 @@ export function packInputFrame(slots, outBytes = new Uint8Array(INPUT_FRAME_BYTE
     outBytes[base] = mx & 0xff;
     outBytes[base + 1] = mz & 0xff;
 
-    // Camera yaw derived from camForward XZ (default facing -Z -> yaw 0)
-    const fx = s.camForward?.x ?? 0;
-    const fz = s.camForward?.z ?? -1;
-    const yaw = Math.atan2(fx, -fz); // [-PI, PI]
+    // Camera yaw derived from camForward XZ when present, else inputRouter's `cameraYaw`.
+    let yaw = 0;
+    if (s.camForward) {
+      const fx = s.camForward.x ?? 0;
+      const fz = s.camForward.z ?? -1;
+      yaw = Math.atan2(fx, -fz); // [-PI, PI]
+    } else if (typeof s.cameraYaw === 'number') {
+      yaw = s.cameraYaw;
+    }
     const yawQuant = Math.round(clamp(yaw / Math.PI, -1, 1) * 32767);
     outBytes[base + 2] = yawQuant & 0xff;
     outBytes[base + 3] = (yawQuant >> 8) & 0xff;
 
     let held = 0;
-    if (s.sprint) held |= INPUT_BITS.SPRINT;
-    if (s.slide) held |= INPUT_BITS.SLIDE;
-    if (s.brace) held |= INPUT_BITS.BRACE;
+    if (s.sprintHeld ?? s.sprint) held |= INPUT_BITS.SPRINT;
+    if (s.slideHeld ?? s.slide) held |= INPUT_BITS.SLIDE;
+    if (s.braceHeld ?? s.brace) held |= INPUT_BITS.BRACE;
 
     let queued = 0;
     if (s.jumpQueued) queued |= INPUT_BITS.JUMP;

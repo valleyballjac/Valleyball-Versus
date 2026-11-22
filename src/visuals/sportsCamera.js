@@ -63,7 +63,7 @@ export function resetSportsCamera() {
  * @param {object|null} ball active match ball
  * @param {number} frameDelta seconds
  */
-export function updateSportsCamera(camera, athletes = [], ball = null, frameDelta = 0.016) {
+export function updateSportsCamera(camera, athletes = [], ball = null, frameDelta = 0.016, heightOffset = 0) {
   if (!athletes || athletes.length === 0) return;
 
   let minX = Infinity;
@@ -144,7 +144,7 @@ export function updateSportsCamera(camera, athletes = [], ball = null, frameDelt
   // Positioned on the East sideline (+X), tracking longitudinal play (Z)
   _desiredPos.set(
     targetX + dynamicDistance,
-    targetY + dynamicHeight,
+    Math.max(1.5, targetY + dynamicHeight + heightOffset),
     targetZ * 0.65, // Slight dolly lead along court length
   );
 

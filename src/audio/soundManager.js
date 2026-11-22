@@ -71,6 +71,7 @@ class SoundManager {
     this.lastHoopClankTime = 0;
     this.lastBodyThudTime = 0;
     this.lastPlayedInPool = new Map();
+    this.activeVoices = 0;
   }
 
   /**
@@ -180,7 +181,6 @@ class SoundManager {
       ['hoop_clank_1', 'audio/hoop_clank_1.wav'],
       ['hoop_clank_2', 'audio/hoop_clank_2.wav'],
       ['hoop_clank_3', 'audio/hoop_clank_3.wav'],
-      ['hoop_swish', 'audio/hoop_swish.wav'],
       // Incidental player body thuds
       ['body_thud_1', 'audio/body_thud_1.wav'],
       ['body_thud_2', 'audio/body_thud_2.wav'],
@@ -313,26 +313,69 @@ class SoundManager {
   }
 
   /**
-   * Plays a preloaded audio buffer with pitch variation, gain scaling, and spatial audio.
+   * Plays a preloaded audio buffer with pitch variation, distance attenuation,
+   * optional stereo panning, voice capping, and automatic node disconnect cleanup.
    */
   playSample(key, gainVal = 1.0, playbackRate = 1.0, worldPos = null, targetBus = this.sfxGain) {
     if (!this.ensureRunning()) return false;
     const buf = this.buffers.get(key);
     if (!buf) return false;
 
-    const { input } = this.createSpatialPanner(worldPos, targetBus);
-    if (!input) return false;
+    const isPriority = targetBus === this.uiGain || gainVal >= 0.85;
+    if (this.activeVoices >= 24 && !isPriority) return false;
 
+    const now = this.ctx.currentTime;
     const src = this.ctx.createBufferSource();
     src.buffer = buf;
-    src.playbackRate.setValueAtTime(Math.max(0.2, Math.min(3.0, playbackRate)), this.ctx.currentTime);
+    src.playbackRate.setValueAtTime(Math.max(0.2, Math.min(3.0, playbackRate)), now);
+
+    let effectiveGain = gainVal;
+    let panner = null;
+
+    if (worldPos && this.camera && TUNING.audio.spatialAudio) {
+      const camPos = this.camera.position;
+      const dx = worldPos.x - camPos.x;
+      const dy = worldPos.y - camPos.y;
+      const dz = worldPos.z - camPos.z;
+      const dist = Math.hypot(dx, dy, dz);
+      const atten = Math.min(1.0, Math.max(0.12, 1.0 / (1.0 + 0.022 * dist)));
+      effectiveGain *= atten;
+
+      if (this.ctx.createStereoPanner) {
+        panner = this.ctx.createStereoPanner();
+        const camYaw = this.camera.rotation.y || 0;
+        const cosY = Math.cos(camYaw);
+        const sinY = Math.sin(camYaw);
+        const localX = dx * cosY - dz * sinY;
+        const pan = Math.max(-0.85, Math.min(0.85, localX / Math.max(6.0, dist)));
+        panner.pan.setValueAtTime(pan, now);
+      }
+    }
 
     const gainNode = this.ctx.createGain();
-    gainNode.gain.setValueAtTime(gainVal, this.ctx.currentTime);
+    gainNode.gain.setValueAtTime(effectiveGain, now);
 
     src.connect(gainNode);
-    gainNode.connect(input);
-    src.start();
+    if (panner) {
+      gainNode.connect(panner);
+      panner.connect(targetBus);
+    } else {
+      gainNode.connect(targetBus);
+    }
+
+    this.activeVoices += 1;
+    src.onended = () => {
+      this.activeVoices = Math.max(0, this.activeVoices - 1);
+      try {
+        src.disconnect();
+        gainNode.disconnect();
+        if (panner) panner.disconnect();
+      } catch {
+        // Ignore already-disconnected audio graph nodes.
+      }
+    };
+
+    src.start(now);
     return true;
   }
 
@@ -401,16 +444,19 @@ class SoundManager {
   /**
    * Boundary Glass / Basketball Backboard Impact:
    * Solid acrylic slap and polycarbonate glass flex when hitting boundaries.
+   * Rate-limited so a ball rolling along the glass never machine-guns audio.
    */
-  playGlassImpact(speed, worldPos = null) {
+  playGlassImpact(speed, worldPos = null, isRolling = false) {
     if (!this.ensureRunning()) return;
-    if (speed < 0.35) return;
+    if (speed < (isRolling ? 1.8 : 0.85)) return;
 
     const now = this.ctx.currentTime;
-    if (now - this.lastGlassTime < 0.075) return;
+    const minInterval = isRolling ? 0.75 : 0.50;
+    if (now - this.lastGlassTime < minInterval) return;
     this.lastGlassTime = now;
 
-    const volume = Math.min(1.0, Math.max(0.18, Math.pow(speed / 10.0, 0.75)));
+    const baseVol = Math.min(1.0, Math.max(0.18, Math.pow(speed / 10.0, 0.75)));
+    const volume = isRolling ? baseVol * 0.42 : baseVol;
     this.playSampleFromPool('glass', POOL_GLASS, volume, 1.0, worldPos);
   }
 
@@ -420,10 +466,10 @@ class SoundManager {
    */
   playHoopClank(speed = 6.0, worldPos = null) {
     if (!this.ensureRunning()) return;
-    if (speed < 0.35) return;
+    if (speed < 0.45) return;
 
     const now = this.ctx.currentTime;
-    if (now - this.lastHoopClankTime < 0.08) return;
+    if (now - this.lastHoopClankTime < 0.25) return;
     this.lastHoopClankTime = now;
 
     const volume = Math.min(1.0, Math.max(0.25, Math.pow(speed / 8.0, 0.7)));
@@ -593,11 +639,10 @@ class SoundManager {
   }
 
   /**
-   * Aperture Crossing Swish
+   * Aperture Crossing Swish (purged in favor of arena buzzer; no-op retained for callers)
    */
-  playHoopCrossing(worldPos = null) {
-    if (!this.ensureRunning()) return;
-    this.playSample('hoop_swish', 0.85, 1.0, worldPos);
+  playHoopCrossing(_worldPos = null) {
+    // Intentionally silent: arena buzzer handles goal celebrations without zipper noise.
   }
 
   /**

@@ -4,6 +4,7 @@ import { Interpolated } from '../core/Interpolated.js';
 import { buildHeadwear, recolorHeadgear } from './cosmeticsBuilders.js';
 import { accentFor } from './valleyballHeadgear.js';
 import { resolveHeadwearSpec } from '../config/cosmetics.js';
+import { mergeStaticGroupByMaterial } from './meshBatcher.js';
 
 /**
  * MODULE HEADER — src/sim/ragdoll.js
@@ -73,9 +74,45 @@ function getAthleteColors(options = null) {
 }
 
 /**
+ * Builds the 4 shared PBR materials for a single Capsule Athlete so all ~26 body
+ * meshes share state instead of creating ~26 duplicate shader/uniform instances.
+ */
+function createSharedAthleteMaterials(colors) {
+  const bodyGrey = new THREE.MeshStandardMaterial({
+    color: colors.bodyGrey,
+    roughness: colors.roughness,
+    metalness: colors.metalness,
+  });
+  bodyGrey.userData.colorRole = 'bodyGrey';
+
+  const clubPrimary = new THREE.MeshStandardMaterial({
+    color: colors.primary,
+    roughness: 0.6,
+    metalness: 0.06,
+  });
+  clubPrimary.userData.colorRole = 'primary';
+
+  const footPrimary = new THREE.MeshStandardMaterial({
+    color: colors.primary,
+    roughness: 0.65,
+    metalness: 0.06,
+  });
+  footPrimary.userData.colorRole = 'primary';
+
+  const joint = new THREE.MeshStandardMaterial({
+    color: colors.jointGrey,
+    roughness: 0.85,
+    metalness: 0.05,
+  });
+  joint.userData.colorRole = 'joint';
+
+  return { bodyGrey, clubPrimary, footPrimary, joint };
+}
+
+/**
  * Builds the solid PBR Capsule Athlete component for a single physical body.
  */
-function createSolidAthletePart(item, colors) {
+function createSolidAthletePart(item, sharedMats) {
   const solidGroup = new THREE.Group();
   solidGroup.name = `solid-${item.key}`;
 
@@ -83,17 +120,10 @@ function createSolidAthletePart(item, colors) {
 
   // 1. HEAD
   if (key === 'head') {
-    // Head Sphere - Flat Matte Grey
-    const headGeo = new THREE.SphereGeometry(radius, 32, 24);
-    const headMat = new THREE.MeshStandardMaterial({
-      color: colors.bodyGrey,
-      roughness: colors.roughness,
-      metalness: colors.metalness,
-    });
-    headMat.userData.colorRole = 'bodyGrey';
-    const headMesh = new THREE.Mesh(headGeo, headMat);
+    const headGeo = new THREE.SphereGeometry(radius, 16, 12);
+    const headMesh = new THREE.Mesh(headGeo, sharedMats.bodyGrey);
     headMesh.castShadow = true;
-    headMesh.receiveShadow = true;
+    headMesh.receiveShadow = false;
     solidGroup.add(headMesh);
 
     // 2. MODULAR HEADWEAR MOUNT (render-only socket). The headwear mesh is
@@ -111,29 +141,18 @@ function createSolidAthletePart(item, colors) {
     // Heavy striking club head in Team Primary color - bold oversized striking mallet / club head
     const clubRadius = radius * 2.3;
     const clubHeight = halfHeight * 2.6;
-    const clubGeo = new THREE.CapsuleGeometry(clubRadius, clubHeight, 16, 20);
-    const clubMat = new THREE.MeshStandardMaterial({
-      color: colors.primary,
-      roughness: 0.6,
-      metalness: 0.06,
-    });
-    clubMat.userData.colorRole = 'primary';
-    const clubMesh = new THREE.Mesh(clubGeo, clubMat);
+    const clubGeo = new THREE.CapsuleGeometry(clubRadius, clubHeight, 5, 10);
+    const clubMesh = new THREE.Mesh(clubGeo, sharedMats.clubPrimary);
     clubMesh.castShadow = true;
-    clubMesh.receiveShadow = true;
+    clubMesh.receiveShadow = false;
     solidGroup.add(clubMesh);
 
-    // Wrist cuff accent in dark matte graphite
-    const cuffGeo = new THREE.CylinderGeometry(clubRadius * 0.96, clubRadius * 0.96, radius * 0.40, 16);
-    const cuffMat = new THREE.MeshStandardMaterial({
-      color: colors.jointGrey,
-      roughness: 0.85,
-      metalness: 0.05,
-    });
-    cuffMat.userData.colorRole = 'joint';
-    const cuff = new THREE.Mesh(cuffGeo, cuffMat);
+    // Wrist cuff accent in dark matte graphite (enclosed by club silhouette; skip shadow pass)
+    const cuffGeo = new THREE.CylinderGeometry(clubRadius * 0.96, clubRadius * 0.96, radius * 0.40, 10);
+    const cuff = new THREE.Mesh(cuffGeo, sharedMats.joint);
     cuff.position.set(0, halfHeight * 0.85, 0);
-    cuff.castShadow = true;
+    cuff.castShadow = false;
+    cuff.receiveShadow = false;
     solidGroup.add(cuff);
 
     return solidGroup;
@@ -143,21 +162,14 @@ function createSolidAthletePart(item, colors) {
   if (key === 'footL' || key === 'footR') {
     // Pure capsule foot in team primary color, flattened along vertical Z axis.
     // Preserves the iconic Capsule Athlete aesthetic while providing a sleek, sporty, low-profile stance.
-    const footMat = new THREE.MeshStandardMaterial({
-      color: colors.primary,
-      roughness: 0.65,
-      metalness: 0.06,
-    });
-    footMat.userData.colorRole = 'primary';
-
-    const footGeo = new THREE.CapsuleGeometry(radius, halfHeight * 2, 16, 24);
-    const footMesh = new THREE.Mesh(footGeo, footMat);
+    const footGeo = new THREE.CapsuleGeometry(radius, halfHeight * 2, 5, 10);
+    const footMesh = new THREE.Mesh(footGeo, sharedMats.footPrimary);
     // Scaled for a sleek athletic shoe: flattened vertically along Z, natural width along X
     footMesh.scale.set(0.85, 1.0, 0.55);
     // Shift slightly forward (+Y in segment space) so the heel naturally sits under the calf
     footMesh.position.set(0, halfHeight * 0.25, 0);
     footMesh.castShadow = true;
-    footMesh.receiveShadow = true;
+    footMesh.receiveShadow = false;
     solidGroup.add(footMesh);
 
     return solidGroup;
@@ -166,31 +178,20 @@ function createSolidAthletePart(item, colors) {
   // 4. ALL OTHER BODY SEGMENTS (chest, spine, pelvis, upperArmL/R, foreArmL/R, thighL/R, calfL/R)
   // Uniform flat matte athletic grey
   const bodyGeo = shape === 'ball'
-    ? new THREE.SphereGeometry(radius, 24, 18)
-    : new THREE.CapsuleGeometry(radius, halfHeight * 2, 12, 24);
-  const bodyMat = new THREE.MeshStandardMaterial({
-    color: colors.bodyGrey,
-    roughness: colors.roughness,
-    metalness: colors.metalness,
-  });
-  bodyMat.userData.colorRole = 'bodyGrey';
-  const mainMesh = new THREE.Mesh(bodyGeo, bodyMat);
+    ? new THREE.SphereGeometry(radius, 14, 10)
+    : new THREE.CapsuleGeometry(radius, halfHeight * 2, 4, 10);
+  const mainMesh = new THREE.Mesh(bodyGeo, sharedMats.bodyGrey);
   mainMesh.castShadow = true;
-  mainMesh.receiveShadow = true;
+  mainMesh.receiveShadow = false;
   solidGroup.add(mainMesh);
 
-  // Subtle dark matte graphite connector spheres at limb joints (proximal joint, +Y)
+  // Subtle dark matte graphite connector spheres at limb joints (nested inside limbs; skip shadow pass)
   if (['upperArmL', 'upperArmR', 'foreArmL', 'foreArmR', 'thighL', 'thighR', 'calfL', 'calfR'].includes(key)) {
-    const jointGeo = new THREE.SphereGeometry(radius * 0.98, 16, 12);
-    const jointMat = new THREE.MeshStandardMaterial({
-      color: colors.jointGrey,
-      roughness: 0.85,
-      metalness: 0.05,
-    });
-    jointMat.userData.colorRole = 'joint';
-    const jointMesh = new THREE.Mesh(jointGeo, jointMat);
+    const jointGeo = new THREE.SphereGeometry(radius * 0.98, 8, 6);
+    const jointMesh = new THREE.Mesh(jointGeo, sharedMats.joint);
     jointMesh.position.set(0, halfHeight, 0);
-    jointMesh.castShadow = true;
+    jointMesh.castShadow = false;
+    jointMesh.receiveShadow = false;
     solidGroup.add(jointMesh);
   }
 
@@ -209,6 +210,7 @@ export function createRagdollVisuals(rig, options = null) {
   const group = new THREE.Group();
   group.name = 'ragdoll-visuals';
   const colors = getAthleteColors(options);
+  const sharedMats = createSharedAthleteMaterials(colors);
   const state = { rig, group, ...options };
 
   for (const item of rig.values()) {
@@ -217,7 +219,7 @@ export function createRagdollVisuals(rig, options = null) {
     bodyGroup.frustumCulled = false;
 
     // 1. Solid stylized Capsule Athlete part
-    const solidMesh = createSolidAthletePart(item, colors);
+    const solidMesh = createSolidAthletePart(item, sharedMats);
     solidMesh.visible = TUNING.debug.showCapsuleAthlete !== false;
     bodyGroup.add(solidMesh);
     item.solidMesh = solidMesh;
@@ -347,6 +349,13 @@ export function setAthleteHeadwear(state, headwearId, options = null) {
   }
 
   piece.name = `headwear-${headwearId}`;
+  piece.traverse((obj) => {
+    if (obj.isMesh) {
+      obj.castShadow = false;
+      obj.receiveShadow = false;
+    }
+  });
+  mergeStaticGroupByMaterial(piece);
   slot.add(piece);
   head.headwearId = headwearId;
   return piece;
@@ -355,12 +364,23 @@ export function setAthleteHeadwear(state, headwearId, options = null) {
 /** Frees all athlete geometries and materials when the ragdoll is torn down. */
 export function disposeRagdollVisuals(group) {
   if (!group) return;
+  const disposedGeos = new Set();
+  const disposedMats = new Set();
   group.traverse((object) => {
     if (!object.isMesh) return;
-    if (object.geometry) object.geometry.dispose();
+    if (object.geometry && !disposedGeos.has(object.geometry)) {
+      disposedGeos.add(object.geometry);
+      object.geometry.dispose();
+    }
     if (Array.isArray(object.material)) {
-      object.material.forEach((m) => m.dispose());
-    } else if (object.material) {
+      for (const m of object.material) {
+        if (m && !disposedMats.has(m)) {
+          disposedMats.add(m);
+          m.dispose();
+        }
+      }
+    } else if (object.material && !disposedMats.has(object.material)) {
+      disposedMats.add(object.material);
       object.material.dispose();
     }
   });
@@ -555,7 +575,7 @@ function createPonytailGroup(radius, colors) {
   ponyGroup.name = 'athlete-ponytail';
 
   // Hair tie band at the top/rear open arch of the visor
-  const bandGeo = new THREE.TorusGeometry(0.020, 0.007, 12, 24);
+  const bandGeo = new THREE.TorusGeometry(0.020, 0.007, 8, 16);
   const bandMat = new THREE.MeshStandardMaterial({
     color: colors.primary,
     roughness: 0.5,
@@ -565,7 +585,7 @@ function createPonytailGroup(radius, colors) {
   const bandMesh = new THREE.Mesh(bandGeo, bandMat);
   bandMesh.position.set(0, radius * 0.48, radius * 0.82);
   bandMesh.rotation.x = Math.PI * 0.36;
-  bandMesh.castShadow = true;
+  bandMesh.castShadow = false;
   ponyGroup.add(bandMesh);
 
   // Flowing ponytail curve in natural athletic dark graphite
@@ -577,34 +597,34 @@ function createPonytailGroup(radius, colors) {
   hairMat.userData.colorRole = 'hair';
 
   // 5 smooth tapered segments cascading gracefully down the back of head and neck
-  const p1 = new THREE.Mesh(new THREE.CapsuleGeometry(0.018, 0.05, 12, 16), hairMat);
+  const p1 = new THREE.Mesh(new THREE.CapsuleGeometry(0.018, 0.05, 6, 10), hairMat);
   p1.position.set(0, radius * 0.44, radius * 0.96);
   p1.rotation.x = Math.PI * 0.42;
-  p1.castShadow = true;
+  p1.castShadow = false;
   ponyGroup.add(p1);
 
-  const p2 = new THREE.Mesh(new THREE.CapsuleGeometry(0.016, 0.07, 12, 16), hairMat);
+  const p2 = new THREE.Mesh(new THREE.CapsuleGeometry(0.016, 0.07, 6, 10), hairMat);
   p2.position.set(0, radius * 0.28, radius * 1.08);
   p2.rotation.x = Math.PI * 0.26;
-  p2.castShadow = true;
+  p2.castShadow = false;
   ponyGroup.add(p2);
 
-  const p3 = new THREE.Mesh(new THREE.CapsuleGeometry(0.013, 0.08, 12, 16), hairMat);
+  const p3 = new THREE.Mesh(new THREE.CapsuleGeometry(0.013, 0.08, 6, 10), hairMat);
   p3.position.set(0, radius * 0.06, radius * 1.12);
   p3.rotation.x = 0.02;
-  p3.castShadow = true;
+  p3.castShadow = false;
   ponyGroup.add(p3);
 
-  const p4 = new THREE.Mesh(new THREE.CapsuleGeometry(0.010, 0.07, 12, 16), hairMat);
+  const p4 = new THREE.Mesh(new THREE.CapsuleGeometry(0.010, 0.07, 6, 10), hairMat);
   p4.position.set(0, -radius * 0.14, radius * 1.10);
   p4.rotation.x = -Math.PI * 0.10;
-  p4.castShadow = true;
+  p4.castShadow = false;
   ponyGroup.add(p4);
 
-  const p5 = new THREE.Mesh(new THREE.CapsuleGeometry(0.008, 0.08, 12, 16), hairMat);
+  const p5 = new THREE.Mesh(new THREE.CapsuleGeometry(0.008, 0.08, 6, 10), hairMat);
   p5.position.set(0, -radius * 0.32, radius * 1.05);
   p5.rotation.x = -Math.PI * 0.08;
-  p5.castShadow = true;
+  p5.castShadow = false;
   ponyGroup.add(p5);
 
   return ponyGroup;
@@ -640,9 +660,13 @@ export function updateAthleteVariant(state, options = null) {
     if (head?.solidMesh) {
       const oldPony = head.solidMesh.getObjectByName('athlete-ponytail');
       if (oldPony) {
+        const ponyMats = new Set();
         oldPony.traverse((obj) => {
           if (obj.geometry) obj.geometry.dispose();
-          if (obj.material) obj.material.dispose();
+          if (obj.material && !ponyMats.has(obj.material)) {
+            ponyMats.add(obj.material);
+            obj.material.dispose();
+          }
         });
         head.solidMesh.remove(oldPony);
       }

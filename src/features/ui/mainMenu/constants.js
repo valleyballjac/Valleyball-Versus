@@ -58,6 +58,14 @@ export const PRACTICE_BALL_OPTIONS = [
   { id: 'large', label: 'BIG BALL (TRAINING)', desc: '1.5m · Rebound & volley practice' },
 ];
 
+export const PRACTICE_DRILL_OPTIONS = [
+  { id: 'sandbox', label: 'FREE SANDBOX', desc: 'Open court · Press B / Select to self-toss ball' },
+  { id: 'newcomer_drill', label: '60s NEWCOMER DRILL', desc: '4-step basics (Volley, Spike, Dive, Goal) + Guides' },
+  { id: 'ball_feeder', label: 'BALL FEEDER', desc: 'Auto-lobs a fresh midfield ball every 4.5s' },
+  { id: 'sparring_bot', label: 'SPARRING BOT', desc: '1v1 warm-up rally vs Medium Balanced AI' },
+  { id: 'local_warmup', label: 'LOCAL WARMUP (2P-4P)', desc: 'All connected controllers active on practice court' },
+];
+
 export const BALL_OPTIONS = MATCH_BALL_OPTIONS;
 
 export const HEADWEAR_OPTIONS = Object.freeze(SERIES_1_PLAYTEST_CYCLE.map((e) => Object.freeze({ id: e.id, label: e.label })));

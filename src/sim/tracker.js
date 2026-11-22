@@ -349,7 +349,7 @@ function applyGains(tracker, rig, animTarget, motor, dt, offMount = 0) {
     if (!target) continue;
 
     const body = item.body;
-    const mass = body.mass();
+    const mass = item.cachedMass !== undefined ? item.cachedMass : body.mass();
 
     // PER-GROUP STIFFNESS, AND IT ONLY APPLIES WHILE HE IS LIMP.
     //
@@ -455,6 +455,7 @@ function applyGains(tracker, rig, animTarget, motor, dt, offMount = 0) {
       _relVel.length() * TUNING.tracking.linearKd * boost * kdScale * groupScale * dt,
       _relVel,
       dt,
+      mass,
     );
 
     // ---- ANGULAR ----
@@ -500,23 +501,27 @@ function applyGains(tracker, rig, animTarget, motor, dt, offMount = 0) {
       // bodies (head, arms, hands, legs) receive 20x-100x higher angular
       // acceleration for the same orientation error and buzz 2-7° every 2-3 ticks.
       let inertiaScale = 1;
-      if (
-        TUNING.tracking.angularPerInertia &&
-        typeof body.principalInertia === 'function' &&
-        typeof body.principalInertiaLocalFrame === 'function'
-      ) {
-        const pI = body.principalInertia();
-        const fr = body.principalInertiaLocalFrame();
-        _axisLocal.copy(_axis).applyQuaternion(_bodyQuatInverse);
-        _frameInv.set(fr.x, fr.y, fr.z, fr.w).invert();
-        _axisLocal.applyQuaternion(_frameInv);
-        const Iaxis =
-          pI.x * _axisLocal.x * _axisLocal.x +
-          pI.y * _axisLocal.y * _axisLocal.y +
-          pI.z * _axisLocal.z * _axisLocal.z;
-        const refInertia = TUNING.tracking.angularRefInertia || 0.0793;
-        if (Number.isFinite(Iaxis) && Iaxis > 0 && refInertia > 0) {
-          inertiaScale = Iaxis / refInertia;
+      if (TUNING.tracking.angularPerInertia) {
+        const pI = item.cachedPrincipalInertia
+          || (typeof body.principalInertia === 'function' ? body.principalInertia() : null);
+        const frInv = item.cachedPrincipalFrameInv
+          || (typeof body.principalInertiaLocalFrame === 'function'
+            ? (() => {
+                const fr = body.principalInertiaLocalFrame();
+                return _frameInv.set(fr.x, fr.y, fr.z, fr.w).invert();
+              })()
+            : null);
+        if (pI && frInv) {
+          _axisLocal.copy(_axis).applyQuaternion(_bodyQuatInverse);
+          _axisLocal.applyQuaternion(frInv);
+          const Iaxis =
+            pI.x * _axisLocal.x * _axisLocal.x +
+            pI.y * _axisLocal.y * _axisLocal.y +
+            pI.z * _axisLocal.z * _axisLocal.z;
+          const refInertia = TUNING.tracking.angularRefInertia || 0.0793;
+          if (Number.isFinite(Iaxis) && Iaxis > 0 && refInertia > 0) {
+            inertiaScale = Iaxis / refInertia;
+          }
         }
       }
 
@@ -542,6 +547,7 @@ function applyGains(tracker, rig, animTarget, motor, dt, offMount = 0) {
       _relVel.length() * TUNING.tracking.angularKd * kdScale * groupScale * dt,
       _relVel,
       dt,
+      item.cachedConservativeInertia ?? null,
     );
   }
 }

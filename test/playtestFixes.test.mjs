@@ -653,7 +653,7 @@ test('v0.4.0 AI aligns strike horizons (8/15/42), kinematic arrival braking, and
       currentVel: { x: 0, y: 0, z: 6.5 }, // closing at 6.5 m/s (stopping envelope at 0.65m is ~3.0m/s)
     },
   );
-  assert.equal(slot.moveWorld.length(), 0, 'Kinematic arrival brake must zero moveWorld to engage ground brake');
+  assert.ok(slot.moveWorld.z <= 0 && !slot.sprintHeld, 'Kinematic arrival brake must drop sprint and coast or counter-brake (never drive forward)');
 
   // 4. Verify 15-tick volley triggers when ball is entering the 15-tick sweet-spot window
   const bot = createBotController({ difficulty: 'hard', slotIndex: 0, seed: 42, aggressiveness: 0.6 });
@@ -786,17 +786,18 @@ test('Menu gamepad polling navigates Character Selection (Page 1) and Match Setu
     pressButton(15);
     assert.deepEqual(cycledOptions[0], { col: 0, row: 4, dir: 1 }, 'D-pad Right on Page 1 cycles P1 Hat (row 4)');
 
-    // 2. Page 1: D-pad Down (13) moves P1 from Row 4 (Hat) to Row 5 (Build), and A (0) cycles P1 Build
+    // 2. Page 1: D-pad Down (13) moves P1 from Row 4 (Hat) to Row 5 (Build), and A (0) keeps Build unchanged & advances focus to Row 6
     pressButton(13);
     assert.equal(mockPlayerSetup.playerFocusRow[0], 5, 'D-pad Down moves P1 focus from Hat (4) to Build (5)');
     pressButton(0);
-    assert.deepEqual(cycledOptions[1], { col: 0, row: 5, dir: 1 }, 'A button on Page 1 cycles P1 Build (row 5)');
+    assert.equal(cycledOptions.length, 1, 'A button on Page 1 option row must NOT cycle or reset Build');
+    assert.equal(mockPlayerSetup.playerFocusRow[0], 8, 'A button on Page 1 Row 5 advances selector to Row 8 (Action Bar, skipping Row 6 CTRL)');
 
     // 3. Page 1: RB (5) switches focus to AI P2 (col 1) and D-pad Right (15) cycles AI difficulty (row 2)
     pressButton(5);
     assert.equal(mockPlayerSetup.focusedColumn, 1, 'RB switches active column from P1 (0) to AI P2 (1)');
     pressButton(15);
-    assert.deepEqual(cycledOptions[2], { col: 1, row: 2, dir: 1 }, 'D-pad Right on AI P2 cycles AI difficulty (row 2)');
+    assert.deepEqual(cycledOptions[1], { col: 1, row: 2, dir: 1 }, 'D-pad Right on AI P2 cycles AI difficulty (row 2)');
 
     // 4. Page 1: Start (9) advances to Page 2 (Match Setup / Rules)
     pressButton(9);

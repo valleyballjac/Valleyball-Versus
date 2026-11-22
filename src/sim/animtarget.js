@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import { TUNING } from '../config/tuning.js';
 import { BONE_MAP, resolveBoneByName, rigSuffixForBodySide } from './autorig.js';
+import { pruneClipsForGhost } from './ghostClipPruner.js';
 
 /**
  * MODULE HEADER — src/sim/animtarget.js
@@ -23,7 +24,6 @@ import { BONE_MAP, resolveBoneByName, rigSuffixForBodySide } from './autorig.js'
 
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const TWO_PI = Math.PI * 2;
-
 /** Below this the quaternion delta has no meaningful axis. */
 const MIN_ANGLE = 1e-8;
 const _targetBody = new THREE.Matrix4();
@@ -43,7 +43,6 @@ const _standAxis = new THREE.Vector3();
 const _mountPos = new THREE.Vector3();
 const _axisX = new THREE.Vector3(1, 0, 0);
 const _pitchQuat = new THREE.Quaternion();
-
 /** The literal that means "run the blend space" rather than pin a clip. */
 const AUTO = 'auto';
 /** Below this combined cycle weight there is no gait worth advancing. */
@@ -223,7 +222,7 @@ export function createAnimTarget(characterRoot, clips, rig) {
     root,
     bindRootLocal,
     skeleton,
-    clips,
+    clips: pruneClipsForGhost(clips, skeleton),
     hips,
     // LAW L5 — the bind-pose HORIZONTAL root translation, restored every step.
     // Which two components those are is derived from the armature, not assumed;

@@ -9,6 +9,7 @@
 
 import { getColorName } from './mainMenu.js';
 import { TUNING } from '../config/tuning.js';
+import { getHudPrefs, setHudPrefs, setCleanBroadcastHud, subscribeHudPrefs } from '../config/hudConfig.js';
 import { soundManager } from '../audio/soundManager.js';
 import { setVibrationEnabled, isVibrationEnabled } from '../input/inputRouter.js';
 import { createMenuPadTracker, MENU_PAD } from '../input/menuPads.js';
@@ -16,6 +17,9 @@ import { createMenuPadTracker, MENU_PAD } from '../input/menuPads.js';
 let menuOverlayEl = null;
 let isOpen = false;
 let clockBannerEl = null;
+let pauseOwnerBadgeEl = null;
+let activePauseOwner = null;
+const PAUSE_SLOT_HEX = ['#00e5ff', '#ff2e55', '#fbb417', '#a855f7'];
 let callbacks = {
   onResume: null,
   onOpen: null,
@@ -33,6 +37,9 @@ let finishPracticeBtn = null;
 const camBoxes = [null, null, null, null];
 const camSelObjs = [null, null, null, null];
 
+let gfxPresetRowEl = null;
+let gfxPresetButtons = [];
+let gfxPresetOptions = [];
 let dprRowEl = null;
 let dprButtons = [];
 let dprOptions = [];
@@ -42,6 +49,20 @@ let shadowOptions = [];
 let controlsRowEl = null;
 let controlsButtons = [];
 let controlsOptions = [];
+let scorebugRowEl = null;
+let scorebugButtons = [];
+let scorebugOptions = [];
+let dropRingRowEl = null;
+let dropRingButtons = [];
+let dropRingOptions = [];
+let strikeGuideRowEl = null;
+let strikeGuideButtons = [];
+let strikeGuideOptions = [];
+let orientRowEl = null;
+let orientButtons = [];
+let orientOptions = [];
+let cleanHudRowEl = null;
+let cleanHudBtnEl = null;
 let tuningRowEl = null;
 let tuningButtons = [];
 let tuningOptions = [];
@@ -62,8 +83,8 @@ let inGamePollHandle = null;
 const inGamePads = createMenuPadTracker();
 
 let currentRenderSettings = {
-  pixelRatioPreset: 'native',
-  shadowQuality: 'high',
+  pixelRatioPreset: '1.25',
+  shadowQuality: 'balanced',
   showControlsOverlay: false,
   showTuningGui: false,
 };
@@ -135,12 +156,15 @@ export function initInGameMenu({
       <span style="font-size: 12px; font-weight: 900; letter-spacing: 0.22em; color: #000000; -webkit-text-stroke: 1px #ffffff; text-stroke: 1px #ffffff;">VERSUS</span>
       <span style="color: rgba(255,255,255,0.3); font-size: 14px;">/</span>
       <span style="color: #ffffff; font-size: 15px; font-weight: 800;">SETTINGS</span>
-      <span style="font-size: 10px; font-weight: 800; color: #00e5ff; background: rgba(0, 229, 255, 0.12); border: 1px solid rgba(0, 229, 255, 0.35); padding: 2px 6px; border-radius: 4px; margin-left: 2px;">v0.4.1</span>
+      <span style="font-size: 10px; font-weight: 800; color: #00e5ff; background: rgba(0, 229, 255, 0.12); border: 1px solid rgba(0, 229, 255, 0.35); padding: 2px 6px; border-radius: 4px; margin-left: 2px;">v0.4.2</span>
     </div>
     <div style="font-size: 11px; color: #fbbf24; margin-top: 2px;">
       ⚡ Play clock continues running in real time
     </div>
   `;
+
+  const rightBadges = document.createElement('div');
+  rightBadges.style.cssText = 'display: flex; flex-direction: column; align-items: flex-end; gap: 4px;';
 
   clockBannerEl = document.createElement('div');
   clockBannerEl.style.cssText = `
@@ -155,8 +179,25 @@ export function initInGameMenu({
   `;
   clockBannerEl.textContent = 'MATCH ACTIVE';
 
+  pauseOwnerBadgeEl = document.createElement('div');
+  pauseOwnerBadgeEl.id = 'ingame-pause-owner-badge';
+  pauseOwnerBadgeEl.style.cssText = `
+    display: none;
+    font-size: 10px;
+    font-weight: 900;
+    padding: 2px 8px;
+    border-radius: 4px;
+    letter-spacing: 0.08em;
+    background: rgba(0, 229, 255, 0.14);
+    border: 1px solid #00e5ff;
+    color: #00e5ff;
+  `;
+
+  rightBadges.appendChild(clockBannerEl);
+  rightBadges.appendChild(pauseOwnerBadgeEl);
+
   header.appendChild(titleBox);
-  header.appendChild(clockBannerEl);
+  header.appendChild(rightBadges);
   container.appendChild(header);
 
   // 1b. Hustle Board Live Readout (Practice Mode Only)
@@ -220,6 +261,61 @@ export function initInGameMenu({
 
   // 2. Performance Settings Section
   container.appendChild(createSectionHeading('GRAPHICS & PERFORMANCE'));
+
+  // Graphics Quality Preset Row (Low / Balanced / High)
+  gfxPresetRowEl = document.createElement('div');
+  gfxPresetRowEl.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;';
+  const gfxLabel = document.createElement('div');
+  gfxLabel.textContent = 'Graphics Preset';
+  gfxLabel.style.cssText = 'font-size: 12px; color: #cbd5e1;';
+  const gfxButtonGroup = document.createElement('div');
+  gfxButtonGroup.style.cssText = 'display: flex; gap: 6px;';
+  gfxPresetOptions = [
+    { id: 'low', label: 'Low (Fast)' },
+    { id: 'balanced', label: 'Balanced' },
+    { id: 'high', label: 'High' },
+  ];
+  gfxPresetButtons = [];
+  const initGfxPreset = getHudPrefs().graphicsPreset || 'balanced';
+  gfxPresetOptions.forEach((opt) => {
+    const btn = document.createElement('button');
+    btn.textContent = opt.label;
+    btn.style.cssText = `
+      padding: 6px 12px;
+      font-size: 11px;
+      font-weight: 700;
+      font-family: inherit;
+      border-radius: 4px;
+      cursor: pointer;
+      border: 1px solid rgba(120, 170, 210, 0.3);
+      transition: all 0.12s ease;
+      background: ${initGfxPreset === opt.id ? '#2563eb' : 'rgba(255, 255, 255, 0.06)'};
+      color: ${initGfxPreset === opt.id ? '#ffffff' : '#94a3b8'};
+    `;
+    btn.onclick = () => {
+      setHudPrefs({ graphicsPreset: opt.id });
+      const nextDpr = opt.id === 'low' ? '1.0' : (opt.id === 'high' ? 'native' : '1.25');
+      const nextShadow = opt.id === 'low' ? 'off' : (opt.id === 'high' ? 'high' : 'balanced');
+      currentRenderSettings.pixelRatioPreset = nextDpr;
+      currentRenderSettings.shadowQuality = nextShadow;
+      dprButtons.forEach((b, idx) => {
+        const isSel = dprOptions[idx].id === nextDpr;
+        b.style.background = isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
+        b.style.color = isSel ? '#ffffff' : '#94a3b8';
+      });
+      shadowButtons.forEach((b, idx) => {
+        const isSel = shadowOptions[idx].id === nextShadow;
+        b.style.background = isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
+        b.style.color = isSel ? '#ffffff' : '#94a3b8';
+      });
+      if (callbacks.onRenderSettingsChange) callbacks.onRenderSettingsChange({ graphicsPreset: opt.id });
+    };
+    gfxPresetButtons.push(btn);
+    gfxButtonGroup.appendChild(btn);
+  });
+  gfxPresetRowEl.appendChild(gfxLabel);
+  gfxPresetRowEl.appendChild(gfxButtonGroup);
+  container.appendChild(gfxPresetRowEl);
 
   // Resolution Scale Row
   dprRowEl = document.createElement('div');
@@ -362,6 +458,147 @@ export function initInGameMenu({
   controlsRow.appendChild(controlsLabel);
   controlsRow.appendChild(controlsButtonGroup);
   container.appendChild(controlsRow);
+
+  // Readability & Optional HUD Toggles (All Default OFF)
+  const buildHudToggleRow = (labelText, options, currentVal, onSelect) => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;';
+    const lbl = document.createElement('div');
+    lbl.textContent = labelText;
+    lbl.style.cssText = 'font-size: 12px; color: #cbd5e1;';
+    const grp = document.createElement('div');
+    grp.style.cssText = 'display: flex; gap: 6px;';
+    const btns = [];
+    options.forEach((opt) => {
+      const btn = document.createElement('button');
+      btn.textContent = opt.label;
+      btn.style.cssText = `
+        padding: 6px 12px;
+        font-size: 11px;
+        font-weight: 700;
+        font-family: inherit;
+        border-radius: 4px;
+        cursor: pointer;
+        border: 1px solid rgba(120, 170, 210, 0.3);
+        transition: all 0.12s ease;
+        background: ${currentVal === opt.id ? '#2563eb' : 'rgba(255, 255, 255, 0.06)'};
+        color: ${currentVal === opt.id ? '#ffffff' : '#94a3b8'};
+      `;
+      btn.onclick = () => onSelect(opt.id);
+      btns.push(btn);
+      grp.appendChild(btn);
+    });
+    row.appendChild(lbl);
+    row.appendChild(grp);
+    container.appendChild(row);
+    return { row, btns };
+  };
+
+  const initialHudPrefs = getHudPrefs();
+  scorebugOptions = [
+    { id: 'off', label: 'Off' },
+    { id: 'splitscreen', label: 'Split-Screen' },
+    { id: 'always', label: 'Always' },
+  ];
+  const scorebugCtrl = buildHudToggleRow('Broadcast Scorebug', scorebugOptions, initialHudPrefs.scorebugMode, (val) => {
+    setHudPrefs({ scorebugMode: val });
+  });
+  scorebugRowEl = scorebugCtrl.row;
+  scorebugButtons = scorebugCtrl.btns;
+
+  dropRingOptions = [
+    { id: false, label: 'Off' },
+    { id: true, label: 'On' },
+  ];
+  const dropRingCtrl = buildHudToggleRow('Ball Rainbow Halo', dropRingOptions, initialHudPrefs.ballDropRing, (val) => {
+    setHudPrefs({ ballDropRing: val });
+  });
+  dropRingRowEl = dropRingCtrl.row;
+  dropRingButtons = dropRingCtrl.btns;
+
+  strikeGuideOptions = [
+    { id: false, label: 'Off' },
+    { id: true, label: 'On' },
+  ];
+  const strikeGuideCtrl = buildHudToggleRow('Strike Range Guide', strikeGuideOptions, initialHudPrefs.strikeRangeGuide, (val) => {
+    setHudPrefs({ strikeRangeGuide: val });
+  });
+  strikeGuideRowEl = strikeGuideCtrl.row;
+  strikeGuideButtons = strikeGuideCtrl.btns;
+
+  orientOptions = [
+    { id: false, label: 'Off' },
+    { id: true, label: 'On' },
+  ];
+  const orientCtrl = buildHudToggleRow('Ball Pip & Swap Cues', orientOptions, initialHudPrefs.orientationCues, (val) => {
+    setHudPrefs({ orientationCues: val });
+  });
+  orientRowEl = orientCtrl.row;
+  orientButtons = orientCtrl.btns;
+
+  // One-click Clean Footage reset for live play or replay broadcast capture
+  cleanHudRowEl = document.createElement('div');
+  cleanHudRowEl.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;';
+  const cleanHudLabel = document.createElement('div');
+  cleanHudLabel.textContent = 'Clean Broadcast Footage';
+  cleanHudLabel.style.cssText = 'font-size: 12px; color: #cbd5e1;';
+  cleanHudBtnEl = document.createElement('button');
+  cleanHudBtnEl.textContent = 'Hide All Guides';
+  cleanHudBtnEl.style.cssText = `
+    padding: 6px 12px;
+    font-size: 11px;
+    font-weight: 700;
+    font-family: inherit;
+    border-radius: 4px;
+    cursor: pointer;
+    border: 1px solid rgba(56, 189, 248, 0.45);
+    background: rgba(56, 189, 248, 0.14);
+    color: #e0f2fe;
+    transition: all 0.12s ease;
+  `;
+  cleanHudBtnEl.onclick = () => {
+    setCleanBroadcastHud();
+    currentRenderSettings.showControlsOverlay = false;
+    controlsButtons.forEach((b, idx) => {
+      const isSel = controlsOptions[idx].id === false;
+      b.style.background = isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
+      b.style.color = isSel ? '#ffffff' : '#94a3b8';
+    });
+    if (callbacks.onRenderSettingsChange) callbacks.onRenderSettingsChange({ showControlsOverlay: false });
+  };
+  cleanHudRowEl.appendChild(cleanHudLabel);
+  cleanHudRowEl.appendChild(cleanHudBtnEl);
+  container.appendChild(cleanHudRowEl);
+
+  const syncHudToggleButtons = (prefs) => {
+    gfxPresetButtons.forEach((b, idx) => {
+      const isSel = gfxPresetOptions[idx].id === prefs.graphicsPreset;
+      b.style.background = isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
+      b.style.color = isSel ? '#ffffff' : '#94a3b8';
+    });
+    scorebugButtons.forEach((b, idx) => {
+      const isSel = scorebugOptions[idx].id === prefs.scorebugMode;
+      b.style.background = isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
+      b.style.color = isSel ? '#ffffff' : '#94a3b8';
+    });
+    dropRingButtons.forEach((b, idx) => {
+      const isSel = dropRingOptions[idx].id === prefs.ballDropRing;
+      b.style.background = isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
+      b.style.color = isSel ? '#ffffff' : '#94a3b8';
+    });
+    strikeGuideButtons.forEach((b, idx) => {
+      const isSel = strikeGuideOptions[idx].id === prefs.strikeRangeGuide;
+      b.style.background = isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
+      b.style.color = isSel ? '#ffffff' : '#94a3b8';
+    });
+    orientButtons.forEach((b, idx) => {
+      const isSel = orientOptions[idx].id === prefs.orientationCues;
+      b.style.background = isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
+      b.style.color = isSel ? '#ffffff' : '#94a3b8';
+    });
+  };
+  subscribeHudPrefs(syncHudToggleButtons);
+  menuOverlayEl._syncHudPrefs = () => syncHudToggleButtons(getHudPrefs());
 
   // Valleyball Tuning GUI Row
   tuningRowEl = document.createElement('div');
@@ -773,6 +1010,13 @@ function applyCameraChoice(playerIdx, mode) {
 // ---------------------------------------------------------------------------
 // In-Game Menu Navigation & Polling
 // ---------------------------------------------------------------------------
+function cycleGfxPreset(dir = 1) {
+  const curIdx = gfxPresetOptions.findIndex((o) => o.id === getHudPrefs().graphicsPreset);
+  const nextIdx = (curIdx + dir + gfxPresetOptions.length) % gfxPresetOptions.length;
+  gfxPresetButtons[nextIdx]?.click();
+  updateInGameFocusUI();
+}
+
 function cycleDpr(dir = 1) {
   const curIdx = dprOptions.findIndex((o) => o.id === currentRenderSettings.pixelRatioPreset);
   const nextIdx = (curIdx + dir + dprOptions.length) % dprOptions.length;
@@ -790,6 +1034,34 @@ function cycleShadow(dir = 1) {
 function cycleControls() {
   const nextVal = !(currentRenderSettings.showControlsOverlay ?? false);
   const targetBtn = controlsButtons.find((_, idx) => controlsOptions[idx].id === nextVal);
+  targetBtn?.click();
+  updateInGameFocusUI();
+}
+
+function cycleScorebug(dir = 1) {
+  const curIdx = scorebugOptions.findIndex((o) => o.id === getHudPrefs().scorebugMode);
+  const nextIdx = (curIdx + dir + scorebugOptions.length) % scorebugOptions.length;
+  scorebugButtons[nextIdx]?.click();
+  updateInGameFocusUI();
+}
+
+function cycleDropRing() {
+  const nextVal = !getHudPrefs().ballDropRing;
+  const targetBtn = dropRingButtons.find((_, idx) => dropRingOptions[idx].id === nextVal);
+  targetBtn?.click();
+  updateInGameFocusUI();
+}
+
+function cycleStrikeGuide() {
+  const nextVal = !getHudPrefs().strikeRangeGuide;
+  const targetBtn = strikeGuideButtons.find((_, idx) => strikeGuideOptions[idx].id === nextVal);
+  targetBtn?.click();
+  updateInGameFocusUI();
+}
+
+function cycleOrientCues() {
+  const nextVal = !getHudPrefs().orientationCues;
+  const targetBtn = orientButtons.find((_, idx) => orientOptions[idx].id === nextVal);
   targetBtn?.click();
   updateInGameFocusUI();
 }
@@ -843,6 +1115,14 @@ function getActiveInGameRows() {
       onRight: () => {},
     });
   }
+  if (gfxPresetRowEl) {
+    rows.push({
+      el: gfxPresetRowEl,
+      onLeft: () => cycleGfxPreset(-1),
+      onRight: () => cycleGfxPreset(1),
+      onAction: () => cycleGfxPreset(1),
+    });
+  }
   if (dprRowEl) {
     rows.push({
       el: dprRowEl,
@@ -865,6 +1145,46 @@ function getActiveInGameRows() {
       onLeft: () => cycleControls(),
       onRight: () => cycleControls(),
       onAction: () => cycleControls(),
+    });
+  }
+  if (scorebugRowEl) {
+    rows.push({
+      el: scorebugRowEl,
+      onLeft: () => cycleScorebug(-1),
+      onRight: () => cycleScorebug(1),
+      onAction: () => cycleScorebug(1),
+    });
+  }
+  if (dropRingRowEl) {
+    rows.push({
+      el: dropRingRowEl,
+      onLeft: () => cycleDropRing(),
+      onRight: () => cycleDropRing(),
+      onAction: () => cycleDropRing(),
+    });
+  }
+  if (strikeGuideRowEl) {
+    rows.push({
+      el: strikeGuideRowEl,
+      onLeft: () => cycleStrikeGuide(),
+      onRight: () => cycleStrikeGuide(),
+      onAction: () => cycleStrikeGuide(),
+    });
+  }
+  if (orientRowEl) {
+    rows.push({
+      el: orientRowEl,
+      onLeft: () => cycleOrientCues(),
+      onRight: () => cycleOrientCues(),
+      onAction: () => cycleOrientCues(),
+    });
+  }
+  if (cleanHudRowEl && cleanHudBtnEl) {
+    rows.push({
+      el: cleanHudRowEl,
+      onLeft: () => {},
+      onRight: () => {},
+      onAction: () => cleanHudBtnEl.click(),
     });
   }
   if (tuningRowEl) {
@@ -1065,8 +1385,15 @@ function startInGameMenuPolling() {
     inGameNavRows = getActiveInGameRows();
     if (inGameNavRows.length === 0) return;
 
+    const ownerPadConnected = activePauseOwner &&
+      Number.isInteger(activePauseOwner.padIndex) &&
+      pads.some((p) => p && p.index === activePauseOwner.padIndex);
+
     for (const pad of pads) {
       if (!pad) continue;
+      // Pause Ownership: only the controller that paused the game drives the pause menu
+      // (keyboard Escape/Arrows always remain active as host fallback).
+      if (ownerPadConnected && pad.index !== activePauseOwner.padIndex) continue;
       const e = inGamePads.pressed(pad);
 
       if (e & MENU_PAD.up) {
@@ -1124,14 +1451,34 @@ function stopInGameMenuPolling() {
   }
 }
 
-export function showInGameMenu() {
+export function showInGameMenu(owner = null) {
   if (!menuOverlayEl) return;
   isOpen = true;
+  activePauseOwner = owner && typeof owner === 'object' ? owner : null;
+  if (pauseOwnerBadgeEl) {
+    if (activePauseOwner) {
+      const hex = PAUSE_SLOT_HEX[activePauseOwner.slotIndex] || '#00e5ff';
+      pauseOwnerBadgeEl.textContent = `PAUSED BY ${activePauseOwner.label || `P${(activePauseOwner.slotIndex ?? 0) + 1}`}`;
+      pauseOwnerBadgeEl.style.color = hex;
+      pauseOwnerBadgeEl.style.borderColor = hex;
+      pauseOwnerBadgeEl.style.background = 'rgba(15, 23, 42, 0.9)';
+      pauseOwnerBadgeEl.style.display = 'inline-block';
+    } else {
+      pauseOwnerBadgeEl.textContent = 'HOST / KEYBOARD CONTROL';
+      pauseOwnerBadgeEl.style.color = '#94a3b8';
+      pauseOwnerBadgeEl.style.borderColor = 'rgba(148, 163, 184, 0.35)';
+      pauseOwnerBadgeEl.style.background = 'rgba(255, 255, 255, 0.05)';
+      pauseOwnerBadgeEl.style.display = 'inline-block';
+    }
+  }
   if (callbacks.onOpen) callbacks.onOpen();
   menuOverlayEl.style.display = 'flex';
   refreshCameraRows();
   if (menuOverlayEl._updateAudioUI) {
     menuOverlayEl._updateAudioUI();
+  }
+  if (menuOverlayEl._syncHudPrefs) {
+    menuOverlayEl._syncHudPrefs();
   }
 
   const isPractice = window.__vb?.getGameState?.() === 'practice' || window.__vb?.matchState?.mode === 'practice';
@@ -1207,6 +1554,7 @@ export function showInGameMenu() {
 export function hideInGameMenu() {
   if (!menuOverlayEl) return;
   isOpen = false;
+  activePauseOwner = null;
   stopInGameMenuPolling();
   menuOverlayEl.style.display = 'none';
   const rows = getActiveInGameRows();
@@ -1223,10 +1571,14 @@ export function hideInGameMenu() {
   });
 }
 
-export function toggleInGameMenu() {
+export function toggleInGameMenu(owner = null) {
   if (isOpen) hideInGameMenu();
-  else showInGameMenu();
+  else showInGameMenu(owner);
   return isOpen;
+}
+
+export function getInGamePauseOwner() {
+  return activePauseOwner;
 }
 
 export function isInGameMenuOpen() {

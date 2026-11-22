@@ -23,6 +23,7 @@
  */
 
 const { app, BrowserWindow, Menu, protocol, net, shell, ipcMain, powerSaveBlocker, screen } = require('electron');
+const fs = require('node:fs/promises');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
@@ -185,6 +186,34 @@ ipcMain.on('valleyball:quit', (event) => {
 });
 ipcMain.on('valleyball:toggle-fullscreen', (event) => {
   if (fromMainWindow(event)) mainWindow.setFullScreen(!mainWindow.isFullScreen());
+});
+
+const REPLAY_NAME_RE = /^[A-Za-z0-9._-]{1,120}\.vbreplay$/;
+const MAX_REPLAY_BYTES = 16 * 1024 * 1024;
+
+function getReplaysDir() {
+  return path.resolve(process.env.VALLEYBALL_REPLAY_DIR || path.join(app.getPath('userData'), 'replays'));
+}
+
+ipcMain.handle('valleyball:get-replays-dir', (event) => {
+  if (!fromMainWindow(event)) return null;
+  return getReplaysDir();
+});
+
+ipcMain.handle('valleyball:save-replay', async (event, payload) => {
+  if (!fromMainWindow(event)) return { ok: false, error: 'unauthorized' };
+  const filename = typeof payload?.filename === 'string' ? path.basename(payload.filename) : '';
+  if (!REPLAY_NAME_RE.test(filename)) return { ok: false, error: 'invalid filename' };
+  const raw = payload?.bytes;
+  if (!(raw instanceof Uint8Array) || raw.byteLength === 0 || raw.byteLength > MAX_REPLAY_BYTES) {
+    return { ok: false, error: 'invalid payload' };
+  }
+  const dir = getReplaysDir();
+  const fullPath = path.resolve(dir, filename);
+  if (!fullPath.startsWith(dir + path.sep)) return { ok: false, error: 'invalid path' };
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(fullPath, raw);
+  return { ok: true, path: fullPath, bytes: raw.byteLength };
 });
 
 app.on('second-instance', () => {

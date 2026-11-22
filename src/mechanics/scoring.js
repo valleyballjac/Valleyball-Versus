@@ -20,12 +20,53 @@ import { TUNING } from '../config/tuning.js';
 const GOAL_N = 'N';
 const GOAL_S = 'S';
 
+/**
+ * Maximum single-tick travel squared (3.0 m per 1/60 s = 180 m/s) accepted as
+ * a physical trajectory. Longer single-tick segments are teleport/reset chords
+ * and must re-anchor the tracker instead of scoring a phantom goal.
+ */
+const MAX_GOAL_TICK_DIST_SQ = 9.0;
+
+/**
+ * Minimum valid crossing height Y (m) inside the hoop aperture. Measured terrain
+ * floor under both hoop apertures (x = 0, |z| = 35..45) is 6.459..9.455 m, so
+ * any crossing below 6.0 m is strictly subterranean and never a legal goal.
+ */
+const HOOP_MIN_VALID_Y = 6.0;
+
 const _missResult = Object.freeze({ hit: false, entrySide: 0, y: 0, z: 0 });
 const _pPrev = { x: 0, y: 0, z: 0 };
+const _hitScratch = { hit: true, entrySide: 0, y: 0, z: 0 };
+const _singleBallScratch = [null];
+
+/**
+ * Classifies whether the ENTIRE ball volume is strictly clear of the x = 0
+ * goal plane: -1 (entirely West, x <= -r), +1 (entirely East, x >= +r),
+ * or 0 (straddling x = 0).
+ */
+function ballClearedSide(x, radius) {
+  if (x <= -radius) return -1;
+  if (x >= radius) return 1;
+  return 0;
+}
 
 /** The goal at the other end. One place, so no call site spells the flip out. */
 function oppositeGoal(goalId) {
   return goalId === GOAL_N ? GOAL_S : GOAL_N;
+}
+
+/**
+ * Records the most recent and previous touching athlete slot per team on a ball
+ * for goal-scorer and assist attribution (zero hot-loop allocations once initialized).
+ */
+export function recordBallTeamTouch(ball, teamId, athleteSlot) {
+  if (!ball || (teamId !== 'home' && teamId !== 'away') || !Number.isInteger(athleteSlot)) return;
+  if (!ball._lastTouchByTeam) ball._lastTouchByTeam = { home: null, away: null };
+  if (!ball._prevTouchByTeam) ball._prevTouchByTeam = { home: null, away: null };
+  if (ball._lastTouchByTeam[teamId] !== null && ball._lastTouchByTeam[teamId] !== athleteSlot) {
+    ball._prevTouchByTeam[teamId] = ball._lastTouchByTeam[teamId];
+  }
+  ball._lastTouchByTeam[teamId] = athleteSlot;
 }
 
 /**
@@ -124,6 +165,11 @@ export function updateScoring(state, balls, tick) {
     state.mode = TUNING.match?.mode || 'match';
   }
 
+  // Capture live-play eligibility BEFORE clock transitions so countdown ticks
+  // and post-buzzer victory/overtime ticks can never score phantom goals, while
+  // a genuine buzzer-beater on the final live tick still counts.
+  const canScore = state.mode === 'practice' || (!state.isCountingDown && !state.matchOver);
+
   if (state.mode === 'match' && !state.matchOver) {
     if (state.isCountingDown) {
       if (state.countdownTicksRemaining > 0) {
@@ -144,11 +190,20 @@ export function updateScoring(state, balls, tick) {
     }
   }
 
-  const { hoopRadius, hoopCenterY, hoopNorthZ, hoopSouthZ, hoopRearmX } = TUNING.match;
+  const { hoopRadius, hoopCenterY, hoopNorthZ, hoopSouthZ } = TUNING.match;
 
-  for (const b of balls) {
+  // Regulation matches ALWAYS use strictly 1 active match ball (multi-ball 3-ball
+  // play is exclusive to Practice Sandbox).
+  let evalBalls = balls;
+  if (state.mode === 'match' && balls.length > 1) {
+    _singleBallScratch[0] = balls[0];
+    evalBalls = _singleBallScratch;
+  }
+
+  for (const b of evalBalls) {
     const handle = b.collider.handle;
     const pos = b.body.translation();
+    const ballRadius = (typeof b.radius === 'number' && b.radius > 0) ? b.radius : 0.5;
     let tracker = state.ballTrackers.get(handle);
 
     if (!tracker) {
@@ -156,8 +211,36 @@ export function updateScoring(state, balls, tick) {
       // previous position to draw a segment from, and inventing one at the
       // origin would fire a goal on the tick a ball spawns.
       state.ballTrackers.set(handle, {
-        prevX: pos.x, prevY: pos.y, prevZ: pos.z, armedN: true, armedS: true,
+        prevX: pos.x, prevY: pos.y, prevZ: pos.z,
+        clearedSide: ballClearedSide(pos.x, ballRadius),
+        pendingGoal: null,
+        pendingFromSide: 0,
+        pendingY: 0,
+        pendingZ: 0,
+        lastResetEpoch: b.resetEpoch || 0,
       });
+      continue;
+    }
+
+    // TELEPORT / RESET CHORD GUARD: re-anchor without scoring whenever the ball
+    // was explicitly reset, jumped an unphysical distance in one tick, or is non-finite.
+    const curEpoch = b.resetEpoch || 0;
+    const ddx = pos.x - tracker.prevX;
+    const ddy = pos.y - tracker.prevY;
+    const ddz = pos.z - tracker.prevZ;
+    const stepDistSq = ddx * ddx + ddy * ddy + ddz * ddz;
+    if (
+      tracker.lastResetEpoch !== curEpoch ||
+      stepDistSq > MAX_GOAL_TICK_DIST_SQ ||
+      !Number.isFinite(pos.x) || !Number.isFinite(pos.y) || !Number.isFinite(pos.z)
+    ) {
+      tracker.prevX = pos.x;
+      tracker.prevY = pos.y;
+      tracker.prevZ = pos.z;
+      tracker.clearedSide = Number.isFinite(pos.x) ? ballClearedSide(pos.x, ballRadius) : 0;
+      tracker.pendingGoal = null;
+      tracker.pendingFromSide = 0;
+      tracker.lastResetEpoch = curEpoch;
       continue;
     }
 
@@ -166,46 +249,78 @@ export function updateScoring(state, balls, tick) {
     _pPrev.z = tracker.prevZ;
     const pPrev = _pPrev;
 
-    // ═══ THE ARMING LATCH ═══
+    // ═══ FULL BALL-CLEARANCE GOAL RULE ═══
     //
-    // A hoop is disarmed by scoring and re-armed ONLY by the ball getting clear
-    // of the plane. That is the whole anti-jitter rule, and it has to be
-    // distance rather than direction.
-    //
-    // WHY NOT "a repeat needs the opposite entry side": because alternating
-    // sides is EXACTLY what jitter is. A ball resting in the goal mouth rocks
-    // east, west, east, west across x = 0, and every one of those crossings
-    // enters from the opposite side to the last — so a direction test scores
-    // every single one of them. It permits precisely the pattern it is meant
-    // to stop.
-    //
-    // AND THE BALL REALLY DOES REST THERE. Measured off the asset: the aperture
-    // is centred at y 10.000 with a radius of 4.667, so it spans y 5.33 to
-    // 14.67 — while the floor at the goal mouth sits at y 9.83. The bottom of
-    // the ring is four and a half metres BELOW the ground. A ball rolling
-    // gently across the goal line is inside the scoring disc, not under it.
-    //
-    // Distance re-arming costs nothing a real goal needs: a shot that goes
-    // through and rebounds off the back wall travels metres clear before it
-    // returns, so it re-arms and scores again, which is the rule.
-    if (Math.abs(pos.x) > hoopRearmX) {
-      tracker.armedN = true;
-      tracker.armedS = true;
+    // A goal registers ONLY once the ENTIRE ball crosses the x = 0 hoop plane
+    // (`|pos.x| >= ballRadius`) through a hoop aperture:
+    //   1. When the ball's center crosses x = 0 inside a hoop aperture from its
+    //      last fully cleared side (`clearedSide`), latch `pendingGoal`.
+    //   2. If a defender swats a partially-crossed ball back before the whole
+    //      sphere clears x = 0, `pendingGoal` clears cleanly (goal-line save).
+    //   3. The instant the entire ball clears the opposite side (`currClearedSide
+    //      === -pendingFromSide`), the goal scores and `clearedSide` flips to
+    //      that new side immediately.
+    //   4. Because `clearedSide` flips immediately upon full clearance, swatting
+    //      (unthreading) a scored ball completely back through the hoop ALWAYS
+    //      registers the responding goal with zero artificial re-arm distance,
+    //      while a slow ball resting/rocking across x = 0 never reaches `|x| >= R`
+    //      and can never double-score.
+    if (canScore && tracker.clearedSide !== 0) {
+      const hitN = testHoopCrossing(pPrev, pos, hoopNorthZ, hoopCenterY, hoopRadius);
+      if (hitN.hit && hitN.y >= HOOP_MIN_VALID_Y) {
+        if (hitN.entrySide === tracker.clearedSide) {
+          tracker.pendingGoal = GOAL_N;
+          tracker.pendingFromSide = tracker.clearedSide;
+          tracker.pendingY = hitN.y;
+          tracker.pendingZ = hitN.z;
+        } else {
+          tracker.pendingGoal = null;
+          tracker.pendingFromSide = 0;
+        }
+      } else {
+        const hitS = testHoopCrossing(pPrev, pos, hoopSouthZ, hoopCenterY, hoopRadius);
+        if (hitS.hit && hitS.y >= HOOP_MIN_VALID_Y) {
+          if (hitS.entrySide === tracker.clearedSide) {
+            tracker.pendingGoal = GOAL_S;
+            tracker.pendingFromSide = tracker.clearedSide;
+            tracker.pendingY = hitS.y;
+            tracker.pendingZ = hitS.z;
+          } else {
+            tracker.pendingGoal = null;
+            tracker.pendingFromSide = 0;
+          }
+        }
+      }
+    } else if (!canScore) {
+      tracker.pendingGoal = null;
+      tracker.pendingFromSide = 0;
     }
 
-    if (tracker.armedN) {
-      const hitN = testHoopCrossing(pPrev, pos, hoopNorthZ, hoopCenterY, hoopRadius);
-      if (hitN.hit) {
-        tracker.armedN = false;
-        recordGoal(state, GOAL_N, hitN, tick);
-      }
+    const currClearedSide = ballClearedSide(pos.x, ballRadius);
+    if (tracker.pendingGoal !== null && tracker.pendingFromSide !== 0 && pos.x * tracker.pendingFromSide > 0) {
+      // Ball center retreated back onto its entry side before full clearance (including after touching x = 0).
+      tracker.pendingGoal = null;
+      tracker.pendingFromSide = 0;
     }
-    if (tracker.armedS) {
-      const hitS = testHoopCrossing(pPrev, pos, hoopSouthZ, hoopCenterY, hoopRadius);
-      if (hitS.hit) {
-        tracker.armedS = false;
-        recordGoal(state, GOAL_S, hitS, tick);
+    if (currClearedSide !== 0) {
+      if (
+        canScore &&
+        tracker.pendingGoal !== null &&
+        tracker.pendingFromSide !== 0 &&
+        currClearedSide === -tracker.pendingFromSide
+      ) {
+        const targetHoopZ = tracker.pendingGoal === GOAL_N ? hoopNorthZ : hoopSouthZ;
+        const maxOffset = hoopRadius + ballRadius + 1.0;
+        if (Math.abs(pos.z - targetHoopZ) <= maxOffset && Math.abs(pos.y - hoopCenterY) <= maxOffset) {
+          _hitScratch.entrySide = tracker.pendingFromSide;
+          _hitScratch.y = tracker.pendingY;
+          _hitScratch.z = tracker.pendingZ;
+          recordGoal(state, tracker.pendingGoal, _hitScratch, tick);
+        }
       }
+      tracker.clearedSide = currClearedSide;
+      tracker.pendingGoal = null;
+      tracker.pendingFromSide = 0;
     }
 
     tracker.prevX = pos.x;

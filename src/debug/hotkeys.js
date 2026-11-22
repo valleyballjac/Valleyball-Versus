@@ -91,6 +91,7 @@ export function installHotkeys({
   getGameState,
   getGui,
   headwearControls,
+  isReplayPlaying,
   onRequestRespawn,
   onHudToggle,
   onSplitscreenToggle,
@@ -99,13 +100,15 @@ export function installHotkeys({
   onShowHeadwearToast,
 }) {
   window.addEventListener('keydown', (event) => {
-    // BACKSPACE — respawn ragdoll(s) on the next fixed tick
-    if (isHotkey(event, 'Backspace')) {
+    const replayActive = Boolean(isReplayPlaying?.());
+
+    // BACKSPACE — respawn ragdoll(s) on the next fixed tick (disabled during replay playback)
+    if (!replayActive && isHotkey(event, 'Backspace')) {
       onRequestRespawn?.();
     }
 
-    // "T" — knockdown all active athletes on the next fixed tick
-    if (isHotkey(event, 'KeyT')) {
+    // "T" — knockdown all active athletes on the next fixed tick (disabled during replay playback)
+    if (!replayActive && isHotkey(event, 'KeyT')) {
       const athletes = getAthletes?.() || [];
       for (const a of athletes) a?.requestKnockdown?.();
     }
@@ -117,48 +120,51 @@ export function installHotkeys({
       refreshGui(getGui);
     }
 
-    // P1: Digit1 (Team), Digit2 (Silhouette), Digit3 (Headwear)
-    if (isHotkey(event, 'Digit1') && !event.shiftKey) {
-      togglePlayerTeam(0, getAthletes, getGui);
-    }
-    if (isHotkey(event, 'Digit2') && !event.shiftKey) {
-      cyclePlayerVariant(0, getAthletes, getGui);
-    }
-    if (isHotkey(event, 'Digit3') && !event.shiftKey) {
-      cyclePlayerHeadwear(0, getAthletes, headwearControls, onShowHeadwearToast, getGui);
-    }
+    // Cosmetic debug hotkeys disabled during Replay Playback so Digit1..5 switch broadcast cameras cleanly
+    if (!replayActive) {
+      // P1: Digit1 (Team), Digit2 (Silhouette), Digit3 (Headwear)
+      if (isHotkey(event, 'Digit1') && !event.shiftKey) {
+        togglePlayerTeam(0, getAthletes, getGui);
+      }
+      if (isHotkey(event, 'Digit2') && !event.shiftKey) {
+        cyclePlayerVariant(0, getAthletes, getGui);
+      }
+      if (isHotkey(event, 'Digit3') && !event.shiftKey) {
+        cyclePlayerHeadwear(0, getAthletes, headwearControls, onShowHeadwearToast, getGui);
+      }
 
-    // P2: Digit9 (Team), Digit0 (Silhouette), Digit8 (Headwear)
-    if (isHotkey(event, 'Digit9') && !event.shiftKey) {
-      togglePlayerTeam(1, getAthletes, getGui);
-    }
-    if (isHotkey(event, 'Digit0') && !event.shiftKey) {
-      cyclePlayerVariant(1, getAthletes, getGui);
-    }
-    if (isHotkey(event, 'Digit8') && !event.shiftKey) {
-      cyclePlayerHeadwear(1, getAthletes, headwearControls, onShowHeadwearToast, getGui);
-    }
+      // P2: Digit9 (Team), Digit0 (Silhouette), Digit8 (Headwear)
+      if (isHotkey(event, 'Digit9') && !event.shiftKey) {
+        togglePlayerTeam(1, getAthletes, getGui);
+      }
+      if (isHotkey(event, 'Digit0') && !event.shiftKey) {
+        cyclePlayerVariant(1, getAthletes, getGui);
+      }
+      if (isHotkey(event, 'Digit8') && !event.shiftKey) {
+        cyclePlayerHeadwear(1, getAthletes, headwearControls, onShowHeadwearToast, getGui);
+      }
 
-    // P3: Digit4 (Team), Digit5 (Silhouette), Digit6 (Headwear)
-    if (isHotkey(event, 'Digit4') && !event.shiftKey) {
-      togglePlayerTeam(2, getAthletes, getGui);
-    }
-    if (isHotkey(event, 'Digit5') && !event.shiftKey) {
-      cyclePlayerVariant(2, getAthletes, getGui);
-    }
-    if (isHotkey(event, 'Digit6') && !event.shiftKey) {
-      cyclePlayerHeadwear(2, getAthletes, headwearControls, onShowHeadwearToast, getGui);
-    }
+      // P3: Digit4 (Team), Digit5 (Silhouette), Digit6 (Headwear)
+      if (isHotkey(event, 'Digit4') && !event.shiftKey) {
+        togglePlayerTeam(2, getAthletes, getGui);
+      }
+      if (isHotkey(event, 'Digit5') && !event.shiftKey) {
+        cyclePlayerVariant(2, getAthletes, getGui);
+      }
+      if (isHotkey(event, 'Digit6') && !event.shiftKey) {
+        cyclePlayerHeadwear(2, getAthletes, headwearControls, onShowHeadwearToast, getGui);
+      }
 
-    // P4: Digit7 (Team), Shift+Digit7 (Silhouette), Shift+Digit6 (Headwear)
-    if (isHotkey(event, 'Digit7') && !event.shiftKey) {
-      togglePlayerTeam(3, getAthletes, getGui);
-    }
-    if (isHotkey(event, 'Digit7') && event.shiftKey) {
-      cyclePlayerVariant(3, getAthletes, getGui);
-    }
-    if (isHotkey(event, 'Digit6') && event.shiftKey) {
-      cyclePlayerHeadwear(3, getAthletes, headwearControls, onShowHeadwearToast, getGui);
+      // P4: Digit7 (Team), Shift+Digit7 (Silhouette), Shift+Digit6 (Headwear)
+      if (isHotkey(event, 'Digit7') && !event.shiftKey) {
+        togglePlayerTeam(3, getAthletes, getGui);
+      }
+      if (isHotkey(event, 'Digit7') && event.shiftKey) {
+        cyclePlayerVariant(3, getAthletes, getGui);
+      }
+      if (isHotkey(event, 'Digit6') && event.shiftKey) {
+        cyclePlayerHeadwear(3, getAthletes, headwearControls, onShowHeadwearToast, getGui);
+      }
     }
 
     // "F8" or "Shift+V" — toggle splitscreen mode

@@ -418,6 +418,74 @@ async function main() {
   const seamByPane = {};
   for (const r of seamFails) seamByPane[r.pane] = (seamByPane[r.pane] || 0) + 1;
 
+  // ── 4. All-3-ball purple corner lip & outer-wall sweep (live game collider flags) ──
+  // Catches the v0.4.1 purple corner fall-through where small/fast balls slipped under
+  // the y = 11.00 m curved fan lip or through unwelded corner seams into the void.
+  const CORNER_BALLS = [
+    { name: 'small', r: 0.20, density: 4.5, rest: 0.90 },
+    { name: 'medium', r: 0.50, density: 4.2, rest: 0.88 },
+    { name: 'large', r: 0.75, density: 2.2, rest: 0.85 },
+  ];
+  let cornerLipShots = 0;
+  let cornerLipFails = 0;
+  for (const bcfg of CORNER_BALLS) {
+    for (const [sx, sz] of [[1, -1], [-1, -1], [1, 1], [-1, 1]]) {
+      for (let i = 0; i <= 10; i++) {
+        const frac = i / 10;
+        const x0 = sx * (6 + frac * 14);
+        const z0 = sz * (52 - frac * 15);
+        const f0 = surfaceY(probe, x0, z0);
+        if (f0 === null) continue;
+        for (const spd of [14, 28]) {
+          cornerLipShots++;
+          const body = gameSim.createRigidBody(
+            RAPIER.RigidBodyDesc.dynamic()
+              .setTranslation(x0, f0 + bcfg.r + 0.35, z0)
+              .setLinvel(sx * spd * Math.SQRT1_2, -1.5, sz * spd * Math.SQRT1_2)
+              .setCanSleep(false)
+              .setCcdEnabled(true),
+          );
+          gameSim.createCollider(
+            RAPIER.ColliderDesc.ball(bcfg.r)
+              .setDensity(bcfg.density)
+              .setFriction(BALL_FRICTION)
+              .setRestitution(bcfg.rest)
+              .setRestitutionCombineRule(RAPIER.CoefficientCombineRule.Max),
+            body,
+          );
+          let breached = false;
+          let endPos = null;
+          for (let t = 0; t < 110; t++) {
+            gameSim.step();
+            const p = body.translation();
+            const underCorner = p.y < 6.0 && Math.abs(p.x) > 10 && Math.abs(p.z) > 37;
+            const escaped = p.y < KILL_FLOOR_Y || Math.abs(p.x) > 30.8 || Math.abs(p.z) > 65.8;
+            if (underCorner || escaped) {
+              breached = true;
+              endPos = p;
+              break;
+            }
+          }
+          gameSim.removeRigidBody(body);
+          if (breached) {
+            cornerLipFails++;
+            failures++;
+            results.push({
+              region: 'purple_corner_lip_game_flags',
+              kind: `ball_${bcfg.name}`,
+              x: +x0.toFixed(2),
+              z: +z0.toFixed(2),
+              restX: +endPos.x.toFixed(2),
+              restZ: +endPos.z.toFixed(2),
+              minY: +endPos.y.toFixed(2),
+              fail: true,
+            });
+          }
+        }
+      }
+    }
+  }
+
   const pass = failures === 0;
   const report = {
     pass,
@@ -469,6 +537,7 @@ async function main() {
     `glass top-seam sweep (game collider flags): ${seamShots} shots, ${seamFails.length} breaches` +
       (seamFails.length ? ` ${JSON.stringify(seamByPane)}` : ''),
   );
+  console.log(`purple corner lip sweep (small/medium/large, game flags): ${cornerLipShots} shots, ${cornerLipFails} breaches`);
   console.log(`spawned ${results.length} entities, ${failures} failures`);
   console.log(pass ? 'DROP TEST PASS — corner fan holds, perimeter sealed' : 'DROP TEST FAIL — see report');
   console.log(`report: ${outPath}`);

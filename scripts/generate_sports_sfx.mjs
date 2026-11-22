@@ -602,21 +602,4 @@ fs.writeFileSync(path.join(outDir, 'footstep_1.wav'), encodeWav(generateFootstep
 fs.writeFileSync(path.join(outDir, 'footstep_2.wav'), encodeWav(generateFootstep(2)));
 fs.writeFileSync(path.join(outDir, 'footstep_3.wav'), encodeWav(generateFootstep(3)));
 
-// Net Swish
-function generateHoopSwish() {
-  const dur = 0.25;
-  const numSamples = Math.floor(SAMPLE_RATE * dur);
-  const samples = new Float32Array(numSamples);
-  for (let i = 0; i < numSamples; i++) {
-    const t = i / SAMPLE_RATE;
-    const prog = t / dur;
-    const env = Math.sin(Math.PI * prog) * 0.7;
-    const noise = Math.random() * 2 - 1;
-    const swishTone = Math.sin(2 * Math.PI * (1600 + 400 * Math.sin(prog * Math.PI)) * t);
-    samples[i] = (noise * 0.7 + swishTone * 0.3) * env;
-  }
-  return samples;
-}
-fs.writeFileSync(path.join(outDir, 'hoop_swish.wav'), encodeWav(generateHoopSwish()));
-
 console.log('All sports audio samples generated successfully in ' + outDir);

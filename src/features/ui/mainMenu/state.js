@@ -81,4 +81,6 @@ export const state = {
   titleFocusIndex: 1,
   /** @type {number|null} Interval ID for menu gamepad polling */
   gamepadPollHandle: null,
+  /** @type {number|null} Dynamic Lobby Host gamepad index (claimed on Title Screen) */
+  lobbyHostPadIndex: null,
 };

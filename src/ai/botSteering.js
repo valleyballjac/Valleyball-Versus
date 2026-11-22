@@ -113,36 +113,67 @@ export function steerToward(inputSlot, currentPos, targetPos, options = {}) {
     inputSlot.hasAim = true;
 
     let speedScale = maxSpeed * (options.decelFactor ?? 1.0);
+    const brakeZone = Math.max(arriveRadius * 1.55, 0.95);
+    const allowBrake = arrive;
+    const effectiveMinDrive = (allowBrake && distance < brakeZone) ? 0.0 : minDrive;
     if (arrive && distance < arriveRadius) {
-        speedScale *= Math.max(0.35, distance / arriveRadius);
+        speedScale *= Math.max(0.32, distance / arriveRadius);
     }
-    if (minDrive > 0) {
-        speedScale = Math.max(minDrive, speedScale);
+    if (effectiveMinDrive > 0) {
+        speedScale = Math.max(effectiveMinDrive, speedScale);
     }
 
-    // Target terminal velocity in m/s (sprint: ~6.0 m/s, run: ~4.2 m/s)
+    // Target terminal velocity in m/s (flat sprint ~6.0 m/s, run ~4.2 m/s; downhill slopes reach 9-10 m/s)
     const topMps = sprint ? 6.0 : 4.2;
+    const targetVel = options.targetVel;
+    const vTargetAlong = targetVel ? Math.max(0, targetVel.x * dirX + targetVel.z * dirZ) : 0;
     let desiredSpeedMps = speedScale * topMps;
-    if (arrive && distance < arriveRadius * 1.6 && minDrive <= 0) {
-        // Kinematic stopping envelope (a_decel ≈ 8.5 m/s^2) so the motor sphere brakes before overshooting
-        const brakeEnvelopeMps = Math.sqrt(2.0 * 8.5 * Math.max(0, distance - 0.12));
+
+    // Real physical motor braking acceleration: `brakeTorque = 4` -> `a_brake = 5.45 m/s^2`.
+    // Reversing stick with `sprintHeld = false` triggers `reversalBiteTime = 0.25s` (~20 m/s^2 plant-and-stop).
+    let vToward = 0;
+    let vClosing = 0;
+    let realStopDist = 0;
+    if (currentVel) {
+        vToward = currentVel.x * dirX + currentVel.z * dirZ;
+        vClosing = Math.max(0, vToward - vTargetAlong);
+        realStopDist = (vClosing * vClosing) / (2.0 * 5.45);
+    }
+    const dynamicBrakeZone = Math.max(brakeZone, Math.min(7.5, realStopDist * 1.12));
+
+    if (allowBrake && distance < dynamicBrakeZone) {
+        // Relative-velocity kinematic stopping envelope matched to real motor brakeTorque (5.45 m/s^2)
+        const brakeEnvelopeMps = Math.sqrt(2.0 * 5.6 * Math.max(0, distance - 0.08)) + vTargetAlong;
         desiredSpeedMps = Math.min(desiredSpeedMps, brakeEnvelopeMps);
+        if (distance < arriveRadius) {
+            speedScale = Math.min(speedScale, Math.max(0.28, desiredSpeedMps / topMps));
+        }
     }
     _scratchVDesired.copy(scratchDir).multiplyScalar(desiredSpeedMps);
 
-    // ═══ REYNOLDS VELOCITY-SPACE STEERING & KINEMATIC BRAKE ═══
-    // F_steer = v_desired - v_current.
-    // When the rolling sphere is closing on an arrive target faster than its stopping envelope,
-    // release the stick so the motor's ground brake (brakeTorque / BRAKE_DECEL) engages cleanly!
+    // ═══ REYNOLDS VELOCITY-SPACE STEERING & REAL-PHYSICS PLANT-AND-BRAKE ═══
     if (currentVel) {
         const vx = currentVel.x;
         const vz = currentVel.z;
-        const vToward = vx * dirX + vz * dirZ;
         const vLatX = vx - vToward * dirX;
         const vLatZ = vz - vToward * dirZ;
         const vLat = Math.hypot(vLatX, vLatZ);
 
-        if (arrive && minDrive <= 0 && distance < arriveRadius * 1.4 && vToward > desiredSpeedMps + 0.35 && vLat < 1.15) {
+        // HOT APPROACH PLANT-BRAKE: Coming down slopes at 7-10 m/s inside real stopping distance,
+        // actively counter-steer opposite velocity with `sprintHeld = false` so `reversalBiteTime` (0.25s)
+        // plants the athlete in ~1.5m instead of sailing 4-5m past the ball!
+        if (allowBrake && distance < dynamicBrakeZone && vClosing > 3.0 && vToward > desiredSpeedMps + 1.35) {
+            const spd = Math.hypot(vx, vz) || 1.0;
+            const revScale = Math.min(0.85, 0.45 + (vToward - desiredSpeedMps) * 0.12);
+            inputSlot.moveWorld.set((-vx / spd) * revScale, 0, (-vz / spd) * revScale);
+            inputSlot.moveX = inputSlot.moveWorld.x;
+            inputSlot.moveZ = inputSlot.moveWorld.z;
+            inputSlot.sprintHeld = false;
+            return;
+        }
+
+        // MODERATE OVERSPEED COAST-BRAKE: Release stick so `brakeTorque = 4` (5.45 m/s^2) lands cleanly on pocket
+        if (allowBrake && distance < dynamicBrakeZone && vToward > desiredSpeedMps + 0.35 && vLat < 1.35) {
             inputSlot.moveWorld.set(0, 0, 0);
             inputSlot.moveX = 0;
             inputSlot.moveZ = 0;
@@ -155,8 +186,8 @@ export function steerToward(inputSlot, currentPos, targetPos, options = {}) {
             const deltaVx = _scratchVDesired.x - vx;
             const deltaVz = _scratchVDesired.z - vz;
 
-            // Blend desired direction with counter-steering damping force (damping gain = 0.45)
-            const kDamp = 0.45;
+            // Stronger counter-steering damping when braking laterally or hot inside the arrive zone
+            const kDamp = (allowBrake && distance < dynamicBrakeZone && (vLat >= 0.90 || vToward > desiredSpeedMps + 0.20)) ? 0.78 : 0.46;
             _scratchFSteer.set(
                 _scratchVDesired.x + deltaVx * kDamp,
                 0,
@@ -179,10 +210,17 @@ export function steerToward(inputSlot, currentPos, targetPos, options = {}) {
         const slopeSign = Math.sign(currentPos.z); // +1 on South slope, -1 on North slope
         const slopeGrade = 0.3375 * Math.pow((az - 10.0) / 40.0, 0.35);
 
-        // Moving uphill: boost drive torque so the sphere doesn't stall against gravity
+        // Moving uphill: boost drive torque so the sphere doesn't stall against gravity,
+        // without overriding kinematic pocket braking when already closing fast.
         const movingUphill = (scratchDir.z * slopeSign) > 0;
         if (movingUphill) {
-            speedScale = Math.max(speedScale, Math.min(1.0, 0.85 + slopeGrade * 0.45));
+            if (allowBrake && distance < brakeZone) {
+                if (distance > 0.16 && vToward < desiredSpeedMps * 0.85) {
+                    speedScale = Math.max(speedScale, Math.min(0.85, 0.50 + slopeGrade * 0.65));
+                }
+            } else {
+                speedScale = Math.max(speedScale, Math.min(1.0, 0.85 + slopeGrade * 0.45));
+            }
         }
 
         // Traversing laterally across slope: bank uphill to cancel downhill gravity drift
@@ -193,7 +231,7 @@ export function steerToward(inputSlot, currentPos, targetPos, options = {}) {
             scratchDir.normalize();
         }
 
-        steepUphill = az > 15.0 && (scratchDir.z * slopeSign) > 0;
+        steepUphill = !(allowBrake && distance < arriveRadius) && az > 15.0 && (scratchDir.z * slopeSign) > 0;
     }
 
     scratchDir.multiplyScalar(Math.min(1.0, speedScale));
@@ -201,26 +239,44 @@ export function steerToward(inputSlot, currentPos, targetPos, options = {}) {
     inputSlot.moveWorld.copy(scratchDir);
     inputSlot.moveX = scratchDir.x;
     inputSlot.moveZ = scratchDir.z;
-    inputSlot.sprintHeld = sprint || steepUphill;
+    inputSlot.sprintHeld = (sprint && !(allowBrake && distance < 0.55)) || steepUphill;
 }
 
 /**
- * Steers the bot in a tight lateral arc around the ball when caught on the wrong side.
- * Tight and responsive to avoid wild detours to the arena walls.
+ * Steers the bot in a wide, collision-safe lateral arc around the ball when caught on
+ * the wrong side so the live 16-body ragdoll limbs never clip or kick the ball backward
+ * toward our own defending hoop.
  */
 export function steerGoalSideArc(inputSlot, selfPos, ballPos, defendGoalPos, options = {}) {
     const signZ = Math.sign(ballPos.z - defendGoalPos.z) || 1; // direction from defend goal to ball
-    // Target a tight waypoint behind the ball on the defending side with compact lateral clearance
-    const lateralOffset = (selfPos.x >= ballPos.x) ? 1.2 : -1.2;
-    const lateralFlareX = Math.max(-15.0, Math.min(15.0, ballPos.x + lateralOffset));
-    const behindZ = ballPos.z - signZ * 0.9;
-    
-    _scratchArcTarget.set(lateralFlareX, 0, behindZ);
+    const ballRadius = options.ballRadius ?? 0.50;
+    const clearLat = 1.45 + ballRadius * 0.90;
+    const behindDist = 1.05 + ballRadius * 0.65;
+    const safeClearR = 1.15 + ballRadius;
+
+    // Pick the side the athlete is already on unless that side clips the glass wall
+    let sideSign = (selfPos.x >= ballPos.x) ? 1 : -1;
+    if (Math.abs(ballPos.x + sideSign * clearLat) > 15.2) {
+        sideSign = -sideSign;
+    }
+    const lateralFlareX = Math.max(-15.0, Math.min(15.0, ballPos.x + sideSign * clearLat));
+
+    // If directly on the attacking side of the ball within limb-clip distance, step laterally
+    // clear of the ball FIRST before dropping back behind it so we never bump it toward our own goal.
+    const dxToBall = selfPos.x - ballPos.x;
+    const dzToBall = selfPos.z - ballPos.z;
+    const distToBall = Math.hypot(dxToBall, dzToBall);
+    const aheadOfBall = (dzToBall * signZ) > -0.15;
+    const targetZ = (aheadOfBall && Math.abs(dxToBall) < safeClearR && distToBall < safeClearR + 0.8)
+        ? (selfPos.z - signZ * 0.25)
+        : (ballPos.z - signZ * behindDist);
+
+    _scratchArcTarget.set(lateralFlareX, 0, Math.max(-46.0, Math.min(46.0, targetZ)));
     steerToward(inputSlot, selfPos, _scratchArcTarget, {
-        sprint: options.sprint ?? true,
+        sprint: (options.sprint ?? true) && distToBall > (1.8 + ballRadius),
         arrive: false,
         maxSpeed: options.maxSpeed ?? 1.0,
-        minDrive: 0.85,
+        minDrive: 0.82,
         currentVel: options.currentVel,
     });
 }
@@ -262,20 +318,29 @@ export function steerGoalAlignedApproach(inputSlot, selfPos, selfVel, ballPos, a
 
     const aimYaw = Math.atan2(_scratchShotDir.x, _scratchShotDir.z);
     const runwayOffset = options.runwayOffset ?? 1.5;
+    const ballRadius = options.ballRadius ?? 0.50;
 
-    // CASE 1: Ahead of ball (between ball and target). Curve smoothly to behind the ball.
-    if (axialDist > 0.25) {
-        const sideSign = lateralDist >= 0 ? 1 : -1;
+    // CASE 1: Ahead of ball (between ball and target). Curve wide around the ball to get behind it
+    // without live ragdoll limbs clipping the ball backward.
+    if (axialDist > 0.20) {
+        const clearLat = 1.45 + ballRadius * 0.90;
+        const behindOff = 1.00 + ballRadius * 0.65;
+        let sideSign = lateralDist >= 0 ? 1 : -1;
+        const candX = ballPos.x - _scratchShotDir.x * behindOff + perpX * sideSign * clearLat;
+        if (Math.abs(candX) > 15.2) sideSign = -sideSign;
+        const stepOutOnly = Math.abs(lateralDist) < (0.95 + ballRadius) && axialDist < (1.2 + ballRadius);
+        const axialTarget = stepOutOnly ? Math.max(0.0, axialDist - 0.30) : -behindOff;
         _scratchApproachTarget.set(
-            ballPos.x - _scratchShotDir.x * 0.9 + perpX * sideSign * 1.3,
+            Math.max(-15.0, Math.min(15.0, ballPos.x + _scratchShotDir.x * axialTarget + perpX * sideSign * clearLat)),
             0,
-            ballPos.z - _scratchShotDir.z * 0.9 + perpZ * sideSign * 1.3
+            Math.max(-46.0, Math.min(46.0, ballPos.z + _scratchShotDir.z * axialTarget + perpZ * sideSign * clearLat))
         );
+        const distToBallNow = Math.hypot(toAthX, toAthZ);
         steerToward(inputSlot, selfPos, _scratchApproachTarget, {
-            sprint: true,
+            sprint: distToBallNow > (1.8 + ballRadius),
             arrive: false,
             maxSpeed: options.maxSpeed ?? 1.0,
-            minDrive: 0.85,
+            minDrive: 0.82,
             currentVel: selfVel,
         });
         return;
@@ -301,27 +366,28 @@ export function steerGoalAlignedApproach(inputSlot, selfPos, selfVel, ballPos, a
     }
 
     // CASE 3: Inside runway corridor behind ball.
-    // When far, sprint to close the distance.
-    // When close (within 1.8m), step into the real-ragdoll limb-reach pocket
-    // (~0.48m forward hand/foot reach vs 0.16m torso radius) so hands/feet sweep through the ball center!
+    // Within 6.5m, engage relative-velocity speed-aware braking so even a 9.5 m/s downhill
+    // approach drops out of sprint in time, restores 100% turn authority, and plants right in the pocket!
     const distToBall = Math.hypot(ballPos.x - selfPos.x, ballPos.z - selfPos.z);
-    const ballRadius = options.ballRadius ?? 0.50;
     const pocketDist = options.pocketDist ?? (0.30 + ballRadius * 0.55);
-    const arriveRadius = options.arriveRadius ?? 0.34;
-    if (distToBall < 1.8) {
+    const arriveRadius = options.arriveRadius ?? 0.65;
+    const sprintCutoff = options.sprintCutoff ?? 1.85;
+    if (distToBall < 6.5) {
         _scratchApproachTarget.set(
             ballPos.x - _scratchShotDir.x * pocketDist,
             0,
             ballPos.z - _scratchShotDir.z * pocketDist
         );
+        const distToPocket = Math.hypot(_scratchApproachTarget.x - selfPos.x, _scratchApproachTarget.z - selfPos.z);
         steerToward(inputSlot, selfPos, _scratchApproachTarget, {
-            sprint: distToBall > 1.05,
+            sprint: (options.sprint ?? true) && distToPocket > Math.max(sprintCutoff, 2.4),
             arrive: true,
-            arriveRadius,
-            maxSpeed: (options.maxSpeed ?? 1.0) * 0.92,
-            minDrive: distToBall > pocketDist + 0.18 ? 0.55 : 0.0,
-            aimYaw,
+            arriveRadius: Math.max(arriveRadius, 0.55),
+            maxSpeed: (options.maxSpeed ?? 1.0) * 0.98,
+            minDrive: 0.0,
+            aimYaw: distToBall < 3.4 ? aimYaw : undefined,
             currentVel: selfVel,
+            targetVel: options.ballVel,
         });
     } else {
         // Fast approach: close corridor targeting anatomical pocket
@@ -332,10 +398,12 @@ export function steerGoalAlignedApproach(inputSlot, selfPos, selfVel, ballPos, a
         );
         steerToward(inputSlot, selfPos, _scratchApproachTarget, {
             sprint: options.sprint ?? true,
-            arrive: false,
+            arrive: true,
+            arriveRadius: 0.85,
             maxSpeed: options.maxSpeed ?? 1.0,
-            minDrive: 0.88,
+            minDrive: 0.86,
             currentVel: selfVel,
+            targetVel: options.ballVel,
         });
     }
 }

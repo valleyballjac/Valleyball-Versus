@@ -19,4 +19,6 @@ contextBridge.exposeInMainWorld('desktopAPI', {
   version: versionArg ? versionArg.slice('--valleyball-version='.length) : '',
   quit: () => ipcRenderer.send('valleyball:quit'),
   toggleFullscreen: () => ipcRenderer.send('valleyball:toggle-fullscreen'),
+  saveReplay: (filename, bytes) => ipcRenderer.invoke('valleyball:save-replay', { filename, bytes }),
+  getReplaysDir: () => ipcRenderer.invoke('valleyball:get-replays-dir'),
 });

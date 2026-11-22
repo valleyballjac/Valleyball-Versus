@@ -51,8 +51,8 @@ export function createHustleBoards(scene) {
   const group = new THREE.Group();
   group.name = 'hustleBoards';
 
-  const W = cfg.canvasWidth || 1024;
-  const H = cfg.canvasHeight || 640;
+  const W = cfg.canvasWidth || 512;
+  const H = cfg.canvasHeight || 320;
 
   const width = cfg.width ?? 6.4;
   const height = cfg.height ?? 2.4;
@@ -88,6 +88,8 @@ export function createHustleBoards(scene) {
       texture,
       material,
       dirty: true,
+      urgentDirty: true,
+      lastUploadTick: -9999,
       lastKey: null,
       pendingData: null,
       pendingOutlineColor: null,
@@ -170,12 +172,20 @@ export function createHustleBoards(scene) {
     group,
     boards,
     channels,
+    homeOnlyList: [channels.home],
+    bothChannelsList: [channels.home, channels.away],
     channelCursor: 0,
+    lastModeCode: -1,
+    lastFlashing: false,
+    lastScoreSig: -1,
     meshes: boards.map((b) => b.mesh),
     canvas: channels.home.canvas,
     texture: channels.home.texture,
   };
 }
+
+/** Mid-rally upload cooldown (90 ticks = 1.5s at 60 Hz). Goals/mode switches bypass immediately. */
+const HUSTLE_MID_RALLY_COOLDOWN_TICKS = 90;
 
 /**
  * Redraws the Hustle Boards if stats, team colors, or celebration state changed.
@@ -189,6 +199,7 @@ export function updateHustleBoards(
   matchProbe = null,
   athletes = null,
   athleteMatchStats = null,
+  currentTick = null,
 ) {
   if (!handle || !handle.channels) return;
 
@@ -196,30 +207,70 @@ export function updateHustleBoards(
   const flashing = celebrationTicks > 0;
   const phase = flashing ? Math.floor(celebrationTicks / (cfg.flashTicks || 15)) % 2 : 0;
 
-  const homeColor = getTeamHex('home');
-  const awayColor = getTeamHex('away');
+  const isMatch = !!(matchProbe && matchProbe.mode === 'match');
+  const modeCode = isPracticeActive ? 1 : (isMatch ? 2 : 0);
+  const homeColorNum = TUNING.athlete?.palette?.homePrimary ?? 0xd90429;
+  const awayColorNum = TUNING.athlete?.palette?.awayPrimary ?? 0x1d4ed8;
   const p1Team = TUNING.players[0]?.team || 'home';
   const p1CustomColor = TUNING.players[0]?.primaryColor;
-  const practiceColor = p1CustomColor != null ? '#' + p1CustomColor.toString(16).padStart(6, '0') : getTeamHex(p1Team);
+  const practiceColorNum = p1CustomColor != null
+    ? p1CustomColor
+    : (p1Team === 'away' ? awayColorNum : homeColorNum);
 
-  const isMatch = !!(matchProbe && matchProbe.mode === 'match');
+  // Fast numeric/scalar hash check before allocating any strings or running buildMatchStatsReport()
+  let fastHash = (modeCode * 31) ^ (flashing ? 1024 : 0) ^ (phase * 2048);
+  fastHash = (fastHash * 31 + homeColorNum) | 0;
+  fastHash = (fastHash * 31 + awayColorNum) | 0;
+  fastHash = (fastHash * 31 + practiceColorNum) | 0;
+  let scoreSig = 0;
 
-  // Lightweight dirty/tick gate: compute a compact signature of inputs before running buildMatchStatsReport()
-  let inputSig = `${isPracticeActive ? 'P' : isMatch ? 'M' : 'S'}|${flashing ? 1 : 0}|${phase}|${homeColor}|${awayColor}|${practiceColor}`;
   if (isPracticeActive) {
-    inputSig += `|${practiceStats.goals || 0}:${practiceStats.hits || 0}:${practiceStats.whiffs || 0}:${practiceStats.sweetSpots || 0}:${practiceStats.spikes || 0}:${practiceStats.dives || 0}:${practiceStats.divingHits || 0}:${practiceStats.totalTouches || 0}`;
+    const g = practiceStats.goals || 0;
+    scoreSig = g;
+    fastHash = (fastHash * 31 + g) | 0;
+    fastHash = (fastHash * 31 + (practiceStats.hits || 0)) | 0;
+    fastHash = (fastHash * 31 + (practiceStats.whiffs || 0)) | 0;
+    fastHash = (fastHash * 31 + (practiceStats.sweetSpots || 0)) | 0;
+    fastHash = (fastHash * 31 + (practiceStats.spikes || 0)) | 0;
+    fastHash = (fastHash * 31 + (practiceStats.dives || 0)) | 0;
+    fastHash = (fastHash * 31 + (practiceStats.divingHits || 0)) | 0;
+    fastHash = (fastHash * 31 + (practiceStats.totalTouches || 0)) | 0;
   } else if (isMatch) {
     const count = athletes ? athletes.length : 0;
-    inputSig += `|${matchProbe.scoreHome || 0}:${matchProbe.scoreAway || 0}:${count}`;
+    scoreSig = ((matchProbe.scoreHome || 0) << 12) | (matchProbe.scoreAway || 0);
+    fastHash = (fastHash * 31 + scoreSig) | 0;
+    fastHash = (fastHash * 31 + count) | 0;
     for (let i = 0; i < count; i++) {
       const a = athletes[i];
       const s = athleteMatchStats ? athleteMatchStats[i] : null;
-      inputSig += `|${a?.team || ''}:${a?.strikeState?.resolvedCount || 0}:${a?.strikeState?.whiffCount || 0}:${s?.goals || 0}:${s?.hits || 0}:${s?.whiffs || 0}:${s?.sweetSpotHits || 0}:${s?.spikes || 0}:${s?.dives || 0}:${s?.divingHits || 0}:${s?.totalTouches || 0}`;
+      fastHash = (fastHash * 31 + (a?.team === 'away' ? 2 : 1)) | 0;
+      fastHash = (fastHash * 31 + (a?.strikeState?.resolvedCount || 0)) | 0;
+      fastHash = (fastHash * 31 + (a?.strikeState?.whiffCount || 0)) | 0;
+      fastHash = (fastHash * 31 + (s?.goals || 0)) | 0;
+      fastHash = (fastHash * 31 + (s?.hits || 0)) | 0;
+      fastHash = (fastHash * 31 + (s?.whiffs || 0)) | 0;
+      fastHash = (fastHash * 31 + (s?.sweetSpotHits || 0)) | 0;
+      fastHash = (fastHash * 31 + (s?.spikes || 0)) | 0;
+      fastHash = (fastHash * 31 + (s?.dives || 0)) | 0;
+      fastHash = (fastHash * 31 + (s?.divingHits || 0)) | 0;
+      fastHash = (fastHash * 31 + (s?.totalTouches || 0)) | 0;
     }
   }
 
-  if (handle._lastInputSig !== inputSig) {
-    handle._lastInputSig = inputSig;
+  if (handle._lastFastHash !== fastHash || handle.lastModeCode !== modeCode) {
+    const isUrgentEvent =
+      handle.lastModeCode !== modeCode ||
+      handle.lastFlashing !== flashing ||
+      handle.lastScoreSig !== scoreSig;
+
+    handle._lastFastHash = fastHash;
+    handle.lastModeCode = modeCode;
+    handle.lastFlashing = flashing;
+    handle.lastScoreSig = scoreSig;
+
+    const homeColor = getTeamHex('home');
+    const awayColor = getTeamHex('away');
+    const practiceColor = p1CustomColor != null ? '#' + p1CustomColor.toString(16).padStart(6, '0') : getTeamHex(p1Team);
 
     const matchReport = isMatch
       ? buildMatchStatsReport({
@@ -233,13 +284,15 @@ export function updateHustleBoards(
 
     // Assign materials to meshes based on mode
     if (isPracticeActive) {
-      for (const b of handle.boards) {
+      for (let i = 0; i < handle.boards.length; i++) {
+        const b = handle.boards[i];
         if (b.displayMesh.material !== handle.channels.home.material) {
           b.displayMesh.material = handle.channels.home.material;
         }
       }
     } else {
-      for (const b of handle.boards) {
+      for (let i = 0; i < handle.boards.length; i++) {
+        const b = handle.boards[i];
         const targetMat = b.spec.team === 'home' ? handle.channels.home.material : handle.channels.away.material;
         if (b.displayMesh.material !== targetMat) {
           b.displayMesh.material = targetMat;
@@ -329,6 +382,9 @@ export function updateHustleBoards(
     handle.channels.home.pendingKey = keyHome;
     if (handle.channels.home.lastKey !== keyHome) {
       handle.channels.home.dirty = true;
+      if (isUrgentEvent || handle.channels.home.lastKey === null) {
+        handle.channels.home.urgentDirty = true;
+      }
     }
 
     // 2. Prepare data for away channel (only needed in Match mode or Standby)
@@ -384,22 +440,22 @@ export function updateHustleBoards(
       handle.channels.away.pendingKey = keyAway;
       if (handle.channels.away.lastKey !== keyAway) {
         handle.channels.away.dirty = true;
+        if (isUrgentEvent || handle.channels.away.lastKey === null) {
+          handle.channels.away.urgentDirty = true;
+        }
       }
     } else {
       handle.channels.away.dirty = false;
+      handle.channels.away.urgentDirty = false;
     }
 
     // 3. MATERIAL UNIFORM-DRIVEN CELEBRATION FLASHING (Zero GPU texture uploads, LAW 8)
-    const flashChannels = [handle.channels.home, handle.channels.away];
-    for (const ch of flashChannels) {
+    const flashChannels = handle.bothChannelsList || [handle.channels.home, handle.channels.away];
+    for (let i = 0; i < flashChannels.length; i++) {
+      const ch = flashChannels[i];
       if (ch?.material?.color) {
-        if (flashing) {
-          if (phase === 1) {
-            // Radiant gold flash pulse
-            ch.material.color.setRGB(1.65, 1.45, 0.45);
-          } else {
-            ch.material.color.setRGB(1.0, 1.0, 1.0);
-          }
+        if (flashing && phase === 1) {
+          ch.material.color.setRGB(1.65, 1.45, 0.45);
         } else {
           ch.material.color.setRGB(1.0, 1.0, 1.0);
         }
@@ -407,24 +463,38 @@ export function updateHustleBoards(
     }
   }
 
-  // 4. Smooth upload scheduled within displayCoordinator budget (at most 1 per frame)
+  // 4. Smooth upload scheduled within displayCoordinator budget (at most 1 per frame,
+  //    and throttled mid-rally to once per 1.5s per channel to prevent PCIe stalls)
   if (!displayCoordinator.canUpload()) return;
 
-  const activeChannels = isPracticeActive ? [handle.channels.home] : [handle.channels.home, handle.channels.away];
+  const activeChannels = isPracticeActive
+    ? (handle.homeOnlyList || [handle.channels.home])
+    : (handle.bothChannelsList || [handle.channels.home, handle.channels.away]);
   if (handle.channelCursor === undefined) handle.channelCursor = 0;
 
   for (let step = 0; step < activeChannels.length; step++) {
     const idx = (handle.channelCursor + step) % activeChannels.length;
     const ch = activeChannels[idx];
-    if (ch.dirty) {
-      drawHustleBoard(ch.context, ch.canvas.width, ch.canvas.height, ch.pendingData, ch.pendingOutlineColor);
-      ch.texture.needsUpdate = true;
-      displayCoordinator.consumeUpload();
-      ch.lastKey = ch.pendingKey;
-      ch.dirty = false;
-      handle.channelCursor = (idx + 1) % activeChannels.length;
-      break;
-    }
+    if (!ch.dirty) continue;
+
+    const cooldownReady =
+      ch.urgentDirty ||
+      currentTick === null ||
+      ch.lastUploadTick === undefined ||
+      (currentTick - ch.lastUploadTick) >= HUSTLE_MID_RALLY_COOLDOWN_TICKS ||
+      currentTick < ch.lastUploadTick;
+
+    if (!cooldownReady) continue;
+
+    drawHustleBoard(ch.context, ch.canvas.width, ch.canvas.height, ch.pendingData, ch.pendingOutlineColor);
+    ch.texture.needsUpdate = true;
+    displayCoordinator.consumeUpload();
+    ch.lastKey = ch.pendingKey;
+    ch.dirty = false;
+    ch.urgentDirty = false;
+    if (currentTick !== null) ch.lastUploadTick = currentTick;
+    handle.channelCursor = (idx + 1) % activeChannels.length;
+    break;
   }
 }
 
@@ -438,7 +508,17 @@ function isDarkColor(hex) {
   return brightness < 70;
 }
 
-function drawHustleBoard(ctx, W, H, data, outlineColor) {
+function drawHustleBoard(ctx, rawW, rawH, data, outlineColor) {
+  ctx.save();
+  ctx.scale(rawW / 1024, rawH / 640);
+  try {
+    drawHustleBoardVirtual(ctx, 1024, 640, data, outlineColor);
+  } finally {
+    ctx.restore();
+  }
+}
+
+function drawHustleBoardVirtual(ctx, W, H, data, outlineColor) {
   const darkOutline = isDarkColor(outlineColor);
   const effectiveOutline = darkOutline ? '#e2e8f0' : outlineColor;
   const scale = H / 800;

@@ -858,12 +858,18 @@ export function buildPerception(ownAthlete, opponentAthlete, activeBalls, matchS
         const signedDist = signZ * (ballZ - selfZ);
         perception.goalSide.signedDistBehindBall = signedDist;
         const distBallToAttackZ = Math.abs(ballZ - perception.hoops.attackGoalPos.z);
-        const isFlankCrossSide = distBallToAttackZ <= 15.0 &&
-            Math.abs(ballX) >= 3.5 &&
-            Math.abs(selfX) >= Math.abs(ballX) - 0.35 &&
+        const distBallToDefendZ = Math.abs(ballZ - perception.hoops.defendGoalPos.z);
+        // Hoops sit in the X = 0 plane at Z = ±40: lateral wing shots from the
+        // attacking circle are prime scoring angles ONLY when the athlete is strictly
+        // outside the ball toward the sideline so striking drives the ball across X = 0
+        // into the hoop, never backward toward our defending half.
+        const isFlankCrossSide = distBallToAttackZ <= 16.0 &&
+            Math.abs(ballX) >= 2.0 &&
+            Math.abs(selfX) >= Math.abs(ballX) + 0.35 &&
             (selfX * ballX) > 0 &&
-            signedDist >= -2.4;
-        perception.goalSide.isGoalSide = signedDist >= -0.25 || isFlankCrossSide;
+            signedDist >= -3.5;
+        const neutralMinSigned = distBallToDefendZ > 24.0 ? -0.20 : -0.10;
+        perception.goalSide.isGoalSide = signedDist >= neutralMinSigned || isFlankCrossSide;
 
         // Facing vs Defending Goal Angle Check
         const yawToDefend = Math.atan2(toDefX, toDefZ);

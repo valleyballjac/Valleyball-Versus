@@ -12,6 +12,7 @@ import { TUNING } from '../config/tuning.js';
 import { getColorName } from './mainMenu.js';
 import { createMenuPadTracker, MENU_PAD } from '../input/menuPads.js';
 import { buildMatchStatsReport } from '../features/match/matchManager.js';
+import { replayManager } from '../features/match/replayManager.js';
 
 let overlayElement = null;
 let titleElement = null;
@@ -28,11 +29,11 @@ const victoryPads = createMenuPadTracker();
 
 let bannerElement = null;
 let btnRowElement = null;
-let defaultCallbacks = { onRematch: null, onPracticeMode: null, onMainMenu: null };
+let defaultCallbacks = { onRematch: null, onWatchReplay: null, onPracticeMode: null, onMainMenu: null };
 
-export function initVictoryScreen({ onRematch, onPracticeMode, onMainMenu }) {
+export function initVictoryScreen({ onRematch, onWatchReplay, onPracticeMode, onMainMenu }) {
   if (overlayElement) return;
-  defaultCallbacks = { onRematch, onPracticeMode, onMainMenu };
+  defaultCallbacks = { onRematch, onWatchReplay, onPracticeMode, onMainMenu };
 
   overlayElement = document.createElement('div');
   overlayElement.id = 'victory-overlay';
@@ -385,11 +386,68 @@ export function showVictoryScreen(
   practiceBtn.id = 'btn-victory-practice';
   mainMenuBtn.id = 'btn-victory-main-menu';
 
+  const navButtons = [rematchBtn];
   btnRowElement.appendChild(rematchBtn);
+
+  const lastReplay = replayManager.getLastReplay();
+  if (lastReplay && defaultCallbacks.onWatchReplay) {
+    const watchReplayBtn = document.createElement('button');
+    watchReplayBtn.id = 'btn-watch-replay';
+    watchReplayBtn.textContent = 'WATCH REPLAY';
+    watchReplayBtn.style.cssText = `
+      padding: 12px 22px;
+      font-size: 14px;
+      font-weight: 800;
+      font-family: inherit;
+      letter-spacing: 0.06em;
+      color: #00e5ff;
+      background: rgba(0, 229, 255, 0.12);
+      border: 1px solid rgba(0, 229, 255, 0.45);
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    `;
+    watchReplayBtn.onmouseenter = () => { watchReplayBtn.style.background = 'rgba(0, 229, 255, 0.22)'; };
+    watchReplayBtn.onmouseleave = () => { watchReplayBtn.style.background = 'rgba(0, 229, 255, 0.12)'; };
+    watchReplayBtn.onclick = () => {
+      hideVictoryScreen();
+      defaultCallbacks.onWatchReplay(lastReplay);
+    };
+    btnRowElement.appendChild(watchReplayBtn);
+    navButtons.push(watchReplayBtn);
+
+    const saveReplayBtn = document.createElement('button');
+    saveReplayBtn.id = 'btn-save-replay';
+    saveReplayBtn.textContent = lastReplay.savedPath ? 'REPLAY SAVED' : 'SAVE .VBREPLAY';
+    saveReplayBtn.title = lastReplay.savedPath || lastReplay.filename || 'Download .vbreplay file';
+    saveReplayBtn.style.cssText = `
+      padding: 12px 18px;
+      font-size: 13px;
+      font-weight: 700;
+      font-family: inherit;
+      letter-spacing: 0.05em;
+      color: #cfe3f5;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    `;
+    saveReplayBtn.onmouseenter = () => { saveReplayBtn.style.background = 'rgba(255, 255, 255, 0.15)'; };
+    saveReplayBtn.onmouseleave = () => { saveReplayBtn.style.background = 'rgba(255, 255, 255, 0.08)'; };
+    saveReplayBtn.onclick = () => {
+      replayManager.downloadLastReplay(lastReplay);
+      saveReplayBtn.textContent = 'DOWNLOADED';
+    };
+    btnRowElement.appendChild(saveReplayBtn);
+    navButtons.push(saveReplayBtn);
+  }
+
   btnRowElement.appendChild(practiceBtn);
   btnRowElement.appendChild(mainMenuBtn);
+  navButtons.push(practiceBtn, mainMenuBtn);
 
-  startVictoryGamepadPolling([rematchBtn, practiceBtn, mainMenuBtn]);
+  startVictoryGamepadPolling(navButtons);
 }
 
 export function showPracticeSummary(

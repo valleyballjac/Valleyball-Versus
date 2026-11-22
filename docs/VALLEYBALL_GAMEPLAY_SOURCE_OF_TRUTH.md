@@ -1,27 +1,27 @@
-# VALLEYBALL — OFFICIAL GAMEPLAY SOURCE OF TRUTH & RULEBOOK
+# VALLEYBALL: OFFICIAL GAMEPLAY SOURCE OF TRUTH & RULEBOOK
 
-**Version:** 1.0 (v0.2.0 Baseline)  
+**Version:** 2.0 (v0.4.1 Baseline, updated 2026-11-18)  
 **Status:** Canonical Design & Rules Contract  
-**Audience:** Game Designers, Systems Engineers, Gameplay Programmers, AI Agent Architects  
+**Audience:** Game Designers, Systems Engineers, Gameplay Programmers, Tournament Organizers, AI Agents  
 **Authoritative Location:** `docs/VALLEYBALL_GAMEPLAY_SOURCE_OF_TRUTH.md`
 
 ---
 
 ## 1. THE ESSENCE OF VALLEYBALL
 
-**Valleyball** is a high-velocity, continuous-momentum, full-contact 3D arcade arena sport. It fuses the aerial trajectory tracking of volleyball, the ground combat and sliding tackles of street soccer, and the kinetic wall-riding physics of extreme sports.
+**Valleyball** is a high-velocity, continuous-momentum, full-contact 3D physics arena sport. It fuses the aerial trajectory reading of volleyball, the ground challenges and sliding tackles of street soccer, and the banked-surface momentum of sloped-bowl sports.
 
 ### The Golden Rule: Continuous Momentum
-Unlike traditional sports, **Valleyball never pauses after a goal**. There is no whistle, no stoppage, no reset to midfield, and no dead-ball re-serve. When a goal is scored, play continues uninterrupted. The ball remains live in physics, the scoreboard flashes, and attacking ends immediately invert. Players must instantly pivot from offense to defense in a continuous flow of athletic play.
+Unlike traditional sports, **Valleyball never pauses after a goal**. There is no whistle, no stoppage, no reset to midfield, and no dead-ball re-serve. When a goal is scored, play continues uninterrupted. The ball remains live in physics, the scoreboards flash, and attacking ends immediately invert. Players must instantly pivot from offense to defense in a continuous flow of athletic play.
 
 ---
 
 ## 2. THE ARENA & COURT GEOMETRY
 
-The game is played inside a seamless sunken bowl arena.
+The game is played inside the canonical authored Valley Court (`public/models/arena.glb`), a sunken sloped bowl enclosed by continuous perimeter glass.
 
 ```
-                  [ NORTH HOOP (z = +40m, y = 10m) ]
+                  [ NORTH HOOP (z = -40m, y = 10m) ]
                      [ NORTH STREAM HEADS: NW / NE ]
                ┌─────────────────────────────────────────┐
                │                                         │
@@ -36,24 +36,24 @@ The game is played inside a seamless sunken bowl arena.
                │                                         │
                └─────────────────────────────────────────┘
                      [ SOUTH STREAM HEADS: SW / SE ]
-                  [ SOUTH HOOP (z = -40m, y = 10m) ]
+                  [ SOUTH HOOP (z = +40m, y = 10m) ]
 ```
 
 ### 2.1 The Goal Hoops
 - **Geometry**: Vertical tori centered in the `x = 0` plane at elevation `y = 10.0m`.
-  - **Goal North**: `(0, 10.0, +40.0)`
-  - **Goal South**: `(0, 10.0, -40.0)`
-  - **Aperture**: Radius $\approx 5.0\text{m}$, tube radius $0.33\text{m}$.
-- **Aperture Plane**: The ring lies strictly in the `YZ` plane at `x = 0`. The opening faces East-West ($\pm X$).
+  - **Goal North**: `(0, 10.0, -40.0)`
+  - **Goal South**: `(0, 10.0, +40.0)`
+  - **Aperture**: Radius `4.667m` (measured off the authored arena asset), tube radius `0.33m`.
+- **Aperture Plane**: The ring lies in the `YZ` plane at `x = 0`. The opening faces East-West (`+X / -X`).
 
 ### 2.2 Seamless Bowl Architecture
-- **In-Play Surfaces**: The court floor, the banked bowl walls, and the elevated stream head ramps are **100% legal, active play surfaces**.
-- Athletes can ride the banked walls, dive off the elevated ramps, and rebound shots off any architectural surface.
+- **In-Play Surfaces**: The court floor, banked bowl walls, perimeter glass, and elevated stream head ramps are **100% legal, active play surfaces**.
+- Athletes can ride the banked walls, dive off the elevated ramps, and bank rebounds off any surface.
 - **Out of Bounds / Kill Plane**: If a ball or athlete falls below `y < -20.0m`, the watchdog system instantly catches and restores them to active play.
 
 ### 2.3 Court Circles (North & South Zones)
-- Two $18\text{m}$ radius circles are painted on the arena floor (centered at North and South).
-- **Role**: Spatial telemetry & tactical awareness. Touching the ball inside a circle logs `Own Circle (Defense)` or `Opp Circle (Attack)` on the Hustle Board.
+- Two `18m` radius circles are painted on the arena floor (centered near North and South).
+- **Role**: Spatial telemetry and tactical awareness. Touching the ball inside a circle logs `Own Circle (Defense)` or `Opp Circle (Attack)` on the Hustle Board.
 - **Scoring Value**: Goals scored from anywhere on court (inside or outside the circles) are worth **1 point**.
 
 ---
@@ -61,22 +61,21 @@ The game is played inside a seamless sunken bowl arena.
 ## 3. MATCH FORMAT, TIMING, & SPAWNS
 
 ### 3.1 Match Duration & Clock
-- **Regulation Time**: Strictly timed **5 minutes (300 seconds)**.
-- **Clock Engine**: Decremented per fixed step at 60 Hz (`300 * 60 = 18,000 ticks`). The clock pauses only when the simulation itself is paused.
-- **Opening Countdown**: A **5-second pre-match countdown** holds the clock at `05:00` while players orient and view team lineups.
+- **Supported Match Lengths**: Configurable in Match Rules: `3:00` (fast arcade), **`5:00` (official tournament default)**, or `10:00` (extended).
+- **Clock Engine**: Decremented per fixed step at 60 Hz (`300 * 60 = 18,000` ticks for a 5-minute match). The clock pauses only when the simulation itself is paused (e.g., pre-match countdown or Overtime Menu).
+- **Opening Countdown**: A pre-match countdown holds the clock at full time while players orient on their stream heads.
 
 ### 3.2 Opening Spawns (Stream Heads)
-Athletes spawn elevated at $+7.5\text{m}$ on the landmark stream heads:
-- **1v1 Match**:
-  - **Home Athlete**: Spawns at South stream head (randomized between `SW` or `SE`), facing North (`yaw = 0`).
-  - **Away Athlete**: Spawns at North stream head (randomized between `NW` or `NE`), facing South (`yaw = \pi`).
+Athletes spawn elevated on the landmark stream heads opposite the goal they are attacking:
+- **1v1 Match (Home attacks North `-Z`, Away attacks South `+Z`)**:
+  - **Home Athlete**: Spawns on a South stream head (`SW` or `SE`, `z ≈ +40m`), facing North (`yaw = PI`).
+  - **Away Athlete**: Spawns on a North stream head (`NW` or `NE`, `z ≈ -40m`), facing South (`yaw = 0`).
 - **2v2 Match**:
-  - **Home Team (P1 & P3)**: Occupy both South stream heads (`SW` and `SE`).
-  - **Away Team (P2 & P4)**: Occupy both North stream heads (`NW` and `NE`).
+  - **Team 1 / Home (P1 & P3)**: Occupy both South stream heads (`SW` and `SE`).
+  - **Team 2 / Away (P2 & P4)**: Occupy both North stream heads (`NW` and `NE`).
 
 ### 3.3 Opening Kickoff / Ball Drop
-- When the match begins, the ball is dropped from the ceiling at elevation $y = 10\text{m}$.
-- **Drop Position**: **Randomized anywhere within the active field of play**.
+- When the match begins, the ball is dropped from `y = 10.0m` inside the court bounds.
 - When the countdown hits **"GO!"**, athletes drop down the stream head ramps and race to contest the opening touch.
 
 ---
@@ -84,9 +83,10 @@ Athletes spawn elevated at $+7.5\text{m}$ on the landmark stream heads:
 ## 4. THE SCORING RULES & TARGET GOAL SWITCHING
 
 ### 4.1 Hoop Crossing & Detection
-A goal occurs when a ball's center crosses the `x = 0` plane within a hoop's circular aperture:
-- **Universal Entry**: A shot entering from East $\to$ West ($+X \to -X$) or West $\to$ East ($-X \to +X$) is equally valid.
-- **Segment Test**: Detected via swept segment intersection between `pPrev` and `pCurr` across $x = 0$, ensuring even hyper-velocity spikes ($>25\text{m/s}$) are never missed.
+A goal occurs when a ball's center crosses the `x = 0` plane within a hoop's circular aperture (`r = 4.667m`):
+- **Universal Entry**: A shot entering from East to West (`+X` to `-X`) or West to East (`-X` to `+X`) is equally valid.
+- **Swept Segment Test**: Detected via swept segment intersection between `pPrev` and `pCurr` across `x = 0`, ensuring high-velocity strikes are never missed.
+- **Distance Re-Arming Latch**: After a goal, the hoop disarms until the ball moves clear of `x = 0` beyond `hoopRearmX`, preventing goal-mouth jitter from double-scoring.
 
 ### 4.2 Point Attribution & The Switching Invariant
 Point allocation and end rotation follow this strict invariant:
@@ -101,57 +101,62 @@ else state.scoreAway += 1;
 state.targetGoal = oppositeGoal(state.targetGoal);
 ```
 
-1. **Initial Orientation**: Matches always start with **Home attacking North** (`targetGoal = 'N'`) and **Away attacking South** (`targetGoal = 'S'`).
+1. **Initial Orientation**: Matches start with **Home attacking North** (`targetGoal = 'N'`, `z = -40m`) and **Away attacking South** (`targetGoal = 'S'`, `z = +40m`).
 2. **Post-Goal Flip**: When a goal is scored in Goal North:
    - Home gets the point (since Home was attacking North).
    - `targetGoal` flips to South (`'S'`).
    - Home is now defending North and attacking South.
    - Away is now defending South and attacking North.
 3. **Synchronized Arena Response**:
-   - All 4 stadium scoreboards invert team attacking banners and color fills.
+   - All stadium scoreboards and in-hoop goal indicators invert team colors immediately.
    - Side ribbon boards flip directional attack arrows.
    - Player chase cameras dynamically re-bias tracking toward the player's updated target hoop.
 
 ### 4.3 Own Goals & Rebound Shots
-- If an athlete knocks the ball into the hoop their team is currently *defending*, the point is awarded to the opponent (who was designated as attacking that goal).
-- Ends flip immediately, ensuring the game always progresses forward.
+- If an athlete knocks the ball into the hoop their team is currently defending, the point is awarded to the opponent (who was designated as attacking that goal).
+- Ends flip immediately, ensuring play always flows forward.
 
 ---
 
-## 5. POSSESSION, CONTACT, & STRIKE MECHANICS
+## 5. POSSESSION, CONTACT, STRIKES, & ASSIST PRESETS
 
-### 5.1 Free Arcade Possession
-- **Zero Touch Limits**: There are no volleyball-style 3-touch limits or double-touch whistles. Athletes can juggle, dribble, wall-pass, or volley repeatedly.
+### 5.1 Free Possession
+- **Zero Touch Limits**: There are no 3-touch limits or double-touch whistles. Athletes can juggle, dribble, wall-pass, or volley repeatedly.
 
-### 5.2 Arcade Full-Contact
-- **Tackling & Knockdowns**: Physical collisions, slide tackles (`C` / `RT`), and diving challenges (`Q` / `X`) are **100% legal**.
-- Knocking down an opponent or dispossessing them with a clean slide is a core defensive strategy. There are no fouls, yellow cards, or penalty kicks.
+### 5.2 Full-Contact Play
+- **Tackling & Knockdowns**: Physical collisions, slide tackles (`C` / `RT`), diving challenges (`Q` / `X`), and directional cuts (`V` or `F` / `RB`) are **100% legal**.
+- Knocking down an opponent or dispossessing them with a clean slide is a core defensive tool. There are no fouls, cards, or penalty kicks.
 
-### 5.3 Strikes & Sweet Spots
-- **Volley / Kick (`E` / `B`)**: Underhand/horizontal contact providing controlled trajectory shaping and ground clears.
-- **Power Spike (`R` / `Y`)**: Overhand strike. When struck at the peak of an athlete's jump reach within the sweet-spot window ($\pm 4$ ticks), the ball triggers an accelerated rainbow power spike directly toward the target hoop.
+### 5.3 Strikes & Sweet-Spot Timing (`src/config/tuning.js`)
+- **Volley / Kick (`E` / `B` / Left Click)**: Ground kick (sweet spot at 8 ticks) or underhand/horizontal volley (sweet spot at 15 ticks) for controlled clears, passes, and angled shots.
+- **Power Spike (`R` / `Y` / Right Click)**: Overhand aerial strike (sweet spot at 42 ticks).
+- **Timing Curve**: Strikes timed within 5 ticks of the sweet spot deliver full 1.0 contact quality, tapering smoothly down to a 35% floor at 12 ticks.
+- **Assist Presets (Selectable Per Player in Setup)**:
+  - **Standard (Official Tournament Default)**: `assistRadius: 0.45m`, `assistWindowTicks: 6`, `aimMagnetism: 0.0`. Rewards clean positioning and timing while forgiving near-miss limb gaps; zero aim magnetism.
+  - **Pure Sim**: `assistRadius: 0.0m`, `aimMagnetism: 0.0`. Strict physical limb collision only (available in tournaments by mutual agreement).
+  - **Casual**: `assistRadius: 0.65m` plus 360-degree right-stick aim steering for newcomers.
 
 ---
 
 ## 6. STAGNANT & DEAD BALL RULES
 
 ### 6.1 Automatic Arena Re-Drop
-- If a ball comes to a complete standstill on the court, gets wedged in a corner, or remains untouched for **4.0 consecutive seconds**:
+- If a ball comes to a standstill, gets wedged, or remains untouched for **4.0 consecutive seconds**:
   1. An arena buzzer sounds.
-  2. The ball is automatically teleported to ceiling height ($y = 10\text{m}$) and dropped at a randomized $(X, Z)$ coordinate within the field of play.
+  2. The ball automatically re-drops from ceiling height (`y = 10.0m`) inside the field of play.
   3. Play continues without pausing the match clock.
 
 ---
 
 ## 7. MATCH BALL TYPES & PHYSICS
 
-The match host selects the match ball during pre-match setup. All ball types score **1 point per goal**, but dramatically alter game pace and feel:
+The match host selects the match ball in Match Rules (`Random`, `Medium`, `Small`, or `Large`). All ball types score **1 point per goal**, while changing pace and trajectory:
 
-| Ball Type | Radius | Mass | Restitution | Friction | Character & Tactical Role |
-|---|---|---|---|---|---|
-| **Medium (Official)** | $0.50\text{m}$ | $2.20\text{kg}$ | $0.88$ | $0.80$ | **The Canonical Standard**: Blue/Yellow signature ball. Balanced weight, predictable trajectory, optimal sweet-spot response. |
-| **Small** | $0.20\text{m}$ | $0.84\text{kg}$ | $0.88$ | $0.80$ | **Lightning Pace**: Crimson/White. Fast, light, snappy, high aerial bounce, rewarding twitch reflexes and rapid volleys. |
-| **Large (Exercise Ball)** | $0.75\text{m}$ | $3.89\text{kg}$ | $0.85$ | $0.85$ | **Heavy Striker**: Purple/Silver. High inertia, massive momentum, pushes athletes backward on contact, wall-bouncer. |
+| Ball Type | Diameter | Radius | Mass | Restitution | Friction | Character & Tactical Role |
+|---|---|---|---|---|---|---|
+| **Medium (Regulation Default)** | `1.0m` | `0.50m` | `2.20 kg` | `0.88` | `0.80` | **Official Tournament Standard**: Balanced weight, readable arcs, clean volley and spike response. |
+| **Small (Foot Ball)** | `0.4m` | `0.20m` | `0.84 kg` | `0.88` | `0.80` | **High-Precision Challenge**: Compact, dense, rapid rebounds, rewarding tight footwork and reflexes. |
+| **Large (Big Ball)** | `1.5m` | `0.75m` | `3.89 kg` | `0.85` | `0.85` | **Big-Rally Crowd Favorite**: Huge volume, skyward bounce, extended airborne rallies (optional for casual or 2v2 play). |
 
 ---
 
@@ -159,33 +164,36 @@ The match host selects the match ball during pre-match setup. All ball types sco
 
 ### 8.1 Regulation End
 When `ticksRemaining` reaches `0`:
-1. The game state switches to `victory`.
-2. The arena buzzer sounds.
-3. The Victory Screen displays the winning team or Draw banner.
+- If one team leads, the arena buzzer sounds and the match transitions to the **Victory Screen** showing team and individual Hustle stats.
+- If the score is **tied**, physics freezes in place and opens the **Overtime Agreement Menu**.
 
-### 8.2 Tiebreaker Rules
-- **Default (Exhibition Match)**: Concludes as a **DRAW / TIED MATCH**.
-- **Tournament / Competitive Mode (Configurable)**:
-  - **Option A: Sudden Death Golden Goal**: The match clock extends indefinitely; the next team to score any goal wins immediately.
-  - **Option B: Fixed Overtime**: Adds a 2-minute overtime clock.
+### 8.2 Overtime Agreement Menu (Shipped in v0.4.1)
+On a tied match, players choose:
+- **Format**:
+  - **Golden Goal (Official Tournament Default)**: Sudden death; next goal wins immediately.
+  - **Timed Overtime**: Extra period of `1:00`, `2:00`, `3:00`, or `5:00`.
+  - **Accept Draw**: Concludes the match as a tie.
+- **Positioning**:
+  - **Respawn at Defending Goals (Official Tournament Default)**: Resets athletes onto stream heads aligned with each team's current attacking/defending end and drops the ball at midfield after a countdown.
+  - **Resume Live in Place**: Unfreezes exact court positions and velocities immediately.
 
 ---
 
 ## 9. THE HUSTLE BOARD (POST-MATCH TELEMETRY)
 
-Performance is evaluated across 10 stats presented in a strict **ROYGBIV spectrum**:
+Performance is evaluated across 10 stats presented in a **ROYGBIV spectrum** (both collective team totals and individual player breakdowns in 2v2):
 
-1. **Red (`#ef4444`) — Goals**: Total goals scored.
-2. **Coral (`#f43f5e`) — Power Spikes**: High-velocity aerial spike executions.
-3. **Orange (`#fb923c`) — Opp Circle (Attack)**: Ball touches inside the opponent's defensive circle.
-4. **Yellow (`#ffd60a`) — Sweet Spot Hits**: Strikes executed within the optimal contact window.
-5. **Green (`#22c55e`) — Strikes (Hits/Whiffs)**: Total strike attempts connected vs missed.
-6. **Mint (`#10b981`) — Own Circle (Defense)**: Ball touches inside the team's defensive circle.
-7. **Cyan (`#38bdf8`) — Strike Accuracy**: Percentage of strike attempts that successfully connected.
-8. **Dark Blue (`#2563eb`) — Touches**: Total physical ball interactions across the match.
-9. **Purple (`#8b5cf6`) — Ground Dives**: Total defensive diving slides initiated.
-10. **Pink (`#ec4899`) — Diving Hits / Saves**: Balls struck or deflected while in an active dive.
+1. **Red (`#ef4444`) : Goals**: Total goals scored.
+2. **Coral (`#f43f5e`) : Power Spikes**: Overhand aerial spike executions.
+3. **Orange (`#fb923c`) : Opp Circle (Attack)**: Ball touches inside the opponent's defensive circle.
+4. **Yellow (`#ffd60a`) : Sweet Spot Hits**: Strikes executed within the optimal contact window.
+5. **Green (`#22c55e`) : Strikes (Hits/Whiffs)**: Total strike attempts connected vs missed.
+6. **Mint (`#10b981`) : Own Circle (Defense)**: Ball touches inside the team's defensive circle.
+7. **Cyan (`#38bdf8`) : Strike Accuracy**: Percentage of strike attempts that successfully connected.
+8. **Dark Blue (`#2563eb`) : Touches**: Total physical ball interactions across the match.
+9. **Purple (`#8b5cf6`) : Ground Dives**: Total diving challenges initiated.
+10. **Pink (`#ec4899`) : Diving Hits / Saves**: Balls struck or deflected while in an active dive.
 
 ---
 
-*This document is the single source of truth for Valleyball gameplay mechanics. Any modifications to game rules, hoop behavior, or match progression must align with this document.*
+*This document is the canonical source of truth for Valleyball gameplay mechanics and matches the shipped v0.4.1 / v0.4.2 build.*

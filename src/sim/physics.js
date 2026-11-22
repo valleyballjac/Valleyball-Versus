@@ -87,6 +87,14 @@ const ALL_UPPER =
 export const ENVIRONMENT_GROUPS =
   (GROUP_ENVIRONMENT << 16) | (ALL_GROUPS & ~ALL_UPPER);
 
+/** Court heightfield: O(1) floor for motors, lower ragdolls, and rays (excludes balls). */
+export const ENVIRONMENT_ATHLETE_GROUPS =
+  (GROUP_ENVIRONMENT << 16) | (ALL_GROUPS & ~ALL_UPPER & ~GROUP_BALL);
+
+/** Court manifold trimesh: full swept-CCD floor exclusively for balls. */
+export const ENVIRONMENT_BALL_GROUPS =
+  (GROUP_ENVIRONMENT << 16) | GROUP_BALL;
+
 const RAGDOLL_LOWER_BITS = [
   GROUP_RAGDOLL,
   GROUP_RAGDOLL_P2,
@@ -150,7 +158,8 @@ export const MOTOR_GROUPS =
 /** The ball hits the world and athlete limbs, and passes through the sphere motors. */
 export const BALL_GROUPS = (GROUP_BALL << 16) | (ALL_GROUPS & ~GROUP_MOTOR);
 
-export const ENVIRONMENT_RAY_GROUPS = (0xffff << 16) | ENVIRONMENT_MEMBERSHIP;
+export const ENVIRONMENT_RAY_GROUPS =
+  ((ALL_GROUPS & ~GROUP_BALL) << 16) | ENVIRONMENT_MEMBERSHIP;
 
 /**
  * THE MATRIX, COMPUTED FROM THE WORDS ABOVE — never typed out by hand.

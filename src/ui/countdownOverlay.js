@@ -12,6 +12,9 @@ let numberEl = null;
 let labelEl = null;
 let lastDisplayedSec = -1;
 let goTimer = 0;
+let overlayVisible = false;
+let cachedVictoryOverlayEl = null;
+let cachedSplitDividerEl = null;
 let splitFramesContainerEl = null;
 let splitFrameEls = [];
 let watermarkHoldTimer = 0;
@@ -75,8 +78,7 @@ export function initCountdownOverlay() {
       gap: 7px;
       padding: 5px 11px;
       border-radius: 6px;
-      background: rgba(11, 13, 20, 0.82);
-      backdrop-filter: blur(6px);
+      background: rgba(11, 13, 20, 0.92);
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       font-size: 11px;
       font-weight: 900;
@@ -158,8 +160,12 @@ export function resetCountdownOverlay() {
   lastDisplayedSec = -1;
   goTimer = 0;
   watermarkHoldTimer = 3.5;
-  if (overlayEl) overlayEl.style.display = 'none';
+  if (overlayEl) {
+    overlayEl.style.display = 'none';
+    overlayVisible = false;
+  }
   if (splitFramesContainerEl) splitFramesContainerEl.style.display = 'none';
+  lastSplitFramesSig = 'hidden';
 }
 
 function updateSplitscreenFrames(isCountingDown, delta) {
@@ -167,10 +173,14 @@ function updateSplitscreenFrames(isCountingDown, delta) {
   const vb = typeof window !== 'undefined' ? window.__vb : null;
   const gameState = vb?.getGameState?.() || 'menu';
   const tuning = vb?.tuning;
-  const victoryOverlay = document.getElementById('victory-overlay');
-  const isVictoryVisible = Boolean(victoryOverlay && victoryOverlay.style.display === 'flex');
-  const dividerEl = document.getElementById('splitscreen-divider');
-  const isSplitDividerActive = Boolean(dividerEl && dividerEl.style.display === 'block');
+  if (!cachedVictoryOverlayEl || !cachedVictoryOverlayEl.isConnected) {
+    cachedVictoryOverlayEl = document.getElementById('victory-overlay');
+  }
+  if (!cachedSplitDividerEl || !cachedSplitDividerEl.isConnected) {
+    cachedSplitDividerEl = document.getElementById('splitscreen-divider');
+  }
+  const isVictoryVisible = Boolean(cachedVictoryOverlayEl && cachedVictoryOverlayEl.style.display === 'flex');
+  const isSplitDividerActive = Boolean(cachedSplitDividerEl && cachedSplitDividerEl.style.display === 'block');
   const isSplitscreen = gameState === 'match' && !isVictoryVisible && (isSplitDividerActive || Boolean(tuning?.camera?.splitscreen));
 
   if (!isSplitscreen) {
@@ -217,7 +227,8 @@ function updateSplitscreenFrames(isCountingDown, delta) {
   }
   const showWatermark = isCountingDown || watermarkHoldTimer > 0;
   const watermarkOpacity = isCountingDown ? 1 : Math.min(1, watermarkHoldTimer / 0.8);
-  const opacityKey = showWatermark && watermarkOpacity > 0.01 ? watermarkOpacity.toFixed(3) : '0';
+  const quantizedOpacity = Math.round(watermarkOpacity * 20) / 20;
+  const opacityKey = showWatermark && quantizedOpacity > 0.01 ? quantizedOpacity.toFixed(2) : '0';
 
   const isQuad = _humanSlots.length > 2;
   let viewports;
@@ -306,7 +317,10 @@ export function updateCountdownOverlay(countdownSeconds, isCountingDown, delta =
   updateSplitscreenFrames(isCountingDown, delta);
 
   if (isCountingDown && countdownSeconds > 0) {
-    overlayEl.style.display = 'flex';
+    if (!overlayVisible) {
+      overlayEl.style.display = 'flex';
+      overlayVisible = true;
+    }
     goTimer = 0.85; // queue "GO!" duration when zero hits
 
     if (countdownSeconds !== lastDisplayedSec) {
@@ -332,7 +346,10 @@ export function updateCountdownOverlay(countdownSeconds, isCountingDown, delta =
     }
   } else if (goTimer > 0) {
     // Show "PLAY!" flash
-    overlayEl.style.display = 'flex';
+    if (!overlayVisible) {
+      overlayEl.style.display = 'flex';
+      overlayVisible = true;
+    }
     goTimer -= delta;
     labelEl.textContent = 'VALLEYBALL';
     numberEl.textContent = 'PLAY!';
@@ -342,9 +359,11 @@ export function updateCountdownOverlay(countdownSeconds, isCountingDown, delta =
 
     if (goTimer <= 0) {
       overlayEl.style.display = 'none';
+      overlayVisible = false;
       lastDisplayedSec = -1;
     }
-  } else {
+  } else if (overlayVisible) {
     overlayEl.style.display = 'none';
+    overlayVisible = false;
   }
 }

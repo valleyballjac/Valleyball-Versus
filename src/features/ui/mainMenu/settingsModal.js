@@ -1,4 +1,5 @@
 import { TUNING } from '../../../config/tuning.js';
+import { getHudPrefs, setHudPrefs, setCleanBroadcastHud, subscribeHudPrefs } from '../../../config/hudConfig.js';
 import { soundManager } from '../../../audio/soundManager.js';
 import { setVibrationEnabled, isVibrationEnabled } from '../../../input/inputRouter.js';
 import { CAMERA_OPTIONS } from './constants.js';
@@ -122,6 +123,49 @@ export function buildMainMenuSettingsModal(rootEl, playerConfigs = [], callbacks
   // 2. DISPLAY & GRAPHICS SECTION
   box.appendChild(createSectionHeader('🖥️ Display & Graphics'));
 
+  // Graphics Quality Preset (Low / Balanced / High)
+  const gfxRow = document.createElement('div');
+  gfxRow.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;';
+  const gfxLabel = document.createElement('span');
+  gfxLabel.style.cssText = 'font-size: 12px; font-weight: 700; color: #cbd5e1;';
+  gfxLabel.textContent = 'Graphics Preset';
+  const gfxGroup = document.createElement('div');
+  gfxGroup.style.cssText = 'display: flex; gap: 6px;';
+  const gfxOpts = [
+    { id: 'low', label: 'Low (Fast)' },
+    { id: 'balanced', label: 'Balanced' },
+    { id: 'high', label: 'High' },
+  ];
+  const gfxBtns = [];
+  const initGfx = getHudPrefs().graphicsPreset || 'balanced';
+  gfxOpts.forEach((opt) => {
+    const b = document.createElement('button');
+    b.textContent = opt.label;
+    const isSel = initGfx === opt.id;
+    b.style.cssText = `
+      padding: 6px 12px; font-size: 11px; font-weight: 700; font-family: inherit;
+      border-radius: 4px; cursor: pointer; border: 1px solid rgba(120, 170, 210, 0.3); transition: all 0.12s ease;
+      background: ${isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)'};
+      color: ${isSel ? '#ffffff' : '#94a3b8'};
+    `;
+    b.onclick = () => {
+      setHudPrefs({ graphicsPreset: opt.id });
+      const nextShadow = opt.id === 'low' ? 'off' : (opt.id === 'high' ? 'high' : 'balanced');
+      shadowBtns.forEach((btn, idx) => {
+        const s = shadowOpts[idx].id === nextShadow;
+        btn.style.background = s ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
+        btn.style.color = s ? '#ffffff' : '#94a3b8';
+      });
+      if (callbacks.onRenderSettingsChange) callbacks.onRenderSettingsChange({ graphicsPreset: opt.id });
+      else if (window.__vb?.applyRenderSettings) window.__vb.applyRenderSettings({ graphicsPreset: opt.id });
+    };
+    gfxBtns.push(b);
+    gfxGroup.appendChild(b);
+  });
+  gfxRow.appendChild(gfxLabel);
+  gfxRow.appendChild(gfxGroup);
+  box.appendChild(gfxRow);
+
   // Stadium Shadows
   const shadowRow = document.createElement('div');
   shadowRow.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;';
@@ -139,7 +183,7 @@ export function buildMainMenuSettingsModal(rootEl, playerConfigs = [], callbacks
   shadowOpts.forEach((opt) => {
     const b = document.createElement('button');
     b.textContent = opt.label;
-    const isSel = (TUNING.render?.shadowQuality || 'high') === opt.id;
+    const isSel = (TUNING.render?.shadowQuality || 'balanced') === opt.id;
     b.style.cssText = `
       padding: 6px 12px; font-size: 11px; font-weight: 700; font-family: inherit;
       border-radius: 4px; cursor: pointer; border: 1px solid rgba(120, 170, 210, 0.3); transition: all 0.12s ease;
@@ -202,6 +246,135 @@ export function buildMainMenuSettingsModal(rootEl, playerConfigs = [], callbacks
   overlayRow.appendChild(overlayLabel);
   overlayRow.appendChild(overlayGroup);
   box.appendChild(overlayRow);
+
+  // 2b. OPTIONAL READABILITY HUD SECTION (All Default OFF)
+  box.appendChild(createSectionHeader('👁️ Optional Readability HUD'));
+
+  const buildMainHudToggle = (labelText, opts, currentVal, onPick) => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;';
+    const lbl = document.createElement('span');
+    lbl.style.cssText = 'font-size: 12px; font-weight: 700; color: #cbd5e1;';
+    lbl.textContent = labelText;
+    const grp = document.createElement('div');
+    grp.style.cssText = 'display: flex; gap: 6px;';
+    const btns = [];
+    opts.forEach((opt) => {
+      const b = document.createElement('button');
+      b.textContent = opt.label;
+      const isSel = currentVal === opt.id;
+      b.style.cssText = `
+        padding: 6px 12px; font-size: 11px; font-weight: 700; font-family: inherit;
+        border-radius: 4px; cursor: pointer; border: 1px solid rgba(120, 170, 210, 0.3); transition: all 0.12s ease;
+        background: ${isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)'};
+        color: ${isSel ? '#ffffff' : '#94a3b8'};
+      `;
+      b.onclick = () => onPick(opt.id);
+      btns.push(b);
+      grp.appendChild(b);
+    });
+    row.appendChild(lbl);
+    row.appendChild(grp);
+    box.appendChild(row);
+    return { row, btns };
+  };
+
+  const initHud = getHudPrefs();
+  const scorebugOpts = [
+    { id: 'off', label: 'Off' },
+    { id: 'splitscreen', label: 'Split-Screen' },
+    { id: 'always', label: 'Always' },
+  ];
+  const { row: scorebugRow, btns: scorebugBtns } = buildMainHudToggle(
+    'Broadcast Scorebug',
+    scorebugOpts,
+    initHud.scorebugMode,
+    (val) => setHudPrefs({ scorebugMode: val }),
+  );
+
+  const dropRingOpts = [
+    { id: false, label: 'Off' },
+    { id: true, label: 'On' },
+  ];
+  const { row: dropRingRow, btns: dropRingBtns } = buildMainHudToggle(
+    'Ball Rainbow Halo',
+    dropRingOpts,
+    initHud.ballDropRing,
+    (val) => setHudPrefs({ ballDropRing: val }),
+  );
+
+  const strikeGuideOpts = [
+    { id: false, label: 'Off' },
+    { id: true, label: 'On' },
+  ];
+  const { row: strikeGuideRow, btns: strikeGuideBtns } = buildMainHudToggle(
+    'Strike Range Guide',
+    strikeGuideOpts,
+    initHud.strikeRangeGuide,
+    (val) => setHudPrefs({ strikeRangeGuide: val }),
+  );
+
+  const orientOpts = [
+    { id: false, label: 'Off' },
+    { id: true, label: 'On' },
+  ];
+  const { row: orientRow, btns: orientBtns } = buildMainHudToggle(
+    'Ball Pip & Swap Cues',
+    orientOpts,
+    initHud.orientationCues,
+    (val) => setHudPrefs({ orientationCues: val }),
+  );
+
+  const cleanRow = document.createElement('div');
+  cleanRow.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;';
+  const cleanLabel = document.createElement('span');
+  cleanLabel.style.cssText = 'font-size: 12px; font-weight: 700; color: #cbd5e1;';
+  cleanLabel.textContent = 'Clean Broadcast Footage';
+  const cleanBtn = document.createElement('button');
+  cleanBtn.textContent = 'Hide All Guides';
+  cleanBtn.style.cssText = `
+    padding: 6px 12px; font-size: 11px; font-weight: 700; font-family: inherit;
+    border-radius: 4px; cursor: pointer; border: 1px solid rgba(56, 189, 248, 0.45);
+    background: rgba(56, 189, 248, 0.14); color: #e0f2fe; transition: all 0.12s ease;
+  `;
+  cleanBtn.onclick = () => {
+    setCleanBroadcastHud();
+    if (callbacks.onRenderSettingsChange) callbacks.onRenderSettingsChange({ showControlsOverlay: false });
+    else if (window.__vb?.applyRenderSettings) window.__vb.applyRenderSettings({ showControlsOverlay: false });
+  };
+  cleanRow.appendChild(cleanLabel);
+  cleanRow.appendChild(cleanBtn);
+  box.appendChild(cleanRow);
+
+  const syncMainHudButtons = (prefs) => {
+    gfxBtns.forEach((btn, idx) => {
+      const s = gfxOpts[idx].id === prefs.graphicsPreset;
+      btn.style.background = s ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
+      btn.style.color = s ? '#ffffff' : '#94a3b8';
+    });
+    scorebugBtns.forEach((btn, idx) => {
+      const s = scorebugOpts[idx].id === prefs.scorebugMode;
+      btn.style.background = s ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
+      btn.style.color = s ? '#ffffff' : '#94a3b8';
+    });
+    dropRingBtns.forEach((btn, idx) => {
+      const s = dropRingOpts[idx].id === prefs.ballDropRing;
+      btn.style.background = s ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
+      btn.style.color = s ? '#ffffff' : '#94a3b8';
+    });
+    strikeGuideBtns.forEach((btn, idx) => {
+      const s = strikeGuideOpts[idx].id === prefs.strikeRangeGuide;
+      btn.style.background = s ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
+      btn.style.color = s ? '#ffffff' : '#94a3b8';
+    });
+    orientBtns.forEach((btn, idx) => {
+      const s = orientOpts[idx].id === prefs.orientationCues;
+      btn.style.background = s ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
+      btn.style.color = s ? '#ffffff' : '#94a3b8';
+    });
+  };
+  subscribeHudPrefs(syncMainHudButtons);
+  mainMenuSettingsModalEl._syncHudPrefs = () => syncMainHudButtons(getHudPrefs());
 
   // 3. CAMERA & CONTROLS SECTION
   box.appendChild(createSectionHeader('🎥 Camera Angle'));
@@ -379,21 +552,42 @@ export function buildMainMenuSettingsModal(rootEl, playerConfigs = [], callbacks
       onAction: () => {},
     },
     {
+      el: gfxRow,
+      onLeft: () => {
+        const curIdx = gfxOpts.findIndex((o) => o.id === getHudPrefs().graphicsPreset);
+        const nextIdx = (curIdx - 1 + gfxOpts.length) % gfxOpts.length;
+        gfxBtns[nextIdx]?.click();
+        soundManager.playTone(440, 0.05, 'sine', 0.15);
+      },
+      onRight: () => {
+        const curIdx = gfxOpts.findIndex((o) => o.id === getHudPrefs().graphicsPreset);
+        const nextIdx = (curIdx + 1) % gfxOpts.length;
+        gfxBtns[nextIdx]?.click();
+        soundManager.playTone(520, 0.05, 'sine', 0.15);
+      },
+      onAction: () => {
+        const curIdx = gfxOpts.findIndex((o) => o.id === getHudPrefs().graphicsPreset);
+        const nextIdx = (curIdx + 1) % gfxOpts.length;
+        gfxBtns[nextIdx]?.click();
+        soundManager.playTone(520, 0.05, 'sine', 0.15);
+      },
+    },
+    {
       el: shadowRow,
       onLeft: () => {
-        const curIdx = shadowOpts.findIndex((o) => (TUNING.render?.shadowQuality || 'high') === o.id);
+        const curIdx = shadowOpts.findIndex((o) => (TUNING.render?.shadowQuality || 'balanced') === o.id);
         const nextIdx = (curIdx - 1 + shadowOpts.length) % shadowOpts.length;
         shadowBtns[nextIdx]?.click();
         soundManager.playTone(440, 0.05, 'sine', 0.15);
       },
       onRight: () => {
-        const curIdx = shadowOpts.findIndex((o) => (TUNING.render?.shadowQuality || 'high') === o.id);
+        const curIdx = shadowOpts.findIndex((o) => (TUNING.render?.shadowQuality || 'balanced') === o.id);
         const nextIdx = (curIdx + 1) % shadowOpts.length;
         shadowBtns[nextIdx]?.click();
         soundManager.playTone(520, 0.05, 'sine', 0.15);
       },
       onAction: () => {
-        const curIdx = shadowOpts.findIndex((o) => (TUNING.render?.shadowQuality || 'high') === o.id);
+        const curIdx = shadowOpts.findIndex((o) => (TUNING.render?.shadowQuality || 'balanced') === o.id);
         const nextIdx = (curIdx + 1) % shadowOpts.length;
         shadowBtns[nextIdx]?.click();
         soundManager.playTone(520, 0.05, 'sine', 0.15);
@@ -415,6 +609,81 @@ export function buildMainMenuSettingsModal(rootEl, playerConfigs = [], callbacks
         const isCurrentlyHidden = overlayBtns[0].style.color === 'rgb(255, 255, 255)' || overlayBtns[0].style.color === '#ffffff';
         overlayBtns[isCurrentlyHidden ? 1 : 0]?.click();
         soundManager.playTone(520, 0.05, 'sine', 0.15);
+      },
+    },
+    {
+      el: scorebugRow,
+      onLeft: () => {
+        const curIdx = scorebugOpts.findIndex((o) => o.id === getHudPrefs().scorebugMode);
+        const nextIdx = (curIdx - 1 + scorebugOpts.length) % scorebugOpts.length;
+        scorebugBtns[nextIdx]?.click();
+        soundManager.playTone(440, 0.05, 'sine', 0.15);
+      },
+      onRight: () => {
+        const curIdx = scorebugOpts.findIndex((o) => o.id === getHudPrefs().scorebugMode);
+        const nextIdx = (curIdx + 1) % scorebugOpts.length;
+        scorebugBtns[nextIdx]?.click();
+        soundManager.playTone(520, 0.05, 'sine', 0.15);
+      },
+      onAction: () => {
+        const curIdx = scorebugOpts.findIndex((o) => o.id === getHudPrefs().scorebugMode);
+        const nextIdx = (curIdx + 1) % scorebugOpts.length;
+        scorebugBtns[nextIdx]?.click();
+        soundManager.playTone(520, 0.05, 'sine', 0.15);
+      },
+    },
+    {
+      el: dropRingRow,
+      onLeft: () => {
+        setHudPrefs({ ballDropRing: !getHudPrefs().ballDropRing });
+        soundManager.playTone(440, 0.05, 'sine', 0.15);
+      },
+      onRight: () => {
+        setHudPrefs({ ballDropRing: !getHudPrefs().ballDropRing });
+        soundManager.playTone(520, 0.05, 'sine', 0.15);
+      },
+      onAction: () => {
+        setHudPrefs({ ballDropRing: !getHudPrefs().ballDropRing });
+        soundManager.playTone(520, 0.05, 'sine', 0.15);
+      },
+    },
+    {
+      el: strikeGuideRow,
+      onLeft: () => {
+        setHudPrefs({ strikeRangeGuide: !getHudPrefs().strikeRangeGuide });
+        soundManager.playTone(440, 0.05, 'sine', 0.15);
+      },
+      onRight: () => {
+        setHudPrefs({ strikeRangeGuide: !getHudPrefs().strikeRangeGuide });
+        soundManager.playTone(520, 0.05, 'sine', 0.15);
+      },
+      onAction: () => {
+        setHudPrefs({ strikeRangeGuide: !getHudPrefs().strikeRangeGuide });
+        soundManager.playTone(520, 0.05, 'sine', 0.15);
+      },
+    },
+    {
+      el: orientRow,
+      onLeft: () => {
+        setHudPrefs({ orientationCues: !getHudPrefs().orientationCues });
+        soundManager.playTone(440, 0.05, 'sine', 0.15);
+      },
+      onRight: () => {
+        setHudPrefs({ orientationCues: !getHudPrefs().orientationCues });
+        soundManager.playTone(520, 0.05, 'sine', 0.15);
+      },
+      onAction: () => {
+        setHudPrefs({ orientationCues: !getHudPrefs().orientationCues });
+        soundManager.playTone(520, 0.05, 'sine', 0.15);
+      },
+    },
+    {
+      el: cleanRow,
+      onLeft: () => {},
+      onRight: () => {},
+      onAction: () => {
+        cleanBtn.click();
+        soundManager.playTone(360, 0.05, 'sine', 0.15);
       },
     },
     {
@@ -552,6 +821,7 @@ export function showMainMenuSettingsModal() {
   if (mainMenuSettingsModalEl) {
     mainMenuSettingsModalEl.style.display = 'flex';
     mainMenuSettingsModalEl._syncCamera?.();
+    mainMenuSettingsModalEl._syncHudPrefs?.();
     if (mainMenuSettingsModalEl._updateFocusUI) {
       mainMenuSettingsModalEl._updateFocusUI();
     }

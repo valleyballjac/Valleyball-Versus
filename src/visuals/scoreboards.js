@@ -240,8 +240,8 @@ export function createScoreboards(scene) {
     { key: 'west', side: 'side', x: -cfg.sideX, y: cfg.sideCenterY, z: 0 },
   ].map((spec) => {
     const canvas = document.createElement('canvas');
-    canvas.width = spec.side === 'end' ? (cfg.endCanvasWidth || 1024) : (cfg.sideCanvasWidth || 2048);
-    canvas.height = spec.side === 'end' ? (cfg.endCanvasHeight || 512) : (cfg.sideCanvasHeight || 512);
+    canvas.width = spec.side === 'end' ? (cfg.endCanvasWidth || 512) : (cfg.sideCanvasWidth || 1024);
+    canvas.height = spec.side === 'end' ? (cfg.endCanvasHeight || 256) : (cfg.sideCanvasHeight || 256);
     const context = canvas.getContext('2d');
 
     const texture = new THREE.CanvasTexture(canvas);
@@ -294,6 +294,9 @@ export function createScoreboards(scene) {
       clockMesh,
       /** Cache key to skip redundant canvas repaints */
       lastKey: null,
+      pendingKey: null,
+      pendingView: { flashing: false, phase: 0 },
+      dirty: true,
     };
   });
 
@@ -317,7 +320,21 @@ export function createScoreboards(scene) {
     clockGeometrySide,
     clockMeshes,
     lastClockText: null,
+    lastClockMode: null,
+    lastClockSeconds: -1,
+    lastClockOvertimePeriod: -1,
+    lastClockGoldenGoal: null,
     lastFlashing: null,
+    lastMatchOver: null,
+    lastBoardSigScoreHome: -1,
+    lastBoardSigScoreAway: -1,
+    lastBoardSigTargetGoal: null,
+    lastBoardSigMatchOver: null,
+    lastBoardSigFlashing: null,
+    lastBoardSigLastGoalId: null,
+    lastBoardSigLastScoredFor: null,
+    lastBoardSigHomeColor: -1,
+    lastBoardSigAwayColor: -1,
   };
 }
 
@@ -348,63 +365,112 @@ export function updateScoreboards(handle, probe) {
 
   const isMatchMode = probe.mode === 'match';
   const seconds = Math.floor(probe.ticksRemaining / 60);
-  const mmss = `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
-  let clockText;
-  if (!isMatchMode) {
-    clockText = 'PRACTICE';
-  } else if (probe.matchOver) {
-    clockText = 'FULL TIME';
-  } else if (probe.isGoldenGoal) {
-    clockText = 'OT · GOLDEN GOAL';
-  } else if (probe.overtimePeriod > 0) {
-    clockText = `OT ${mmss}`;
-  } else {
-    clockText = mmss;
-  }
+  const overtimePeriod = probe.overtimePeriod || 0;
+  const isGoldenGoal = !!probe.isGoldenGoal;
+  const matchOver = !!probe.matchOver;
 
   // 1. DECOUPLED MICRO-CLOCK OVERLAY UPDATE (65 KB payload shared across all 4 boards)
-  // Only updates when clock string or celebration flashing changes
-  const clockDirty = (handle.lastClockText !== clockText) || (handle.lastFlashing !== flashing) || (handle.lastMatchOver !== probe.matchOver);
-  if (clockDirty) {
-    handle.lastClockText = clockText;
-    handle.lastFlashing = flashing;
-    handle.lastMatchOver = probe.matchOver;
+  // Avoids formatting clock strings until the integer second or match state actually changes.
+  const clockInputsChanged =
+    handle.lastClockMode !== isMatchMode ||
+    handle.lastClockSeconds !== seconds ||
+    handle.lastClockOvertimePeriod !== overtimePeriod ||
+    handle.lastClockGoldenGoal !== isGoldenGoal ||
+    handle.lastFlashing !== flashing ||
+    handle.lastMatchOver !== matchOver;
 
-    // During celebration flashing, hide clock overlays so the GOAL banner displays unimpeded
-    if (handle.clockMeshes) {
-      for (const mesh of handle.clockMeshes) {
-        mesh.visible = !flashing;
-      }
+  if (clockInputsChanged) {
+    let clockText;
+    if (!isMatchMode) {
+      clockText = 'PRACTICE';
+    } else if (matchOver) {
+      clockText = 'FULL TIME';
+    } else if (isGoldenGoal) {
+      clockText = 'OT · GOLDEN GOAL';
+    } else {
+      const mmss = `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+      clockText = overtimePeriod > 0 ? `OT ${mmss}` : mmss;
     }
 
-    if (!flashing && handle.clockContext) {
-      drawMicroClock(handle.clockContext, handle.clockCanvas.width, handle.clockCanvas.height, clockText, probe.matchOver);
-      handle.clockTexture.needsUpdate = true;
+    handle.lastClockMode = isMatchMode;
+    handle.lastClockSeconds = seconds;
+    handle.lastClockOvertimePeriod = overtimePeriod;
+    handle.lastClockGoldenGoal = isGoldenGoal;
+
+    const clockDirty =
+      handle.lastClockText !== clockText ||
+      handle.lastFlashing !== flashing ||
+      handle.lastMatchOver !== matchOver;
+
+    if (clockDirty) {
+      handle.lastClockText = clockText;
+      handle.lastFlashing = flashing;
+      handle.lastMatchOver = matchOver;
+
+      // During celebration flashing, hide clock overlays so the GOAL banner displays unimpeded
+      if (handle.clockMeshes) {
+        for (let i = 0; i < handle.clockMeshes.length; i++) {
+          handle.clockMeshes[i].visible = !flashing;
+        }
+      }
+
+      if (!flashing && handle.clockContext) {
+        drawMicroClock(handle.clockContext, handle.clockCanvas.width, handle.clockCanvas.height, clockText, matchOver);
+        handle.clockTexture.needsUpdate = true;
+      }
     }
   }
 
-  // 2. BACKPLATES UPDATE ONLY ON SCORE/GOAL/SIDE EVENTS (Zero uploads on standard second ticks)
-  for (const board of handle.boards) {
-    const key = `${board.key}|${probe.scoreHome}|${probe.scoreAway}|${probe.targetGoal}|` +
-      `${probe.matchOver ? 1 : 0}|${flashing ? 1 : 0}|${probe.lastGoalId || ''}|${probe.lastScoredFor || ''}|${INK.home}|${INK.away}`;
+  // 2. BACKPLATES UPDATE ONLY ON SCORE/GOAL/SIDE/COLOR EVENTS (Zero string/object allocs on steady ticks)
+  const homeColorNum = TUNING.athlete?.palette?.homePrimary ?? 0xd90429;
+  const awayColorNum = TUNING.athlete?.palette?.awayPrimary ?? 0x1d4ed8;
+  const lastGoalId = probe.lastGoalId || '';
+  const lastScoredFor = probe.lastScoredFor || '';
 
-    board.pendingKey = key;
-    board.pendingView = { flashing, phase };
-    if (board.lastKey !== key) {
-      board.dirty = true;
+  const boardInputsChanged =
+    handle.lastBoardSigScoreHome !== probe.scoreHome ||
+    handle.lastBoardSigScoreAway !== probe.scoreAway ||
+    handle.lastBoardSigTargetGoal !== probe.targetGoal ||
+    handle.lastBoardSigMatchOver !== matchOver ||
+    handle.lastBoardSigFlashing !== flashing ||
+    handle.lastBoardSigLastGoalId !== lastGoalId ||
+    handle.lastBoardSigLastScoredFor !== lastScoredFor ||
+    handle.lastBoardSigHomeColor !== homeColorNum ||
+    handle.lastBoardSigAwayColor !== awayColorNum;
+
+  if (boardInputsChanged) {
+    handle.lastBoardSigScoreHome = probe.scoreHome;
+    handle.lastBoardSigScoreAway = probe.scoreAway;
+    handle.lastBoardSigTargetGoal = probe.targetGoal;
+    handle.lastBoardSigMatchOver = matchOver;
+    handle.lastBoardSigFlashing = flashing;
+    handle.lastBoardSigLastGoalId = lastGoalId;
+    handle.lastBoardSigLastScoredFor = lastScoredFor;
+    handle.lastBoardSigHomeColor = homeColorNum;
+    handle.lastBoardSigAwayColor = awayColorNum;
+
+    const sharedKey = `${probe.scoreHome}|${probe.scoreAway}|${probe.targetGoal}|` +
+      `${matchOver ? 1 : 0}|${flashing ? 1 : 0}|${lastGoalId}|${lastScoredFor}|${homeColorNum}|${awayColorNum}`;
+    for (let i = 0; i < handle.boards.length; i++) {
+      const board = handle.boards[i];
+      board.pendingKey = sharedKey;
+      if (board.lastKey !== sharedKey) {
+        board.dirty = true;
+      }
     }
+  }
+
+  for (let i = 0; i < handle.boards.length; i++) {
+    const board = handle.boards[i];
+    board.pendingView.flashing = flashing;
+    board.pendingView.phase = phase;
   }
 
   // 3. MATERIAL UNIFORM-DRIVEN CELEBRATION FLASHING (Zero GPU texture uploads, LAW 8)
-  for (const board of handle.boards) {
-    if (flashing) {
-      if (phase === 1) {
-        // Radiant gold flash pulse
-        board.screenMaterial.color.setRGB(1.65, 1.45, 0.45);
-      } else {
-        // Clean baseline tone
-        board.screenMaterial.color.setRGB(1.0, 1.0, 1.0);
-      }
+  for (let i = 0; i < handle.boards.length; i++) {
+    const board = handle.boards[i];
+    if (flashing && phase === 1) {
+      board.screenMaterial.color.setRGB(1.65, 1.45, 0.45);
     } else {
       board.screenMaterial.color.setRGB(1.0, 1.0, 1.0);
     }
@@ -443,8 +509,18 @@ export function updateScoreboards(handle, probe) {
  */
 function drawEndBoard(board, probe, view) {
   const ctx = board.context;
-  const W = board.canvas.width;
-  const H = board.canvas.height;
+  ctx.save();
+  ctx.scale(board.canvas.width / 1024, board.canvas.height / 512);
+  try {
+    drawEndBoardVirtual(ctx, board, probe, view);
+  } finally {
+    ctx.restore();
+  }
+}
+
+function drawEndBoardVirtual(ctx, board, probe, view) {
+  const W = 1024;
+  const H = 512;
 
   // Architectural Obsidian stadium bezel with canonical pink corner accents
   drawObsidianBezel(ctx, W, H);
@@ -569,8 +645,18 @@ function drawEndBoard(board, probe, view) {
  */
 function drawSideBoard(board, probe, view) {
   const ctx = board.context;
-  const W = board.canvas.width;
-  const H = board.canvas.height;
+  ctx.save();
+  ctx.scale(board.canvas.width / 2048, board.canvas.height / 512);
+  try {
+    drawSideBoardVirtual(ctx, board, probe, view);
+  } finally {
+    ctx.restore();
+  }
+}
+
+function drawSideBoardVirtual(ctx, board, probe, view) {
+  const W = 2048;
+  const H = 512;
 
   // Architectural Obsidian stadium bezel with canonical pink corner accents
   drawObsidianBezel(ctx, W, H);

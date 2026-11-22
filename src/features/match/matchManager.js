@@ -340,6 +340,7 @@ class MatchManager {
     this.matchState.countdownSecondsRemaining = isCountingDown ? Math.ceil(countdownSeconds) : 0;
     this.matchState.countdownTicksRemaining = isCountingDown ? Math.round(countdownSeconds * fixedHz) : 0;
     this.matchState._buzzerPlayed = false;
+    this.matchState._agreedDraw = false;
     this.matchState.overtimeMode = null;
     this.matchState.isGoldenGoal = false;
     this.matchState.overtimePeriod = 0;
@@ -395,7 +396,11 @@ class MatchManager {
   }
 
   /** Resets match scores and timer for a rematch. */
-  rematch(countdownSeconds = TUNING.match?.countdownSeconds ?? 3) {
+  rematch(countdownOrConfigs = TUNING.match?.countdownSeconds ?? 3) {
+    const countdownSeconds =
+      typeof countdownOrConfigs === 'number' && Number.isFinite(countdownOrConfigs)
+        ? countdownOrConfigs
+        : (TUNING.match?.countdownSeconds ?? 3);
     this.gameState = 'match';
     this.resetMatchState({
       mode: 'match',
@@ -410,7 +415,7 @@ class MatchManager {
   }
 
   /** Configures `matchState` for Overtime (`golden_goal`, `timed`, or `draw`). */
-  startOvertime({ format = 'golden_goal', durationSeconds = 120 } = {}) {
+  startOvertime({ format = 'golden_goal', durationSeconds = 120, positionMode = 'in_place' } = {}) {
     const fixedHz = TUNING.loop?.fixedHz || 60;
     this.matchState.overtimeMode = format;
     if (format === 'draw') {
@@ -425,6 +430,24 @@ class MatchManager {
     this.matchState.overtimePeriod = (this.matchState.overtimePeriod || 0) + 1;
     this.matchState.matchOver = false;
     this.matchState.celebrationTicks = 0;
+    this.matchState._buzzerPlayed = false;
+    this.matchState._agreedDraw = false;
+
+    if (positionMode === 'respawn') {
+      const cdSec = TUNING.match?.countdownSeconds ?? 3;
+      this.matchState.isCountingDown = cdSec > 0;
+      this.matchState.countdownSecondsRemaining = cdSec > 0 ? Math.ceil(cdSec) : 0;
+      this.matchState.countdownTicksRemaining = cdSec > 0 ? Math.round(cdSec * fixedHz) : 0;
+      this.preMatchCountdownRemaining = Math.max(0, cdSec);
+      if (this.matchState.ballTrackers && typeof this.matchState.ballTrackers.clear === 'function') {
+        this.matchState.ballTrackers.clear();
+      }
+    } else {
+      this.matchState.isCountingDown = false;
+      this.matchState.countdownSecondsRemaining = 0;
+      this.matchState.countdownTicksRemaining = 0;
+      this.preMatchCountdownRemaining = 0;
+    }
 
     if (format === 'golden_goal') {
       this.matchState.isGoldenGoal = true;

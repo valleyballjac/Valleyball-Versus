@@ -42,6 +42,8 @@ import {
   playerSetup,
   getPlayerConfigs,
   getSelectedMatchBall,
+  getSelectedMatchDuration,
+  getSelectedMatchArena,
   getAggressivenessBadge,
   setPlayerAggressiveness,
   updateAggressivenessUI,
@@ -80,7 +82,9 @@ import {
   startMenuGamepadPolling,
   stopSetupGamepadPolling,
   setMenuNavigationContext,
+  resetMenuPadTargets,
 } from './menuNavigation.js';
+import { syncExplicitMappingsWithConfigs } from '../../../input/inputRouter.js';
 
 export * from './constants.js';
 export * from './toast.js';
@@ -92,6 +96,8 @@ export * from './controllerAssignment.js';
 export {
   getPlayerConfigs,
   getSelectedMatchBall,
+  getSelectedMatchDuration,
+  getSelectedMatchArena,
   getAggressivenessBadge,
   setPlayerAggressiveness,
   updateAggressivenessUI,
@@ -109,6 +115,7 @@ let callbacks = {
   onEnterSetup: null,
   onExitSetup: null,
   onRenderSettingsChange: null,
+  onBallPreviewChange: null,
 };
 
 export function initMainMenu(cbs = {}) {
@@ -138,17 +145,42 @@ export function initMainMenu(cbs = {}) {
   buildMainMenuSettingsModal(rootEl, getPlayerConfigs(), callbacks);
   buildFlyoverOverlay(rootEl, callbacks.onSkipFlyover);
 
+  const handleQuickStartFromAssignment = (data = {}) => {
+    const fmt = data?.mode === '2v2' ? '2v2' : '1v1';
+    setCurrentSetupMode('match');
+    setMatchFormat(fmt);
+    applyControllerAssignments(data?.assignments || null, 'match');
+    enforceColorExclusivity();
+    const count = fmt === '2v2' ? 4 : 2;
+    const activeConfigs = getPlayerConfigs().slice(0, count);
+    syncExplicitMappingsWithConfigs(activeConfigs, count);
+    hideMainMenu();
+    const rawBall = getSelectedMatchBall();
+    const matchBall = (rawBall === 'small' || rawBall === 'medium' || rawBall === 'large' || rawBall === 'random')
+      ? rawBall
+      : 'random';
+    setSelectedMatchBall(matchBall);
+    callbacks.onStartMatch?.(activeConfigs, {
+      ball: matchBall,
+      duration: getSelectedMatchDuration() || 300,
+      arena: getSelectedMatchArena() || 'court',
+    });
+  };
+
   const openMatchControllerAssignment = (preserveExisting = false, initialMode = null) => {
     const playerSetupEl = getPlayerSetupEl();
     if (playerSetupEl && playerSetupEl.style.display === 'flex') {
       playerSetupEl.style.display = 'none';
       if (callbacks.onExitSetup) callbacks.onExitSetup();
     }
+    callbacks.onBallPreviewChange?.({ visible: false });
+    resetMenuPadTargets();
     if (state.titleScreenEl) state.titleScreenEl.style.display = 'none';
     rootEl.style.pointerEvents = 'auto';
     const targetMode = initialMode || (preserveExisting ? getControllerAssignmentMode() : '1v1');
     showControllerAssignment(targetMode, {
       onProceed: (data) => showPlayerSetup('match', data),
+      onQuickStart: handleQuickStartFromAssignment,
       onBack: () => showTitleScreen(),
     }, { preserveExisting });
     startMenuGamepadPolling();
@@ -157,6 +189,7 @@ export function initMainMenu(cbs = {}) {
   // Build Screens
   buildControllerAssignmentScreen(rootEl, {
     onProceed: (data) => showPlayerSetup('match', data),
+    onQuickStart: handleQuickStartFromAssignment,
     onBack: () => showTitleScreen(),
   });
   buildPlayerSetupScreen(rootEl, callbacks, {
@@ -298,8 +331,8 @@ export function showPlayerSetup(mode = 'match', options = {}) {
     if (lobbyTitleEl) lobbyTitleEl.textContent = is2v2 ? '2v2 TEAM LOBBY / SETUP' : 'MATCH LOBBY / SETUP';
     if (lobbySubtitleEl) {
       lobbySubtitleEl.textContent = is2v2
-        ? 'Team 1 (P1 & P3) vs Team 2 (P2 & P4) — Collective team kits & individual athlete loadouts'
-        : 'Team 1 (P1) vs Team 2 (P2) — Collective team kits & individual athlete loadouts';
+        ? 'Team 1 (P1 & P3) vs Team 2 (P2 & P4): Collective team kits & individual athlete loadouts'
+        : 'Team 1 (P1) vs Team 2 (P2): Collective team kits & individual athlete loadouts';
     }
     if (lobbyBadgeEl) {
       lobbyBadgeEl.textContent = is2v2 ? '2v2 (4 ATHLETES) · 5:00 DURATION' : '1v1 VERSUS · 5:00 DURATION';
@@ -330,6 +363,7 @@ export function showPlayerSetup(mode = 'match', options = {}) {
   }
 
   cancelMatchCountdown();
+  resetMenuPadTargets();
   setSetupPage(1);
   setMatchRulesFocusRow(0);
   setFocusedColumn(0);
@@ -368,12 +402,14 @@ export function showPlayerSetup(mode = 'match', options = {}) {
 
 export function hidePlayerSetup() {
   stopSetupGamepadPolling();
+  callbacks.onBallPreviewChange?.({ visible: false });
   const playerSetupEl = getPlayerSetupEl();
   if (playerSetupEl) playerSetupEl.style.display = 'none';
 }
 
 export function hideMainMenu() {
   stopSetupGamepadPolling();
+  callbacks.onBallPreviewChange?.({ visible: false });
   state.titleBrandBall?.stop();
   hideControllerAssignment();
   hideHowToPlayModal();

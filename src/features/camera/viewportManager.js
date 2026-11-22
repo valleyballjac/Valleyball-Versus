@@ -11,7 +11,8 @@ import * as THREE from 'three';
 import { TUNING } from '../../config/tuning.js';
 import { PlayerCamera } from '../../visuals/playerCamera.js';
 import { CinematicCamera } from '../../visuals/cinematicCamera.js';
-import { updateCelestialSkybox } from '../../visuals/skybox.js';
+import { updateCelestialSkybox, setSkyboxQuality } from '../../visuals/skybox.js';
+import { getHudPrefs, setHudPrefs } from '../../config/hudConfig.js';
 
 const MAX_LIVE_PIXEL_RATIO = 1.5;
 
@@ -38,6 +39,19 @@ const _quadViewports = [
   { slot: 3, x: 0, y: 0, w: 0, h: 0 },
 ];
 const _humanSlotsScratch = [];
+const _viewportLayoutPool = [
+  { slot: -1, x: 0, y: 0, w: 0, h: 0, camera: null },
+  { slot: -1, x: 0, y: 0, w: 0, h: 0, camera: null },
+  { slot: -1, x: 0, y: 0, w: 0, h: 0, camera: null },
+  { slot: -1, x: 0, y: 0, w: 0, h: 0, camera: null },
+];
+
+function setCameraAspectIfChanged(camera, aspect) {
+  if (Math.abs(camera.aspect - aspect) > 1e-6) {
+    camera.aspect = aspect;
+    camera.updateProjectionMatrix();
+  }
+}
 
 /**
  * Manages cameras, splitscreen viewports, shadow/DPR quality presets, and camera notifications.
@@ -47,6 +61,14 @@ class ViewportManager {
     this.renderer = null;
     this.scene = null;
     this.stadiumLights = [];
+    this.ambientLight = null;
+    this.hemisphereLight = null;
+    this.turfParticles = null;
+    this._shadowDirty = true;
+    this._dividerEl = null;
+    this._lastDividerDisplay = '';
+    this.lastViewportLayout = [];
+    this.lastIsSplitscreen = false;
     this.getGameState = () => 'menu';
     this.getAthletes = () => [];
     this.getActiveBotSlots = () => [];
@@ -97,6 +119,9 @@ class ViewportManager {
     cinematicCamera,
     spectatorCamera,
     stadiumLights = [],
+    ambientLight = null,
+    hemisphereLight = null,
+    turfParticles = null,
     getGameState,
     getAthletes,
     getActiveBotSlots,
@@ -111,6 +136,9 @@ class ViewportManager {
     if (cinematicCamera) this.cinematicCamera = cinematicCamera;
     if (spectatorCamera) this.spectatorCamera = spectatorCamera;
     this.stadiumLights = stadiumLights;
+    this.ambientLight = ambientLight;
+    this.hemisphereLight = hemisphereLight;
+    this.turfParticles = turfParticles;
     if (getGameState) this.getGameState = getGameState;
     if (getAthletes) this.getAthletes = getAthletes;
     if (getActiveBotSlots) this.getActiveBotSlots = getActiveBotSlots;
@@ -121,8 +149,13 @@ class ViewportManager {
       this.getGuiInstance = getGuiInstance || getGui;
     }
 
-    this.applyShadowSettings();
-    this.applyViewportSize();
+    if (this.getGameState) {
+      const initialPreset = getHudPrefs().graphicsPreset || 'balanced';
+      this.applyGraphicsPreset(initialPreset);
+    } else {
+      this.applyShadowSettings();
+      this.applyViewportSize();
+    }
     if (typeof window !== 'undefined') {
       window.addEventListener('resize', () => this.applyViewportSize());
     }
@@ -134,8 +167,6 @@ class ViewportManager {
    * @returns {number[]}
    */
   getActiveHumanSlots() {
-    const gameState = this.getGameState();
-    if (gameState === 'practice') return [0];
     const athletes = this.getAthletes();
     const activeBotSlots = this.getActiveBotSlots();
     _humanSlotsScratch.length = 0;
@@ -143,6 +174,9 @@ class ViewportManager {
       if (athletes[i]?.isEnabled && !activeBotSlots.includes(i)) {
         _humanSlotsScratch.push(i);
       }
+    }
+    if (_humanSlotsScratch.length === 0 && this.getGameState() === 'practice') {
+      _humanSlotsScratch.push(0);
     }
     return _humanSlotsScratch;
   }
@@ -255,25 +289,6 @@ class ViewportManager {
     const width = window.innerWidth;
     const height = window.innerHeight;
 
-    let ratio = Math.min(window.devicePixelRatio || 1, MAX_LIVE_PIXEL_RATIO);
-    const preset = TUNING.render?.pixelRatioPreset;
-    if (preset === '1.0') {
-      ratio = 1.0;
-    } else if (preset === '1.25') {
-      ratio = Math.min(1.25, window.devicePixelRatio || 1);
-    } else if (preset === 'native') {
-      ratio = Math.min(window.devicePixelRatio || 1, MAX_LIVE_PIXEL_RATIO);
-    }
-
-    this.renderer.setPixelRatio(ratio);
-    this.renderer.setSize(width, height);
-
-    this.cinematicCamera.camera.aspect = width / height;
-    this.cinematicCamera.camera.updateProjectionMatrix();
-
-    this.spectatorCamera.aspect = width / height;
-    this.spectatorCamera.updateProjectionMatrix();
-
     const gameState = this.getGameState();
     const athletes = this.getAthletes();
     const humanSlots = this.getActiveHumanSlots();
@@ -282,6 +297,27 @@ class ViewportManager {
     );
     const isMatchState = gameState === 'match' || gameState === 'overtime_menu';
     const isSplitscreen = isMatchState && !!TUNING.camera.splitscreen && (humanSlots.length >= 2 || (athletes.length >= 2 && !!TUNING.camera.forceQuadSplitscreen)) && !isSharedCam;
+    const isQuadSplit = isSplitscreen && (humanSlots.length > 2 || (athletes.length >= 4 && !!TUNING.camera.forceQuadSplitscreen));
+
+    let ratio = Math.min(window.devicePixelRatio || 1, MAX_LIVE_PIXEL_RATIO);
+    const preset = TUNING.render?.pixelRatioPreset;
+    if (preset === '1.0') {
+      // On Low/1.0 preset, drop splitscreen slightly to keep browser/iGPU locked at 60 FPS
+      ratio = isSplitscreen ? 0.85 : 1.0;
+    } else if (preset === '1.25') {
+      // Splitscreen renders 2 or 4 full passes: keep crisp 1.0x native pixels in splitscreen
+      // instead of oversampling to 2400x1350 on 150% DPI Windows laptops.
+      ratio = Math.min(isSplitscreen ? 1.0 : 1.25, window.devicePixelRatio || 1);
+    } else if (preset === 'native') {
+      ratio = Math.min(window.devicePixelRatio || 1, isSplitscreen ? 1.25 : MAX_LIVE_PIXEL_RATIO);
+    }
+
+    this.renderer.setPixelRatio(ratio);
+    this.renderer.setSize(width, height);
+    this._shadowDirty = true;
+
+    setCameraAspectIfChanged(this.cinematicCamera.camera, width / Math.max(1, height));
+    setCameraAspectIfChanged(this.spectatorCamera, width / Math.max(1, height));
 
     // Broadcast and Sports cameras are full-screen only: if in individual splitscreen, revert them to chase.
     if (isSplitscreen) {
@@ -294,14 +330,12 @@ class ViewportManager {
       }
     }
 
-    const isQuadSplit = isSplitscreen && (humanSlots.length > 2 || (athletes.length >= 4 && !!TUNING.camera.forceQuadSplitscreen));
     const aspect = isQuadSplit
-      ? (width / 2) / (height / 2)
-      : (isSplitscreen ? (width / 2) / height : width / height);
+      ? (width / 2) / Math.max(1, height / 2)
+      : (isSplitscreen ? (width / 2) / Math.max(1, height) : width / Math.max(1, height));
 
     for (const pc of this.playerCameras) {
-      pc.camera.aspect = aspect;
-      pc.camera.updateProjectionMatrix();
+      setCameraAspectIfChanged(pc.camera, aspect);
     }
   }
 
@@ -310,7 +344,7 @@ class ViewportManager {
    */
   applyShadowSettings() {
     if (!this.renderer) return;
-    const quality = TUNING.render?.shadowQuality || 'high';
+    const quality = TUNING.render?.shadowQuality || 'balanced';
     if (quality === 'off') {
       this.renderer.shadowMap.enabled = false;
       for (const light of this.stadiumLights) {
@@ -325,13 +359,57 @@ class ViewportManager {
         this.stadiumLights[i].castShadow = false;
       }
     } else {
-      // 'high' - all 4 towers cast shadows
+      // 'high' - 2 opposing stadium towers cast crisp cross shadows without 4x shadow-pass stall
       this.renderer.shadowMap.enabled = true;
-      for (const light of this.stadiumLights) {
-        light.castShadow = true;
+      for (let i = 0; i < this.stadiumLights.length; i++) {
+        this.stadiumLights[i].castShadow = (i === 0 || i === 3);
       }
     }
+    this._shadowDirty = true;
     this.renderer.shadowMap.needsUpdate = true;
+  }
+
+  /**
+   * Applies a unified Low / Balanced / High graphics preset for universal hardware
+   * compatibility (DPR, shadows, stadium light count, skybox starfield, turf budget).
+   *
+   * @param {'low'|'balanced'|'high'} preset
+   */
+  applyGraphicsPreset(preset = 'balanced') {
+    const mode = preset === 'low' || preset === 'high' ? preset : 'balanced';
+    setHudPrefs({ graphicsPreset: mode });
+    setSkyboxQuality(mode);
+
+    const isLow = mode === 'low';
+    const isHigh = mode === 'high';
+    // Balanced & Low use 1 primary DirectionalLight + HemisphereLight fill instead of
+    // 4 per-pixel GGX directional lights, cutting PBR fragment shading cost by >50%
+    // while keeping crisp shadows and balanced stadium illumination.
+    for (let i = 0; i < this.stadiumLights.length; i++) {
+      const light = this.stadiumLights[i];
+      if (!light) continue;
+      if (isHigh) {
+        light.visible = (i === 0 || i === 3);
+        light.intensity = 1.15;
+      } else {
+        light.visible = (i === 0);
+        light.intensity = isLow ? 1.75 : 1.85;
+      }
+    }
+    if (this.hemisphereLight) {
+      this.hemisphereLight.visible = true;
+      this.hemisphereLight.intensity = isHigh ? 0.80 : (isLow ? 1.15 : 1.05);
+    }
+    if (this.ambientLight) {
+      this.ambientLight.intensity = this.hemisphereLight ? 0.20 : (isLow ? 0.85 : 0.45);
+    }
+    if (this.turfParticles?.setMaxParticles) {
+      this.turfParticles.setMaxParticles(isLow ? 64 : 256);
+    }
+
+    const dprPreset = isLow ? '1.0' : (mode === 'high' ? 'native' : '1.25');
+    const shadowMode = isLow ? 'off' : (mode === 'high' ? 'high' : 'balanced');
+    this.applyRenderSettings({ pixelRatioPreset: dprPreset, shadowQuality: shadowMode });
   }
 
   /**
@@ -340,6 +418,10 @@ class ViewportManager {
    * @param {object} [settings={}]
    */
   applyRenderSettings(settings = {}) {
+    if (settings.graphicsPreset) {
+      this.applyGraphicsPreset(settings.graphicsPreset);
+      return;
+    }
     if (settings.pixelRatioPreset) {
       if (!TUNING.render) TUNING.render = {};
       TUNING.render.pixelRatioPreset = settings.pixelRatioPreset;
@@ -478,7 +560,7 @@ class ViewportManager {
    * @param {Array<object>} params.athletes
    * @param {number[]} params.humanSlots
    */
-  renderScene({ gameState, isVictoryActive, victoryCameraActive, matchState, athletes, humanSlots }) {
+  renderScene({ gameState, isVictoryActive, victoryCameraActive, matchState, athletes, humanSlots, stepsThisFrame = 1, replayFollowSlot = -1 }) {
     const renderer = this.renderer;
     const scene = this.scene;
     if (!renderer || !scene) return;
@@ -490,26 +572,42 @@ class ViewportManager {
     const isSharedCam = humanSlots.length > 0 && humanSlots.every(
       (s) => this.playerCameras[s]?.mode === 'broadcast' || this.playerCameras[s]?.mode === 'sports',
     );
-    const isMatchState = gameState === 'match' || gameState === 'overtime_menu';
-    const isSplitscreen = isMatchState && !!TUNING.camera.splitscreen && (humanSlots.length >= 2 || (athletes.length >= 2 && !!TUNING.camera.forceQuadSplitscreen)) && !isSharedCam && !victoryActive;
+    const isFreeDrone = this.cinematicCamera.mode === 'free';
+    const isMatchState = gameState === 'match' || gameState === 'overtime_menu' || (gameState === 'practice' && humanSlots.length >= 2);
+    const isSplitscreen = !isFreeDrone && isMatchState && !!TUNING.camera.splitscreen && (humanSlots.length >= 2 || (athletes.length >= 2 && !!TUNING.camera.forceQuadSplitscreen)) && !isSharedCam && !victoryActive;
+    this.lastIsSplitscreen = isSplitscreen;
 
-    const dividerEl = document.getElementById('splitscreen-divider');
-    if (dividerEl) {
-      dividerEl.style.display = isSplitscreen ? 'block' : 'none';
+    if (!this._dividerEl && typeof document !== 'undefined') {
+      this._dividerEl = document.getElementById('splitscreen-divider');
+    }
+    const nextDividerDisplay = isSplitscreen ? 'block' : 'none';
+    if (this._dividerEl && this._lastDividerDisplay !== nextDividerDisplay) {
+      this._dividerEl.style.display = nextDividerDisplay;
+      this._lastDividerDisplay = nextDividerDisplay;
     }
 
     const width = window.innerWidth;
-    const height = window.innerHeight;
+    const height = Math.max(1, window.innerHeight);
 
-    // Render stadium shadow maps once per frame across all viewports
-    renderer.shadowMap.needsUpdate = true;
+    // Update stadium shadow maps at most once per stepped simulation tick (60 Hz)
+    // instead of redundantly on every interpolated 120/144/240 Hz display frame.
+    if (stepsThisFrame > 0 || this._shadowDirty) {
+      renderer.shadowMap.needsUpdate = true;
+      this._shadowDirty = false;
+    }
 
-    if (gameState === 'menu' || gameState === 'flyover' || victoryActive) {
-      this.cinematicCamera.camera.aspect = width / height;
-      this.cinematicCamera.camera.updateProjectionMatrix();
+    this.lastViewportLayout.length = 0;
+
+    if (gameState === 'menu' || gameState === 'flyover' || victoryActive || isFreeDrone) {
+      setCameraAspectIfChanged(this.cinematicCamera.camera, width / height);
       updateCelestialSkybox(this.cinematicCamera.camera);
       renderer.setViewport(0, 0, width, height);
       renderer.render(scene, this.cinematicCamera.camera);
+      if (isFreeDrone) {
+        const freeEntry = _viewportLayoutPool[0];
+        freeEntry.slot = -1; freeEntry.x = 0; freeEntry.y = 0; freeEntry.w = width; freeEntry.h = height; freeEntry.camera = this.cinematicCamera.camera;
+        this.lastViewportLayout.push(freeEntry);
+      }
     } else if (isSplitscreen && (humanSlots.length > 2 || (athletes.length >= 4 && !!TUNING.camera.forceQuadSplitscreen))) {
       // 4-Way Quad Splitscreen (2x2 Grid: Top-Left P1, Top-Right P2, Bottom-Left P3, Bottom-Right P4)
       const halfW = Math.floor(width / 2);
@@ -526,12 +624,15 @@ class ViewportManager {
         for (let i = 0; i < athletes.length; i++) {
           athletes[i]?.setHeadVisible?.(i === q.slot ? pc.mode !== 'firstPerson' : true);
         }
-        pc.camera.aspect = q.w / Math.max(1, q.h);
-        pc.camera.updateProjectionMatrix();
+        setCameraAspectIfChanged(pc.camera, q.w / Math.max(1, q.h));
         updateCelestialSkybox(pc.camera);
         renderer.setViewport(q.x, q.y, q.w, q.h);
         renderer.setScissor(q.x, q.y, q.w, q.h);
         renderer.render(scene, pc.camera);
+
+        const entry = _viewportLayoutPool[qIdx];
+        entry.slot = q.slot; entry.x = q.x; entry.y = q.y; entry.w = q.w; entry.h = q.h; entry.camera = pc.camera;
+        this.lastViewportLayout.push(entry);
       }
       for (let i = 0; i < athletes.length; i++) athletes[i]?.setHeadVisible?.(true);
       renderer.setScissorTest(false);
@@ -547,23 +648,29 @@ class ViewportManager {
       for (let i = 0; i < athletes.length; i++) {
         athletes[i]?.setHeadVisible?.(i === leftSlot ? this.playerCameras[leftSlot].mode !== 'firstPerson' : true);
       }
-      this.playerCameras[leftSlot].camera.aspect = halfW / height;
-      this.playerCameras[leftSlot].camera.updateProjectionMatrix();
+      setCameraAspectIfChanged(this.playerCameras[leftSlot].camera, halfW / height);
       updateCelestialSkybox(this.playerCameras[leftSlot].camera);
       renderer.setViewport(0, 0, halfW, height);
       renderer.setScissor(0, 0, halfW, height);
       renderer.render(scene, this.playerCameras[leftSlot].camera);
 
+      const leftEntry = _viewportLayoutPool[0];
+      leftEntry.slot = leftSlot; leftEntry.x = 0; leftEntry.y = 0; leftEntry.w = halfW; leftEntry.h = height; leftEntry.camera = this.playerCameras[leftSlot].camera;
+      this.lastViewportLayout.push(leftEntry);
+
       // Right Viewport
       for (let i = 0; i < athletes.length; i++) {
         athletes[i]?.setHeadVisible?.(i === rightSlot ? this.playerCameras[rightSlot].mode !== 'firstPerson' : true);
       }
-      this.playerCameras[rightSlot].camera.aspect = (width - halfW) / height;
-      this.playerCameras[rightSlot].camera.updateProjectionMatrix();
+      setCameraAspectIfChanged(this.playerCameras[rightSlot].camera, (width - halfW) / height);
       updateCelestialSkybox(this.playerCameras[rightSlot].camera);
       renderer.setViewport(halfW, 0, width - halfW, height);
       renderer.setScissor(halfW, 0, width - halfW, height);
       renderer.render(scene, this.playerCameras[rightSlot].camera);
+
+      const rightEntry = _viewportLayoutPool[1];
+      rightEntry.slot = rightSlot; rightEntry.x = halfW; rightEntry.y = 0; rightEntry.w = width - halfW; rightEntry.h = height; rightEntry.camera = this.playerCameras[rightSlot].camera;
+      this.lastViewportLayout.push(rightEntry);
 
       // Restore head visibility after viewports
       for (let i = 0; i < athletes.length; i++) athletes[i]?.setHeadVisible?.(true);
@@ -571,10 +678,13 @@ class ViewportManager {
       renderer.setScissorTest(false);
       renderer.setViewport(0, 0, width, height);
     } else {
-      // Single Viewport (Practice, 1 human vs AI, AI vs AI spectator, or shared camera)
+      // Single Viewport (Practice, 1 human vs AI, AI vs AI spectator, shared camera, or Replay POV)
       let activeRenderCamera = this.playerCameras[0].camera;
       let activeAthleteSlot = 0;
-      if (humanSlots.length === 0) {
+      if (replayFollowSlot >= 0 && replayFollowSlot < this.playerCameras.length && athletes[replayFollowSlot]?.isEnabled) {
+        activeAthleteSlot = replayFollowSlot;
+        activeRenderCamera = this.playerCameras[replayFollowSlot].camera;
+      } else if (humanSlots.length === 0) {
         // All-AI spectator broadcast camera
         activeRenderCamera = this.spectatorCamera;
         activeAthleteSlot = -1;
@@ -589,11 +699,14 @@ class ViewportManager {
         athletes[activeAthleteSlot].setHeadVisible(!isFp);
       }
 
-      activeRenderCamera.aspect = width / height;
-      activeRenderCamera.updateProjectionMatrix();
+      setCameraAspectIfChanged(activeRenderCamera, width / height);
       updateCelestialSkybox(activeRenderCamera);
       renderer.setViewport(0, 0, width, height);
       renderer.render(scene, activeRenderCamera);
+
+      const singleEntry = _viewportLayoutPool[0];
+      singleEntry.slot = activeAthleteSlot; singleEntry.x = 0; singleEntry.y = 0; singleEntry.w = width; singleEntry.h = height; singleEntry.camera = activeRenderCamera;
+      this.lastViewportLayout.push(singleEntry);
 
       if (activeAthleteSlot >= 0 && athletes[activeAthleteSlot]?.setHeadVisible) {
         athletes[activeAthleteSlot].setHeadVisible(true);

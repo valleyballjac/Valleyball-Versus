@@ -21,7 +21,14 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { TUNING } from '../config/tuning.js';
 import { createBotController, updateBot } from './botController.js';
 import { testHoopCrossing } from '../mechanics/scoring.js';
-import { toTrimeshArrays } from '../sim/arena.js';
+import {
+  toTrimeshArrays,
+  rasterizeCourtHeightfield,
+  createCourtHeightfieldColliderDesc,
+  rasterizeCourtTrimesh,
+  createCourtTrimeshColliderDesc,
+  attachUpperStadiumContainment,
+} from '../sim/arena.js';
 import { getCourtFloorY } from './botPerception.js';
 import {
   createTelemetryRecorder,
@@ -52,6 +59,8 @@ const AIR_CONTROL = 0.15;
 // Collision groups matching src/sim/physics.js:
 // motor x ball = NO (motor sphere ignores the ball; torso/limb proxy touches it)
 const ENV_GROUPS = (0x0001 << 16) | 0x001F;
+const ENV_ATHLETE_GROUPS = (0x0001 << 16) | 0x000F; // HeightField: motors + ragdolls (excludes ball 0x0010)
+const ENV_BALL_GROUPS = (0x0001 << 16) | 0x0010;    // Clean manifold trimesh: balls only (full swept-CCD)
 const RAGDOLL_GROUPS = (0x0002 << 16) | 0x0011;
 const MOTOR_GROUPS = (0x0008 << 16) | 0x0009;
 const BALL_GROUPS = (0x0010 << 16) | 0x0017;
@@ -77,8 +86,8 @@ const STRIKE = {
 };
 
 const KILL_PLANE_Y = -15;
-const ARENA_HALF_X = 50;
-const ARENA_HALF_Z = 60;
+const ARENA_HALF_X = 31.5;
+const ARENA_HALF_Z = 66.5;
 const COURT_WALL_X = 18.0;
 const COURT_WALL_Z = 48.0;
 
@@ -120,6 +129,8 @@ export async function initHeadless() {
                   vertices,
                   indices,
                   fixInternalEdges: isCourtSurface,
+                  heightfield: isCourtSurface ? rasterizeCourtHeightfield(vertices, indices) : null,
+                  cleanCourt: isCourtSurface ? rasterizeCourtTrimesh(vertices, indices) : null,
                 });
               }
             }
@@ -245,10 +256,22 @@ export function createHeadlessMatch(paramsA, paramsB, opts = {}) {
   // Court surface & barrier colliders: real 3D valley trimeshes or fallback cuboids
   if (cachedCollisionMeshes && cachedCollisionMeshes.length > 0) {
     for (const m of cachedCollisionMeshes) {
+      if (m.heightfield && m.cleanCourt) {
+        const hfDesc = createCourtHeightfieldColliderDesc(RAPIER, m.vertices, m.indices, m.heightfield);
+        hfDesc.setFriction(0.3).setRestitution(0.75).setCollisionGroups(ENV_ATHLETE_GROUPS);
+        world.createCollider(hfDesc, groundBody);
+
+        const ballDesc = createCourtTrimeshColliderDesc(RAPIER, m.vertices, m.indices, m.cleanCourt);
+        ballDesc.setFriction(0.3).setRestitution(0.75).setCollisionGroups(ENV_BALL_GROUPS);
+        world.createCollider(ballDesc, groundBody);
+        continue;
+      }
       const flags = m.fixInternalEdges ? RAPIER.TriMeshFlags.FIX_INTERNAL_EDGES : 0;
-      const desc = flags
-        ? RAPIER.ColliderDesc.trimesh(m.vertices, m.indices, flags)
-        : RAPIER.ColliderDesc.trimesh(m.vertices, m.indices);
+      const desc =
+        (m.cleanCourt && createCourtTrimeshColliderDesc(RAPIER, m.vertices, m.indices, m.cleanCourt)) ||
+        (flags
+          ? RAPIER.ColliderDesc.trimesh(m.vertices, m.indices, flags)
+          : RAPIER.ColliderDesc.trimesh(m.vertices, m.indices));
       if (m.name.includes('Court')) {
         desc.setFriction(0.3).setRestitution(0.75);
       } else if (m.name.includes('Barrier') || m.name.includes('Boundary')) {
@@ -259,6 +282,11 @@ export function createHeadlessMatch(paramsA, paramsB, opts = {}) {
       desc.setCollisionGroups(ENV_GROUPS);
       world.createCollider(desc, groundBody);
     }
+    attachUpperStadiumContainment(RAPIER, world, groundBody, {
+      collisionGroups: ENV_GROUPS,
+      friction: 0.2,
+      restitution: 0.6,
+    });
   } else {
     world.createCollider(
       RAPIER.ColliderDesc.cuboid(ARENA_HALF_X, 0.5, ARENA_HALF_Z)
@@ -372,6 +400,8 @@ export function createHeadlessMatch(paramsA, paramsB, opts = {}) {
   const ballBody = world.createRigidBody(
     RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(1.5, 10, 0)
+      .setCanSleep(false)
+      .setCcdEnabled(true)
       .setLinearDamping(ballDrag)
       .setAngularDamping(0.8),
   );
@@ -902,7 +932,7 @@ function checkScoring(match) {
 
   if (match.ballArmed.N) {
     const hit = testHoopCrossing(prev, pos, HOOP_NORTH_Z, HOOP_CENTER_Y, HOOP_RADIUS);
-    if (hit.hit) {
+    if (hit.hit && hit.y >= 6.0) {
       match.ballArmed.N = false;
       recordHeadlessGoal(match, 'N');
       return;
@@ -911,7 +941,7 @@ function checkScoring(match) {
 
   if (match.ballArmed.S) {
     const hit = testHoopCrossing(prev, pos, HOOP_SOUTH_Z, HOOP_CENTER_Y, HOOP_RADIUS);
-    if (hit.hit) {
+    if (hit.hit && hit.y >= 6.0) {
       match.ballArmed.S = false;
       recordHeadlessGoal(match, 'S');
       return;

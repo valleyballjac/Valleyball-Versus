@@ -1,6 +1,6 @@
 # Valleyball Versus roadmap
 
-Last updated 2026-11-14. This is the one place for what comes next. [AGENTS.md](../AGENTS.md) holds the rules and [the Gameplay Source of Truth](VALLEYBALL_GAMEPLAY_SOURCE_OF_TRUTH.md) holds the rules of the sport.
+Last updated 2026-11-18. This is the one place for what comes next. [AGENTS.md](../AGENTS.md) holds the rules and [the Gameplay Source of Truth](VALLEYBALL_GAMEPLAY_SOURCE_OF_TRUTH.md) holds the rules of the sport.
 
 ## Shipped: v0.4.0
 
@@ -61,29 +61,41 @@ Streamlined the post-v0.4.0 codebase, eliminated dead/vestigial code, unlocked m
 
 ---
 
-## Now: v0.4.2 — Spectating, Replays, Desktop LAN, Music & Championship Polish
+## Shipped: v0.4.2 (Dec 27 Championship Build, 2026-11-22)
 
-Builds on the clean v0.4.1 foundation to deliver tournament broadcast/spectating tools, local network play, full audio atmosphere, and 2v2 AI depth ahead of the **December 27, 2026 Inaugural Championship**.
+Shipped the live local tournament and public web/desktop build ahead of the **December 27, 2026 Inaugural Championship** (1 to 2 local PC stations, 5-minute timed matches, Golden Goal overtime, Standard assist, 1.0m Medium Ball).
 
-### 1. Spectator Mode, Broadcast Director & Match Replays (`.vbreplay`)
-- [ ] **Compact Match Recording (`.vbreplay`)**: Record match seed + 60 Hz `InputFrame` log (~40 KB per 5-minute match) so any match can be saved, re-watched from any angle, or fed directly into the highlight-mining pipeline.
-- [ ] **Live Broadcast Director Camera**: Auto-switching camera director (Sideline Broadcast, Rim Orbit on aerial contests, Player Chase on fast breaks) for live tournament streams and bot-vs-bot exhibitions.
-- [ ] **Free-Fly / Caster Drone Camera**: Smooth controller or mouse/WASD free-camera for live tournament commentators and video capture.
-- [ ] **Spectator-Only Instant Replays**: Rolling 5-second `WorldSnapshot` transform ring buffer driving post-goal Picture-in-Picture / Rim-Cam instant replays **strictly on the Spectator view and Replay Viewer** (never interrupting live players' Continuous Momentum on court).
+### 1. Broadcast Replay Director Suite (v3 `.vbreplay`)
+- [x] **v3 World-State Pose Keyframe Recording (`src/core/replayPose.js`)**: Automatically records 30 Hz ball and 16-part athlete ragdoll transforms plus scoreboard state for zero-desync playback and sub-millisecond (`< 0.2 ms`) instant timeline click-and-drag scrubbing. Auto-saves silently in Electron (`userData/replays`) and supports Save/Load `.vbreplay` files.
+- [x] **Full Director Transport, Slow-Mo, Camera Height & Clip Export (`src/ui/replayDock.js`)**: Prominent Play/Pause, dedicated Slow-Mo (`0.5x`, `0.25x`, `0.1x`), continuous Rewind (`-1x`, `-2x`, `-4x`), Fast-Forward (`2x`, `4x`), `+` / `-` camera height controls across all 7 cameras and Free Drone, `P1` to `P4` athlete targeting, color-coded goal-scorer timeline pins, clickable Goal Scorer Strip, Broadcast Goal Callout Banner, and clean in-app `.webm` clip recording.
 
-### 2. Desktop LAN Multiplayer & Dual-Monitor Tournament Spectator
-- [ ] **Multi-PC LAN Play & Spectating (`electron/`)**: Auto-discovered local network rooms over UDP/WebSocket allowing 1–4 Player PCs (each with full-screen chase cameras at native 144–240 Hz) plus unlimited Spectator PCs on the local switch/router.
-- [ ] **Single-PC Dual-Monitor Spectator Window**: Optional second Electron window outputting the clean Broadcast Director + Spectator Instant Replays + Hustle Telemetry to a tournament projector or capture card while players play on the primary display.
+### 2. Gameplay, Physics, Performance & UX Polish
+- [x] **2.5x Frame-Rate Optimization (`src/sim/meshBatcher.js`, `viewportManager.js`, `ragdoll.js`)**: Batched static arena meshes (preserving vertex colors on purple corner wedges) and headwear, optimized Balanced lighting and splitscreen pixel-ratio defaults (`2P Splitscreen Balanced`: `49.9 FPS -> 131.0 FPS`, draw calls `312 -> 182`).
+- [x] **Full Ball-Clearance Scoring & Instant Unthreading (`src/mechanics/scoring.js`)**: Goal registers once the full ball volume crosses `x = 0`, enabling clean goal-line saves on partial pokes and instant responding goals when a scored ball is swatted straight back through the hoop. Enforced strict single-ball regulation matches across Quick Play, Setup, and scoring.
+- [x] **Arena Corner Lip Seal & Audio Limiter (`src/sim/arena.js`, `soundManager.js`)**: Removed `FIX_INTERNAL_EDGES` from barrier/goal trimeshes, welded curved corner fan rim skirts (`0/264` breaches across Small/Medium/Large balls), and rate-limited rolling glass impact audio to `<= 2/sec`.
+- [x] **Multiplayer Reliability, Setup & How To Play Overhaul**: Fixed Match 1 P2 controller activation, added 3D spinning Match Ball preview, fixed Practice setup head spin and simplified Practice to Free Sandbox, fixed `A` advance in setup menus, and rebuilt How To Play across Standard Gamepad, Fighting Pad / Arcade Stick, and Keyboard & Mouse.
+- [x] **USB-Hub Reconnect & Defocus Safety**: Verified Electron `backgroundThrottling: false`, latched gamepad states across window blur, added hardware-ID reconnect recovery, and removed noisy synthetic `hoop_swish.wav`.
 
-### 3. Audio Atmosphere (`musicManager.js` & Crowd Reactions)
-- [ ] **In-Game Music Manager**: Bring `src/audio/musicManager.js` and soundtrack stems from `archive/trailer-debut-v2` onto `main` with menu/in-game mix controls.
-- [ ] **Reactive Crowd Audio**: Dynamic crowd swells reacting to supersonic strikes, rim clanks, clutch dive saves, and overtime tension.
+### Remaining Pre-Championship Local Polish
+- [ ] **In-Game Music Manager (Stretch / Next Up)**: Bring `src/audio/musicManager.js` and soundtrack stems onto `main` with menu/in-game mix controls once core playtest and venue milestones are locked.
+- [ ] **Pre-Championship 4-Controller Soak**: Run a live 4-controller USB-hub soak session at a Monday playtest before Dec 27.
 
-### 4. 2v2 AI Chemistry & Evolutionary Re-Training
-- [ ] **2v2 Off-Ball & Aerial Chemistry**: Tune bot setter/spiker coordination, standing/jump spike frequency, and multi-touch combinations.
-- [ ] **Evolutionary Training Sweep**: Run `npm run train:bot` with the 7 newly wired genome parameters and validate via `npm run eval:match`.
+---
 
-### 5. Inaugural Championship Readiness (December 27, 2026)
-- [ ] **4-Controller Hub & Defocus Soak Test**: Verify 4 controllers on a USB hub with window defocus (`backgroundThrottling: false`).
-- [ ] **Cross-Platform Desktop Builds**: Run and verify the GitHub Actions "Desktop builds" workflow (`.github/workflows/desktop.yml`) for Windows, macOS, and Linux.
-- [ ] **Public Distribution Prep**: Windows code-signing certificate, macOS notarization, Linux AppImage/sandbox handling, and `steamworks.js` integration once the Steam page is live.
+## Next: v0.4.3+ (Post-Championship, Jan 2027+)
+
+Deferred intentionally so Dec 27 focus stays on local playtests, tournament execution, and community growth:
+
+### 1. Broadcast Director & Spectator Instant Replays
+- [ ] **Live Broadcast Director Camera**: Auto-switching camera director (Sideline Broadcast, Rim Orbit on aerial contests, Player Chase on fast breaks).
+- [ ] **Free-Fly / Caster Drone Camera**: Smooth controller or mouse/WASD free-camera for live casters and video capture.
+- [ ] **Spectator-Only Instant Replays**: Rolling 5-second `WorldSnapshot` transform ring buffer driving post-goal Picture-in-Picture replays strictly on Spectator/Replay views (OBS `stream-kit/` covers instant replays for Dec 27).
+
+### 2. Multi-PC LAN & Dual-Monitor Spectator
+- [ ] **Multi-PC LAN Play & Spectating (`electron/`)**: Auto-discovered UDP/WebSocket local network rooms for multi-PC full-screen play plus Spectator PCs.
+- [ ] **Single-PC Dual-Monitor Spectator Window**: Optional second Electron window outputting the Broadcast Director feed to a projector or capture card.
+
+### 3. Audio Atmosphere, 2v2 AI & Public Distribution
+- [ ] **Reactive Crowd Audio**: Dynamic crowd swells reacting to power spikes, rim clanks, clutch dives, and overtime tension.
+- [ ] **2v2 AI Chemistry & Evolutionary Re-Training**: Tune bot setter/spiker coordination and run `npm run train:bot` with the newly wired genome parameters.
+- [ ] **Cross-Platform Signed Builds & Steam Prep**: Run `.github/workflows/desktop.yml` across Windows, macOS, and Linux; add code signing, notarization, and `steamworks.js` once the Steam page is live.

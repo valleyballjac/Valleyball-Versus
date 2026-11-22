@@ -87,6 +87,9 @@ export class PlayerCamera {
     // Dynamic lens FOV punch (offset in degrees)
     this.fovPunch = 0;
 
+    // Replay Director vertical crane height offset (meters; strictly 0 in live gameplay)
+    this.heightOffset = 0;
+
     // Internal scratch vectors
     this._athleteFocus = new THREE.Vector3();
     this._target = new THREE.Vector3();
@@ -424,7 +427,7 @@ export class PlayerCamera {
       const fOffset = fp.forwardOffset ?? 0.12;
       this.camera.position.set(
         eyeX + fwdX * fOffset,
-        eyeY + fwdY * 0.04,
+        Math.max(0.6, eyeY + fwdY * 0.04 + this.heightOffset),
         eyeZ + fwdZ * fOffset,
       );
 
@@ -440,7 +443,7 @@ export class PlayerCamera {
 
     // 1. SPORTS CAMERA
     if (this.mode === 'sports') {
-      updateSportsCamera(this.camera, allAthletes, activeBall, frameDelta);
+      updateSportsCamera(this.camera, allAthletes, activeBall, frameDelta, this.heightOffset);
       this._applyCameraEffects(tuning, frameDelta);
       return;
     }
@@ -459,7 +462,7 @@ export class PlayerCamera {
         : playerZ;
       const clampedZ = Math.min(tv.maxZ, Math.max(tv.minZ, leadZ + this.manualPitchOffset));
 
-      this._desiredPos.set(tv.sideX, tv.heightY, clampedZ);
+      this._desiredPos.set(tv.sideX, Math.max(1.2, tv.heightY + this.heightOffset), clampedZ);
       if (!this._broadcastLookInit) {
         this.camera.position.copy(this._desiredPos);
       } else {
@@ -518,7 +521,7 @@ export class PlayerCamera {
 
       this._desiredPos.set(
         p.x * 0.4 + screenRightX * this.manualAzimuthOffset,
-        p.y - tuning.targetHeight + top.heightY,
+        Math.max(2.0, p.y - tuning.targetHeight + top.heightY + this.heightOffset),
         desiredZ,
       );
       this._target.set(
@@ -669,6 +672,9 @@ export class PlayerCamera {
 
       this._computeArmDirection(desiredDistance, effAzimuth, effPitch);
       this._applySpringArm(world, tuning, desiredDistance, frameDelta);
+      if (this.heightOffset !== 0) {
+        this.camera.position.y = Math.max(1.0, this.camera.position.y + this.heightOffset);
+      }
 
       // 5. Look-At Target: Look slightly forward over athlete's shoulder towards the ball
       // Ensures the athlete is reliably framed in lower-middle screen while tracking the ball
@@ -718,6 +724,9 @@ export class PlayerCamera {
 
       this._computeArmDirection(desiredDistance, this.azimuth, this.pitch);
       this._applySpringArm(world, tuning, desiredDistance, frameDelta);
+      if (this.heightOffset !== 0) {
+        this.camera.position.y = Math.max(1.0, this.camera.position.y + this.heightOffset);
+      }
       this.camera.lookAt(this._smoothedTarget);
       this._applyCameraEffects(tuning, frameDelta);
       return;

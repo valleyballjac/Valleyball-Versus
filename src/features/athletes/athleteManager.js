@@ -275,8 +275,12 @@ class AthleteManager {
    */
   stageForLobby(mode = 'match') {
     const randIdlePhase = (slot, total) => ((slot + 0.15 + Math.random() * 0.70) / total) % 1;
+    // Clear any knockdown / slide / dive / impact residue from title balls or prior matches
+    // so staged athletes always stand upright at full tracker stiffness with zero neck spin.
+    this.resetStats();
     if (mode === 'practice') {
       this.ensureRoster(1);
+      this.resetStats();
       if (this.athletes[0]) {
         this.athletes[0].setEnabled(true);
         this.athletes[0].teleportTo({ x: 0.45, y: 0.50, z: 0.35 }, -Math.PI * 0.18, Math.random());
@@ -354,6 +358,7 @@ class AthleteManager {
       }
       if (a.actionState) {
         a.actionState.slideTime = 0;
+        a.actionState.slideCooldown = 0;
         a.actionState.divePending = false;
         a.actionState.diveStunUntil = -Infinity;
         a.actionState.cleatAnchorUntil = -Infinity;
@@ -365,6 +370,8 @@ class AthleteManager {
         a.tracker.knockdownTone = 0;
         a.tracker.muscleTone = 0;
         a.tracker.offMount = 0;
+        a.tracker.mountDistance = 0;
+        a.tracker.warnedMount = false;
       }
       if (a.impactEvents) {
         a.impactEvents.length = 0;

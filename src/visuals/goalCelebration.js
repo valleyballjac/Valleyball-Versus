@@ -34,7 +34,7 @@ export function createGoalCelebrationSystem(scene) {
 
   // 1. Hoop Energy Ring (aperture radius ~ 4.67m, in X = 0 plane)
   const ringRadius = TUNING.match?.hoopRadius ?? 4.667;
-  const ringGeom = new THREE.TorusGeometry(ringRadius, 0.14, 16, 64);
+  const ringGeom = new THREE.TorusGeometry(ringRadius, 0.14, 10, 40);
   const ringMat = new THREE.MeshBasicMaterial({
     color: 0xffffff,
     transparent: true,
@@ -47,13 +47,7 @@ export function createGoalCelebrationSystem(scene) {
   ringMesh.visible = false;
   group.add(ringMesh);
 
-  // 2. Atmospheric Point Light — pre-warmed at boot (LAW 8).
-  // Kept permanently visible with intensity modulated at runtime to prevent WebGL shader recompilation hitches.
-  const goalLight = new THREE.PointLight(0xffffff, 0, 24, 1.8);
-  goalLight.visible = true;
-  group.add(goalLight);
-
-  // 3. Shimmering Spark Cascade (InstancedMesh)
+  // 2. Shimmering Spark Cascade (InstancedMesh; avoids compiling a PointLight into all PBR shaders)
   const sparkGeom = new THREE.BoxGeometry(0.12, 0.12, 0.12);
   const sparkMat = new THREE.MeshBasicMaterial({
     color: 0xffffff,
@@ -112,12 +106,7 @@ export function createGoalCelebrationSystem(scene) {
     ringMesh.visible = true;
     ringTime = ringDuration;
 
-    // 2. Position & ignite atmospheric point light (intensity-only modulation, LAW 8)
-    goalLight.position.set(hoopPos.x, hoopPos.y, hoopPos.z);
-    goalLight.color.copy(_color);
-    goalLight.intensity = 3.5;
-
-    // 3. Spawn spark cascade through the hoop
+    // 2. Spawn spark cascade through the hoop
     const spawnCount = Math.min(36, MAX_SPARKS);
     activeSparks = spawnCount;
 
@@ -175,11 +164,9 @@ export function createGoalCelebrationSystem(scene) {
 
       // Smooth fade-out
       ringMat.opacity = Math.max(0, 0.95 * (1.0 - progress));
-      goalLight.intensity = Math.max(0, 3.5 * (1.0 - progress * progress));
 
       if (ringTime <= 0) {
         ringMesh.visible = false;
-        goalLight.intensity = 0;
       }
     }
 
@@ -241,7 +228,6 @@ export function createGoalCelebrationSystem(scene) {
   function reset() {
     ringTime = 0;
     ringMesh.visible = false;
-    goalLight.intensity = 0;
     activeSparks = 0;
     sparkMesh.count = 0;
     sparkMesh.instanceMatrix.needsUpdate = true;
@@ -249,6 +235,8 @@ export function createGoalCelebrationSystem(scene) {
 
   return {
     group,
+    ringMesh,
+    sparkMesh,
     triggerGoal,
     update,
     reset,

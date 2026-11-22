@@ -11,6 +11,7 @@
 import * as THREE from 'three';
 
 let skyboxGroup = null;
+let starPointGroups = [];
 
 export function initCelestialSkybox(scene) {
   // If previously initialized, clean up
@@ -24,6 +25,7 @@ export function initCelestialSkybox(scene) {
       }
     });
     skyboxGroup = null;
+    starPointGroups = [];
   }
 
   skyboxGroup = new THREE.Group();
@@ -37,7 +39,7 @@ export function initCelestialSkybox(scene) {
   // ---------------------------------------------------------------------------
   // Radius 320m sits well within the camera far plane (400m) while wrapping the arena.
   const domeRadius = 320;
-  const domeGeo = new THREE.SphereGeometry(domeRadius, 48, 32);
+  const domeGeo = new THREE.SphereGeometry(domeRadius, 24, 16);
 
   const domeMat = new THREE.ShaderMaterial({
     side: THREE.BackSide,
@@ -250,10 +252,24 @@ export function initCelestialSkybox(scene) {
     const pts = new THREE.Points(geo, mat);
     pts.renderOrder = -190;
     skyboxGroup.add(pts);
+    starPointGroups.push(pts);
   }
 
   scene.add(skyboxGroup);
   return skyboxGroup;
+}
+
+/**
+ * Adjusts skybox rendering complexity for the active graphics quality preset.
+ * In 'low' mode, hides the 2,533 additive starfield sprites to save fragment overdraw.
+ *
+ * @param {'low'|'balanced'|'high'} preset
+ */
+export function setSkyboxQuality(preset = 'balanced') {
+  const showStars = preset !== 'low';
+  for (let i = 0; i < starPointGroups.length; i++) {
+    starPointGroups[i].visible = showStars;
+  }
 }
 
 /**

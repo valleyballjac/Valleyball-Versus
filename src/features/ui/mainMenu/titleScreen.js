@@ -104,7 +104,7 @@ export function buildTitleScreen(rootEl, navActions = {}) {
   `;
 
   const versionBadge = document.createElement('div');
-  versionBadge.textContent = 'v0.4.1';
+  versionBadge.textContent = 'v0.4.2';
   versionBadge.style.cssText = `
     font-size: 11px;
     font-weight: 800;
@@ -255,13 +255,7 @@ export function buildTitleScreen(rootEl, navActions = {}) {
     box-sizing: border-box;
     user-select: none;
   `;
-  promptBar.innerHTML = `
-    <span style="color:#00e5ff;font-weight:900;">🎮 P1 CONTROL</span>
-    <span style="color:#475569;">&middot;</span>
-    <span><b style="color:#ffffff;">↕</b> NAVIGATE</span>
-    <span style="color:#475569;">&middot;</span>
-    <span style="display:inline-flex;align-items:center;gap:4px;">${renderCardinalDiamondSvg('south', 13)} <b style="color:#4ade80;">✕/A / START / ENTER</b> SELECT</span>
-  `;
+  promptBar.innerHTML = buildTitlePromptHtml(state.lobbyHostPadIndex);
   menuList.appendChild(promptBar);
 
   titleScreenEl.appendChild(header);
@@ -270,6 +264,27 @@ export function buildTitleScreen(rootEl, navActions = {}) {
 
   state.titleScreenEl = titleScreenEl;
   return titleScreenEl;
+}
+
+function buildTitlePromptHtml(hostPadIndex = null) {
+  const hostBadge = Number.isInteger(hostPadIndex) && hostPadIndex >= 0
+    ? `<span style="color:#00e5ff;font-weight:900;">🎮 PAD ${hostPadIndex + 1} · LOBBY HOST</span>`
+    : `<span style="color:#00e5ff;font-weight:900;">🎮 ANY CONTROLLER · CLAIM HOST</span>`;
+  return `
+    ${hostBadge}
+    <span style="color:#475569;">&middot;</span>
+    <span><b style="color:#ffffff;">↕</b> NAVIGATE</span>
+    <span style="color:#475569;">&middot;</span>
+    <span style="display:inline-flex;align-items:center;gap:4px;">${renderCardinalDiamondSvg('south', 13)} <b style="color:#4ade80;">✕/A / START / ENTER</b> SELECT</span>
+  `;
+}
+
+export function updateTitleHostPrompt(hostPadIndex = null) {
+  if (typeof document === 'undefined') return;
+  const promptBar = document.getElementById('title-controller-prompt');
+  if (promptBar) {
+    promptBar.innerHTML = buildTitlePromptHtml(hostPadIndex);
+  }
 }
 
 export function updateTitleFocusUI() {

@@ -275,6 +275,8 @@ export async function createBall(scene, options = {}) {
     appliedRestitution: restitution,
     /** Tick of the last spawn event. -Infinity means "never reset". */
     lastResetTick: -Infinity,
+    /** Monotonic counter incremented on every resetBall teleport so scoring skips teleport chords. */
+    resetEpoch: 0,
     /** Tick of the last limb contact. -Infinity means "never touched". */
     lastTouchTick: -Infinity,
     /** Rig key of the last limb contact, or '' for none. NOT a state. */
@@ -308,7 +310,7 @@ export async function createBall(scene, options = {}) {
  * @param {number} tick
  * @param {{ x: number, y: number, z: number }|null} [targetPos=null]
  */
-export function resetBall(ball, tick, targetPos = null) {
+export function resetBall(ball, tick, targetPos = null, initialVel = null) {
   if (targetPos) {
     ball.spawn.x = targetPos.x;
     ball.spawn.y = targetPos.y;
@@ -318,12 +320,18 @@ export function resetBall(ball, tick, targetPos = null) {
   _spawn.set(ball.spawn.x, ball.spawn.y, ball.spawn.z);
 
   ball.body.setTranslation({ x: _spawn.x, y: _spawn.y, z: _spawn.z }, true);
-  ball.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+  ball.body.setLinvel(
+    initialVel
+      ? { x: initialVel.x || 0, y: initialVel.y || 0, z: initialVel.z || 0 }
+      : { x: 0, y: 0, z: 0 },
+    true,
+  );
   ball.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
   ball.body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
   ball.interpolated.reset(_spawn);
 
   ball.lastResetTick = tick;
+  ball.resetEpoch = (ball.resetEpoch || 0) + 1;
   ball.lastBraceRedirectTick = -Infinity;
 }
 

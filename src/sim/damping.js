@@ -53,14 +53,15 @@ export function conservativeInertia(body) {
  * @param {THREE.Vector3} relativeVelocity body velocity MINUS target velocity
  * @param {number} dt the constant timestep
  */
-export function applyClampedLinearDamping(body, requestedImpulse, relativeVelocity, dt) {
+export function applyClampedLinearDamping(body, requestedImpulse, relativeVelocity, dt, cachedMass = null) {
   if (!(requestedImpulse > 0)) return;
 
   const speed = relativeVelocity.length();
   if (speed <= MIN_SPEED) return;
 
   // The impulse that would land this relative velocity exactly on zero.
-  const maximum = body.mass() * speed;
+  const mass = cachedMass !== null ? cachedMass : body.mass();
+  const maximum = mass * speed;
 
   _dir.copy(relativeVelocity).multiplyScalar(-Math.min(requestedImpulse, maximum) / (speed * dt));
 
@@ -77,14 +78,16 @@ export function applyClampedLinearDamping(body, requestedImpulse, relativeVeloci
  * @param {number} requestedImpulse magnitude, already scaled by dt by the caller
  * @param {THREE.Vector3} relativeAngvel body angular velocity MINUS target's
  * @param {number} dt the constant timestep
+ * @param {number|null} [cachedInertia=null] Optional precomputed conservative inertia
  */
-export function applyClampedAngularDamping(body, requestedImpulse, relativeAngvel, dt) {
+export function applyClampedAngularDamping(body, requestedImpulse, relativeAngvel, dt, cachedInertia = null) {
   if (!(requestedImpulse > 0)) return;
 
   const speed = relativeAngvel.length();
   if (speed <= MIN_SPEED) return;
 
-  const maximum = conservativeInertia(body) * speed;
+  const inertia = cachedInertia !== null ? cachedInertia : conservativeInertia(body);
+  const maximum = inertia * speed;
 
   _dir.copy(relativeAngvel).multiplyScalar(-Math.min(requestedImpulse, maximum) / (speed * dt));
 

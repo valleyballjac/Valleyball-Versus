@@ -36,7 +36,7 @@ function createHoopIndicatorAssembly(hoopZ, hoopCenterY, hoopRadius, name) {
   root.add(apertureGroup);
 
   // 1. Clean, untextured non-collider translucent plane inside the hoop aperture
-  const planeGeom = new THREE.CircleGeometry(Math.max(1.0, hoopRadius - 0.03), 64);
+  const planeGeom = new THREE.CircleGeometry(Math.max(1.0, hoopRadius - 0.03), 36);
   const planeMat = new THREE.MeshBasicMaterial({
     color: 0xffffff,
     transparent: true,
@@ -51,7 +51,7 @@ function createHoopIndicatorAssembly(hoopZ, hoopCenterY, hoopRadius, name) {
   apertureGroup.add(planeMesh);
 
   // 2. Slim hoop-hugging rim glow so the team color remains readable edge-on down X = 0
-  const rimGeom = new THREE.TorusGeometry(hoopRadius, 0.12, 12, 64);
+  const rimGeom = new THREE.TorusGeometry(hoopRadius, 0.12, 8, 36);
   const rimMat = new THREE.MeshBasicMaterial({
     color: 0xffffff,
     transparent: true,

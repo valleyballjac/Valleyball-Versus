@@ -9,6 +9,8 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 import { TUNING, assetUrl } from './config/tuning.js';
+import { getHudPrefs, setHudPrefs, setCleanBroadcastHud } from './config/hudConfig.js';
+import { getCourtFloorY, isCourtFloorSampleAvailable } from './ai/courtHeightmap.js';
 import { getHeadwearLabel } from './config/cosmetics.js';
 import { Loop } from './core/Loop.js';
 import { WorldSnapshotRingBuffer, packInputFrame, unpackInputFrame } from './core/snapshot.js';
@@ -45,16 +47,23 @@ import {
 } from './features/match/matchManager.js';
 import {
   practiceStats,
+  newcomerDrill,
   resetPracticeStats,
   syncPracticeStrikeStats,
-  incrementPracticeSessionTicks,
+  stepPracticeDrillTick,
+  summonPracticeBall,
+  configurePracticeRoster,
+  applyPracticeHudOverrides,
+  restorePracticeHudOverrides,
   getPracticeSessionSeconds,
   getSelectedPracticeBallType,
   setSelectedPracticeBallType,
+  getSelectedPracticeDrill,
 } from './features/match/practiceMode.js';
 import {
   readFixtureFromSearch, fixtureMatchSetup, createFixtureRandom, fixtureBotSeed, resultSide, buildMatchResult,
 } from './features/match/matchFixture.js';
+import { replayManager, generateMatchSeed, createMatchRandom } from './features/match/replayManager.js';
 import {
   initInputRouter,
   sampleAllInputs,
@@ -70,6 +79,7 @@ import {
   consumeCameraCyclePlayer,
   consumeCameraCycleArena,
   consumeMenuToggle,
+  consumeMenuToggleOwner,
   getMouseDeltas,
   getMouseSlot,
   getCameraCycleHint,
@@ -77,6 +87,7 @@ import {
   triggerHaptic,
   setExplicitDeviceMappings,
   assignDefaultDeviceForSlot,
+  syncExplicitMappingsWithConfigs,
 } from './input/inputRouter.js';
 import { createMenuPadTracker, MENU_PAD } from './input/menuPads.js';
 import { updateSportsCamera } from './visuals/sportsCamera.js';
@@ -84,12 +95,19 @@ import { createBotController, updateBot } from './ai/botController.js';
 import { createTurfParticleSystem, getPitchSurfaceColor } from './visuals/turfParticles.js';
 import { createGoalCelebrationSystem } from './visuals/goalCelebration.js';
 import { createGoalIndicators } from './visuals/goalIndicators.js';
+import { createBallDropRings } from './visuals/ballDropRing.js';
+import { createSetupBallPreview } from './visuals/setupBallPreview.js';
+import { warmupSceneShaders } from './visuals/shaderWarmup.js';
 import { setHudVisible, updateHud } from './ui/hudOverlay.js';
+import { initMatchReadabilityHud, updateMatchReadabilityHud } from './ui/matchReadabilityHud.js';
 import { initOvertimeMenu, showOvertimeMenu, hideOvertimeMenu, isOvertimeMenuOpen } from './ui/overtimeMenu.js';
 import { initVictoryScreen, showVictoryScreen, hideVictoryScreen, showPracticeSummary, isVictoryScreenVisible } from './ui/victoryScreen.js';
 import { initControlsOverlay, updateControlsOverlay, setControlsOverlayEnabled, hideControlsOverlay } from './ui/controlsOverlay.js';
+import { logClipInventory } from './debug/clipInventory.js';
 import { initCountdownOverlay, updateCountdownOverlay, resetCountdownOverlay } from './ui/countdownOverlay.js';
 import { initInGameMenu, toggleInGameMenu, hideInGameMenu, updateInGameMenuBanner, isInGameMenuOpen } from './ui/inGameMenu.js';
+import { updatePracticeHud, hidePracticeHud } from './ui/practiceHud.js';
+import { initReplayDock, updateReplayDock, resetReplayDockState, sampleFreeDroneInput } from './ui/replayDock.js';
 import {
   initMainMenu,
   initMobileNotice,
@@ -107,7 +125,7 @@ import {
 import {
   resolveStrikeContact, resolveBraceRedirect, strikeProbe, KIND_NAME,
 } from './mechanics/strikes.js';
-import { updateScoring, matchProbe } from './mechanics/scoring.js';
+import { updateScoring, matchProbe, recordBallTeamTouch } from './mechanics/scoring.js';
 import { createScoreboards, updateScoreboards, loadDisplayFont } from './visuals/scoreboards.js';
 import { createHustleBoards, updateHustleBoards } from './visuals/hustleBoards.js';
 import { displayCoordinator } from './visuals/displayCoordinator.js';
@@ -143,13 +161,23 @@ const pelvisTilt = (q) => {
 // ---------------------------------------------------------------------------
 
 const canvas = document.getElementById('viewport');
+const _bootSearch = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+const _needsDrawingBuffer = Boolean(
+  _bootSearch && (
+    _bootSearch.has('captureTick') ||
+    _bootSearch.has('capture') ||
+    _bootSearch.has('fixture') ||
+    _bootSearch.has('stateTrace')
+  ),
+);
 
 const renderer = new THREE.WebGLRenderer({
   canvas,
   antialias: true,
-  // Without this the framebuffer may be cleared before a manual toDataURL reads
-  // it, and every such capture comes back a valid, uniformly black PNG.
-  preserveDrawingBuffer: true,
+  powerPreference: 'high-performance',
+  // Enabled only for headless/manual capture modes; leaving false in live play
+  // allows fast swapchain flips without a per-frame full-screen MSAA backbuffer copy.
+  preserveDrawingBuffer: _needsDrawingBuffer,
 });
 
 // SHADOWS, for depth. A ball in flight over a curved floor is impossible to
@@ -203,7 +231,9 @@ for (const tower of stadiumTowers) {
   stadiumLights.push(light);
 }
 
-scene.add(new THREE.AmbientLight(0x8fb4d6, 0.45));
+const ambientLight = new THREE.AmbientLight(0x8fb4d6, 0.20);
+const hemisphereLight = new THREE.HemisphereLight(0xdbeafe, 0x1e293b, 1.05);
+scene.add(ambientLight, hemisphereLight);
 
 /**
  * PLAYER & CINEMATIC CAMERAS — owned by viewportManager.
@@ -213,25 +243,23 @@ const { playerCameras, spectatorCamera, cinematicCamera } = viewportManager;
 const turfParticles = createTurfParticleSystem(scene);
 const goalCelebration = createGoalCelebrationSystem(scene);
 const goalIndicators = createGoalIndicators(scene);
+const ballDropRings = createBallDropRings(scene);
+const setupBallPreview = createSetupBallPreview(scene);
 
 const _pitchRayOrigin = { x: 0, y: 0, z: 0 };
 const _pitchRayDown = { x: 0, y: -1, z: 0 };
 let _pitchRay = null;
 
 function queryPitchSurfaceY(x, z, refY = 1.0) {
+  if (activeArenaType() === 'court' && isCourtFloorSampleAvailable(x, z)) {
+    return getCourtFloorY(x, z);
+  }
   const world = getWorld();
   if (!world) return Math.max(0, refY - 0.5);
   if (!_pitchRay) _pitchRay = new RAPIER.Ray(_pitchRayOrigin, _pitchRayDown);
-  _pitchRayOrigin.x = x;
-  _pitchRayOrigin.y = Math.max(refY + 1.5, 2.0);
-  _pitchRayOrigin.z = z;
-  const hit = world.castRay(
-    _pitchRay, 5.0, true, undefined, ENVIRONMENT_RAY_GROUPS,
-  );
-  if (hit) {
-    return _pitchRayOrigin.y - hit.timeOfImpact;
-  }
-  return Math.max(0, refY - 0.5);
+  _pitchRayOrigin.x = x; _pitchRayOrigin.y = Math.max(refY + 1.5, 2.0); _pitchRayOrigin.z = z;
+  const hit = world.castRay(_pitchRay, 5.0, true, undefined, ENVIRONMENT_RAY_GROUPS);
+  return hit ? _pitchRayOrigin.y - hit.timeOfImpact : Math.max(0, refY - 0.5);
 }
 
 const camera = playerCameras[0].camera;
@@ -240,6 +268,7 @@ const cameraRig = playerCameras[0]; // backward compatibility for debug capture 
 const flyoverPads = createMenuPadTracker();
 let gameState = 'menu'; // 'menu' | 'flyover' | 'match' | 'overtime_menu' | 'practice'
 let victoryCameraActive = false;
+let victoryScreenTimer = null;
 
 let athletes = [];
 /**
@@ -252,8 +281,11 @@ let activeBotSlots = [];
 const athleteMatchStats = [0, 1, 2, 3].map((i) => createPlayerMatchStats(i));
 let activeFixture = null;
 let fixtureRandom = null;
+let currentMatchSeed = 0;
+let currentMatchRandom = null;
 let fixtureFlyoverEndTick = -1;
 let lastMatchConfigs = null;
+let lastMatchSpawns = null;
 let balls = [];
 let allBalls = [];
 let currentMatchBallType = 'random';
@@ -280,6 +312,9 @@ viewportManager.init({
   renderer,
   scene,
   stadiumLights,
+  ambientLight,
+  hemisphereLight,
+  turfParticles,
   getActiveBotSlots: () => activeBotSlots,
   getAthletes: () => athletes,
   getGameState: () => gameState,
@@ -300,45 +335,20 @@ function ensureAthletesRegistered(count, configs) {
   return athletes;
 }
 
-function syncPlayerCameraMode(playerIndex, mode) {
-  viewportManager.syncPlayerCameraMode(playerIndex, mode);
-}
-
-function leaveSharedCameraForOtherSlot(changedPlayerIndex) {
-  viewportManager.leaveSharedCameraForOtherSlot(changedPlayerIndex);
-}
-
-function cyclePlayerCameraView(playerIndex = 0, delta = 1) {
-  viewportManager.cyclePlayerCameraView(playerIndex, delta);
-}
-
-function cycleArenaCameraView(playerIndex = 0, delta = 1) {
-  viewportManager.cycleArenaCameraView(playerIndex, delta);
-}
-
-function applyCameraTuning() {
-  viewportManager.applyCameraTuning();
-}
-
-function applyViewportSize() {
-  viewportManager.applyViewportSize();
-}
-
-function applyShadowSettings() {
-  viewportManager.applyShadowSettings();
-}
+const syncPlayerCameraMode = (playerIndex, mode) => viewportManager.syncPlayerCameraMode(playerIndex, mode);
+const leaveSharedCameraForOtherSlot = (changedPlayerIndex) => viewportManager.leaveSharedCameraForOtherSlot(changedPlayerIndex);
+const cyclePlayerCameraView = (playerIndex = 0, delta = 1) => viewportManager.cyclePlayerCameraView(playerIndex, delta);
+const cycleArenaCameraView = (playerIndex = 0, delta = 1) => viewportManager.cycleArenaCameraView(playerIndex, delta);
+const applyCameraTuning = () => viewportManager.applyCameraTuning();
+const applyViewportSize = () => viewportManager.applyViewportSize();
+const applyShadowSettings = () => viewportManager.applyShadowSettings();
 applyShadowSettings();
+const applyRenderSettings = (settings = {}) => viewportManager.applyRenderSettings(settings);
 
-function applyRenderSettings(settings = {}) {
-  viewportManager.applyRenderSettings(settings);
-}
-
-window.addEventListener('resize', applyViewportSize);
-
-function setActiveMatchBall(typeOrIndex = 'random') {
+function setActiveMatchBall(typeOrIndex = 'random', randomFn = Math.random, allowMultiBall = false) {
   if (allBalls.length === 0) return null;
 
-  if (typeOrIndex === 'all') {
+  if (typeOrIndex === 'all' && allowMultiBall) {
     for (const b of allBalls) {
       b.mesh.visible = true;
       b.body.setEnabled(true);
@@ -359,7 +369,7 @@ function setActiveMatchBall(typeOrIndex = 'random') {
   } else if (typeOrIndex === 'large') {
     chosenIdx = 2;
   } else {
-    chosenIdx = Math.floor(Math.random() * allBalls.length);
+    chosenIdx = Math.floor(randomFn() * allBalls.length);
   }
 
   for (let i = 0; i < allBalls.length; i++) {
@@ -459,12 +469,7 @@ function drainImpacts(tick, dt) {
           if (isNewTouch) {
             athleteHit._lastTouchTick = tick;
             const teamId = TUNING.players[athleteIdx]?.team || (athleteIdx % 2 === 0 ? 'home' : 'away');
-            if (!hitBall._lastTouchByTeam) hitBall._lastTouchByTeam = { home: null, away: null };
-            if (!hitBall._prevTouchByTeam) hitBall._prevTouchByTeam = { home: null, away: null };
-            if (hitBall._lastTouchByTeam[teamId] !== null && hitBall._lastTouchByTeam[teamId] !== athleteIdx) {
-              hitBall._prevTouchByTeam[teamId] = hitBall._lastTouchByTeam[teamId];
-            }
-            hitBall._lastTouchByTeam[teamId] = athleteIdx;
+            recordBallTeamTouch(hitBall, teamId, athleteIdx);
 
             if (athleteMatchStats[athleteIdx] && gameState === 'match') {
               athleteMatchStats[athleteIdx].totalTouches++;
@@ -589,7 +594,13 @@ function drainImpacts(tick, dt) {
         if (arenaType === 'goal') {
           soundManager.playHoopClank(speed, ballPos);
         } else if (arenaType === 'boundary' && ballPos.y >= 13.0) {
-          soundManager.playGlassImpact(speed, ballPos);
+          const wasOffGlass = (tick - (hitBall._lastGlassContactTick || 0)) > 12;
+          hitBall._lastGlassContactTick = tick;
+          const sincePlay = tick - (hitBall._lastGlassPlayTick || -999);
+          if ((wasOffGlass && sincePlay >= 18) || (!wasOffGlass && sincePlay >= 42 && totalForce > 14)) {
+            hitBall._lastGlassPlayTick = tick;
+            soundManager.playGlassImpact(speed, ballPos, !wasOffGlass);
+          }
         } else {
           const wasInAir = (tick - (hitBall._lastGroundTick || 0)) > 10;
           hitBall._lastGroundTick = tick;
@@ -732,21 +743,29 @@ function finishMatchAndReport(tick) {
   });
   window.__vb.lastMatchStatsReport = statsReport;
 
+  if (replayManager.isPlayingBack()) {
+    replayManager.setPlaybackPaused(true);
+    return;
+  }
+
   const winnerAthlete = getWinningAthlete();
   const winnerPos = winnerAthlete?.motor?.body?.translation() || { x: 0, y: 0, z: 0 };
   cinematicCamera.startVictoryPresentation(new THREE.Vector3(winnerPos.x, winnerPos.y, winnerPos.z), 12.0);
   victoryCameraActive = true;
 
-  setTimeout(() => {
-    showVictoryScreen(
-      matchProbe(matchState),
-      slotStats[0],
-      slotStats[1],
-      statsReport,
-    );
+  if (victoryScreenTimer) clearTimeout(victoryScreenTimer);
+  victoryScreenTimer = setTimeout(() => {
+    victoryScreenTimer = null;
+    if (replayManager.isPlayingBack() || gameState === 'menu') return;
+    showVictoryScreen(matchProbe(matchState), slotStats[0], slotStats[1], statsReport);
   }, 1200);
 
   reportMatchResult(tick, slotStats, statsReport);
+  const sh = matchState?.scoreHome || 0; const sa = matchState?.scoreAway || 0;
+  const winner = sh > sa ? 'home' : (sa > sh ? 'away' : 'draw');
+  if (replayManager.isRecording()) replayManager.recordPoseTick({ athletes, balls, matchState, forceCapture: true });
+  replayManager.finishMatchRecording({ scoreHome: sh, scoreAway: sa, winner });
+  cinematicCamera.stopFreeFly(); resetReplayDockState();
 }
 
 /**
@@ -757,6 +776,21 @@ function finishMatchAndReport(tick) {
  */
 function fixedUpdate(dt, tick) {
   if (athletes.length === 0 || gameState === 'overtime_menu') return;
+  if (replayManager.isPosePlayback() && gameState === 'match') return;
+  if (replayManager.isPlayingBack() && gameState === 'match' && !(matchState && matchState.isCountingDown)) {
+    const steps = replayManager.consumePlaybackSteps();
+    for (let s = 0; s < steps; s++) {
+      if (!replayManager.isPlayingBack() || matchState?.matchOver) break;
+      stepSimulationTick(dt, tick + s);
+    }
+    return;
+  }
+  stepSimulationTick(dt, tick);
+}
+
+function stepSimulationTick(dt, tick) {
+  if (athletes.length === 0 || gameState === 'overtime_menu') return;
+  const isSeekingReplay = replayManager.isSeeking();
 
   // 0 — A fixture's flyover ends on a tick, so its countdown starts on the same
   // tick every run, however the frames happened to fall.
@@ -768,26 +802,37 @@ function fixedUpdate(dt, tick) {
   if (respawnRequested) {
     respawnRequested = false;
     for (let i = 0; i < athletes.length; i++) {
-      if (i > 0 && (gameState === 'practice' || armedCaptureTick !== null)) continue;
+      if ((i > 0 && armedCaptureTick !== null) || !athletes[i]?.isEnabled) continue;
       athletes[i].requestRespawn();
     }
   }
 
-  // 2 — BALL WATCHDOG & SERVE (B / Start or fall out of bounds)
-  const serveQueued = consumeAthleteBallReset(0) && gameState === 'practice';
+  // 2 — BALL WATCHDOG & SERVE (B / Select self-toss in Practice, or out of bounds)
+  let practiceTossTriggered = false;
+  if (gameState === 'practice') {
+    for (let i = 0; i < athletes.length; i++) {
+      if (athletes[i]?.isEnabled && consumeAthleteBallReset(i)) {
+        summonPracticeBall(athletes[i], balls, tick, resetBall);
+        practiceTossTriggered = true;
+      }
+    }
+  } else {
+    consumeAthleteBallReset(0);
+  }
   const armedBallSpawn = armedCaptureTick !== null && tick === TUNING.ball.captureSpawnTick;
-  const isDeterministic = armedCaptureTick !== null || activeFixture !== null;
+  const isPlayingReplay = replayManager.isPlayingBack();
+  const isDeterministic = armedCaptureTick !== null || activeFixture !== null || replayManager.isRecording() || isPlayingReplay;
 
   for (let i = 0; i < balls.length; i += 1) {
     const b = balls[i];
     if (!b?.body || (typeof b.body.isEnabled === 'function' && !b.body.isEnabled())) continue;
     if (captureFixture && fixtureParksBall(captureFixture, i)) continue;
-    const belowWorld = b.body.translation().y < arenaPreset.killPlaneY;
-    if (serveQueued || armedBallSpawn || belowWorld) {
-      const dropPos = getCourtBallDropSpawn(i, balls.length, tick, isDeterministic);
-      resetBall(b, tick, dropPos);
-      if (belowWorld && !serveQueued && !armedBallSpawn) {
-        console.log(`[ball:${b.id}] out of bounds — reset at tick ${tick}`);
+    const bp = b.body.translation();
+    const outOfBounds = !Number.isFinite(bp.y) || bp.y < arenaPreset.killPlaneY || Math.abs(bp.x) > 33 || Math.abs(bp.z) > 68;
+    if (armedBallSpawn || outOfBounds) {
+      resetBall(b, tick, getCourtBallDropSpawn(i, balls.length, tick, isDeterministic));
+      if (outOfBounds && !practiceTossTriggered && !armedBallSpawn) {
+        console.log(`[ball:${b.id}] out of bounds (${bp.x?.toFixed?.(1)}, ${bp.y?.toFixed?.(1)}, ${bp.z?.toFixed?.(1)}) - reset at tick ${tick}`);
       }
     }
   }
@@ -795,12 +840,14 @@ function fixedUpdate(dt, tick) {
   if (captureFixture) applyFixtureServes(captureFixture, tick, balls, resetBall);
 
   // ─── AI BOT DECISION & SYNTHETIC INPUT EXECUTION ───
-  for (const bc of botControllers) {
-    const botAthlete = athletes[bc.slotIndex];
-    const opponentIdx = bc.slotIndex % 2 === 0 ? 1 : 0;
-    const opponent = athletes[opponentIdx] || null;
-    const botSlot = getInputSlot(bc.slotIndex);
-    updateBot(bc, botAthlete, opponent, balls, matchState, botSlot, tick, dt, athletes);
+  if (!isPlayingReplay) {
+    for (const bc of botControllers) {
+      const botAthlete = athletes[bc.slotIndex];
+      const opponentIdx = bc.slotIndex % 2 === 0 ? 1 : 0;
+      const opponent = athletes[opponentIdx] || null;
+      const botSlot = getInputSlot(bc.slotIndex);
+      updateBot(bc, botAthlete, opponent, balls, matchState, botSlot, tick, dt, athletes);
+    }
   }
 
   // 3 to 10 — ATHLETE PRE-PHYSICS MECHANICS (Drive, Jump, Slide, Dive, Strikes, Ghost, Tracking)
@@ -809,9 +856,10 @@ function fixedUpdate(dt, tick) {
   const isBallHeld = (gameState === 'match' && isCountingDown) || (gameState === 'flyover');
   const hoopNorthZ = TUNING.match?.hoopNorthZ ?? -40.0;
   const hoopSouthZ = TUNING.match?.hoopSouthZ ?? 40.0;
+  const replaySlots = (isPlayingReplay && gameState === 'match' && !isAthleteHeld) ? replayManager.readPlaybackTick() : null;
+  const recordLiveTick = !isPlayingReplay && gameState === 'match' && !isAthleteHeld && replayManager.isRecording();
 
   for (let i = 0; i < athletes.length; i++) {
-    if (gameState === 'practice' && i > 0) continue;
     const athlete = athletes[i];
     if (!athlete?.isEnabled) continue;
     const athTeam = athlete.team || TUNING.players?.[i]?.team || (i % 2 === 0 ? 'home' : 'away');
@@ -823,8 +871,18 @@ function fixedUpdate(dt, tick) {
     let cutQueued = consumeAthleteCut(i);
     let volleyQueued = consumeAthleteVolley(i);
     let spikeQueued = consumeAthleteSpike(i);
+    let facingFollowsCamera = !isAthleteHeld && !activeBotSlots.includes(i) && (playerCameras[i]?.mode === 'chase' || playerCameras[i]?.mode === 'ball' || playerCameras[i]?.mode === 'thirdPerson' || playerCameras[i]?.mode === 'firstPerson');
 
-    if (isAthleteHeld) {
+    if (replaySlots && replaySlots[i]) {
+      const rf = replaySlots[i];
+      inputSnapshot = rf.inputSnapshot;
+      jumpQueued = rf.jumpQueued;
+      diveQueued = rf.diveQueued;
+      cutQueued = rf.cutQueued;
+      volleyQueued = rf.volleyQueued;
+      spikeQueued = rf.spikeQueued;
+      facingFollowsCamera = rf.facingFollowsCamera;
+    } else if (isAthleteHeld) {
       inputSnapshot = {
         ...inputSnapshot,
         moveX: 0,
@@ -839,6 +897,10 @@ function fixedUpdate(dt, tick) {
       cutQueued = false;
       volleyQueued = false;
       spikeQueued = false;
+    } else if (recordLiveTick) {
+      replayManager.recordSlot(i, inputSnapshot, {
+        jumpQueued, diveQueued, cutQueued, volleyQueued, spikeQueued, facingFollowsCamera,
+      });
     }
 
     const preResult = athlete.prePhysicsUpdate({
@@ -853,8 +915,7 @@ function fixedUpdate(dt, tick) {
       balls,
       arenaPreset,
       targetGoalZ: athTargetGoalZ,
-      facingFollowsCamera:
-        !isAthleteHeld && !activeBotSlots.includes(i) && (playerCameras[i]?.mode === 'chase' || playerCameras[i]?.mode === 'ball' || playerCameras[i]?.mode === 'thirdPerson' || playerCameras[i]?.mode === 'firstPerson'),
+      facingFollowsCamera,
     });
 
     if (preResult?.actions) {
@@ -1008,6 +1069,7 @@ function fixedUpdate(dt, tick) {
       athlete.motor.body.setLinvel({ x: 0, y: Math.min(lv.y, 0), z: 0 }, true);
     }
   }
+  if (recordLiveTick) replayManager.commitTick();
 
   // 7b — Air drag and spin decay for balls
   for (const b of balls) applyBallResistance(b, dt);
@@ -1030,7 +1092,7 @@ function fixedUpdate(dt, tick) {
             }
           }
           b.body.setTranslation(b._preMatchSpawnPos, true);
-        } else {
+        } else if (gameState !== 'flyover') {
           b._preMatchSpawnPos = null;
         }
       }
@@ -1058,6 +1120,7 @@ function fixedUpdate(dt, tick) {
   drainImpacts(tick, dt);
 
   // 12b — SCORING & OVERTIME
+  let scoredThisTick = false;
   if (matchState && (gameState === 'match' || gameState === 'practice')) {
     const goalsBefore = matchState.events.length;
     if (matchState.isGoldenGoal && !matchState.matchOver) {
@@ -1065,31 +1128,39 @@ function fixedUpdate(dt, tick) {
     }
     updateScoring(matchState, balls, tick);
     if (matchState.events.length > goalsBefore) {
+      scoredThisTick = true;
       const lastGoal = matchState.events[matchState.events.length - 1];
       const hoopPos = {
         x: 0,
         y: TUNING.match.hoopCenterY,
         z: lastGoal.goal === 'N' ? TUNING.match.hoopNorthZ : TUNING.match.hoopSouthZ,
       };
-      soundManager.playGoal(lastGoal.scoredFor, lastGoal.goal, hoopPos);
-      goalCelebration.triggerGoal(lastGoal.scoredFor, hoopPos, { y: lastGoal.y, z: lastGoal.z });
+      if (!isSeekingReplay) {
+        soundManager.playGoal(lastGoal.scoredFor, lastGoal.goal, hoopPos);
+        goalCelebration.triggerGoal(lastGoal.scoredFor, hoopPos, { y: lastGoal.y, z: lastGoal.z });
+      }
       if (gameState === 'practice') {
         practiceStats.goals++;
       } else if (gameState === 'match') {
         const scoringBall = balls[0];
         const scoredTeam = lastGoal.scoredFor;
+        let scorerSlot = null;
+        let assistSlot = null;
         if (scoringBall?._lastTouchByTeam) {
-          const scorerIdx = scoringBall._lastTouchByTeam[scoredTeam];
-          const assistIdx = scoringBall._prevTouchByTeam?.[scoredTeam];
-          if (scorerIdx !== null && scorerIdx !== undefined && athleteMatchStats[scorerIdx]) {
-            athleteMatchStats[scorerIdx].goals = (athleteMatchStats[scorerIdx].goals || 0) + 1;
+          scorerSlot = scoringBall._lastTouchByTeam[scoredTeam] ?? null;
+          assistSlot = scoringBall._prevTouchByTeam?.[scoredTeam] ?? null;
+          if (scorerSlot !== null && athleteMatchStats[scorerSlot]) {
+            athleteMatchStats[scorerSlot].goals = (athleteMatchStats[scorerSlot].goals || 0) + 1;
           }
-          if (assistIdx !== null && assistIdx !== undefined && assistIdx !== scorerIdx && athleteMatchStats[assistIdx]) {
-            athleteMatchStats[assistIdx].assists = (athleteMatchStats[assistIdx].assists || 0) + 1;
+          if (assistSlot !== null && assistSlot !== scorerSlot && athleteMatchStats[assistSlot]) {
+            athleteMatchStats[assistSlot].assists = (athleteMatchStats[assistSlot].assists || 0) + 1;
           }
           scoringBall._lastTouchByTeam = { home: null, away: null };
           scoringBall._prevTouchByTeam = { home: null, away: null };
         }
+        replayManager.recordGoal({
+          scoredFor: scoredTeam, goal: lastGoal.goal, scoreHome: matchState.scoreHome, scoreAway: matchState.scoreAway, scorerSlot, assistSlot,
+        });
         // Golden Goal sudden death: first goal immediately wins the match!
         if (matchState.isGoldenGoal) {
           matchState.matchOver = true;
@@ -1099,7 +1170,14 @@ function fixedUpdate(dt, tick) {
     if (gameState === 'match' && matchState.matchOver && !matchState._buzzerPlayed) {
       const isTied = (matchState.scoreHome || 0) === (matchState.scoreAway || 0);
       if (isTied && !matchState._agreedDraw) {
-        if (activeFixture) {
+        const replayOt = isPlayingReplay ? replayManager.getPlaybackOvertimeDecision() : null;
+        if (replayOt) {
+          matchState.matchOver = false;
+          applyOvertimeAgreement(replayOt);
+        } else if (isPlayingReplay) {
+          matchState._agreedDraw = true;
+          finishMatchAndReport(tick);
+        } else if (activeFixture) {
           const otRule = activeFixture.overtime || 'draw';
           if (otRule === 'golden_goal' || otRule === 'timed') {
             matchState.matchOver = false;
@@ -1133,12 +1211,12 @@ function fixedUpdate(dt, tick) {
   }
 
   if (gameState === 'practice') {
-    incrementPracticeSessionTicks();
+    stepPracticeDrillTick({ tick, athletes, balls, resetBallFn: resetBall });
   }
 
   // 13 — POST-PHYSICS (Snapshots, strike assist, and player combat)
   for (let i = 0; i < athletes.length; i++) {
-    if ((gameState === 'practice' && i > 0) || !athletes[i]?.isEnabled) continue;
+    if (!athletes[i]?.isEnabled) continue;
     try {
       const assistEvent = athletes[i].postPhysicsUpdate(tick, dt, balls, athletes, i);
       if (assistEvent) {
@@ -1147,6 +1225,7 @@ function fixedUpdate(dt, tick) {
         const lastTouch = athlete._lastTouchTick ?? -999;
         if ((tick - lastTouch) >= touchCooldownTicks) {
           athlete._lastTouchTick = tick;
+          recordBallTeamTouch(balls[0], TUNING.players[i]?.team || (i % 2 === 0 ? 'home' : 'away'), i);
           if (gameState === 'match' && athleteMatchStats[i]) {
             athleteMatchStats[i].totalTouches++;
           } else if (i === 0 && gameState === 'practice') {
@@ -1187,12 +1266,33 @@ function fixedUpdate(dt, tick) {
     }
   }
   for (const b of balls) syncBallSnapshot(b);
-
-  // 14 — ASSERTS
+  if (recordLiveTick) {
+    Object.assign(_poseTickArgs, { athletes, balls, matchState, forceCapture: scoredThisTick });
+    replayManager.recordPoseTick(_poseTickArgs);
+  }
   assertInvariants(tick);
 }
+const _poseTickArgs = { athletes: null, balls: null, matchState: null, forceCapture: false };
+const _posePlayArgs = { athletes: null, balls: null, matchState: null, goalCelebration: null, playerCameras: null };
 
 const NO_MOUSE_DELTAS = Object.freeze({ dx: 0, dy: 0 });
+const _athGoalScratch = { x: 0, y: 10.0, z: -40.0 };
+const _camUpdateArgs = {
+  athlete: null, activeBall: null, inputSlot: null, mouseDeltas: NO_MOUSE_DELTAS,
+  world: null, frameDelta: 0, allAthletes: null, attackingGoal: _athGoalScratch,
+};
+const _goalIndArgs = { gameState: 'menu', matchState: null, tick: 0 };
+const _ballDropRingArgs = { gameState: 'menu', balls: null, athletes: null, isVictoryActive: false };
+const _renderSceneArgs = {
+  gameState: 'menu', matchState: null, victoryCameraActive: false,
+  athletes: null, humanSlots: null, stepsThisFrame: 0, replayFollowSlot: -1,
+};
+const _readabilityHudArgs = {
+  gameState: 'menu', isVictoryActive: false, isMenuOpen: false,
+  match: null, practiceStats: null, athletes: null, balls: null,
+  viewportLayout: null, isSplitscreen: false, tick: 0,
+};
+const _hudArgs = { match: null, athletes: null, ball: null, balls: null, loop: null, cameraRig: null };
 
 /**
  * Updates all player cameras for the current frame.
@@ -1220,22 +1320,22 @@ function updateCameras() {
   const hoopSouthZ = TUNING.match?.hoopSouthZ ?? 40.0;
   const mouseSlot = getMouseSlot();
 
+  _camUpdateArgs.activeBall = activeBall;
+  _camUpdateArgs.world = world;
+  _camUpdateArgs.frameDelta = frameDelta;
+  _camUpdateArgs.allAthletes = athletes;
+
   for (let i = 0; i < athletes.length; i++) {
     const athlete = athletes[i];
     if (!athlete?.isEnabled || !playerCameras[i]) continue;
     const athTeam = athlete.team || TUNING.players?.[i]?.team || (i % 2 === 0 ? 'home' : 'away');
     const athAttacksNorth = (athTeam === 'home') ? (matchState?.targetGoal === 'N') : (matchState?.targetGoal === 'S');
-    const athGoal = { x: 0, y: hoopCenterY, z: athAttacksNorth ? hoopNorthZ : hoopSouthZ };
-    playerCameras[i].update({
-      athlete,
-      activeBall,
-      inputSlot: getInputSlot(i),
-      mouseDeltas: mouseSlot === i ? getMouseDeltas() : NO_MOUSE_DELTAS,
-      world,
-      frameDelta,
-      allAthletes: athletes,
-      attackingGoal: athGoal,
-    });
+    _athGoalScratch.y = hoopCenterY;
+    _athGoalScratch.z = athAttacksNorth ? hoopNorthZ : hoopSouthZ;
+    _camUpdateArgs.athlete = athlete;
+    _camUpdateArgs.inputSlot = getInputSlot(i);
+    _camUpdateArgs.mouseDeltas = mouseSlot === i ? getMouseDeltas() : NO_MOUSE_DELTAS;
+    playerCameras[i].update(_camUpdateArgs);
   }
 
   if (getActiveHumanSlots().length === 0) {
@@ -1255,19 +1355,18 @@ function render(alpha) {
   renderFrameCount++;
   displayCoordinator.reset(1);
 
-  const registry = loop.interpolated;
-  for (let i = 0; i < registry.length; i += 1) registry[i].apply(alpha);
-
-  for (let i = 0; i < athletes.length; i++) {
-    const athlete = athletes[i];
-    if ((gameState === 'practice' && i > 0) || !athlete?.isEnabled) {
-      if (athlete?.ragdoll?.group) athlete.ragdoll.group.visible = false;
-      continue;
-    }
-    athlete.renderPose(alpha);
-  }
-
   const frameDelta = Math.min(loop.frameTimeMs / 1000, TUNING.loop.maxFrameTime);
+  if (replayManager.isPosePlayback() && gameState === 'match') {
+    Object.assign(_posePlayArgs, { athletes, balls, matchState, goalCelebration, playerCameras });
+    replayManager.advancePosePlayback(frameDelta, _posePlayArgs);
+  } else {
+    const registry = loop.interpolated; for (let i = 0; i < registry.length; i += 1) registry[i].apply(alpha);
+    for (let i = 0; i < athletes.length; i++) {
+      const athlete = athletes[i];
+      if (!athlete?.isEnabled) { if (athlete?.ragdoll?.group) athlete.ragdoll.group.visible = false; continue; }
+      athlete.renderPose(alpha);
+    }
+  }
   turfParticles.update(frameDelta);
   goalCelebration.update(frameDelta);
 
@@ -1293,8 +1392,11 @@ function render(alpha) {
     }
   }
 
-  // Pre-match pause: freezes simulation and match clock only during the pre-match countdown stage.
-  loop.paused = isInGameMenuOpen() && (gameState === 'match' && !!(matchState && matchState.isCountingDown));
+  // Pause simulation while menu is open during pre-match countdown OR replay playback
+  // so broadcasters can switch cameras and toggle clean footage / visual guides freely.
+  loop.paused = isInGameMenuOpen() && (
+    replayManager.isPlayingBack() || (gameState === 'match' && !!(matchState && matchState.isCountingDown))
+  );
 
   const isVictoryActive = (gameState === 'match') && !!(matchState && matchState.matchOver) && victoryCameraActive;
 
@@ -1318,12 +1420,15 @@ function render(alpha) {
       if (wt) cinematicCamera.winnerPos.set(wt.x, wt.y, wt.z);
     }
     cinematicCamera.update(frameDelta);
+    if (gameState === 'menu') setupBallPreview.update(frameDelta, allBalls);
+  } else if (cinematicCamera.mode === 'free') {
+    if (!isInGameMenuOpen()) cinematicCamera.updateFreeFly(frameDelta, sampleFreeDroneInput());
   } else if (gameState !== 'overtime_menu') {
     updateCameras();
   }
 
   if (consumeMenuToggle() && gameState !== 'menu' && gameState !== 'flyover' && gameState !== 'overtime_menu' && !isInGameMenuOpen()) {
-    toggleInGameMenu();
+    toggleInGameMenu(consumeMenuToggleOwner());
   }
 
   const match = matchState ? matchProbe(matchState) : null;
@@ -1336,25 +1441,14 @@ function render(alpha) {
   const isPracticeActive = (gameState === 'practice');
   syncPracticeStrikeStats(athletes[0]);
 
-  const callScoreboards = () => updateScoreboards(scoreboards, match);
-  const callHustleBoards = () => updateHustleBoards(
-    hustleBoards,
-    practiceStats,
-    getPracticeSessionSeconds(),
-    isPracticeActive,
-    matchState?.celebrationTicks || 0,
-    match,
-    athletes,
-    athleteMatchStats,
-  );
-
-  // Alternate priority so scoreboards and hustle boards do not starve each other
+  const celebTicks = matchState?.celebrationTicks || 0;
+  // Alternate priority so scoreboards and hustle boards do not starve each other (zero per-frame closures)
   if (renderFrameCount % 2 === 0) {
-    callScoreboards();
-    callHustleBoards();
+    updateScoreboards(scoreboards, match);
+    updateHustleBoards(hustleBoards, practiceStats, getPracticeSessionSeconds(), isPracticeActive, celebTicks, match, athletes, athleteMatchStats, loop.tick);
   } else {
-    callHustleBoards();
-    callScoreboards();
+    updateHustleBoards(hustleBoards, practiceStats, getPracticeSessionSeconds(), isPracticeActive, celebTicks, match, athletes, athleteMatchStats, loop.tick);
+    updateScoreboards(scoreboards, match);
   }
 
   if (match) {
@@ -1364,22 +1458,48 @@ function render(alpha) {
     updateInGameMenuBanner(match);
   }
 
-  goalIndicators.update({
-    gameState,
-    matchState,
-    tick: loop.tick,
-  });
+  _goalIndArgs.gameState = gameState;
+  _goalIndArgs.matchState = matchState;
+  _goalIndArgs.tick = loop.tick;
+  goalIndicators.update(_goalIndArgs);
+
+  _ballDropRingArgs.gameState = gameState;
+  _ballDropRingArgs.balls = balls;
+  _ballDropRingArgs.athletes = athletes;
+  _ballDropRingArgs.isVictoryActive = isVictoryActive;
+  ballDropRings.update(_ballDropRingArgs);
 
   const humanSlots = getActiveHumanSlots();
-  viewportManager.renderScene({
-    gameState: gameState === 'overtime_menu' ? 'match' : gameState,
-    matchState,
-    victoryCameraActive,
-    athletes,
-    humanSlots,
-  });
+  _renderSceneArgs.gameState = gameState === 'overtime_menu' ? 'match' : gameState;
+  _renderSceneArgs.matchState = matchState;
+  _renderSceneArgs.victoryCameraActive = victoryCameraActive;
+  _renderSceneArgs.athletes = athletes;
+  _renderSceneArgs.humanSlots = humanSlots;
+  _renderSceneArgs.stepsThisFrame = replayManager.isPosePlayback() ? 1 : loop.stepsThisFrame;
+  _renderSceneArgs.replayFollowSlot = replayManager.isPlayingBack() ? replayManager.getFollowSlot() : -1;
+  viewportManager.renderScene(_renderSceneArgs);
 
-  updateHud({ match, athletes, ball, balls, loop, cameraRig });
+  _readabilityHudArgs.gameState = gameState;
+  _readabilityHudArgs.isVictoryActive = isVictoryActive;
+  _readabilityHudArgs.isMenuOpen = isInGameMenuOpen() || isMainMenuActive() || isOvertimeMenuOpen();
+  _readabilityHudArgs.match = match;
+  _readabilityHudArgs.practiceStats = practiceStats;
+  _readabilityHudArgs.athletes = athletes;
+  _readabilityHudArgs.balls = balls;
+  _readabilityHudArgs.viewportLayout = viewportManager.lastViewportLayout;
+  _readabilityHudArgs.isSplitscreen = viewportManager.lastIsSplitscreen;
+  _readabilityHudArgs.tick = loop.tick;
+  updateMatchReadabilityHud(_readabilityHudArgs);
+  updatePracticeHud({ gameState, isMenuOpen: _readabilityHudArgs.isMenuOpen });
+  updateReplayDock({ isMenuOpen: _readabilityHudArgs.isMenuOpen });
+
+  _hudArgs.match = match;
+  _hudArgs.athletes = athletes;
+  _hudArgs.ball = ball;
+  _hudArgs.balls = balls;
+  _hudArgs.loop = loop;
+  _hudArgs.cameraRig = cameraRig;
+  updateHud(_hudArgs);
 }
 
 const loop = new Loop({ fixedUpdate, render });
@@ -1421,120 +1541,16 @@ async function loadCharacter() {
       `${gltf.animations.length} clips present and untouched in this task`,
   );
 
-  logClipInventory();
+  logClipInventory(characterClips);
 }
 
-/**
- * EVERY CLIP-NAME FIELD IN TUNING, READ OUT OF TUNING.
- *
- * Lesson 22 — a readout READS, it never recomputes. Retyping the registered
- * names into the inventory below would produce a table that goes on agreeing
- * with itself after somebody edits TUNING, which is worse than having no table
- * at all. Every field is reached by walking the same objects the blend space
- * walks: TUNING.anim.blend.idleClip, every string in TUNING.blend2d including
- * the per-direction ring tables, and every key ending in "Clip" on TUNING.jump,
- * TUNING.standUp and TUNING.action. Add a clip field to any of those and it
- * appears here without this function being touched.
- *
- * Keyed by LOWERCASED clip name, because findClip in animtarget.js resolves
- * case-insensitively and a readout that is stricter than the resolver would
- * report a registered clip as unreferenced.
- *
- * @returns {Map<string, {name: string, paths: string[]}>} lowercased clip name
- *          -> the name as TUNING actually spells it, and the fields naming it
- */
-function tuningClipFields() {
-  const fields = new Map();
-  const add = (path, value) => {
-    if (typeof value !== 'string' || value === '') return;
-    const key = value.toLowerCase();
-    const entry = fields.get(key);
-    // The authored spelling is kept, not the lowercased key: the warning at the
-    // bottom of the inventory quotes this back at whoever has to go and find the
-    // field, and "crash" does not appear in tuning.js — 'Crash' does.
-    if (entry) entry.paths.push(path);
-    else fields.set(key, { name: value, paths: [path] });
-  };
-
-  add('anim.blend.idleClip', TUNING.anim.blend.idleClip);
-
-  for (const [key, value] of Object.entries(TUNING.blend2d)) {
-    if (typeof value === 'string') {
-      add(`blend2d.${key}`, value);
-    } else if (value && typeof value === 'object') {
-      for (const [dir, name] of Object.entries(value)) add(`blend2d.${key}.${dir}`, name);
-    }
-  }
-
-  for (const group of ['jump', 'standUp', 'action']) {
-    for (const [key, value] of Object.entries(TUNING[group])) {
-      if (key.endsWith('Clip')) add(`${group}.${key}`, value);
-    }
-  }
-
-  return fields;
-}
-
-/**
- * THE CLIP INVENTORY — every clip in the asset set, once, at load.
- *
- * Informational, and deliberately so. AN UNREFERENCED CLIP IS NOT AN ERROR: the
- * 30-animation asset ships the whole strike and transition inventory long
- * before anything registers any of it, so a readout that treated "present but
- * unused" as a fault would cry wolf for the rest of the phase.
- *
- * What it is actually for is the mirror question — a TUNING field naming a clip
- * the asset does NOT have. That case is silent at runtime by design: the back
- * node falls back to the forward walk and the action nodes fall back to a held
- * airborne pose rather than throwing, which is the right behaviour and also the
- * reason a typo in a clip name can survive a play session unnoticed. Those are
- * warned about by name below.
- */
-function logClipInventory() {
-  const fields = tuningClipFields();
-  const rows = characterClips.map((clip) => ({
-    name: clip.name,
-    duration: clip.duration,
-    tracks: clip.tracks.length,
-    referencedBy: (fields.get(clip.name.toLowerCase()) || { paths: [] }).paths,
-  }));
-
-  const width = Math.max(4, ...rows.map((row) => row.name.length));
-  console.log(
-    `[clips] ${'clip'.padEnd(width)}  ${'dur (s)'.padStart(7)}  ${'tracks'.padStart(6)}  referenced by`,
-  );
-  for (const row of rows) {
-    console.log(
-      `[clips] ${row.name.padEnd(width)}  ${row.duration.toFixed(3).padStart(7)}  ` +
-        `${String(row.tracks).padStart(6)}  ${row.referencedBy.join(', ') || '—'}`,
-    );
-  }
-
-  const referenced = rows.filter((row) => row.referencedBy.length).length;
-  console.log(
-    `[clips] ${rows.length} clips in the asset set: ${referenced} referenced by a TUNING ` +
-      `clip-name field, ${rows.length - referenced} unreferenced (not an error).`,
-  );
-
-  const present = new Set(rows.map((row) => row.name.toLowerCase()));
-  for (const [key, entry] of fields) {
-    if (present.has(key)) continue;
-    console.warn(
-      `[clips] TUNING names "${entry.name}" at ${entry.paths.join(', ')} and the asset set ` +
-        `has no such clip. That field falls back rather than throwing, so it is silent at runtime.`,
-    );
-  }
-}
-
-function spawnMatchAthletesAndCameras(configs, targetGoal = 'N', randomFn = Math.random) {
-  if (athletes.length < 2) return;
+function spawnMatchAthletesAndCameras(configs, targetGoal = 'N', randomFn = Math.random, presetSpawns = null) {
+  if (athletes.length < 2) return null;
   const count = Math.min(athletes.length, Math.max(2, configs?.length || 2));
-  const spawns = computeStreamHeadSpawns({
-    configs: configs || TUNING.players,
-    athleteCount: count,
-    targetGoal,
-    randomFn,
-  });
+  const spawns = (Array.isArray(presetSpawns) && presetSpawns.length >= count)
+    ? presetSpawns
+    : computeStreamHeadSpawns({ configs: configs || TUNING.players, athleteCount: count, targetGoal, randomFn });
+  lastMatchSpawns = spawns;
   for (let i = 0; i < count; i++) {
     athletes[i].teleportTo(spawns[i].pos, spawns[i].facingYaw);
     if (playerCameras[i]) {
@@ -1545,13 +1561,14 @@ function spawnMatchAthletesAndCameras(configs, targetGoal = 'N', randomFn = Math
       playerCameras[i].resetSmoothing();
     }
   }
+  return spawns;
 }
 
 /**
  * Applies a tied-match overtime decision from the Overtime Agreement Menu or a URL fixture.
  * @param {{ format: 'draw' | 'golden_goal' | 'timed', durationSeconds?: number, positionMode?: 'in_place' | 'respawn' }} agreement
  */
-function applyOvertimeAgreement({ format, durationSeconds = 120, positionMode = 'in_place' } = {}) {
+function applyOvertimeAgreement({ format, durationSeconds = 120, positionMode = 'in_place', dropPos: presetDrop = null, spawns: presetSpawns = null } = {}) {
   hideOvertimeMenu();
   if (format === 'draw') {
     gameState = 'match';
@@ -1565,11 +1582,13 @@ function applyOvertimeAgreement({ format, durationSeconds = 120, positionMode = 
   gameState = 'match';
   victoryCameraActive = false;
 
+  let dropPos = null;
+  let otSpawns = null;
   if (positionMode === 'respawn') {
     clearGameplayInputQueues();
-    spawnMatchAthletesAndCameras(lastMatchConfigs || TUNING.players, matchState.targetGoal, fixtureRandom || Math.random);
+    otSpawns = spawnMatchAthletesAndCameras(lastMatchConfigs || TUNING.players, matchState.targetGoal, fixtureRandom || currentMatchRandom || Math.random, presetSpawns);
     if (balls.length > 0) {
-      const dropPos = getCourtBallDropSpawn(0, 1, loop.tick, activeFixture !== null);
+      dropPos = presetDrop || getCourtBallDropSpawn(0, 1, loop.tick, activeFixture !== null || replayManager.isRecording() || replayManager.isPlayingBack());
       resetBall(balls[0], loop.tick, dropPos);
       balls[0]._preMatchSpawnPos = { x: dropPos.x, y: dropPos.y, z: dropPos.z };
       matchState.preMatchSpawnPos = balls[0]._preMatchSpawnPos;
@@ -1580,6 +1599,7 @@ function applyOvertimeAgreement({ format, durationSeconds = 120, positionMode = 
     matchState.isCountingDown = false;
     matchState.countdownTicksRemaining = 0;
   }
+  replayManager.recordOvertime({ format, durationSeconds, positionMode, dropPos, spawns: otSpawns });
 
   if (scoreboards) {
     updateScoreboards(scoreboards, matchProbe(matchState));
@@ -1605,16 +1625,28 @@ function handleRematch() {
   athleteMatchStats.forEach((s, idx) => resetPlayerMatchStats(s, idx));
 
   // Spawn athletes on the stream heads opposite their target goals
-  spawnMatchAthletesAndCameras(lastMatchConfigs || TUNING.players, matchState.targetGoal, Math.random);
+  restorePracticeHudOverrides();
+  hidePracticeHud();
+  cinematicCamera.stopFreeFly();
+  resetReplayDockState();
+  replayManager.stopPlayback();
+  currentMatchSeed = generateMatchSeed();
+  currentMatchRandom = createMatchRandom(currentMatchSeed);
+  spawnMatchAthletesAndCameras(lastMatchConfigs || TUNING.players, matchState.targetGoal, currentMatchRandom);
 
   // Ensure match ball is refreshed (respecting random or specific selection)
-  setActiveMatchBall(currentMatchBallType);
+  setActiveMatchBall(currentMatchBallType, currentMatchRandom);
   if (balls.length > 0) {
-    const dropPos = getCourtBallDropSpawn(0, 1, loop.tick, false);
+    const dropPos = getCourtBallDropSpawn(0, 1, loop.tick, true);
     resetBall(balls[0], loop.tick, dropPos);
     balls[0]._preMatchSpawnPos = { x: dropPos.x, y: dropPos.y, z: dropPos.z };
     if (matchState) matchState.preMatchSpawnPos = balls[0]._preMatchSpawnPos;
   }
+  replayManager.beginMatchRecording({
+    seed: currentMatchSeed, configs: lastMatchConfigs || TUNING.players, athletes, playerCount: athletes.length,
+    ball: balls[0]?.id || currentMatchBallType, durationSeconds: TUNING.match.durationSeconds || 300,
+    arena: activeArenaType(), initialDrop: balls[0]?._preMatchSpawnPos, initialSpawns: lastMatchSpawns,
+  });
 
   if (scoreboards) {
     updateScoreboards(scoreboards, matchProbe(matchState));
@@ -1635,6 +1667,8 @@ function skipFlyover() {
   gameState = 'match';
   fixtureFlyoverEndTick = -1;
   hideFlyoverOverlay();
+  if (lastMatchSpawns) spawnMatchAthletesAndCameras(lastMatchConfigs || TUNING.players, matchState?.targetGoal || 'N', currentMatchRandom || Math.random, lastMatchSpawns);
+  if (balls.length > 0 && balls[0]._preMatchSpawnPos) resetBall(balls[0], loop.tick, balls[0]._preMatchSpawnPos);
 
   matchManager.skipFlyover();
   matchState = matchManager.getState();
@@ -1717,13 +1751,13 @@ function handleStartMatch(configs, matchRulesOrBall = {}) {
   let durationSeconds = 300;
   let arenaType = activeArenaType();
 
-  if (typeof matchRulesOrBall === 'string') {
-    ballPreference = matchRulesOrBall;
-  } else if (matchRulesOrBall && typeof matchRulesOrBall === 'object') {
+  if (typeof matchRulesOrBall === 'string') ballPreference = matchRulesOrBall;
+  else if (matchRulesOrBall && typeof matchRulesOrBall === 'object') {
     if (matchRulesOrBall.ball) ballPreference = matchRulesOrBall.ball;
     if (matchRulesOrBall.duration) durationSeconds = matchRulesOrBall.duration;
     if (matchRulesOrBall.arena) arenaType = matchRulesOrBall.arena;
   }
+  if (ballPreference === 'all') ballPreference = 'random';
 
   // Check arena reload requirement
   if (arenaType !== activeArenaType()) {
@@ -1740,21 +1774,29 @@ function handleStartMatch(configs, matchRulesOrBall = {}) {
     }
   }
 
-  hideMainMenu();
+  hideMainMenu(); if (victoryScreenTimer) { clearTimeout(victoryScreenTimer); victoryScreenTimer = null; }
+  TUNING.match.mode = 'match';
+  setupBallPreview.hide(allBalls);
   hideOvertimeMenu();
-  clearGameplayInputQueues();
-  lastMatchConfigs = configs;
+  restorePracticeHudOverrides();
+  hidePracticeHud();
+  cinematicCamera.stopFreeFly(); clearGameplayInputQueues();
+  if (!matchRulesOrBall?.isReplay) { lastMatchConfigs = configs; resetReplayDockState(); }
   // Only startFixtureMatch passes its fixture. Any other start (the lobby, a
   // fixture abandoned to the menu and replayed) is not that fixture's match.
   if (!matchRulesOrBall?.fixture) {
     activeFixture = null;
     fixtureRandom = null;
   }
+  if (!matchRulesOrBall?.isReplay) replayManager.stopPlayback();
+  currentMatchSeed = generateMatchSeed(matchRulesOrBall?.seed ?? activeFixture?.seed);
+  currentMatchRandom = fixtureRandom || createMatchRandom(currentMatchSeed);
 
   athleteMatchStats.forEach((s, idx) => resetPlayerMatchStats(s, idx));
 
   // 0. AI BOT & SPLITSCREEN TOPOLOGY SETUP (resolved BEFORE setting camera modes)
   const matchCount = (configs && configs.length >= 4) ? 4 : 2;
+  syncExplicitMappingsWithConfigs(configs, matchCount);
   ensureAthletesRegistered(matchCount, configs);
   botControllers = [];
   activeBotSlots = [];
@@ -1767,7 +1809,7 @@ function handleStartMatch(configs, matchRulesOrBall = {}) {
           difficulty: pConfig.difficulty || 'medium',
           slotIndex: i,
           aggressiveness: pConfig.aggressiveness ?? 0.60,
-          seed: activeFixture ? fixtureBotSeed(activeFixture, i) : loop.tick + 42 + i,
+          seed: activeFixture ? fixtureBotSeed(activeFixture, i) : ((currentMatchSeed ^ Math.imul(i + 1, 0x9e3779b1)) >>> 0),
         });
         botControllers.push(bot);
         activeBotSlots.push(i);
@@ -1777,8 +1819,8 @@ function handleStartMatch(configs, matchRulesOrBall = {}) {
       }
     }
 
-    // Decided fresh every match: fullscreen for <= 1 human, splitscreen for 2+ humans.
-    TUNING.camera.splitscreen = (humanCount >= 2) || !!TUNING.camera.forceQuadSplitscreen;
+    // Decided fresh every match: fullscreen for <= 1 human or replay, splitscreen for 2+ live humans.
+    TUNING.camera.splitscreen = (!matchRulesOrBall?.isReplay && humanCount >= 2) || !!TUNING.camera.forceQuadSplitscreen;
   }
 
   // Honor shared fullscreen Broadcast / Sports if chosen by any human player in multiplayer
@@ -1834,7 +1876,7 @@ function handleStartMatch(configs, matchRulesOrBall = {}) {
 
   // 3. Select and configure match ball & duration
   currentMatchBallType = ballPreference;
-  setActiveMatchBall(currentMatchBallType);
+  setActiveMatchBall(currentMatchBallType, currentMatchRandom);
 
   matchManager.startMatch(configs, { durationSeconds, ballPreference, arenaType });
   matchState = matchManager.getState();
@@ -1845,14 +1887,21 @@ function handleStartMatch(configs, matchRulesOrBall = {}) {
   goalCelebration.reset();
 
   // Position athletes on stream heads opposite their target goals
-  spawnMatchAthletesAndCameras(configs, matchState.targetGoal, fixtureRandom || Math.random);
+  spawnMatchAthletesAndCameras(configs, matchState.targetGoal, currentMatchRandom, matchRulesOrBall?.initialSpawns || null);
 
   // Fresh match ball at 10m
   if (balls.length > 0) {
-    const dropPos = getCourtBallDropSpawn(0, 1, loop.tick, activeFixture !== null);
+    const dropPos = matchRulesOrBall?.initialDrop || getCourtBallDropSpawn(0, 1, loop.tick, true);
     resetBall(balls[0], loop.tick, dropPos);
     balls[0]._preMatchSpawnPos = { x: dropPos.x, y: dropPos.y, z: dropPos.z };
     if (matchState) matchState.preMatchSpawnPos = balls[0]._preMatchSpawnPos;
+  }
+  if (!matchRulesOrBall?.isReplay) {
+    replayManager.beginMatchRecording({
+      seed: currentMatchSeed, configs, athletes, playerCount: matchCount,
+      ball: balls[0]?.id || currentMatchBallType, durationSeconds, arena: arenaType,
+      initialDrop: balls[0]?._preMatchSpawnPos, initialSpawns: lastMatchSpawns, fixtureId: activeFixture?.id || null,
+    });
   }
 
   // Start the flyover cutscene
@@ -1883,95 +1932,44 @@ function practicePlayerConfig() {
   return configs.find((c) => c && c.type === 'human') || configs[0];
 }
 
-function handleStartPractice(playerConfig = null, ballChoice = 'all') {
-  hideMainMenu();
-  hideInGameMenu();
-  hideVictoryScreen();
-  hideOvertimeMenu();
-  clearGameplayInputQueues();
-  turfParticles.reset();
-  goalCelebration.reset();
-  victoryCameraActive = false;
+function handleStartPractice(playerConfig = null, ballChoice = 'all', drillMode = getSelectedPracticeDrill()) {
+  hideMainMenu(); setupBallPreview.hide(allBalls); hideInGameMenu(); hideVictoryScreen(); hideOvertimeMenu();
+  replayManager.cancelRecording(); replayManager.stopPlayback(); resetReplayDockState();
+  cinematicCamera.stopFreeFly(); clearGameplayInputQueues();
+  turfParticles.reset(); goalCelebration.reset(); victoryCameraActive = false;
   gameState = 'practice';
   setSelectedPracticeBallType(ballChoice);
-
-  // Practice is one human athlete. Drop any bots the last match left running:
-  // after a match where P1 was the AI, the practice athlete was still bot-driven.
-  botControllers = [];
-  activeBotSlots = [];
-
-  // Reset practice drill stats
-  resetPracticeStats();
-  if (athletes[0]?.strikeState) {
-    athletes[0].strikeState.resolvedCount = 0;
-    athletes[0].strikeState.whiffCount = 0;
-  }
-
-  // 1. Apply customized solo athlete options
-  if (playerConfig && athletes[0]) {
-    athletes[0].setTeamAndVariant(playerConfig.team || 'home', playerConfig.variant || 'classic', { primaryColor: playerConfig.primaryColor });
-    if (playerConfig.headwear !== undefined && athletes[0].headwear !== playerConfig.headwear) athletes[0].setHeadwear(playerConfig.headwear);
-    playerCameras[0].setMode(playerConfig.cameraMode || 'chase', false);
-    if (TUNING.players[0]) {
-      TUNING.players[0].team = playerConfig.team;
-      TUNING.players[0].variant = playerConfig.variant;
-      TUNING.players[0].primaryColor = playerConfig.primaryColor;
-      TUNING.players[0].headwear = playerConfig.headwear;
-    }
-    syncPlayerCameraMode(0, playerCameras[0].mode);
-    const pColor = playerConfig.primaryColor ?? 0xd90429;
-    if (TUNING.athlete?.palette) {
-      TUNING.athlete.palette.homePrimary = pColor;
-    }
-    if (TUNING.teams?.home) {
-      TUNING.teams.home.primaryColor = pColor;
-    }
-  }
-
-  // 2. Hide extra athletes and position practice athlete at center
-  athleteManager.ensureRoster(1);
-  athleteManager.teleportToPracticeSpawn(arenaPreset);
-
+  const padCount = typeof navigator?.getGamepads === 'function' ? Array.from(navigator.getGamepads()).filter((p) => p?.connected).length : 0;
+  const roster = configurePracticeRoster({
+    playerConfig, drillMode, athleteManager, athletes, playerCameras, arenaPreset, createBotController, syncPlayerCameraMode, connectedPadCount: padCount,
+    onApplyPlayerTuning: (cfg, split) => {
+      TUNING.camera.splitscreen = split;
+      if (!cfg) return;
+      if (TUNING.players[0]) Object.assign(TUNING.players[0], { team: cfg.team, variant: cfg.variant, primaryColor: cfg.primaryColor, headwear: cfg.headwear });
+      const c = cfg.primaryColor ?? 0xd90429;
+      if (TUNING.athlete?.palette) TUNING.athlete.palette.homePrimary = c;
+      if (TUNING.teams?.home) TUNING.teams.home.primaryColor = c;
+    },
+  });
+  botControllers = roster.botControllers;
+  activeBotSlots = roster.activeBotSlots;
+  resetPracticeStats(athletes[0]);
+  applyPracticeHudOverrides(drillMode);
   matchManager.startPractice(playerConfig, ballChoice);
   matchState = matchManager.getState();
-
-  // 3. Configure ball(s) according to user selection
-  setActiveMatchBall(ballChoice);
-
-  // Spawn P1 cleanly at center court facing North (-Z)
+  setActiveMatchBall(ballChoice, Math.random, true);
   const isDeterministic = armedCaptureTick !== null;
-  if (athletes[0]) {
-    const spawnPos = (arenaPreset && arenaPreset.spawn) || { x: 0, y: 1.5, z: 0 };
-    athletes[0].teleportTo({ x: spawnPos.x, y: Math.max(1.5, spawnPos.y), z: spawnPos.z }, Math.PI);
-    playerCameras[0].azimuth = 0;
-    playerCameras[0].manualAzimuthOffset = 0;
-    playerCameras[0].manualPitchOffset = 0;
-    playerCameras[0].resetSmoothing();
-  }
-
-  // Drop balls
-  for (let i = 0; i < balls.length; i++) {
-    const dropPos = getCourtBallDropSpawn(i, balls.length, loop.tick, isDeterministic);
-    resetBall(balls[i], loop.tick, dropPos);
-  }
-
+  for (let i = 0; i < balls.length; i++) resetBall(balls[i], loop.tick, getCourtBallDropSpawn(i, balls.length, loop.tick, isDeterministic));
   applyViewportSize();
-  console.log(`[practice] sandbox started with ball choice "${ballChoice}"`);
+  console.log(`[practice] "${drillMode}" started with ball choice "${ballChoice}"`);
 }
 
 function handleFinishPractice() {
-  hideInGameMenu();
+  hideInGameMenu(); hidePracticeHud(); restorePracticeHudOverrides();
   syncPracticeStrikeStats(athletes[0]);
   showPracticeSummary(practiceStats, getPracticeSessionSeconds(), {
-    onPracticeAgain: () => {
-      handleStartPractice(practicePlayerConfig(), getSelectedPracticeBallType());
-    },
-    onCustomize: () => {
-      hideVictoryScreen();
-      gameState = 'menu';
-      showPlayerSetup('practice');
-      applyViewportSize();
-    },
+    onPracticeAgain: () => handleStartPractice(practicePlayerConfig(), getSelectedPracticeBallType(), getSelectedPracticeDrill()),
+    onCustomize: () => { hideVictoryScreen(); gameState = 'menu'; showPlayerSetup('practice'); applyViewportSize(); },
     onMainMenu: returnToMainMenu,
   });
 }
@@ -2004,12 +2002,12 @@ function launchMenuBalls() {
 
 function returnToMainMenu() {
   loop.paused = false;
+  replayManager.cancelRecording();
+  replayManager.stopPlayback();
   exitGamePointerLock();
-  hideInGameMenu();
-  hideVictoryScreen();
-  hideOvertimeMenu();
-  resetCountdownOverlay();
-  hideFlyoverOverlay();
+  if (victoryScreenTimer) { clearTimeout(victoryScreenTimer); victoryScreenTimer = null; }
+  hideInGameMenu(); hideVictoryScreen(); hideOvertimeMenu();
+  resetCountdownOverlay(); hideFlyoverOverlay();
 
   // Clear AI bots
   botControllers = [];
@@ -2023,7 +2021,9 @@ function returnToMainMenu() {
   matchState = matchManager.getState();
   matchState.mode = 'menu';
 
-  // 2. Reset practice drill stats
+  // 2. Reset practice drill stats & replay/camera states
+  restorePracticeHudOverrides(); hidePracticeHud();
+  cinematicCamera.stopFreeFly(); resetReplayDockState();
   resetPracticeStats();
   athleteMatchStats.forEach((s, idx) => resetPlayerMatchStats(s, idx));
 
@@ -2085,6 +2085,7 @@ function handleEnterSetup(mode = 'match') {
 }
 
 function handleExitSetup() {
+  setupBallPreview.hide(allBalls);
   athleteManager.stageForTitle();
   launchMenuBalls();
   cinematicCamera.startTitleOrbit();
@@ -2208,13 +2209,15 @@ async function boot() {
 
   initInputRouter(canvas);
   initControlsOverlay();
+  initMatchReadabilityHud();
+  const _playerCameraList = playerCameras.map((pc) => pc.camera);
   loop.onFrame(() => {
     const isGameplayActive = (gameState === 'match' || gameState === 'practice')
       && !isInGameMenuOpen()
       && !isMainMenuActive()
       && !isVictoryScreenVisible()
       && !isOvertimeMenuOpen();
-    sampleAllInputs(playerCameras.map((pc) => pc.camera), gameState === 'practice' ? 1 : athletes.length, TUNING.match.mode, activeBotSlots, isGameplayActive);
+    sampleAllInputs(_playerCameraList, gameState === 'practice' ? 1 : athletes.length, gameState === 'practice' ? 'practice' : 'match', activeBotSlots, isGameplayActive);
     updateControlsOverlay(getControlsSnapshot(), gameState, isInGameMenuOpen(), isVictoryScreenVisible(), !!matchState?.matchOver, !!matchState?.isCountingDown, isMainMenuActive());
   });
 
@@ -2234,6 +2237,7 @@ async function boot() {
 
   initVictoryScreen({
     onRematch: handleRematch,
+    onWatchReplay: () => window.__vb.playReplay(),
     onPracticeMode: () => handleStartPractice(practicePlayerConfig(), getSelectedPracticeBallType()),
     onMainMenu: returnToMainMenu,
   });
@@ -2284,7 +2288,7 @@ async function boot() {
     },
     initialRenderSettings: {
       pixelRatioPreset: TUNING.render?.pixelRatioPreset || '1.25',
-      shadowQuality: TUNING.render?.shadowQuality || 'high',
+      shadowQuality: TUNING.render?.shadowQuality || 'balanced',
     },
   });
 
@@ -2295,6 +2299,7 @@ async function boot() {
     getGameState: () => gameState,
     getGui: () => guiInstance,
     headwearControls,
+    isReplayPlaying: () => replayManager.isPlayingBack(),
     onRequestRespawn: requestRagdollSpawn,
     onHudToggle: setHudVisible,
     onSplitscreenToggle: applyViewportSize,
@@ -2322,55 +2327,21 @@ async function boot() {
   initStateTrace({ loop, getWorld, getAthletes: () => athletes });
 
   window.__vb = window.__vb || {};
-  window.__vb.matchState = matchState;
-  Object.defineProperty(window.__vb, 'balls', { get: () => balls, configurable: true });
-  window.__vb.sound = soundManager;
   window.__soundManager = soundManager;
-  window.__vb.tuning = TUNING;
   window.TUNING = TUNING;
   window.THREE = THREE;
-  window.__vb.THREE = THREE;
-  window.__vb.scene = scene;
-  window.__vb.camera = camera;
-  window.__vb.playerCameras = playerCameras;
-  window.__vb.cameraRig = cameraRig;
-  window.__vb.renderer = renderer;
-  window.__vb.loop = loop;
-  window.__vb.athletes = athletes;
-  window.__vb.rematch = handleRematch;
-  window.__vb.toggleInGameMenu = toggleInGameMenu;
-  window.__vb.hideInGameMenu = hideInGameMenu;
-  window.__vb.isInGameMenuOpen = isInGameMenuOpen;
-  window.__vb.overtimeMenu = {
-    show: showOvertimeMenu,
-    hide: hideOvertimeMenu,
-    isOpen: isOvertimeMenuOpen,
-    applyAgreement: applyOvertimeAgreement,
-  };
-  window.__vb.getInputSlot = getInputSlot;
-  window.__vb.applyRenderSettings = applyRenderSettings;
-  window.__vb.showMainMenu = showTitleScreen;
-  window.__vb.showPlayerSetup = showPlayerSetup;
-  window.__vb.startMatch = handleStartMatch;
-  window.__vb.skipFlyover = skipFlyover;
-  window.__vb.returnToMainMenu = returnToMainMenu;
-  window.__vb.setActiveMatchBall = setActiveMatchBall;
-  window.__vb.allBalls = allBalls;
-  window.__vb.getGameState = () => gameState;
-  window.__vb.cinematicCamera = cinematicCamera;
-  window.__vb.getPlayerConfigs = getPlayerConfigs;
-  window.__vb.athleteMatchStats = athleteMatchStats;
-  window.__vb.showVictoryScreen = showVictoryScreen;
-  window.__vb.showPracticeSummary = showPracticeSummary;
-  window.__vb.hustleBoards = hustleBoards;
-  window.__vb.updateHustleBoards = updateHustleBoards;
-  window.__vb.displayCoordinator = displayCoordinator;
-  window.__vb.practiceStats = practiceStats;
-  window.__vb.finishPractice = handleFinishPractice;
-  window.__vb.startPractice = handleStartPractice;
-  Object.defineProperty(window.__vb, 'practiceSessionSeconds', {
-    get: () => getPracticeSessionSeconds(),
-    configurable: true,
+  Object.defineProperty(window.__vb, 'balls', { get: () => balls, configurable: true });
+  Object.defineProperty(window.__vb, 'practiceSessionSeconds', { get: () => getPracticeSessionSeconds(), configurable: true });
+  Object.assign(window.__vb, {
+    matchState, sound: soundManager, tuning: TUNING, THREE, scene, camera, playerCameras, cameraRig,
+    renderer, loop, athletes, rematch: handleRematch, toggleInGameMenu, hideInGameMenu, isInGameMenuOpen,
+    overtimeMenu: { show: showOvertimeMenu, hide: hideOvertimeMenu, isOpen: isOvertimeMenuOpen, applyAgreement: applyOvertimeAgreement },
+    getInputSlot, applyRenderSettings, getHudPrefs, setHudPrefs,
+    setCleanBroadcast: () => { setCleanBroadcastHud(); applyRenderSettings({ showControlsOverlay: false }); },
+    showMainMenu: showTitleScreen, showPlayerSetup, startMatch: handleStartMatch, skipFlyover, returnToMainMenu,
+    setActiveMatchBall, allBalls, getGameState: () => gameState, cinematicCamera, getPlayerConfigs,
+    athleteMatchStats, showVictoryScreen, showPracticeSummary, hustleBoards, updateHustleBoards,
+    displayCoordinator, practiceStats, finishPractice: handleFinishPractice, startPractice: handleStartPractice,
   });
 
   window.__vb.setTeamConfig = (teamId, options) => {
@@ -2415,22 +2386,51 @@ async function boot() {
   };
 
   window.__vb.snapshotRing = new WorldSnapshotRingBuffer(360);
-  window.__vb.packInputFrame = packInputFrame;
-  window.__vb.unpackInputFrame = unpackInputFrame;
-
+  window.__vb.packInputFrame = packInputFrame; window.__vb.unpackInputFrame = unpackInputFrame;
+  const syncPoseArgs = () => Object.assign(_posePlayArgs, { athletes, balls, matchState, goalCelebration, playerCameras });
+  const replayCamCtx = () => ({ cinematicCamera, playerCameras, spectatorCamera, athletes, syncPlayerCameraMode, applyViewportSize });
+  const selectReplayCamera = (preset) => replayManager.applyCameraPreset(preset, replayCamCtx());
+  const selectReplayFollowSlot = (slotIdx) => replayManager.applyFollowSlot(slotIdx, replayCamCtx());
+  const seekReplayToFrame = (targetFrame) => replayManager.seekToFrame(targetFrame, {
+    ...syncPoseArgs(),
+    resetMatchForSeek: (prep) => {
+      hideVictoryScreen(); victoryCameraActive = false; gameState = 'match';
+      matchManager.startMatch(prep.configs, { durationSeconds: prep.rules.duration, ballPreference: prep.rules.ball, arenaType: prep.rules.arena });
+      matchState = matchManager.getState(); matchState.isCountingDown = false; matchState.countdownTicksRemaining = 0;
+      athleteManager.resetStats(); turfParticles.reset(); goalCelebration.reset();
+      athleteMatchStats.forEach((s, idx) => resetPlayerMatchStats(s, idx));
+      spawnMatchAthletesAndCameras(prep.configs, matchState.targetGoal, createMatchRandom(prep.seed), prep.initialSpawns);
+      if (balls.length > 0 && prep.initialDrop) resetBall(balls[0], 0, prep.initialDrop);
+    },
+    stepOneReplayTick: (f) => stepSimulationTick(loop.fixedDt, f),
+  });
+  const jumpReplayGoal = (dir) => replayManager.jumpToAdjacentGoal(dir, syncPoseArgs());
+  const playReplayInput = async (input = replayManager.getLastReplay()) => {
+    const prep = await replayManager.preparePlayback(input); resetReplayDockState();
+    handleStartMatch(prep.configs, { ...prep.rules, seed: prep.seed, initialDrop: prep.initialDrop, initialSpawns: prep.initialSpawns });
+    for (let i = 0; i < athletes.length; i++) athletes[i]?.setAssistPreset?.(prep.configs[i]?.assistPreset || 'standard');
+    skipFlyover(); if (prep.isPose && matchState) { matchState.isCountingDown = false; matchState.countdownTicksRemaining = 0; seekReplayToFrame(0); }
+    return prep.meta;
+  };
+  initReplayDock({
+    onSeek: seekReplayToFrame, onJumpGoal: jumpReplayGoal, onSelectCamera: selectReplayCamera, onSelectFollowSlot: selectReplayFollowSlot,
+    onLoadReplayFile: (bytes, filename) => playReplayInput({ bytes, filename }),
+    onExitReplay: () => { replayManager.stopPlayback(); cinematicCamera.stopFreeFly(); resetReplayDockState(); returnToMainMenu(); },
+    onCleanFootage: (hidden) => { if (hidden) applyRenderSettings({ showControlsOverlay: false }); },
+    onFreeLookDelta: (dy, dp) => cinematicCamera.rotateFreeLook(dy, dp), onFreeFovDelta: (df) => cinematicCamera.adjustFreeFov(df),
+    onAdjustHeight: (delta, reset = false) => (cinematicCamera.mode === 'free' ? (reset ? cinematicCamera.setFreeHeight(12) : cinematicCamera.nudgeFreeHeight(delta)) : (reset ? replayManager.setCameraHeightOffset(0, playerCameras) : replayManager.adjustCameraHeightOffset(delta, playerCameras))),
+    getCameraHeight: () => (cinematicCamera.mode === 'free' ? cinematicCamera.getFreeHeight() : replayManager.getCameraHeightOffset()),
+    isMenuOpen: () => isInGameMenuOpen() || isMainMenuActive() || isOvertimeMenuOpen(),
+  });
+  Object.assign(window.__vb, {
+    replay: replayManager, newcomerDrill, seekReplay: seekReplayToFrame, jumpReplayGoal, selectReplayCamera, selectReplayFollowSlot,
+    getLastReplay: () => replayManager.getLastReplay(), downloadLastReplay: () => replayManager.downloadLastReplay(), playReplay: playReplayInput,
+    updateAthletePalette: () => { for (const a of athletes) if (a.ragdoll) a.refreshVisuals(); },
+    updateAthleteVariant: () => { for (const a of athletes) if (a.ragdoll) a.refreshVisuals(); },
+  });
   Object.defineProperty(window.__vb, 'ragdoll', { get: () => athletes[0]?.ragdoll || null, configurable: true });
   Object.defineProperty(window.__vb, 'motor', { get: () => athletes[0]?.motor || null, configurable: true });
   Object.defineProperty(window.__vb, 'animTarget', { get: () => athletes[0]?.animTarget || null, configurable: true });
-  window.__vb.updateAthletePalette = () => {
-    for (const a of athletes) {
-      if (a.ragdoll) a.refreshVisuals();
-    }
-  };
-  window.__vb.updateAthleteVariant = () => {
-    for (const a of athletes) {
-      if (a.ragdoll) a.refreshVisuals();
-    }
-  };
   window.__vb.probe = (athleteIndex = 0) => {
     const a = athletes[athleteIndex] || athletes[0];
     if (!a || !a.ragdoll) return null;
@@ -2562,9 +2562,11 @@ async function boot() {
     onSkipFlyover: skipFlyover,
     onEnterSetup: handleEnterSetup,
     onExitSetup: handleExitSetup,
+    onBallPreviewChange: (opts) => (opts?.visible ? setupBallPreview.setSelection(opts) : setupBallPreview.hide(allBalls)),
   });
 
   initMobileNotice();
+  warmupSceneShaders({ renderer, scene, camera, turfParticles, goalCelebration, ballDropRings });
 
   // A ?fixture= match skips the menus entirely. A malformed one stops the boot
   // loudly: a broadcast or a tournament must never quietly fall back to the
