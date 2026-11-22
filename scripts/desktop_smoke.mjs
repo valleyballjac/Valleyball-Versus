@@ -58,7 +58,15 @@ const armed = (await quit.textContent()).trim();
 if (armed !== 'PRESS AGAIN TO QUIT') failures.push(`one press on Quit showed "${armed}"`);
 
 const closed = new Promise((resolve) => app.once('close', () => resolve(true)));
-await quit.click();
+try {
+  await quit.click();
+} catch (err) {
+  // On Linux/Xvfb, app.quit() can tear down the window before Playwright's
+  // click RPC finishes; `didClose` below still verifies the app actually exited.
+  if (!/Target page, context or browser has been closed|Connection closed/i.test(err?.message || '')) {
+    throw err;
+  }
+}
 const didClose = await Promise.race([closed, new Promise((resolve) => setTimeout(() => resolve(false), 10_000))]);
 if (!didClose) {
   failures.push('a second press on Quit did not close the app');
