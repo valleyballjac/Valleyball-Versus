@@ -76,8 +76,8 @@ export function initVictoryScreen({ onRematch, onWatchReplay, onPracticeMode, on
     margin-bottom: 6px;
   `;
   brandBadge.innerHTML = `
-    <span style="font-size: 18px; font-weight: 900; letter-spacing: 0.12em; background: linear-gradient(90deg, #ff2e55 0%, #ff6b35 20%, #fbb417 40%, #4ade80 60%, #00e5ff 80%, #a855f7 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">VALLEYBALL</span>
-    <span style="font-size: 12px; font-weight: 900; letter-spacing: 0.25em; color: #000000; -webkit-text-stroke: 1px #ffffff; text-stroke: 1px #ffffff;">VERSUS</span>
+    <span style="font-family: 'Syncopate', sans-serif; font-size: 16px; font-weight: 700; letter-spacing: 0.08em; background: linear-gradient(90deg, #FF2A42 0%, #FF6B00 14.3%, #FFD000 28.6%, #10E56A 42.9%, #00E5FF 57.2%, #1F65FF 71.5%, #6B11FF 85.8%, #E000B8 100%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;">VALLEYBALL</span>
+    <span style="font-family: 'Syncopate', sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 0.28em; color: #F5F5F7;">VERSUS</span>
   `;
   container.appendChild(brandBadge);
 
@@ -86,9 +86,9 @@ export function initVictoryScreen({ onRematch, onWatchReplay, onPracticeMode, on
     height: 2px;
     width: 60px;
     margin: 0 auto 12px auto;
-    background: linear-gradient(90deg, #ff2e55 0%, #ff6b35 20%, #fbb417 40%, #4ade80 60%, #00e5ff 80%, #a855f7 100%);
+    background: linear-gradient(90deg, #FF2A42 0%, #FF6B00 14.3%, #FFD000 28.6%, #10E56A 42.9%, #00E5FF 57.2%, #1F65FF 71.5%, #6B11FF 85.8%, #E000B8 100%);
     border-radius: 1px;
-    opacity: 0.8;
+    opacity: 0.85;
   `;
   container.appendChild(brandDivider);
 

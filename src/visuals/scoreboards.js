@@ -95,13 +95,15 @@ export function isDarkColor(hex) {
 const ATHLETIC_FONT = "'Orbitron', 'Impact', 'Arial Black', sans-serif";
 
 /**
- * Registers the bundled Orbitron faces (public/fonts/orbitron, OFL) and
- * resolves once they have loaded. It ships with the game so an offline machine
- * (the desktop build at an event) does not draw every board in Impact.
+ * Registers the bundled Orbitron (scoreboards) and Syncopate (brand wordmark)
+ * faces (public/fonts/, OFL) and resolves once they have loaded. They ship with
+ * the game so an offline machine (the desktop build at an event) renders exact
+ * typography with zero network requests.
  *
  * A canvas does not wait for a web font: text drawn before the face loads is
  * baked into the texture in the fallback. Boot awaits this before
- * createScoreboards(), and it covers the hustle boards too. Never rejects.
+ * createScoreboards(), and it covers the hustle boards and title lockup too.
+ * Never rejects.
  *
  * @returns {Promise<void>}
  */
@@ -115,9 +117,16 @@ export function loadDisplayFont() {
     document.fonts.add(face);
     return face.load();
   });
+  const syncopateFace = new FontFace(
+    'Syncopate',
+    `url(${assetUrl('fonts/syncopate/syncopate-700-latin.woff2')}) format('woff2')`,
+    { weight: '700', style: 'normal' },
+  );
+  document.fonts.add(syncopateFace);
+  faces.push(syncopateFace.load());
   return Promise.all(faces).then(
     () => {},
-    (error) => console.warn('[font] Orbitron did not load; boards use the fallback face', error),
+    (error) => console.warn('[font] Bundled display font did not load; using fallback face', error),
   );
 }
 

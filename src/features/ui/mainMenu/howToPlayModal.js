@@ -419,7 +419,7 @@ export function buildHowToPlayModal(rootEl) {
     justify-content: space-between;
     align-items: center;
     border-bottom: 2px solid;
-    border-image: linear-gradient(90deg, #ff2e55, #ff6b35, #fbb417, #4ade80, #00e5ff, #3b82f6, #a855f7) 1;
+    border-image: linear-gradient(90deg, #FF2A42 0%, #FF6B00 14.3%, #FFD000 28.6%, #10E56A 42.9%, #00E5FF 57.2%, #1F65FF 71.5%, #6B11FF 85.8%, #E000B8 100%) 1;
     padding-bottom: 12px;
     margin-bottom: 14px;
     flex-wrap: wrap;
@@ -428,9 +428,9 @@ export function buildHowToPlayModal(rootEl) {
 
   const titleGroup = document.createElement('div');
   titleGroup.innerHTML = `
-    <div style="font-size: 20px; font-weight: 900; letter-spacing: 0.1em; display: flex; align-items: baseline; gap: 8px;">
-      <span style="background: linear-gradient(90deg, #ff2e55 0%, #ff6b35 20%, #fbb417 40%, #4ade80 60%, #00e5ff 80%, #a855f7 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">VALLEYBALL</span>
-      <span style="color: #ffffff;">HOW TO PLAY</span>
+    <div style="font-size: 17px; font-weight: 700; letter-spacing: 0.08em; display: flex; align-items: baseline; gap: 10px;">
+      <span style="font-family: 'Syncopate', sans-serif; font-weight: 700; background: linear-gradient(90deg, #FF2A42 0%, #FF6B00 14.3%, #FFD000 28.6%, #10E56A 42.9%, #00E5FF 57.2%, #1F65FF 71.5%, #6B11FF 85.8%, #E000B8 100%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;">VALLEYBALL</span>
+      <span style="color: #F5F5F7; font-size: 15px; font-weight: 800;">HOW TO PLAY</span>
     </div>
     <div style="font-size: 10.5px; color: #94a3b8; font-weight: 700; letter-spacing: 0.08em; margin-top: 2px;">LB / RB SWITCHES SECTION · ◀ ▶ SWITCHES INPUT DIAGRAM</div>
   `;

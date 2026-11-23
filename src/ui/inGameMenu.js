@@ -144,18 +144,18 @@ export function initInGameMenu({
     justify-content: space-between;
     align-items: center;
     border-bottom: 2px solid;
-    border-image: linear-gradient(90deg, #ff2e55, #ff6b35, #fbb417, #4ade80, #00e5ff, #3b82f6, #a855f7) 1;
+    border-image: linear-gradient(90deg, #FF2A42 0%, #FF6B00 14.3%, #FFD000 28.6%, #10E56A 42.9%, #00E5FF 57.2%, #1F65FF 71.5%, #6B11FF 85.8%, #E000B8 100%) 1;
     padding-bottom: 12px;
     margin-bottom: 16px;
   `;
 
   const titleBox = document.createElement('div');
   titleBox.innerHTML = `
-    <div style="font-size: 18px; font-weight: 900; letter-spacing: 0.08em; display: flex; align-items: baseline; gap: 8px;">
-      <span style="background: linear-gradient(90deg, #ff2e55 0%, #ff6b35 20%, #fbb417 40%, #4ade80 60%, #00e5ff 80%, #a855f7 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">VALLEYBALL</span>
-      <span style="font-size: 12px; font-weight: 900; letter-spacing: 0.22em; color: #000000; -webkit-text-stroke: 1px #ffffff; text-stroke: 1px #ffffff;">VERSUS</span>
+    <div style="font-size: 15px; font-weight: 700; letter-spacing: 0.06em; display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px;">
+      <span style="font-family: 'Syncopate', sans-serif; font-weight: 700; background: linear-gradient(90deg, #FF2A42 0%, #FF6B00 14.3%, #FFD000 28.6%, #10E56A 42.9%, #00E5FF 57.2%, #1F65FF 71.5%, #6B11FF 85.8%, #E000B8 100%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;">VALLEYBALL</span>
+      <span style="font-family: 'Syncopate', sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 0.22em; color: #F5F5F7;">VERSUS</span>
       <span style="color: rgba(255,255,255,0.3); font-size: 14px;">/</span>
-      <span style="color: #ffffff; font-size: 15px; font-weight: 800;">SETTINGS</span>
+      <span style="color: #ffffff; font-size: 14px; font-weight: 800;">SETTINGS</span>
       <span style="font-size: 10px; font-weight: 800; color: #00e5ff; background: rgba(0, 229, 255, 0.12); border: 1px solid rgba(0, 229, 255, 0.35); padding: 2px 6px; border-radius: 4px; margin-left: 2px;">v0.4.2</span>
     </div>
     <div style="font-size: 11px; color: #fbbf24; margin-top: 2px;">

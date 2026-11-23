@@ -40,7 +40,7 @@ export function buildTitleScreen(rootEl, navActions = {}) {
     transition: opacity 0.3s ease;
   `;
 
-  // Left Brand Lockup: 3D Globe Ball + Rainbow VALLEYBALL + Outlined VERSUS v0.4.0
+  // Left Brand Lockup: 3D Medium Ball + Canonical Syncopate VALLEYBALL + Solid Chalk VERSUS
   const header = document.createElement('div');
   header.style.cssText = `
     display: flex;
@@ -61,7 +61,7 @@ export function buildTitleScreen(rootEl, navActions = {}) {
     display: flex;
     align-items: center;
     justify-content: center;
-    margin-bottom: 12px;
+    margin-bottom: 14px;
     position: relative;
   `;
   state.titleBrandBall = createBrandBall(ballContainer, { size: 176, speed: 0.35, tilt: 0.25 });
@@ -69,15 +69,17 @@ export function buildTitleScreen(rootEl, navActions = {}) {
   const title = document.createElement('h1');
   title.textContent = 'VALLEYBALL';
   title.style.cssText = `
-    font-size: clamp(46px, 4.2vw, 62px);
-    font-weight: 900;
-    letter-spacing: 0.14em;
+    font-family: 'Syncopate', sans-serif;
+    font-size: clamp(32px, 3.6vw, 52px);
+    font-weight: 700;
+    letter-spacing: 0.08em;
     margin: 0;
     text-transform: uppercase;
-    background: linear-gradient(90deg, #ff2e55 0%, #ff6b35 15%, #fbb417 30%, #4ade80 46%, #00e5ff 62%, #3b82f6 78%, #a855f7 90%, #ec4899 100%);
+    background: linear-gradient(90deg, #FF2A42 0%, #FF6B00 14.3%, #FFD000 28.6%, #10E56A 42.9%, #00E5FF 57.2%, #1F65FF 71.5%, #6B11FF 85.8%, #E000B8 100%);
     -webkit-background-clip: text;
+    background-clip: text;
     -webkit-text-fill-color: transparent;
-    filter: drop-shadow(0 4px 18px rgba(0, 0, 0, 0.75)) drop-shadow(0 0 24px rgba(0, 229, 255, 0.25));
+    filter: drop-shadow(0 4px 18px rgba(0, 0, 0, 0.75)) drop-shadow(0 0 24px rgba(0, 229, 255, 0.22));
     line-height: 1.05;
   `;
 
@@ -92,13 +94,13 @@ export function buildTitleScreen(rootEl, navActions = {}) {
   const tag = document.createElement('div');
   tag.textContent = 'VERSUS';
   tag.style.cssText = `
+    font-family: 'Syncopate', sans-serif;
     font-size: 16px;
-    font-weight: 900;
-    letter-spacing: 0.45em;
-    text-indent: 0.45em;
-    color: #000000;
-    -webkit-text-stroke: 1.5px #ffffff;
-    text-stroke: 1.5px #ffffff;
+    font-weight: 700;
+    letter-spacing: 0.44em;
+    text-indent: 0.44em;
+    color: #F5F5F7;
+    text-transform: uppercase;
     filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.85));
     line-height: 1.2;
   `;

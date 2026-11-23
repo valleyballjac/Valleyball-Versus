@@ -48,7 +48,7 @@ export function buildMainMenuSettingsModal(rootEl, playerConfigs = [], callbacks
     justify-content: space-between;
     align-items: center;
     border-bottom: 2px solid;
-    border-image: linear-gradient(90deg, #ff2e55, #ff6b35, #fbb417, #4ade80, #00e5ff, #3b82f6, #a855f7) 1;
+    border-image: linear-gradient(90deg, #FF2A42 0%, #FF6B00 14.3%, #FFD000 28.6%, #10E56A 42.9%, #00E5FF 57.2%, #1F65FF 71.5%, #6B11FF 85.8%, #E000B8 100%) 1;
     padding-bottom: 12px;
     margin-bottom: 20px;
   `;
