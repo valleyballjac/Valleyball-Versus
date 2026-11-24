@@ -69,8 +69,9 @@
         position: fixed;
         inset: auto max(10px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
         display: flex;
+        flex-wrap: wrap;
         justify-content: space-between;
-        gap: 12px;
+        gap: 10px 12px;
         pointer-events: none;
         user-select: none;
         z-index: 10;
@@ -265,6 +266,26 @@
         pointer-events: none;
         z-index: 5;
       }
+
+      #splitscreen-divider-h {
+        display: none;
+        position: fixed;
+        left: 0;
+        right: 0;
+        top: 50%;
+        height: 2px;
+        transform: translateY(-50%);
+        background: linear-gradient(
+          to right,
+          rgba(255, 255, 255, 0.3),
+          rgba(217, 4, 41, 0.6) 30%,
+          rgba(29, 78, 216, 0.6) 70%,
+          rgba(255, 255, 255, 0.3)
+        );
+        box-shadow: 0 0 8px rgba(0, 0, 0, 0.8);
+        pointer-events: none;
+        z-index: 5;
+      }
     </style>
   </head>
   <body>
@@ -355,6 +376,7 @@
     <div id="controls-overlay" hidden aria-hidden="true"></div>
 
     <div id="splitscreen-divider"></div>
+    <div id="splitscreen-divider-h"></div>
     <div id="camera-toast"></div>
     <div id="headwear-toast"></div>
 

@@ -1,6 +1,6 @@
 # VALLEYBALL: OFFICIAL GAMEPLAY SOURCE OF TRUTH & RULEBOOK
 
-**Version:** 2.0 (v0.4.1 Baseline, updated 2026-11-18)  
+**Version:** 2.1 (v0.4.2.1 Baseline, updated 2026-11-24)  
 **Status:** Canonical Design & Rules Contract  
 **Audience:** Game Designers, Systems Engineers, Gameplay Programmers, Tournament Organizers, AI Agents  
 **Authoritative Location:** `docs/VALLEYBALL_GAMEPLAY_SOURCE_OF_TRUTH.md`
@@ -82,11 +82,11 @@ Athletes spawn elevated on the landmark stream heads opposite the goal they are 
 
 ## 4. THE SCORING RULES & TARGET GOAL SWITCHING
 
-### 4.1 Hoop Crossing & Detection
-A goal occurs when a ball's center crosses the `x = 0` plane within a hoop's circular aperture (`r = 4.667m`):
+### 4.1 Hoop Crossing & Full Ball-Clearance Scoring (`src/mechanics/scoring.js`)
+A goal registers ONLY once the entire ball volume crosses the `x = 0` hoop plane (`|pos.x| >= ballRadius`) through a hoop's circular aperture (`r = 4.667m`, `y >= 6.0m`):
 - **Universal Entry**: A shot entering from East to West (`+X` to `-X`) or West to East (`-X` to `+X`) is equally valid.
-- **Swept Segment Test**: Detected via swept segment intersection between `pPrev` and `pCurr` across `x = 0`, ensuring high-velocity strikes are never missed.
-- **Distance Re-Arming Latch**: After a goal, the hoop disarms until the ball moves clear of `x = 0` beyond `hoopRearmX`, preventing goal-mouth jitter from double-scoring.
+- **Goal-Line Saves**: If a defender swats a partially crossed ball back out before the whole sphere clears `x = 0`, the pending entry resets cleanly with zero goal awarded.
+- **Instant Rebound Unthreading**: Because `clearedSide` flips the instant the full ball clears the ring, swatting a scored ball straight back through the hoop immediately scores the responding goal without any artificial re-arm distance, while a slow ball rocking across `x = 0` never clears `|x| >= ballRadius` and never double-scores.
 
 ### 4.2 Point Attribution & The Switching Invariant
 Point allocation and end rotation follow this strict invariant:
@@ -138,13 +138,11 @@ state.targetGoal = oppositeGoal(state.targetGoal);
 
 ---
 
-## 6. STAGNANT & DEAD BALL RULES
+## 6. CONTINUOUS PLAY & BOUNDARY RECOVERY
 
-### 6.1 Automatic Arena Re-Drop
-- If a ball comes to a standstill, gets wedged, or remains untouched for **4.0 consecutive seconds**:
-  1. An arena buzzer sounds.
-  2. The ball automatically re-drops from ceiling height (`y = 10.0m`) inside the field of play.
-  3. Play continues without pausing the match clock.
+### 6.1 Out-of-Bounds Ball Respawn
+- The sloped Valley Court floor and curved glass walls prevent dead-ball stalls naturally, so there is no mid-court stagnant-ball timer or stoppage.
+- If a ball ever escapes court bounds (`y < killPlaneY`, `|x| > 33m`, or `|z| > 68m`), the watchdog immediately re-drops it from ceiling height (`y = 10.0m`) inside the field of play without pausing the match clock.
 
 ---
 

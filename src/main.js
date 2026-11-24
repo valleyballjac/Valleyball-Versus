@@ -739,7 +739,7 @@ function finishMatchAndReport(tick) {
     athletes,
     athleteMatchStats,
     playerConfigs: lastMatchConfigs || TUNING.players,
-    activeCount: athletes.length,
+    activeCount: Math.max(2, athletes.filter((a) => a && a.isEnabled !== false).length),
   });
   window.__vb.lastMatchStatsReport = statsReport;
 
@@ -1392,10 +1392,10 @@ function render(alpha) {
     }
   }
 
-  // Pause simulation while menu is open during pre-match countdown OR replay playback
-  // so broadcasters can switch cameras and toggle clean footage / visual guides freely.
+  // Pause simulation while menu is open during live match, practice, or replay playback
+  // so players and broadcasters can change settings without bots or clock advancing.
   loop.paused = isInGameMenuOpen() && (
-    replayManager.isPlayingBack() || (gameState === 'match' && !!(matchState && matchState.isCountingDown))
+    replayManager.isPlayingBack() || gameState === 'match' || gameState === 'practice'
   );
 
   const isVictoryActive = (gameState === 'match') && !!(matchState && matchState.matchOver) && victoryCameraActive;

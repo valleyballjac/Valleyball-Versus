@@ -31,6 +31,47 @@ let bannerElement = null;
 let btnRowElement = null;
 let defaultCallbacks = { onRematch: null, onWatchReplay: null, onPracticeMode: null, onMainMenu: null };
 
+function parseHexRgb(hex) {
+  const clean = String(hex || '#ffffff').replace('#', '');
+  const full = clean.length === 3 ? clean.replace(/(.)/g, '$1$1') : clean;
+  const num = parseInt(full, 16);
+  if (!Number.isFinite(num)) return [255, 255, 255];
+  return [(num >> 16) & 255, (num >> 8) & 255, num & 255];
+}
+
+function relativeLuminance([r, g, b]) {
+  const lin = [r, g, b].map((v) => {
+    const s = v / 255;
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2];
+}
+
+export function readableOnDark(hex, bgHex = '#0e141e', minRatio = 4.5) {
+  const base = parseHexRgb(hex);
+  const bgLum = relativeLuminance(parseHexRgb(bgHex));
+  const ratioFor = (rgb) => {
+    const l = relativeLuminance(rgb);
+    return (Math.max(l, bgLum) + 0.05) / (Math.min(l, bgLum) + 0.05);
+  };
+  if (ratioFor(base) >= minRatio) {
+    return '#' + base.map((v) => v.toString(16).padStart(2, '0')).join('');
+  }
+  const white = [248, 250, 252];
+  for (let step = 1; step <= 20; step++) {
+    const t = step / 20;
+    const mixed = [
+      Math.round(base[0] + (white[0] - base[0]) * t),
+      Math.round(base[1] + (white[1] - base[1]) * t),
+      Math.round(base[2] + (white[2] - base[2]) * t),
+    ];
+    if (ratioFor(mixed) >= minRatio) {
+      return '#' + mixed.map((v) => v.toString(16).padStart(2, '0')).join('');
+    }
+  }
+  return '#f8fafc';
+}
+
 export function initVictoryScreen({ onRematch, onWatchReplay, onPracticeMode, onMainMenu }) {
   if (overlayElement) return;
   defaultCallbacks = { onRematch, onWatchReplay, onPracticeMode, onMainMenu };
@@ -205,13 +246,15 @@ export function showVictoryScreen(
 
   const homeHex = '#' + (TUNING.athlete?.palette?.homePrimary ?? 0xd90429).toString(16).padStart(6, '0');
   const awayHex = '#' + (TUNING.athlete?.palette?.awayPrimary ?? 0x1d4ed8).toString(16).padStart(6, '0');
+  const homeInk = readableOnDark(homeHex);
+  const awayInk = readableOnDark(awayHex);
   const p1IsHome = (report.players?.[0]?.team || TUNING.players?.[0]?.team || 'home') === 'home';
   const team1SideKey = p1IsHome ? 'home' : 'away';
   const team2SideKey = p1IsHome ? 'away' : 'home';
-  const team1Color = p1IsHome ? homeHex : awayHex;
-  const team2Color = p1IsHome ? awayHex : homeHex;
-  const team1ColorName = getColorName(team1Color).toUpperCase();
-  const team2ColorName = getColorName(team2Color).toUpperCase();
+  const team1Color = p1IsHome ? homeInk : awayInk;
+  const team2Color = p1IsHome ? awayInk : homeInk;
+  const team1ColorName = getColorName(p1IsHome ? homeHex : awayHex).toUpperCase();
+  const team2ColorName = getColorName(p1IsHome ? awayHex : homeHex).toUpperCase();
 
   const team1Roster = is2v2 ? 'TEAM 1 · P1 & P3' : 'TEAM 1 · P1';
   const team2Roster = is2v2 ? 'TEAM 2 · P2 & P4' : 'TEAM 2 · P2';
@@ -222,21 +265,21 @@ export function showVictoryScreen(
     const winnerColorName = getColorName(homeHex).toUpperCase();
     const winnerTeamLabel = p1IsHome ? team1Roster : team2Roster;
     titleElement.textContent = `${winnerColorName} (${winnerTeamLabel}) WINS!`;
-    titleElement.style.color = homeHex;
+    titleElement.style.color = homeInk;
   } else if (awayWon) {
     const winnerColorName = getColorName(awayHex).toUpperCase();
     const winnerTeamLabel = p1IsHome ? team2Roster : team1Roster;
     titleElement.textContent = `${winnerColorName} (${winnerTeamLabel}) WINS!`;
-    titleElement.style.color = awayHex;
+    titleElement.style.color = awayInk;
   } else {
     titleElement.textContent = 'MATCH DRAW!';
     titleElement.style.color = '#f3f4f6';
   }
 
   scoreElement.innerHTML = `
-    <span style="color: ${homeHex};">${match.scoreHome}</span>
-    <span style="color: #64748b; font-size: 32px;">-</span>
-    <span style="color: ${awayHex};">${match.scoreAway}</span>
+    <span style="color: ${homeInk};">${match.scoreHome}</span>
+    <span style="color: #94a3b8; font-size: 32px;">-</span>
+    <span style="color: ${awayInk};">${match.scoreAway}</span>
   `;
 
   const totalGoals = match.goals || (match.scoreHome + match.scoreAway);

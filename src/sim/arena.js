@@ -975,7 +975,7 @@ function isRenderOnly(object) {
  *
  * @param {THREE.Material} material
  */
-function normaliseCourtMaterial(material) {
+function normaliseCourtMaterial(material, hintName = '') {
   if (!material || !material.isMeshStandardMaterial) return;
 
   // Standardize chalk lines to canonical arena chalk white (#F5F5F7)
@@ -1030,7 +1030,10 @@ function normaliseCourtMaterial(material) {
   }
 
   // Goal hoops / hardware: anodized athletic satin metal
-  if (material.name && (material.name.includes('Goal') || material.name.includes('Hoop'))) {
+  if (
+    (material.name && (material.name.includes('Goal') || material.name.includes('Hoop'))) ||
+    /Goal|Hoop/i.test(hintName)
+  ) {
     material.roughness = 0.35;
     material.metalness = 0.50;
     return;
@@ -1165,8 +1168,9 @@ async function loadCourtArena(scene) {
         object.frustumCulled = true;
         const materials = Array.isArray(object.material) ? object.material : [object.material];
         let isGlassMesh = false;
+        const hintName = `${owner?.name || ''} ${object?.name || ''}`;
         for (let mi = 0; mi < materials.length; mi++) {
-          const replacement = normaliseCourtMaterial(materials[mi]);
+          const replacement = normaliseCourtMaterial(materials[mi], hintName);
           if (replacement) {
             isGlassMesh = true;
             if (Array.isArray(object.material)) {
@@ -1193,7 +1197,8 @@ async function loadCourtArena(scene) {
       object.castShadow = false;
       object.frustumCulled = true;
       const materials = Array.isArray(object.material) ? object.material : [object.material];
-      for (const material of materials) normaliseCourtMaterial(material);
+      const hintName = `${owner?.name || ''} ${object?.name || ''}`;
+      for (const material of materials) normaliseCourtMaterial(material, hintName);
       if (isVisualFloorMesh(owner, object.name, false)) {
         rasterizeMeshIntoVisualGrid(visGrid, object.geometry, object.matrixWorld);
         hasVisualFloorSamples = true;

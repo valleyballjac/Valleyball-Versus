@@ -353,7 +353,7 @@ class MatchManager {
     this.matchState.dropState = {
       pending: false,
       countdownTicks: 0,
-      spawnPosition: { ...TUNING.match.ballDropPosition },
+      spawnPosition: { x: 0, y: TUNING.match.ballDropHeightY ?? 10, z: 0 },
     };
     return this.matchState;
   }

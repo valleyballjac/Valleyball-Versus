@@ -723,9 +723,9 @@ const DEFAULTS = {
     interceptDiveMaxRedirectAngleDeg: 45.0,
     // More upright hold phase than a normal dive, so the athlete stays ready to block.
     interceptDiveHoldPhase: 0.45,
-    // RECOVERY TRADE-OFF: a brace-dive that never touches a ball is a whiff, and
-    // the landing commits this many EXTRA stun ticks on top of diveStunTicks.
+    // RECOVERY TRADE-OFF: a brace-dive that never touches a ball adds EXTRA stun ticks on top of diveStunTicks.
     interceptDiveWhiffStunTicks: 30,
+    interceptDiveWindowTicks: 28,
 
     // THE PELVIS'S CLAMP, BOOSTED WHILE SLIDING. At speed the whole body is
     // dragging on the floor, and the tracker's mass-proportional impulse cap is

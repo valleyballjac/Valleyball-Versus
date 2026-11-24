@@ -236,16 +236,21 @@ export function updateHustleBoards(
     fastHash = (fastHash * 31 + (practiceStats.divingHits || 0)) | 0;
     fastHash = (fastHash * 31 + (practiceStats.totalTouches || 0)) | 0;
   } else if (isMatch) {
-    const count = athletes ? athletes.length : 0;
+    let enabledCount = 0;
+    const totalSlots = athletes ? athletes.length : 0;
+    for (let i = 0; i < totalSlots; i++) {
+      if (athletes[i] && athletes[i].isEnabled !== false) enabledCount++;
+    }
     scoreSig = ((matchProbe.scoreHome || 0) << 12) | (matchProbe.scoreAway || 0);
     fastHash = (fastHash * 31 + scoreSig) | 0;
-    fastHash = (fastHash * 31 + count) | 0;
-    for (let i = 0; i < count; i++) {
+    fastHash = (fastHash * 31 + enabledCount) | 0;
+    for (let i = 0; i < totalSlots; i++) {
       const a = athletes[i];
+      if (!a || a.isEnabled === false) continue;
       const s = athleteMatchStats ? athleteMatchStats[i] : null;
-      fastHash = (fastHash * 31 + (a?.team === 'away' ? 2 : 1)) | 0;
-      fastHash = (fastHash * 31 + (a?.strikeState?.resolvedCount || 0)) | 0;
-      fastHash = (fastHash * 31 + (a?.strikeState?.whiffCount || 0)) | 0;
+      fastHash = (fastHash * 31 + (a.team === 'away' ? 2 : 1)) | 0;
+      fastHash = (fastHash * 31 + (a.strikeState?.resolvedCount || 0)) | 0;
+      fastHash = (fastHash * 31 + (a.strikeState?.whiffCount || 0)) | 0;
       fastHash = (fastHash * 31 + (s?.goals || 0)) | 0;
       fastHash = (fastHash * 31 + (s?.hits || 0)) | 0;
       fastHash = (fastHash * 31 + (s?.whiffs || 0)) | 0;
@@ -272,13 +277,19 @@ export function updateHustleBoards(
     const awayColor = getTeamHex('away');
     const practiceColor = p1CustomColor != null ? '#' + p1CustomColor.toString(16).padStart(6, '0') : getTeamHex(p1Team);
 
+    let activeCountForReport = 0;
+    if (athletes) {
+      for (let i = 0; i < athletes.length; i++) {
+        if (athletes[i] && athletes[i].isEnabled !== false) activeCountForReport++;
+      }
+    }
     const matchReport = isMatch
       ? buildMatchStatsReport({
           match: matchProbe,
           athletes: athletes || [],
           athleteMatchStats: athleteMatchStats || [],
           playerConfigs: TUNING.players || [],
-          activeCount: athletes ? athletes.length : 2,
+          activeCount: Math.max(2, activeCountForReport),
         })
       : null;
 
@@ -505,7 +516,7 @@ function isDarkColor(hex) {
   const g = (num >> 8) & 255;
   const b = num & 255;
   const brightness = (r * 299 + g * 587 + b * 114) / 1000;
-  return brightness < 70;
+  return brightness < 110;
 }
 
 function drawHustleBoard(ctx, rawW, rawH, data, outlineColor) {

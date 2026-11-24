@@ -9,8 +9,10 @@
 
 import { TUNING } from '../config/tuning.js';
 import { getColorName } from './mainMenu.js';
+import { state as menuState } from '../features/ui/mainMenu/state.js';
 import { soundManager } from '../audio/soundManager.js';
 import { MENU_PAD, createMenuPadTracker } from '../input/menuPads.js';
+import { getExplicitDeviceMappings } from '../input/inputRouter.js';
 
 let overlayEl = null;
 let headerTitleEl = null;
@@ -134,7 +136,7 @@ export function initOvertimeMenu(cbs = {}) {
     color: #fbbf24;
     text-shadow: 0 0 18px rgba(251, 191, 36, 0.45);
   `;
-  headerTitleEl.textContent = 'REGULATION TIED — OVERTIME AGREEMENT';
+  headerTitleEl.textContent = 'REGULATION TIED: OVERTIME AGREEMENT';
 
   scoreBannerEl = document.createElement('div');
   scoreBannerEl.id = 'overtime-menu-score';
@@ -145,11 +147,11 @@ export function initOvertimeMenu(cbs = {}) {
     color: #ffffff;
     margin-top: 6px;
   `;
-  scoreBannerEl.textContent = 'HOME 0 — 0 AWAY';
+  scoreBannerEl.textContent = 'HOME 0 - 0 AWAY';
 
   const subHint = document.createElement('div');
   subHint.style.cssText = 'font-size: 11px; color: #94a3b8; margin-top: 6px;';
-  subHint.textContent = 'Agree on overtime rules using Mouse, Arrow Keys / WASD, or Gamepad D-Pad';
+  subHint.textContent = 'Agree on overtime rules using Mouse, Arrow Keys / WASD, or Host Gamepad';
 
   headerBox.append(headerTitleEl, scoreBannerEl, subHint);
   card.appendChild(headerBox);
@@ -522,9 +524,16 @@ function startOvertimeMenuPolling() {
     const rows = getActiveRows();
     if (rows.length === 0) return;
 
+    const mappedP1 = getExplicitDeviceMappings?.()?.[0];
+    const hostPadIndex = (mappedP1 && mappedP1.type === 'gamepad' && Number.isInteger(mappedP1.padIndex))
+      ? mappedP1.padIndex
+      : (Number.isInteger(menuState.lobbyHostPadIndex) ? menuState.lobbyHostPadIndex : (pads[0]?.index ?? null));
+
     for (const pad of pads) {
       if (!pad) continue;
       const e = padTracker.pressed(pad);
+      if (!e) continue;
+      const isHostPad = pad.index === hostPadIndex;
       if (e & MENU_PAD.up) {
         focusRowIdx = (focusRowIdx - 1 + rows.length) % rows.length;
         soundManager.playTone(400, 0.04, 'sine', 0.15);
@@ -542,10 +551,18 @@ function startOvertimeMenuPolling() {
         rows[focusRowIdx]?.onRight?.();
       }
       if (e & MENU_PAD.a) {
+        if (!isHostPad) {
+          soundManager.playTone(220, 0.08, 'sawtooth', 0.12);
+          continue;
+        }
         rows[focusRowIdx]?.onAction?.();
         if (!isOpen) return;
       }
       if (e & MENU_PAD.start) {
+        if (!isHostPad) {
+          soundManager.playTone(220, 0.08, 'sawtooth', 0.12);
+          continue;
+        }
         confirmOvertimeSelection();
         return;
       }
@@ -591,11 +608,11 @@ export function showOvertimeMenu({ scoreHome = 0, scoreAway = 0, overtimePeriod 
 
   if (headerTitleEl) {
     headerTitleEl.textContent = overtimePeriod > 0
-      ? `OVERTIME ${overtimePeriod} TIED — OVERTIME AGREEMENT`
-      : 'REGULATION TIED — OVERTIME AGREEMENT';
+      ? `OVERTIME ${overtimePeriod} TIED: OVERTIME AGREEMENT`
+      : 'REGULATION TIED: OVERTIME AGREEMENT';
   }
   if (scoreBannerEl) {
-    scoreBannerEl.textContent = `TEAM 1 (${homeName}) ${scoreHome} — ${scoreAway} TEAM 2 (${awayName})`;
+    scoreBannerEl.textContent = `TEAM 1 (${homeName}) ${scoreHome} - ${scoreAway} TEAM 2 (${awayName})`;
   }
 
   overlayEl.style.display = 'flex';

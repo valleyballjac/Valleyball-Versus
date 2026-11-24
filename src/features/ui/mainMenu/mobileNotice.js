@@ -5,12 +5,21 @@ let mobileNoticeEl = null;
 
 export function initMobileNotice() {
   if (typeof window === 'undefined') return;
+  if (window.desktopAPI?.isDesktop) return;
   if (sessionStorage.getItem('vy_mobile_notice_dismissed')) return;
+
+  const pads = typeof navigator.getGamepads === 'function' ? (navigator.getGamepads() || []) : [];
+  for (let i = 0; i < pads.length; i++) {
+    if (pads[i] && pads[i].connected) return;
+  }
+
+  const isMobileUa = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent || '');
+  if (window.innerWidth >= 1024 && !isMobileUa) return;
 
   const isTouchOrMobile = (
     ('ontouchstart' in window) ||
     (navigator.maxTouchPoints > 0) ||
-    /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+    isMobileUa ||
     window.innerWidth < 768
   );
 
@@ -41,7 +50,7 @@ export function initMobileNotice() {
     <div style="display: flex; align-items: center; gap: 10px;">
       <span style="font-size: 18px;">📱</span>
       <span>
-        <strong>Mobile / Touch Device Detected:</strong> Valleyball Versus is optimized for desktop browsers with 1–2 gamepads or keyboard. Touch controls are currently not supported.
+        <strong>Mobile / Touch Device Detected:</strong> Valleyball Versus is optimized for desktop browsers with 1 to 4 gamepads or keyboard. Touch controls are currently not supported.
       </span>
     </div>
     <button id="vy-mobile-dismiss" style="

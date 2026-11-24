@@ -31,6 +31,16 @@ const _viewportsDual = [
   { slot: 1, top: '0%', left: '50%', width: '50%', height: '100%' },
 ];
 
+function isCaptureOrDeterministicUrl() {
+  if (typeof window === 'undefined' || !window.location) return false;
+  try {
+    const params = new URLSearchParams(window.location.search);
+    return params.has('captureTick') || params.has('capture') || params.has('fixture') || params.has('stateTrace');
+  } catch {
+    return false;
+  }
+}
+
 function toHexColor(num, fallback = '#ff2e55') {
   if (typeof num === 'string' && num.startsWith('#')) return num;
   if (typeof num === 'number' && Number.isFinite(num)) {
@@ -225,8 +235,13 @@ function updateSplitscreenFrames(isCountingDown, delta) {
   } else if (watermarkHoldTimer > 0) {
     watermarkHoldTimer = Math.max(0, Math.min(watermarkHoldTimer - delta, 2.8 - elapsedMatchSec));
   }
-  const showWatermark = isCountingDown || watermarkHoldTimer > 0;
-  const watermarkOpacity = isCountingDown ? 1 : Math.min(1, watermarkHoldTimer / 0.8);
+  const persistBadges = !isCaptureOrDeterministicUrl();
+  const showWatermark = persistBadges || isCountingDown || watermarkHoldTimer > 0;
+  const watermarkOpacity = isCountingDown
+    ? 1
+    : (persistBadges
+      ? (watermarkHoldTimer > 0 ? Math.max(0.62, Math.min(1, watermarkHoldTimer / 0.8)) : 0.62)
+      : Math.min(1, watermarkHoldTimer / 0.8));
   const quantizedOpacity = Math.round(watermarkOpacity * 20) / 20;
   const opacityKey = showWatermark && quantizedOpacity > 0.01 ? quantizedOpacity.toFixed(2) : '0';
 

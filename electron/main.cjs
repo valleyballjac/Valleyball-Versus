@@ -15,6 +15,7 @@
  *
  * Command-line options for the built app:
  *   --windowed   start in a window instead of borderless fullscreen
+ *   --tv         open on an external display (TV) when connected
  *   --uncapped   turn vsync off and render as fast as the GPU allows
  *                (benchmarking only: tears, and works the GPU flat out)
  *
@@ -29,6 +30,7 @@ const { pathToFileURL } = require('node:url');
 
 const DEV_URL = process.env.VALLEYBALL_DEV_URL || '';
 const START_WINDOWED = process.argv.includes('--windowed') || DEV_URL !== '';
+const PREFER_EXTERNAL_DISPLAY = process.argv.includes('--tv') || process.argv.includes('--external-display');
 const UNCAPPED = process.argv.includes('--uncapped');
 
 const SCHEME = 'app';
@@ -86,11 +88,38 @@ function serveBundle() {
   });
 }
 
-function windowedBounds() {
+function getTargetDisplay() {
+  const primary = screen.getPrimaryDisplay();
+  if (!PREFER_EXTERNAL_DISPLAY) return primary;
+  return screen.getAllDisplays().find((d) => d.id !== primary.id) || primary;
+}
+
+function windowedBounds(display = getTargetDisplay()) {
   // 16:9, at most 1600x900, and never larger than 90% of the work area.
-  const { width, height } = screen.getPrimaryDisplay().workAreaSize;
-  const w = Math.min(1600, Math.floor(width * 0.9), Math.floor(((height * 0.9) * 16) / 9));
-  return { width: w, height: Math.round((w * 9) / 16) };
+  const area = display.workArea;
+  const w = Math.min(1600, Math.floor(area.width * 0.9), Math.floor(((area.height * 0.9) * 16) / 9));
+  const h = Math.round((w * 9) / 16);
+  return {
+    x: area.x + Math.round((area.width - w) / 2),
+    y: area.y + Math.round((area.height - h) / 2),
+    width: w,
+    height: h,
+  };
+}
+
+function moveToNextDisplay() {
+  const displays = screen.getAllDisplays();
+  if (!mainWindow || displays.length < 2) return;
+  const current = screen.getDisplayMatching(mainWindow.getBounds());
+  const idx = Math.max(0, displays.findIndex((d) => d.id === current.id));
+  const next = displays[(idx + 1) % displays.length];
+  if (mainWindow.isFullScreen()) {
+    mainWindow.setFullScreen(false);
+    mainWindow.setBounds(next.bounds);
+    mainWindow.setFullScreen(true);
+  } else {
+    mainWindow.setBounds(windowedBounds(next));
+  }
 }
 
 function isAppPage(url) {
@@ -117,8 +146,18 @@ function applyMenu() {
 function createWindow() {
   applyMenu();
 
+  const targetDisplay = getTargetDisplay();
+  const initialBounds = START_WINDOWED
+    ? windowedBounds(targetDisplay)
+    : {
+        x: targetDisplay.bounds.x,
+        y: targetDisplay.bounds.y,
+        width: targetDisplay.bounds.width,
+        height: targetDisplay.bounds.height,
+      };
+
   mainWindow = new BrowserWindow({
-    ...windowedBounds(),
+    ...initialBounds,
     fullscreen: !START_WINDOWED,
     useContentSize: true,
     autoHideMenuBar: true,
@@ -147,19 +186,23 @@ function createWindow() {
 
   webContents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown') return;
-    // F11 toggles fullscreen (the window menu, and its shortcuts, are removed).
+    // F11 toggles fullscreen; Shift+F11 moves the window to the next display.
     if (input.key === 'F11') {
-      mainWindow.setFullScreen(!mainWindow.isFullScreen());
+      if (input.shift) {
+        moveToNextDisplay();
+      } else {
+        mainWindow.setFullScreen(!mainWindow.isFullScreen());
+      }
       event.preventDefault();
-    } else if (input.key === 'I' && input.control && input.shift) {
+    } else if (input.key === 'I' && input.control && input.shift && (!app.isPackaged || process.argv.includes('--dev'))) {
       webContents.toggleDevTools();
       event.preventDefault();
     }
   });
 
-  // The title screen's links open in the system browser, never in a game window.
+  // The title screen's links open in the system browser when windowed, never stealing fullscreen kiosk focus.
   webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+    if (START_WINDOWED && /^https?:\/\//i.test(url)) shell.openExternal(url);
     return { action: 'deny' };
   });
   webContents.on('will-navigate', (event, url) => {

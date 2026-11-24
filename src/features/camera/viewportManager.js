@@ -67,6 +67,11 @@ class ViewportManager {
     this._shadowDirty = true;
     this._dividerEl = null;
     this._lastDividerDisplay = '';
+    this._hDividerEl = null;
+    this._lastHDividerDisplay = '';
+    this._contextLost = false;
+    this._contextOverlayEl = null;
+    this._boundContextCanvas = null;
     this.lastViewportLayout = [];
     this.lastIsSplitscreen = false;
     this.getGameState = () => 'menu';
@@ -159,6 +164,55 @@ class ViewportManager {
     if (typeof window !== 'undefined') {
       window.addEventListener('resize', () => this.applyViewportSize());
     }
+    this._bindWebGLContextHandlers();
+  }
+
+  _setContextLostOverlay(visible) {
+    if (typeof document === 'undefined') return;
+    if (!this._contextOverlayEl && visible) {
+      const el = document.createElement('div');
+      el.id = 'webgl-context-overlay';
+      el.style.cssText = `
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(6, 10, 16, 0.92);
+        color: #f8fafc;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 16px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        z-index: 12000;
+        text-align: center;
+        padding: 24px;
+      `;
+      el.textContent = 'Display connection interrupted. Restoring arena...';
+      document.body?.appendChild(el);
+      this._contextOverlayEl = el;
+    }
+    if (this._contextOverlayEl) {
+      this._contextOverlayEl.style.display = visible ? 'flex' : 'none';
+    }
+  }
+
+  _bindWebGLContextHandlers() {
+    const canvasEl = this.renderer?.domElement;
+    if (!canvasEl || typeof canvasEl.addEventListener !== 'function' || this._boundContextCanvas === canvasEl) return;
+    this._boundContextCanvas = canvasEl;
+    canvasEl.addEventListener('webglcontextlost', (event) => {
+      if (event && typeof event.preventDefault === 'function') event.preventDefault();
+      this._contextLost = true;
+      this._setContextLostOverlay(true);
+    }, false);
+    canvasEl.addEventListener('webglcontextrestored', () => {
+      this._contextLost = false;
+      this._shadowDirty = true;
+      if (this.renderer?.shadowMap) this.renderer.shadowMap.needsUpdate = true;
+      this.applyViewportSize();
+      this._setContextLostOverlay(false);
+    }, false);
   }
 
   /**
@@ -305,11 +359,10 @@ class ViewportManager {
       // On Low/1.0 preset, drop splitscreen slightly to keep browser/iGPU locked at 60 FPS
       ratio = isSplitscreen ? 0.85 : 1.0;
     } else if (preset === '1.25') {
-      // Splitscreen renders 2 or 4 full passes: keep crisp 1.0x native pixels in splitscreen
-      // instead of oversampling to 2400x1350 on 150% DPI Windows laptops.
-      ratio = Math.min(isSplitscreen ? 1.0 : 1.25, window.devicePixelRatio || 1);
+      // Cap quad splitscreen (4 full passes/frame) at 0.85x so bar TVs & iGPUs hold 60 FPS
+      ratio = isQuadSplit ? 0.85 : Math.min(isSplitscreen ? 1.0 : 1.25, window.devicePixelRatio || 1);
     } else if (preset === 'native') {
-      ratio = Math.min(window.devicePixelRatio || 1, isSplitscreen ? 1.25 : MAX_LIVE_PIXEL_RATIO);
+      ratio = Math.min(window.devicePixelRatio || 1, isQuadSplit ? 1.0 : (isSplitscreen ? 1.25 : MAX_LIVE_PIXEL_RATIO));
     }
 
     this.renderer.setPixelRatio(ratio);
@@ -563,7 +616,7 @@ class ViewportManager {
   renderScene({ gameState, isVictoryActive, victoryCameraActive, matchState, athletes, humanSlots, stepsThisFrame = 1, replayFollowSlot = -1 }) {
     const renderer = this.renderer;
     const scene = this.scene;
-    if (!renderer || !scene) return;
+    if (!renderer || !scene || this._contextLost) return;
 
     const victoryActive = isVictoryActive !== undefined
       ? isVictoryActive
@@ -575,15 +628,24 @@ class ViewportManager {
     const isFreeDrone = this.cinematicCamera.mode === 'free';
     const isMatchState = gameState === 'match' || gameState === 'overtime_menu' || (gameState === 'practice' && humanSlots.length >= 2);
     const isSplitscreen = !isFreeDrone && isMatchState && !!TUNING.camera.splitscreen && (humanSlots.length >= 2 || (athletes.length >= 2 && !!TUNING.camera.forceQuadSplitscreen)) && !isSharedCam && !victoryActive;
+    const isQuadSplit = isSplitscreen && (humanSlots.length > 2 || (athletes.length >= 4 && !!TUNING.camera.forceQuadSplitscreen));
     this.lastIsSplitscreen = isSplitscreen;
 
     if (!this._dividerEl && typeof document !== 'undefined') {
       this._dividerEl = document.getElementById('splitscreen-divider');
     }
+    if (!this._hDividerEl && typeof document !== 'undefined') {
+      this._hDividerEl = document.getElementById('splitscreen-divider-h');
+    }
     const nextDividerDisplay = isSplitscreen ? 'block' : 'none';
     if (this._dividerEl && this._lastDividerDisplay !== nextDividerDisplay) {
       this._dividerEl.style.display = nextDividerDisplay;
       this._lastDividerDisplay = nextDividerDisplay;
+    }
+    const nextHDividerDisplay = isQuadSplit ? 'block' : 'none';
+    if (this._hDividerEl && this._lastHDividerDisplay !== nextHDividerDisplay) {
+      this._hDividerEl.style.display = nextHDividerDisplay;
+      this._lastHDividerDisplay = nextHDividerDisplay;
     }
 
     const width = window.innerWidth;
@@ -608,7 +670,7 @@ class ViewportManager {
         freeEntry.slot = -1; freeEntry.x = 0; freeEntry.y = 0; freeEntry.w = width; freeEntry.h = height; freeEntry.camera = this.cinematicCamera.camera;
         this.lastViewportLayout.push(freeEntry);
       }
-    } else if (isSplitscreen && (humanSlots.length > 2 || (athletes.length >= 4 && !!TUNING.camera.forceQuadSplitscreen))) {
+    } else if (isQuadSplit) {
       // 4-Way Quad Splitscreen (2x2 Grid: Top-Left P1, Top-Right P2, Bottom-Left P3, Bottom-Right P4)
       const halfW = Math.floor(width / 2);
       const halfH = Math.floor(height / 2);
