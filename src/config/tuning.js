@@ -1078,7 +1078,7 @@ const DEFAULTS = {
       standard: {
         id: 'standard',
         label: 'STANDARD [DEFAULT]',
-        desc: 'v0.2.2 baseline · 0.45m hit forgiveness',
+        desc: 'Balanced · 0.45m hit forgiveness',
         assistRadius: 0.45,
         assistWindowTicks: 6,
         aimMagnetism: 0.0,
@@ -1086,14 +1086,14 @@ const DEFAULTS = {
       casual: {
         id: 'casual',
         label: 'CASUAL',
-        desc: '0.65m reach + 360° right-stick aim steering',
+        desc: '0.65m reach · Wide hit timing window',
         assistRadius: 0.65,
         assistWindowTicks: 9,
         aimMagnetism: 0.0,
       },
     },
 
-    // Baseline Default: Standard (v0.2.2 baseline)
+    // Baseline Default: Standard (0.45m reach, 6-tick window)
     assistRadius: 0.45,       // m of proximity forgiveness around a qualifying limb
     assistWindowTicks: 6,     // only within +/- this many ticks of sweetTick
     aimMagnetism: 0.0,        // 0.0 = pure player aim (disabled by default)
@@ -1275,19 +1275,13 @@ const DEFAULTS = {
     // hand at 155, so the angular term was pure noise: measured, raising
     // angularKp made the ORIENTATION error worse, 9.5° with the term switched
     // off against 30° with it on. At 0.01 it does what it is for — 2.4°.
-    // RAISED 0.01 -> 0.06 (ruling, delegated). At 0.01 the ghost held a torso
-    // tilt of at most 19 degrees while the body reached 90 at speed: the cap
-    // was starving the correction that keeps the athlete upright, and the
-    // clamp — not the gain — was the binding constraint. 0.06 sweeps the
-    // measured maximum to 24 degrees. It is still a clamp, so LAW L3 holds:
-    // the impulse can only ever reduce the error, never add energy.
+    // RAISED 0.01 -> 0.06 so upright recovery is not starved at speed. LAW L3 holds.
     maxAngularImpulse: 0.06, angularPerInertia: true, angularRefInertia: 0.0793, buzzFilter: true,
-    // Leg form recovery: spherical hip joints twist on slides. Boost angular torque
-    // on thighs when upright so legs snap cleanly forward.
+    // DO NOT REMOVE: INVARIANT [NATURAL-LIMB-ALIGNMENT]
+    // Spherical joints (hips, spine, shoulders) lack cone/twist stops in Rapier 0.19.3;
+    // twistInertiaFloor prevents angularPerInertia from starving longitudinal untwist.
     thighTwistRecovery: {
-      enabled: true,
-      boostKp: 1.8,
-      maxAngular: 0.08,
+      enabled: true, boostKp: 2.2, maxAngular: 0.09, twistInertiaFloor: 0.45, minInertiaScale: 0.001,
     },
     // Raising limpness is what buys this back. A flat collapse via slow
     // recovery alone needs 0.12 here, an 8.3 s penalty; at limpness 5 the same

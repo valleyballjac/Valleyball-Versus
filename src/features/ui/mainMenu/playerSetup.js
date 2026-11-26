@@ -21,6 +21,7 @@ import { showToast } from './toast.js';
 import {
   PALETTE_SWATCHES,
   getColorName,
+  checkSwatchContrast,
   HEADWEAR_OPTIONS,
   PHYSIQUE_OPTIONS,
   CAMERA_OPTIONS,
@@ -82,10 +83,13 @@ function getActivePlayerIndices() {
 
 let setupPage = 1;
 let currentBallOptions = MATCH_BALL_OPTIONS;
-let selectedMatchBall = 'random';
+let selectedMatchBall = 'medium';
 let selectedMatchDuration = 300;
 let selectedMatchArena = 'court';
 let selectedPracticeDrill = 'sandbox';
+function getSelectedPracticeDrillOption() {
+  return PRACTICE_DRILL_OPTIONS.find((o) => o.id === selectedPracticeDrill) || PRACTICE_DRILL_OPTIONS[0];
+}
 let matchBallCards = [];
 let practiceDrillCards = [];
 let matchDurationButtons = [];
@@ -148,7 +152,10 @@ let matchCountdownSecs = 0;
 let matchCountdownActive = false;
 let readyBannerEls = [null, null, null, null];
 let ctrlTagEls = [null, null, null, null];
+const slotColorPillEls = [null, null, null, null];
+const slotSwitchBadgeEls = [null, null, null, null];
 let rulesReadyStripEl = null;
+let contrastWarningEl = null;
 
 export function notifyBallPreview() {
   if (!callbacks.onBallPreviewChange) return;
@@ -379,7 +386,7 @@ export function buildPlayerSetupScreen(root, cbs = {}, navs = {}) {
   rulesHeader.style.cssText = 'display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 6px; gap: 10px;';
   rulesHeader.innerHTML = `
     <span style="font-size:13px;font-weight:900;letter-spacing:0.12em;color:#ffffff;">MATCH RULES &amp; READY CHECK</span>
-    <span class="contextual-btn-badge" style="border-color:#00e5ff;color:#00e5ff;background:rgba(0,229,255,0.14);font-size:10.5px;">🎮 HOST (P1): ↕ / ◀ ▶ SETS RULES &middot; P2-P4: PRESS A / X / START TO READY</span>
+    <span id="match-rules-header-hint" class="contextual-btn-badge" style="border-color:#00e5ff;color:#00e5ff;background:rgba(0,229,255,0.14);font-size:10.5px;">🎮 HOST (P1): ↕ / ◀ ▶ SETS RULES &middot; P2-P4: PRESS A / X / START, SPACE / ENTER, OR CLICK TO READY</span>
   `;
   matchRulesBoxEl.appendChild(rulesHeader);
 
@@ -416,7 +423,7 @@ export function buildPlayerSetupScreen(root, cbs = {}, navs = {}) {
     const drillBox = document.getElementById('practice-drill-selector-box');
 
     if (currentSetupMode === 'practice') {
-      selectedPracticeDrill = 'sandbox';
+      const drillOpt = getSelectedPracticeDrillOption();
       typeCards.forEach((c) => { if (c) c.style.display = 'none'; });
       if (col2El) col2El.style.display = 'none';
       if (col3El) col3El.style.display = 'none';
@@ -424,13 +431,13 @@ export function buildPlayerSetupScreen(root, cbs = {}, navs = {}) {
       if (teamGroup2El) teamGroup2El.style.display = 'none';
       if (previewWindowEl) previewWindowEl.style.display = 'flex';
       if (team1PlayersGridEl) team1PlayersGridEl.style.gridTemplateColumns = 'minmax(0, 1fr)';
-      if (teamHeaderTitleEls[0]) teamHeaderTitleEls[0].textContent = 'PRACTICE ATHLETE · FREE SANDBOX';
+      if (teamHeaderTitleEls[0]) teamHeaderTitleEls[0].textContent = `PRACTICE ATHLETE · ${drillOpt.label}`;
       columnsBoxEl.style.display = 'grid';
       columnsBoxEl.style.gridTemplateColumns = 'minmax(290px, 370px) minmax(320px, 1fr)';
       matchRulesBoxEl.style.display = 'flex';
       matchRulesBoxEl.style.maxWidth = '740px';
       matchRulesBoxEl.style.margin = '0';
-      if (drillBox) drillBox.style.display = 'none';
+      if (drillBox) drillBox.style.display = 'flex';
       const durationBox = document.getElementById('match-duration-selector-box');
       const arenaBox = document.getElementById('arena-selector-box');
       if (durationBox) durationBox.style.display = 'none';
@@ -442,9 +449,12 @@ export function buildPlayerSetupScreen(root, cbs = {}, navs = {}) {
       if (btnStartMatch) {
         btnStartMatch.style.display = 'block';
         btnStartMatch.disabled = false;
-        btnStartMatch.textContent = 'START FREE SANDBOX ➔';
+        btnStartMatch.textContent = `START ${drillOpt.label} ➔`;
       }
       if (btnBack) btnBack.textContent = '⮌ TITLE';
+      updatePracticeDrillUI();
+      updateSwatchUI();
+      updateInputBadgesUI();
       updateFocusUI();
       notifyBallPreview();
       return;
@@ -492,8 +502,12 @@ export function buildPlayerSetupScreen(root, cbs = {}, navs = {}) {
       matchRulesBoxEl.style.flexDirection = 'column';
       matchRulesBoxEl.style.maxWidth = '860px';
       matchRulesBoxEl.style.margin = '0 auto';
+      const activeIndices = getActivePlayerIndices();
+      const setupHostSlot = playerConfigs[0]?.type === 'human'
+        ? 0
+        : (activeIndices.find((idx) => playerConfigs[idx]?.type === 'human') ?? -1);
       matchRulesFocusRow = 0;
-      matchRulesActionCol = playerConfigs[0]?.type === 'human' ? 1 : 2;
+      matchRulesActionCol = setupHostSlot >= 0 ? 1 : 2;
       if (btnBack) btnBack.textContent = '⮌ PLAYERS';
       if (btnNext) btnNext.style.display = 'none';
       if (btnReadyP1) btnReadyP1.style.display = 'block';
@@ -502,11 +516,14 @@ export function buildPlayerSetupScreen(root, cbs = {}, navs = {}) {
       if (btnReadyP4) btnReadyP4.style.display = is2v2 ? 'block' : 'none';
       if (btnStartMatch) btnStartMatch.style.display = 'block';
       lobbyTitleEl.textContent = 'MATCH RULES & READY UP';
-      if (lobbySubtitleEl) lobbySubtitleEl.textContent = 'Host (P1) sets Ball Size & Match Length (↕ / ◀ ▶) · Each player locks in their own Ready button';
+      const hostTag = setupHostSlot >= 0 ? `P${setupHostSlot + 1}` : 'P1';
+      if (lobbySubtitleEl) lobbySubtitleEl.textContent = `Host (${hostTag}) sets Ball Size & Match Length (↕ / ◀ ▶) · Each player locks in their own Ready button`;
       updateMatchBallUI();
       updateMatchDurationUI();
     }
     updateReadyUI();
+    updateSwatchUI();
+    updateInputBadgesUI();
     getActivePlayerIndices().forEach((idx) => updateAggressivenessUI(idx));
     updateFocusUI();
     notifyBallPreview();
@@ -613,12 +630,10 @@ export function buildPlayerSetupScreen(root, cbs = {}, navs = {}) {
       transition: all 0.15s ease;
     `;
     btn.onclick = () => {
-      if (idx > 0 && playerConfigs[idx]?.type === 'human') {
-        const m = getExplicitDeviceMappings()?.[idx];
+      const m = getExplicitDeviceMappings()?.[idx];
+      if (idx > 0 && playerConfigs[idx]?.type === 'human' && m?.type === 'gamepad') {
         soundManager.playTone(240, 0.08, 'sawtooth', 0.14);
-        const devHint = m?.type === 'gamepad'
-          ? `Pad ${m.padIndex + 1} (press □/X, ✕/A, or START)`
-          : 'Keyboard 2 (press ENTER)';
+        const devHint = `Pad ${m.padIndex + 1} (press □/X, ✕/A, or START)`;
         showToast(`🎮 P${idx + 1} must Ready Up on their own controller: ${devHint}`, 'info', 2000);
         return;
       }
@@ -777,14 +792,14 @@ export function buildPracticeDrillSelector() {
   top.innerHTML = `
     <div>
       <span style="font-size: 11px; font-weight: 900; letter-spacing: 0.1em; color: #c084fc;">1. PRACTICE MODE / DRILL</span>
-      <span style="font-size: 10px; color: #94a3b8; margin-left: 8px;">Choose sandbox, 60s guided drill, ball feeder, sparring bot, or local warmup</span>
+      <span style="font-size: 10px; color: #94a3b8; margin-left: 8px;">Choose sandbox, newcomer checklist, ball feeder, sparring bot, or local warmup</span>
     </div>
   `;
   box.appendChild(top);
 
   const row = document.createElement('div');
   row.id = 'practice-drill-cards-row';
-  row.style.cssText = 'display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px;';
+  row.style.cssText = 'display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px;';
   practiceDrillCards = [];
 
   PRACTICE_DRILL_OPTIONS.forEach((opt) => {
@@ -833,6 +848,13 @@ export function updatePracticeDrillUI() {
     const titleSpan = card.firstElementChild;
     if (titleSpan) titleSpan.style.color = isSel ? '#ffffff' : '#94a3b8';
   });
+  if (currentSetupMode === 'practice') {
+    const drillOpt = getSelectedPracticeDrillOption();
+    if (btnStartMatch) btnStartMatch.textContent = `START ${drillOpt.label} ➔`;
+    if (teamHeaderTitleEls[0]) teamHeaderTitleEls[0].textContent = `PRACTICE ATHLETE · ${drillOpt.label}`;
+    if (colSubEls[0]) colSubEls[0].textContent = drillOpt.label;
+    if (lobbyBadgeEl) lobbyBadgeEl.textContent = `SOLO PRACTICE · ${drillOpt.label}`;
+  }
 }
 
 export function cyclePracticeDrill(direction = 1) {
@@ -920,6 +942,10 @@ export function renderMatchBallCards(options) {
     `;
     card.onclick = () => {
       selectedMatchBall = opt.id;
+      if (currentSetupMode === 'practice') {
+        playerFocusRow[0] = 8;
+        updateFocusUI();
+      }
       updateMatchBallUI();
     };
     matchBallCards.push({ card, opt });
@@ -1207,10 +1233,24 @@ export function updateInputBadgesUI() {
   [0, 1, 2, 3].forEach((idx) => {
     const badge = playerInputBadges[idx];
     const vpBadge = playerViewportBadges[idx];
-    const slotTheme = getPlayerSlotTheme(idx);
+    const kitColor = playerConfigs[idx]?.primaryColor;
+    const slotTheme = getPlayerSlotTheme(idx, kitColor);
+
+    if (colEls[idx]) {
+      colEls[idx].style.borderTop = `3px solid ${slotTheme.hex}`;
+    }
+    if (slotColorPillEls[idx]) {
+      slotColorPillEls[idx].style.background = slotTheme.bg;
+      slotColorPillEls[idx].style.borderColor = slotTheme.hex;
+      slotColorPillEls[idx].style.color = slotTheme.hex;
+    }
+    if (slotSwitchBadgeEls[idx]) {
+      slotSwitchBadgeEls[idx].style.borderColor = slotTheme.hex;
+      slotSwitchBadgeEls[idx].style.color = slotTheme.hex;
+    }
 
     if (vpBadge) {
-      vpBadge.innerHTML = renderViewportBadgeHtml(idx, humanSlots, currentSetupMode);
+      vpBadge.innerHTML = renderViewportBadgeHtml(idx, humanSlots, currentSetupMode, kitColor);
     }
 
     if (!badge) return;
@@ -1312,6 +1352,10 @@ export function applyControllerAssignments(assignments = null, mode = 'match') {
   updateTypeButtonsUI();
   updateReadyUI();
   activeIndices.forEach((idx) => updateAggressivenessUI(idx));
+  if (playerConfigs[focusedColumn]?.type !== 'human') {
+    const firstHuman = activeIndices.find((idx) => playerConfigs[idx]?.type === 'human');
+    if (firstHuman !== undefined) focusedColumn = firstHuman;
+  }
   updateInputBadgesUI();
   updateFocusUI();
   activeIndices.forEach((idx) => notifyPlayerUpdate(idx));
@@ -1348,6 +1392,8 @@ export function setPlayerTeam(idx, team) {
 
   updateTeamButtonsUI();
   enforceColorExclusivity();
+  updateInputBadgesUI();
+  updateFocusUI();
 
   getActivePlayerIndices().forEach((i) => notifyPlayerUpdate(i));
 }
@@ -1366,9 +1412,9 @@ export function updateTeamButtonsUI() {
     const subEl = colSubEls[idx];
     if (subEl) {
       if (currentSetupMode === 'practice') {
-        subEl.textContent = 'SOLO SANDBOX';
+        subEl.textContent = getSelectedPracticeDrillOption().label;
       } else {
-        subEl.textContent = curTeam === 'home' ? 'SOUTH · TARGETS NORTH' : 'NORTH · TARGETS SOUTH';
+        subEl.textContent = curTeam === 'home' ? 'HOME (SOUTH) · TARGETS NORTH' : 'AWAY (NORTH) · TARGETS SOUTH';
       }
     }
   });
@@ -1405,6 +1451,8 @@ export function setPlayerColor(idx, colorHex) {
   updateReadyUI();
 
   enforceColorExclusivity();
+  updateInputBadgesUI();
+  updateFocusUI();
   sameTeamIndices.forEach((i) => notifyPlayerUpdate(i));
 }
 
@@ -1458,8 +1506,9 @@ export function updateSwatchUI() {
     const repIdx = teamGroupIdx === 0 ? 0 : 1;
     const cardEl = teamHeaderCardEls[teamGroupIdx];
     if (cardEl && playerConfigs[repIdx]) {
-      const hexStr = '#' + (playerConfigs[repIdx].primaryColor ?? 0xffffff).toString(16).padStart(6, '0');
-      cardEl.style.borderTop = `3px solid ${hexStr}`;
+      const slotTheme = getPlayerSlotTheme(repIdx, playerConfigs[repIdx].primaryColor);
+      cardEl.style.borderColor = slotTheme.border;
+      cardEl.style.borderTop = `3px solid ${slotTheme.hex}`;
     }
   });
 
@@ -1480,15 +1529,39 @@ export function updateSwatchUI() {
         btn.style.boxShadow = 'none';
         btn.title = `${swatch.name} (Claimed by Home Team)`;
       } else {
+        const selOutline = getPlayerSlotTheme(idx, swatch.hex).hex;
         btn.style.opacity = '1';
         btn.style.cursor = 'pointer';
         btn.style.pointerEvents = 'auto';
-        btn.style.border = isSelected ? '2px solid #ffffff' : '2px solid transparent';
-        btn.style.boxShadow = isSelected ? '0 0 10px rgba(255, 255, 255, 0.8)' : 'none';
+        btn.style.border = isSelected ? `2px solid #ffffff` : '2px solid transparent';
+        btn.style.outline = isSelected ? `2px solid ${selOutline}` : 'none';
+        btn.style.outlineOffset = isSelected ? '1px' : '0px';
+        btn.style.boxShadow = isSelected ? `0 0 10px ${selOutline}` : 'none';
         btn.title = swatch.name;
       }
     });
   });
+
+  if (contrastWarningEl) {
+    if (currentSetupMode === 'practice') {
+      contrastWarningEl.style.display = 'none';
+      contrastWarningEl.textContent = '';
+    } else {
+      const homeCfg = playerConfigs.find((c) => c?.team === 'home') || playerConfigs[0];
+      const awayCfg = playerConfigs.find((c) => c?.team === 'away') || playerConfigs[1];
+      const res = checkSwatchContrast(homeCfg?.primaryColor, awayCfg?.primaryColor);
+      if (!res.ok) {
+        const homeName = getColorName(homeCfg?.primaryColor).toUpperCase();
+        const awayName = getColorName(awayCfg?.primaryColor).toUpperCase();
+        contrastWarningEl.style.display = 'flex';
+        contrastWarningEl.dataset.ratio = String(res.ratio);
+        contrastWarningEl.textContent = `KIT CONTRAST WARNING: ${homeName} vs ${awayName} (${res.ratio}:1) · ${res.reason}`;
+      } else {
+        contrastWarningEl.style.display = 'none';
+        contrastWarningEl.textContent = '';
+      }
+    }
+  }
 }
 
 export function setPlayerHeadwear(idx, headwearId) {
@@ -1728,6 +1801,69 @@ function lobbyDeviceLabel(idx) {
   return `P${idx + 1} · ${m.keyId === 'kb2' ? 'IJKL' : 'WASD'}`;
 }
 
+function getSlotReadyHint(idx) {
+  const mappings = getExplicitDeviceMappings();
+  const m = mappings?.[idx];
+  if (m?.type === 'gamepad') {
+    return {
+      btnHtml: `${renderCardinalDiamondSvg('west', 12)}<span>□/X READY</span>`,
+      stripText: 'PRESS A / X / START',
+    };
+  }
+  if (m?.type === 'keyboard') {
+    if (m.keyId === 'kb2') {
+      return {
+        btnHtml: '<span>ENTER / CLICK READY</span>',
+        stripText: 'PRESS ENTER OR CLICK',
+      };
+    }
+    return {
+      btnHtml: '<span>SPACE / CLICK READY</span>',
+      stripText: 'PRESS SPACE OR CLICK',
+    };
+  }
+  const activeIndices = getActivePlayerIndices();
+  let kb1Claimed = false;
+  let kb2Claimed = false;
+  for (let i = 0; i < activeIndices.length; i++) {
+    const s = activeIndices[i];
+    if (s === idx || playerConfigs[s]?.type !== 'human') continue;
+    const sm = mappings?.[s];
+    if (sm?.type === 'keyboard') {
+      if (sm.keyId === 'kb2') kb2Claimed = true;
+      else kb1Claimed = true;
+    }
+  }
+  const freeKeysets = [];
+  if (!kb1Claimed) freeKeysets.push('kb1');
+  if (!kb2Claimed) freeKeysets.push('kb2');
+  let unmappedRank = 0;
+  for (let i = 0; i < activeIndices.length; i++) {
+    const s = activeIndices[i];
+    if (s === idx) break;
+    if (playerConfigs[s]?.type === 'human' && !mappings?.[s]) {
+      unmappedRank++;
+    }
+  }
+  const assignedKey = freeKeysets[unmappedRank];
+  if (assignedKey === 'kb1') {
+    return {
+      btnHtml: '<span>SPACE / CLICK READY</span>',
+      stripText: 'PRESS SPACE OR CLICK',
+    };
+  }
+  if (assignedKey === 'kb2') {
+    return {
+      btnHtml: '<span>ENTER / CLICK READY</span>',
+      stripText: 'PRESS ENTER OR CLICK',
+    };
+  }
+  return {
+    btnHtml: '<span>CLICK READY</span>',
+    stripText: 'CLICK TO READY',
+  };
+}
+
 /**
  * Allows any unassigned gamepad pressing A / Y / Start inside the Lobby to directly
  * claim the next open AI slot (or pad-less human slot) on the fly without returning
@@ -1754,6 +1890,9 @@ export function claimLobbySlotForPad(padIndex, padId = '') {
     state.playerConfigs[targetSlot].type = 'human';
   }
   playerFocusRow[targetSlot] = targetSlot === 0 ? 1 : 2; // P1 starts on Team Color, P2-P4 start on Hat
+  if (focusedColumn === targetSlot && targetSlot !== 0 && playerConfigs[0]?.type === 'human') {
+    focusedColumn = 0;
+  }
 
   updateReadyUI();
   updateTypeButtonsUI();
@@ -1764,7 +1903,7 @@ export function claimLobbySlotForPad(padIndex, padId = '') {
 
   soundManager.playTone(587.33, 0.06, 'sine', 0.22);
   setTimeout(() => soundManager.playTone(880, 0.1, 'sine', 0.25), 60);
-  showToast(`🎮 Controller ${padIndex + 1} joined as Player ${targetSlot + 1}!`, 'info', 2200);
+  showToast(`🎮 Controller ${padIndex + 1} joined as Player ${targetSlot + 1}`, 'info', 2200);
   return targetSlot;
 }
 
@@ -1826,13 +1965,12 @@ export function launchMatchNow() {
   cancelMatchCountdown();
   hidePlayerSetup();
   const matchRules = {
-    ball: (currentSetupMode !== 'practice' && selectedMatchBall === 'all') ? 'random' : selectedMatchBall,
+    ball: (currentSetupMode !== 'practice' && selectedMatchBall === 'all') ? 'medium' : selectedMatchBall,
     duration: selectedMatchDuration,
     arena: selectedMatchArena,
   };
   if (currentSetupMode === 'practice') {
-    selectedPracticeDrill = 'sandbox';
-    if (callbacks.onStartPractice) callbacks.onStartPractice(playerConfigs[0], selectedMatchBall, 'sandbox');
+    if (callbacks.onStartPractice) callbacks.onStartPractice(playerConfigs[0], selectedMatchBall, selectedPracticeDrill);
   } else {
     const activeCount = getActiveMatchPlayerCount();
     const activeConfigs = playerConfigs.slice(0, activeCount);
@@ -1930,7 +2068,7 @@ export function updateReadyUI() {
   if (currentSetupMode === 'practice') {
     if (btnStartMatch) {
       btnStartMatch.disabled = false;
-      btnStartMatch.textContent = 'START FREE SANDBOX ➔';
+      btnStartMatch.textContent = `START ${getSelectedPracticeDrillOption().label} ➔`;
       btnStartMatch.style.background = '#10b981';
       btnStartMatch.style.opacity = '1';
       btnStartMatch.style.cursor = 'pointer';
@@ -1974,7 +2112,7 @@ export function updateReadyUI() {
     }
 
     if (btn) {
-      const slotTheme = getPlayerSlotTheme(idx);
+      const slotTheme = getPlayerSlotTheme(idx, playerConfigs[idx]?.primaryColor);
       if (setupPage === 2) {
         btn.style.display = (idx < 2 || is2v2) ? 'inline-flex' : 'none';
         btn.style.alignItems = 'center';
@@ -1992,7 +2130,7 @@ export function updateReadyUI() {
         btn.style.boxShadow = 'none';
       } else if (isReady) {
         btn.disabled = false;
-        btn.innerHTML = `<span style="padding:1px 5px;border-radius:3px;background:${slotTheme.hex};color:${slotTheme.textOnFill};font-size:9.5px;font-weight:900;">P${idx + 1}</span><span>✓ READY!</span>`;
+        btn.innerHTML = `<span style="padding:1px 5px;border-radius:3px;background:${slotTheme.hex};color:${slotTheme.textOnFill};font-size:9.5px;font-weight:900;">P${idx + 1}</span><span>✓ READY</span>`;
         btn.style.background = '#10b981';
         btn.style.borderColor = '#34d399';
         btn.style.borderLeft = `5px solid ${slotTheme.hex}`;
@@ -2000,8 +2138,9 @@ export function updateReadyUI() {
         btn.style.cursor = 'pointer';
         btn.style.boxShadow = `0 0 16px rgba(16, 185, 129, 0.55), 0 0 8px ${slotTheme.glow}`;
       } else {
+        const readyHint = getSlotReadyHint(idx);
         btn.disabled = false;
-        btn.innerHTML = `<span style="padding:1px 5px;border-radius:3px;background:${slotTheme.hex};color:${slotTheme.textOnFill};font-size:9.5px;font-weight:900;">P${idx + 1}</span>${renderCardinalDiamondSvg('west', 12)}<span>□/X READY</span>`;
+        btn.innerHTML = `<span style="padding:1px 5px;border-radius:3px;background:${slotTheme.hex};color:${slotTheme.textOnFill};font-size:9.5px;font-weight:900;">P${idx + 1}</span>${readyHint.btnHtml}`;
         btn.style.background = slotTheme.bg;
         btn.style.borderColor = slotTheme.hex;
         btn.style.borderLeft = `5px solid ${slotTheme.hex}`;
@@ -2016,17 +2155,33 @@ export function updateReadyUI() {
   // sees their exact controller, splitscreen side, and Ready status at a glance
   if (rulesReadyStripEl && setupPage === 2) {
     const humanSlots = activeIndices.filter((i) => playerConfigs[i]?.type === 'human');
+    const headerHintEl = typeof document !== 'undefined' ? document.getElementById('match-rules-header-hint') : null;
+    if (headerHintEl) {
+      const hostSlot = humanSlots.includes(0) ? 0 : (humanSlots[0] ?? 0);
+      const otherHumans = humanSlots.filter((i) => i !== hostSlot);
+      const mappings = getExplicitDeviceMappings();
+      const anyPad = otherHumans.some((i) => mappings?.[i]?.type === 'gamepad');
+      const anyKb = otherHumans.some((i) => mappings?.[i]?.type !== 'gamepad');
+      const otherPrompt = otherHumans.length === 0
+        ? 'AI BOTS READY AUTOMATICALLY'
+        : (anyPad && anyKb
+          ? 'GUESTS: PRESS A / X / START, SPACE / ENTER, OR CLICK TO READY'
+          : (anyKb ? 'GUESTS: PRESS SPACE / ENTER OR CLICK TO READY' : 'GUESTS: PRESS A / X / START TO READY'));
+      headerHintEl.textContent = `🎮 HOST (P${hostSlot + 1}): ↕ / ◀ ▶ SETS RULES · ${otherPrompt}`;
+    }
     rulesReadyStripEl.innerHTML = activeIndices.map((idx) => {
-      const t = getPlayerSlotTheme(idx);
+      const kitColor = playerConfigs[idx]?.primaryColor;
+      const t = getPlayerSlotTheme(idx, kitColor);
       const isAI = playerConfigs[idx]?.type === 'ai';
       const isReady = playerReadyState[idx];
       const devTxt = isAI ? `AI (${(playerConfigs[idx]?.difficulty || 'med').toUpperCase()})` : lobbyDeviceLabel(idx).replace(/^P\d\s*·\s*/, '');
-      const vpHtml = renderViewportBadgeHtml(idx, humanSlots, 'match');
+      const vpHtml = renderViewportBadgeHtml(idx, humanSlots, 'match', kitColor);
+      const readyHint = getSlotReadyHint(idx);
       const statusHtml = isAI
         ? '<span style="color:#94a3b8;font-weight:800;">✓ BOT READY</span>'
         : (isReady
           ? '<span style="padding:2px 8px;border-radius:5px;background:#10b981;color:#ffffff;font-weight:900;">✓ READY</span>'
-          : `<span style="padding:2px 8px;border-radius:5px;background:${t.bg};border:1px solid ${t.hex};color:${t.hex};font-weight:900;">PRESS A / X / START</span>`);
+          : `<span style="padding:2px 8px;border-radius:5px;background:${t.bg};border:1px solid ${t.hex};color:${t.hex};font-weight:900;">${readyHint.stripText}</span>`);
       return `
         <div style="flex:1 1 175px;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 10px;border-radius:8px;background:${isReady && !isAI ? 'rgba(16,185,129,0.15)' : 'rgba(16,24,38,0.82)'};border:1.5px solid ${isReady && !isAI ? '#10b981' : (isAI ? 'rgba(148,163,184,0.28)' : t.hex)};border-left:5px solid ${t.hex};">
           <div style="display:flex;align-items:center;gap:6px;min-width:0;">
@@ -2102,6 +2257,28 @@ export function buildCenterPreviewWindow() {
     height: 100%;
     pointer-events: none;
   `;
+  contrastWarningEl = document.createElement('div');
+  contrastWarningEl.id = 'swatch-contrast-warning';
+  contrastWarningEl.setAttribute?.('role', 'status');
+  contrastWarningEl.setAttribute?.('aria-live', 'polite');
+  contrastWarningEl.style.cssText = `
+    display: none;
+    align-items: center;
+    justify-content: center;
+    max-width: 100%;
+    padding: 7px 11px;
+    margin-bottom: 6px;
+    border-radius: 8px;
+    background: rgba(245, 158, 11, 0.16);
+    border: 1.5px solid #f59e0b;
+    color: #fde68a;
+    font-size: 10.5px;
+    font-weight: 800;
+    line-height: 1.35;
+    text-align: center;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55);
+  `;
+  stage.appendChild(contrastWarningEl);
   return stage;
 }
 
@@ -2149,14 +2326,14 @@ export function buildTeamGroupPanel(teamGroupIdx, teamTitle, slotIndices) {
 
   const subSpan = document.createElement('span');
   subSpan.style.cssText = 'font-size: 10px; color: #94a3b8; font-weight: 800; letter-spacing: 0.06em;';
-  subSpan.textContent = playerConfigs[repIdx].team === 'home' ? 'SOUTH · TARGETS NORTH' : 'NORTH · TARGETS SOUTH';
+  subSpan.textContent = playerConfigs[repIdx].team === 'home' ? 'HOME (SOUTH) · TARGETS NORTH' : 'AWAY (NORTH) · TARGETS SOUTH';
   slotIndices.forEach((s) => { colSubEls[s] = subSpan; });
 
   topBar.appendChild(titleSpan);
   topBar.appendChild(subSpan);
   teamCard.appendChild(topBar);
 
-  // Row 0: Collective Team Kit (Home / Dark vs Away / Light)
+  // Row 0: Collective Team Kit (Home / South vs Away / North)
   const teamStatusRow = document.createElement('div');
   teamStatusRow.id = `row-team-status-p${repIdx + 1}`;
   teamStatusRow.style.cssText = 'display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 3px 4px; border-radius: 6px; transition: all 0.15s ease;';
@@ -2170,8 +2347,8 @@ export function buildTeamGroupPanel(teamGroupIdx, teamTitle, slotIndices) {
 
   const teamBtns = [];
   [
-    { id: 'home', label: 'HOME / DARK' },
-    { id: 'away', label: 'AWAY / LIGHT' },
+    { id: 'home', label: 'HOME (SOUTH)' },
+    { id: 'away', label: 'AWAY (NORTH)' },
   ].forEach((t) => {
     const btn = document.createElement('button');
     btn.textContent = t.label;
@@ -2264,7 +2441,7 @@ export function buildTeamGroupPanel(teamGroupIdx, teamTitle, slotIndices) {
 }
 
 export function buildPlayerColumn(idx, label, themeColor, sharedTeamStatusRow = null, sharedTeamColorRow = null) {
-  const slotTheme = getPlayerSlotTheme(idx);
+  const slotTheme = getPlayerSlotTheme(idx, playerConfigs[idx]?.primaryColor);
   const col = document.createElement('div');
   col.id = `player-setup-col-${idx + 1}`;
   colEls[idx] = col;
@@ -2318,6 +2495,7 @@ export function buildPlayerColumn(idx, label, themeColor, sharedTeamStatusRow = 
     letter-spacing: 0.06em;
   `;
   slotColorPill.textContent = slotTheme.short;
+  slotColorPillEls[idx] = slotColorPill;
   labelSpan.appendChild(slotColorPill);
 
   if (idx === 0 || idx === 1) {
@@ -2327,6 +2505,7 @@ export function buildPlayerColumn(idx, label, themeColor, sharedTeamStatusRow = 
     badgeEl.style.borderColor = slotTheme.hex;
     badgeEl.style.color = slotTheme.hex;
     badgeEl.textContent = idx === 0 ? 'LB' : 'RB';
+    slotSwitchBadgeEls[idx] = badgeEl;
     const titleTextEl = document.createElement('span');
     titleTextEl.textContent = label;
     if (idx === 0) {
@@ -2770,7 +2949,7 @@ function clearControllerFocusStyle(el) {
 function applyControllerFocusStyle(el, controllerSlotIdx, customLabel = null) {
   if (!el) return;
   el.classList.remove('rainbow-focused');
-  const theme = getPlayerSlotTheme(controllerSlotIdx);
+  const theme = getPlayerSlotTheme(controllerSlotIdx, playerConfigs[controllerSlotIdx]?.primaryColor);
   el.style.outline = `2px solid ${theme.hex}`;
   el.style.outlineOffset = '1px';
   el.style.boxShadow = `0 0 14px ${theme.glow}, inset 0 0 8px ${theme.bg}`;
@@ -2821,21 +3000,30 @@ export function updateFocusUI() {
 
   if (setupLegendEl) {
     if (currentSetupMode === 'practice') {
-      setupLegendEl.innerHTML = `🎮 <b>↕ / ✕/A</b> NEXT ROW &middot; <b>◀ ▶</b> CHANGE &middot; <b style="color:#10b981;">START</b> LAUNCH SANDBOX &middot; ${renderCardinalDiamondSvg('east', '#f87171', 12)} <b>○/B / ESC</b> TITLE`;
+      setupLegendEl.innerHTML = `🎮 <b>↕ / ✕/A</b> NEXT ROW &middot; <b>◀ ▶</b> CHANGE &middot; <b style="color:#10b981;">START</b> LAUNCH PRACTICE &middot; ${renderCardinalDiamondSvg('east', '#f87171', 12)} <b>○/B / ESC</b> TITLE`;
     } else if (setupPage === 2) {
-      setupLegendEl.innerHTML = `🎮 <b style="color:#00e5ff;">P1 ONLY: ↕ / ✕/A NEXT · ◀ ▶ MATCH RULES</b> &middot; ${renderCardinalDiamondSvg('west', '#10b981', 12)} <b style="color:#10b981;">□/X / START</b> OWN READY &middot; ${renderCardinalDiamondSvg('east', '#f87171', 12)} <b>○/B / ESC</b> PLAYERS`;
+      setupLegendEl.innerHTML = `🎮 <b style="color:#00e5ff;">P1 ONLY: ↕ / ✕/A NEXT · ◀ ▶ MATCH RULES</b> &middot; ${renderCardinalDiamondSvg('west', '#10b981', 12)} <b style="color:#10b981;">□/X / START / SPACE / ENTER / CLICK</b> OWN READY &middot; ${renderCardinalDiamondSvg('east', '#f87171', 12)} <b>○/B / ESC</b> PLAYERS`;
     } else if (!sharedCursor) {
       setupLegendEl.innerHTML = `🎮 EACH CONTROLLER EDITS ITS OWN PLAYER &amp; TEAM &middot; <b>↕ / ✕/A</b> NEXT ROW &middot; <b>◀ ▶</b> CHANGE &middot; <b style="color:#00e5ff;">P1 LB/RB/TAB</b> EDIT AI &middot; <b style="color:#10b981;">START</b> MATCH RULES ➔ &middot; ${renderCardinalDiamondSvg('east', '#f87171', 12)} <b>○/B</b> CONTROLLERS`;
     } else {
-      setupLegendEl.innerHTML = `🎮 <b>↕ / ✕/A</b> NEXT ROW &middot; <b>◀ ▶</b> CHANGE &middot; ${renderCardinalDiamondSvg('north', '#f59e0b', 12)} <b style="color:#f59e0b;">△/Y</b> JOIN / BOT &middot; <b style="color:#00e5ff;">P1 LB / RB / TAB</b> SWITCH SLOT &middot; <b style="color:#10b981;">START</b> MATCH RULES ➔ &middot; ${renderCardinalDiamondSvg('east', '#f87171', 12)} <b>○/B</b> CONTROLLERS`;
+      setupLegendEl.innerHTML = `🎮 <b>↕ / ✕/A</b> NEXT ROW &middot; <b>◀ ▶</b> CHANGE &middot; <b style="color:#4ade80;">SPARE PAD: A / Y / START TO JOIN</b> &middot; ${renderCardinalDiamondSvg('north', '#f59e0b', 12)} <b style="color:#f59e0b;">△/Y</b> BOT &middot; <b style="color:#00e5ff;">P1 LB / RB / TAB</b> SWITCH SLOT &middot; <b style="color:#10b981;">START</b> MATCH RULES ➔ &middot; ${renderCardinalDiamondSvg('east', '#f87171', 12)} <b>○/B</b> CONTROLLERS`;
     }
   }
 
-  // 1. PRACTICE MODE (Free Sandbox: Single Page, Rows 1..6 Athlete, 7 Ball, 8 Action Row)
+  // 1. PRACTICE MODE (Single Page, Rows 1..6 Athlete, 7 Drill, 8 Ball, 9 Action Row)
   if (currentSetupMode === 'practice') {
+    const p1Theme = getPlayerSlotTheme(0, playerConfigs[0]?.primaryColor);
     if (ctrlTagEls[0]) {
       ctrlTagEls[0].textContent = '[P1 ACTIVE]';
-      ctrlTagEls[0].style.color = '#00e5ff';
+      ctrlTagEls[0].style.color = p1Theme.hex;
+    }
+    if (colEls[0]) {
+      colEls[0].style.borderColor = p1Theme.hex;
+      colEls[0].style.borderTop = `3px solid ${p1Theme.hex}`;
+    }
+    if (teamHeaderCardEls[0]) {
+      teamHeaderCardEls[0].style.borderColor = p1Theme.hex;
+      teamHeaderCardEls[0].style.borderTop = `3px solid ${p1Theme.hex}`;
     }
 
     const activeRow = playerFocusRow[0];
@@ -2859,12 +3047,20 @@ export function updateFocusUI() {
       }
     });
 
+    // Row 7: Practice Drill Selector Box
     const drillBox = document.getElementById('practice-drill-selector-box');
-    if (drillBox) clearControllerFocusStyle(drillBox);
-
-    // Row 7: Practice Ball Selector Box
-    if (ballBox) {
+    if (drillBox) {
       if (activeRow === 7) {
+        applyControllerFocusStyle(drillBox, 0, 'P1');
+      } else {
+        clearControllerFocusStyle(drillBox);
+        drillBox.style.borderColor = 'rgba(168, 85, 247, 0.35)';
+      }
+    }
+
+    // Row 8: Practice Ball Selector Box
+    if (ballBox) {
+      if (activeRow === 8) {
         applyControllerFocusStyle(ballBox, 0, 'P1');
       } else {
         clearControllerFocusStyle(ballBox);
@@ -2872,9 +3068,9 @@ export function updateFocusUI() {
       }
     }
 
-    // Row 8: Action Row (Back and Start Free Sandbox)
+    // Row 9: Action Row (Back and Start Practice)
     if (btnBack && btnStartMatch) {
-      if (activeRow === 8) {
+      if (activeRow === 9) {
         if (practiceActionCol === 0) {
           applyControllerFocusStyle(btnBack, 0, 'P1');
           clearControllerFocusStyle(btnStartMatch);
@@ -2891,12 +3087,18 @@ export function updateFocusUI() {
   }
 
   // 2. MATCH MODE SCREEN 2: MATCH RULES & CUSTOMIZATION
-  // Only P1 controls Match Rules (Row 0 = Ball Size, Row 1 = Match Length, Row 2 = P1 Action Bar).
-  // Other human players (P2-P4) default directly to their own color-coded Ready button.
+  // Only the setup host controls Match Rules (Row 0 = Ball Size, Row 1 = Match Length, Row 2 = Host Action Bar).
+  // Other human players (non-host) default directly to their own color-coded Ready button.
   if (setupPage === 2) {
+    const activeIndices = getActivePlayerIndices();
+    const setupHostSlot = playerConfigs[0]?.type === 'human'
+      ? 0
+      : (activeIndices.find((idx) => playerConfigs[idx]?.type === 'human') ?? 0);
+    const hostBadge = `P${setupHostSlot + 1}`;
+
     if (ballBox) {
       if (matchRulesFocusRow === 0) {
-        applyControllerFocusStyle(ballBox, 0, 'P1 RULES');
+        applyControllerFocusStyle(ballBox, setupHostSlot, `${hostBadge} RULES`);
       } else {
         clearControllerFocusStyle(ballBox);
         ballBox.style.borderColor = 'rgba(255, 255, 255, 0.15)';
@@ -2905,7 +3107,7 @@ export function updateFocusUI() {
 
     if (durationBox) {
       if (matchRulesFocusRow === 1) {
-        applyControllerFocusStyle(durationBox, 0, 'P1 RULES');
+        applyControllerFocusStyle(durationBox, setupHostSlot, `${hostBadge} RULES`);
       } else {
         clearControllerFocusStyle(durationBox);
         durationBox.style.borderColor = 'rgba(255, 255, 255, 0.15)';
@@ -2916,20 +3118,22 @@ export function updateFocusUI() {
       clearControllerFocusStyle(arenaBox);
     }
 
-    const p1ActionBtns = [btnBack, btnReadyP1, btnStartMatch];
-    const clampedP1Col = Math.max(0, Math.min(p1ActionBtns.length - 1, matchRulesActionCol));
-    p1ActionBtns.forEach((btn, colIdx) => {
+    const hostReadyBtn = playerReadyButtons[setupHostSlot] || btnReadyP1;
+    const hostActionBtns = [btnBack, hostReadyBtn, btnStartMatch];
+    const clampedHostCol = Math.max(0, Math.min(hostActionBtns.length - 1, matchRulesActionCol));
+    hostActionBtns.forEach((btn, colIdx) => {
       if (!btn) return;
-      const isFocused = (matchRulesFocusRow === 2) && (clampedP1Col === colIdx);
+      const isFocused = (matchRulesFocusRow === 2) && (clampedHostCol === colIdx);
       if (isFocused) {
-        applyControllerFocusStyle(btn, 0, 'P1');
+        applyControllerFocusStyle(btn, setupHostSlot, hostBadge);
       } else {
         clearControllerFocusStyle(btn);
       }
     });
 
-    // P2, P3, P4 always focus their own Ready button on Page 2
-    [1, 2, 3].forEach((slotIdx) => {
+    // Non-host active human slots focus their own Ready button on Page 2; AI or inactive slots clear focus
+    [0, 1, 2, 3].forEach((slotIdx) => {
+      if (slotIdx === setupHostSlot) return;
       const rBtn = playerReadyButtons[slotIdx];
       if (!rBtn) return;
       const isActiveSlot = slotIdx < getActiveMatchPlayerCount() && playerConfigs[slotIdx]?.type === 'human';
@@ -2946,8 +3150,10 @@ export function updateFocusUI() {
   // Every human slot ALWAYS has its own active row cursor highlight with its signature controller color & badge,
   // AND focusedColumn allows P1 (Slot 0) to configure AI slots via LB/RB/TAB.
   const activeIndices = getActivePlayerIndices();
-  const humanCount = activeIndices.filter((i) => playerConfigs[i]?.type === 'human').length;
-  const isSlotCursorActive = (s) => (humanCount > 1 ? (playerConfigs[s]?.type === 'human' || focusedColumn === s) : (playerConfigs[s]?.type === 'human' && s === 0) || focusedColumn === s);
+  const setupHostSlot = playerConfigs[0]?.type === 'human'
+    ? 0
+    : (activeIndices.find((i) => playerConfigs[i]?.type === 'human') ?? 0);
+  const isSlotCursorActive = (s) => playerConfigs[s]?.type === 'human' || focusedColumn === s;
 
   // Clear shared team rows first before applying active focus highlights
   [0, 1].forEach((teamRep) => {
@@ -2956,7 +3162,7 @@ export function updateFocusUI() {
   });
 
   activeIndices.forEach((idx) => {
-    const slotTheme = getPlayerSlotTheme(idx);
+    const slotTheme = getPlayerSlotTheme(idx, playerConfigs[idx]?.primaryColor);
     const tag = ctrlTagEls[idx];
     const col = colEls[idx];
     const isHumanSlot = playerConfigs[idx]?.type === 'human';
@@ -2965,9 +3171,9 @@ export function updateFocusUI() {
         tag.innerHTML = `<span class="contextual-btn-badge" style="border-color:${slotTheme.hex};color:${slotTheme.hex};">${lobbyDeviceLabel(idx)}</span>`;
         tag.style.color = '#ffffff';
       } else if (focusedColumn === idx) {
-        tag.innerHTML = `<span class="contextual-btn-badge" style="border-color:#00e5ff;color:#00e5ff;box-shadow:0 0 10px rgba(0,229,255,0.45);">P1 EDITING · △/Y: JOIN</span>`;
+        tag.innerHTML = `<span class="contextual-btn-badge" style="border-color:#00e5ff;color:#00e5ff;box-shadow:0 0 10px rgba(0,229,255,0.45);">P${setupHostSlot + 1} EDITING · A / Y / START: JOIN</span>`;
       } else {
-        tag.innerHTML = `<span class="contextual-btn-badge" style="border-color:rgba(255,255,255,0.28);color:#94a3b8;">BOT · P1 LB/RB/TAB</span>`;
+        tag.innerHTML = `<span class="contextual-btn-badge" style="border-color:rgba(255,255,255,0.28);color:#94a3b8;">BOT · PRESS A / Y / START TO JOIN</span>`;
       }
     }
     if (col && !playerReadyState[idx]) {
@@ -2980,8 +3186,8 @@ export function updateFocusUI() {
 
     const activeRow = playerFocusRow[idx];
     const isThisColActive = isSlotCursorActive(idx);
-    const controllerOwner = isHumanSlot ? idx : 0;
-    const badgeLabel = isHumanSlot ? slotTheme.short : `P1 ➔ BOT ${slotTheme.short}`;
+    const controllerOwner = isHumanSlot ? idx : setupHostSlot;
+    const badgeLabel = isHumanSlot ? slotTheme.short : `P${setupHostSlot + 1} ➔ BOT ${slotTheme.short}`;
 
     // Individual rows 2..7: 2=Headwear, 3=Physique, 4=Camera, 5=Assist, 6=Control Type, 7=AI Style
     [2, 3, 4, 5, 6, 7].forEach((rIdx) => {
@@ -3007,9 +3213,12 @@ export function updateFocusUI() {
       const focusingSlots = validSlots.filter((s) => playerFocusRow[s] === rIdx && isSlotCursorActive(s));
       if (focusingSlots.length > 0) {
         const primarySlot = focusingSlots[0];
-        const ownerIdx = playerConfigs[primarySlot]?.type === 'human' ? primarySlot : 0;
+        const ownerIdx = playerConfigs[primarySlot]?.type === 'human' ? primarySlot : setupHostSlot;
         const combinedLabel = focusingSlots
-          .map((s) => (playerConfigs[s]?.type === 'human' ? getPlayerSlotTheme(s).short : `P1➔${getPlayerSlotTheme(s).short}`))
+          .map((s) => {
+            const st = getPlayerSlotTheme(s, playerConfigs[s]?.primaryColor);
+            return playerConfigs[s]?.type === 'human' ? st.short : `P${setupHostSlot + 1}➔${st.short}`;
+          })
           .join(' + ');
         applyControllerFocusStyle(el, ownerIdx, combinedLabel);
       } else {
@@ -3025,9 +3234,9 @@ export function updateFocusUI() {
     );
     if (actionSlots.length > 0) {
       const primarySlot = actionSlots[0];
-      const ownerIdx = playerConfigs[primarySlot]?.type === 'human' ? primarySlot : 0;
-      const combinedLabel = actionSlots
-        .map((s) => (playerConfigs[s]?.type === 'human' ? getPlayerSlotTheme(s).short : 'P1'))
+      const ownerIdx = playerConfigs[primarySlot]?.type === 'human' ? primarySlot : setupHostSlot;
+        const combinedLabel = actionSlots
+        .map((s) => (playerConfigs[s]?.type === 'human' ? getPlayerSlotTheme(s, playerConfigs[s]?.primaryColor).short : `P${setupHostSlot + 1}`))
         .join(' + ');
       if (screen1ActionCol === 0) {
         applyControllerFocusStyle(btnBack, ownerIdx, combinedLabel);
@@ -3060,6 +3269,11 @@ export function setPracticeActionCol(v) { practiceActionCol = v; }
 export function getPlayerConfigs() { return playerConfigs; }
 export function getSelectedMatchBall() { return selectedMatchBall; }
 export function setSelectedMatchBall(val) { selectedMatchBall = val; }
+export function getSelectedPracticeDrill() { return selectedPracticeDrill; }
+export function setSelectedPracticeDrill(val) {
+  selectedPracticeDrill = val || 'sandbox';
+  updatePracticeDrillUI();
+}
 export function getSelectedMatchDuration() { return selectedMatchDuration; }
 export function setSelectedMatchDuration(val) { selectedMatchDuration = val; }
 export function getSelectedMatchArena() { return selectedMatchArena; }
@@ -3113,6 +3327,8 @@ export const playerSetup = {
   set screen1ActionCol(v) { screen1ActionCol = v; },
   get practiceActionCol() { return practiceActionCol; },
   set practiceActionCol(v) { practiceActionCol = v; },
+  get selectedPracticeDrill() { return selectedPracticeDrill; },
+  set selectedPracticeDrill(v) { setSelectedPracticeDrill(v); },
   get playerConfigs() { return playerConfigs; },
   get playerInputBadges() { return playerInputBadges; },
   get playerFocusRow() { return playerFocusRow; },

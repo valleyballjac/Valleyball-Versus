@@ -35,9 +35,9 @@ export const CAMERA_OPTIONS = [
 ];
 
 export const MATCH_BALL_OPTIONS = [
-  { id: 'random', label: 'RANDOM', desc: 'Random each match [Default]' },
+  { id: 'random', label: 'RANDOM', desc: 'Random each match' },
   { id: 'small', label: 'FOOTBALL (SMALL)', desc: '0.4m · Hard Difficulty' },
-  { id: 'medium', label: 'MEDIUM BALL', desc: '1.0m · Average Difficulty' },
+  { id: 'medium', label: 'MEDIUM BALL', desc: '1.0m · Average Difficulty [Default]' },
   { id: 'large', label: 'BIG BALL', desc: '1.5m · Easiest Difficulty' },
 ];
 
@@ -59,8 +59,8 @@ export const PRACTICE_BALL_OPTIONS = [
 ];
 
 export const PRACTICE_DRILL_OPTIONS = [
-  { id: 'sandbox', label: 'FREE SANDBOX', desc: 'Open court · Press B / Select to self-toss ball' },
-  { id: 'newcomer_drill', label: '60s NEWCOMER DRILL', desc: '4-step basics (Volley, Spike, Dive, Goal) + Guides' },
+  { id: 'sandbox', label: 'FREE SANDBOX', desc: 'Open court · Press Key B / Select to self-toss ball' },
+  { id: 'newcomer_drill', label: 'NEWCOMER CHECKLIST', desc: '4-step basics (Volley, Spike, Dive, Goal) · Untimed' },
   { id: 'ball_feeder', label: 'BALL FEEDER', desc: 'Auto-lobs a fresh midfield ball every 4.5s' },
   { id: 'sparring_bot', label: 'SPARRING BOT', desc: '1v1 warm-up rally vs Medium Balanced AI' },
   { id: 'local_warmup', label: 'LOCAL WARMUP (2P-4P)', desc: 'All connected controllers active on practice court' },
@@ -71,68 +71,163 @@ export const BALL_OPTIONS = MATCH_BALL_OPTIONS;
 export const HEADWEAR_OPTIONS = Object.freeze(SERIES_1_PLAYTEST_CYCLE.map((e) => Object.freeze({ id: e.id, label: e.label })));
 
 export const ASSIST_OPTIONS = [
-  { id: 'standard', label: 'STANDARD', desc: 'v0.2.2 baseline · 0.45m hit forgiveness' },
+  { id: 'standard', label: 'STANDARD', desc: 'Balanced · 0.45m hit forgiveness' },
   { id: 'pureSim', label: 'PURE SIM', desc: 'True physics · 0% forgiveness' },
-  { id: 'casual', label: 'CASUAL', desc: '0.65m reach + 360° right-stick aim steering' },
+  { id: 'casual', label: 'CASUAL', desc: '0.65m reach · Wide hit timing window' },
 ];
 
+export function toHexCss(color, fallback = '#d90429') {
+  if (typeof color === 'number' && Number.isFinite(color)) {
+    return '#' + (color & 0xffffff).toString(16).padStart(6, '0');
+  }
+  if (typeof color === 'string') {
+    const clean = color.trim().replace('#', '');
+    if (/^[0-9a-fA-F]{3}$/.test(clean)) {
+      return '#' + clean.replace(/(.)/g, '$1$1').toLowerCase();
+    }
+    if (/^[0-9a-fA-F]{6}$/.test(clean)) {
+      return '#' + clean.toLowerCase();
+    }
+  }
+  return fallback;
+}
+
+function parseHexRgb(color) {
+  const hex = toHexCss(color, '#ffffff').slice(1);
+  const num = parseInt(hex, 16);
+  return [(num >> 16) & 255, (num >> 8) & 255, num & 255];
+}
+
+function srgbToLinear(c) {
+  const s = c / 255;
+  return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+}
+
+function relativeLuminance(rgb) {
+  return 0.2126 * srgbToLinear(rgb[0]) + 0.7152 * srgbToLinear(rgb[1]) + 0.0722 * srgbToLinear(rgb[2]);
+}
+
+function linearRgbToLab([r, g, b]) {
+  const x = (0.4124564 * r + 0.3575761 * g + 0.1804375 * b) / 0.95047;
+  const y = (0.2126729 * r + 0.7151522 * g + 0.0721750 * b) / 1.00000;
+  const z = (0.0193339 * r + 0.1191920 * g + 0.9503041 * b) / 1.08883;
+  const f = (t) => (t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116);
+  const fx = f(x);
+  const fy = f(y);
+  const fz = f(z);
+  return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
+}
+
+function deltaE(a, b) {
+  return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+}
+
+export function readableOnDark(hex, bgHex = '#0f172a', minRatio = 4.5) {
+  const base = parseHexRgb(hex);
+  const bgLum = relativeLuminance(parseHexRgb(bgHex));
+  const ratioFor = (rgb) => {
+    const l = relativeLuminance(rgb);
+    return (Math.max(l, bgLum) + 0.05) / (Math.min(l, bgLum) + 0.05);
+  };
+  if (ratioFor(base) >= minRatio) {
+    return '#' + base.map((v) => v.toString(16).padStart(2, '0')).join('');
+  }
+  const white = [248, 250, 252];
+  for (let step = 1; step <= 20; step++) {
+    const t = step / 20;
+    const mixed = [
+      Math.round(base[0] + (white[0] - base[0]) * t),
+      Math.round(base[1] + (white[1] - base[1]) * t),
+      Math.round(base[2] + (white[2] - base[2]) * t),
+    ];
+    if (ratioFor(mixed) >= minRatio) {
+      return '#' + mixed.map((v) => v.toString(16).padStart(2, '0')).join('');
+    }
+  }
+  return '#f8fafc';
+}
+
+export function checkSwatchContrast(homeHex, awayHex) {
+  const ra = parseHexRgb(homeHex);
+  const rb = parseHexRgb(awayHex);
+  const lumA = relativeLuminance(ra);
+  const lumB = relativeLuminance(rb);
+  const ratio = Number(((Math.max(lumA, lumB) + 0.05) / (Math.min(lumA, lumB) + 0.05)).toFixed(2));
+  if (ra[0] === rb[0] && ra[1] === rb[1] && ra[2] === rb[2]) {
+    return { ok: false, ratio, reason: 'Both teams use the same kit color' };
+  }
+  if (lumA < 0.12 && lumB < 0.12 && ratio < 1.5) {
+    return { ok: false, ratio, reason: 'Both kit colors are very dark and may blend in shadow' };
+  }
+  if (lumA > 0.65 && lumB > 0.65 && ratio < 1.5) {
+    return { ok: false, ratio, reason: 'Both kit colors are bright and may blend on court' };
+  }
+  const la = [srgbToLinear(ra[0]), srgbToLinear(ra[1]), srgbToLinear(ra[2])];
+  const lb = [srgbToLinear(rb[0]), srgbToLinear(rb[1]), srgbToLinear(rb[2])];
+  if (deltaE(linearRgbToLab(la), linearRgbToLab(lb)) < 30) {
+    return { ok: false, ratio, reason: 'Kit colors are too close in hue and brightness' };
+  }
+  const simP = ([r, g, b]) => [
+    0.152286 * r + 1.052583 * g - 0.204868 * b,
+    0.114503 * r + 0.786281 * g + 0.099216 * b,
+    -0.003882 * r - 0.048116 * g + 1.051998 * b,
+  ];
+  const simD = ([r, g, b]) => [
+    0.367322 * r + 0.860646 * g - 0.227968 * b,
+    0.280085 * r + 0.672501 * g + 0.047413 * b,
+    -0.011820 * r + 0.042940 * g + 0.968881 * b,
+  ];
+  const simT = ([r, g, b]) => [
+    1.255528 * r - 0.076749 * g - 0.178779 * b,
+    -0.078411 * r + 0.930809 * g + 0.147602 * b,
+    0.004733 * r + 0.691367 * g + 0.303900 * b,
+  ];
+  if (Math.min(deltaE(linearRgbToLab(simP(la)), linearRgbToLab(simP(lb))), deltaE(linearRgbToLab(simD(la)), linearRgbToLab(simD(lb)))) < 28) {
+    return { ok: false, ratio, reason: 'Low red-green colorblind contrast between Home and Away kits' };
+  }
+  if (deltaE(linearRgbToLab(simT(la)), linearRgbToLab(simT(lb))) < 28) {
+    return { ok: false, ratio, reason: 'Low blue-yellow colorblind contrast between Home and Away kits' };
+  }
+  return { ok: true, ratio, reason: '' };
+}
+
+function buildKitTheme(slotIdx, kitColorHex) {
+  const hex = readableOnDark(kitColorHex, '#0f172a');
+  const rgb = parseHexRgb(hex);
+  const rgba = (a) => `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${a})`;
+  const slotNum = slotIdx + 1;
+  return Object.freeze({
+    slot: slotIdx,
+    label: `P${slotNum}`,
+    short: `P${slotNum}`,
+    teamTag: slotIdx % 2 === 0 ? 'T1' : 'T2',
+    name: getColorName(kitColorHex),
+    hex,
+    bg: rgba(0.14),
+    bgStrong: rgba(0.24),
+    border: hex,
+    glow: rgba(0.48),
+    textOnFill: relativeLuminance(rgb) > 0.35 ? '#0f172a' : '#ffffff',
+  });
+}
+
 /**
- * Signature visual identity per controller/player slot (P1..P4).
- * Ensures every player's cursor, badge, and viewport indicator is immediately distinguishable.
+ * Signature visual identity per controller/player slot (P1..P4) aligned with team kit colors.
+ * Defaults to Home Red (P1/P3) and Away Blue (P2/P4) while keeping P1..P4 slot tags distinct.
  */
 export const PLAYER_SLOT_COLORS = Object.freeze([
-  Object.freeze({
-    slot: 0,
-    label: 'P1',
-    short: 'P1',
-    name: 'Cyan',
-    hex: '#00e5ff',
-    bg: 'rgba(0, 229, 255, 0.14)',
-    bgStrong: 'rgba(0, 229, 255, 0.24)',
-    border: '#00e5ff',
-    glow: 'rgba(0, 229, 255, 0.48)',
-    textOnFill: '#001018',
-  }),
-  Object.freeze({
-    slot: 1,
-    label: 'P2',
-    short: 'P2',
-    name: 'Coral',
-    hex: '#ff2e55',
-    bg: 'rgba(255, 46, 85, 0.14)',
-    bgStrong: 'rgba(255, 46, 85, 0.24)',
-    border: '#ff2e55',
-    glow: 'rgba(255, 46, 85, 0.48)',
-    textOnFill: '#ffffff',
-  }),
-  Object.freeze({
-    slot: 2,
-    label: 'P3',
-    short: 'P3',
-    name: 'Gold',
-    hex: '#fbb417',
-    bg: 'rgba(251, 180, 23, 0.14)',
-    bgStrong: 'rgba(251, 180, 23, 0.24)',
-    border: '#fbb417',
-    glow: 'rgba(251, 180, 23, 0.48)',
-    textOnFill: '#1a1100',
-  }),
-  Object.freeze({
-    slot: 3,
-    label: 'P4',
-    short: 'P4',
-    name: 'Violet',
-    hex: '#a855f7',
-    bg: 'rgba(168, 85, 247, 0.14)',
-    bgStrong: 'rgba(168, 85, 247, 0.24)',
-    border: '#a855f7',
-    glow: 'rgba(168, 85, 247, 0.48)',
-    textOnFill: '#ffffff',
-  }),
+  buildKitTheme(0, '#d90429'),
+  buildKitTheme(1, '#1d4ed8'),
+  buildKitTheme(2, '#d90429'),
+  buildKitTheme(3, '#1d4ed8'),
 ]);
 
-export function getPlayerSlotTheme(slotIdx = 0) {
-  return PLAYER_SLOT_COLORS[slotIdx] || PLAYER_SLOT_COLORS[0];
+export function getPlayerSlotTheme(slotIdx = 0, kitColorHex = null) {
+  const safeIdx = Number.isInteger(slotIdx) && slotIdx >= 0 && slotIdx < 4 ? slotIdx : 0;
+  if (kitColorHex !== null && kitColorHex !== undefined) {
+    return buildKitTheme(safeIdx, kitColorHex);
+  }
+  return PLAYER_SLOT_COLORS[safeIdx] || PLAYER_SLOT_COLORS[0];
 }
 
 /**
@@ -270,9 +365,9 @@ export function getSlotViewportInfo(slotIdx, humanSlots = [], mode = 'match') {
 /**
  * Renders a mini 16:9 screen diagram SVG + viewport label badge showing where the player's camera sits on screen.
  */
-export function renderViewportBadgeHtml(slotIdx, humanSlots = [], mode = 'match') {
+export function renderViewportBadgeHtml(slotIdx, humanSlots = [], mode = 'match', kitColorHex = null) {
   const info = getSlotViewportInfo(slotIdx, humanSlots, mode);
-  const theme = getPlayerSlotTheme(slotIdx);
+  const theme = getPlayerSlotTheme(slotIdx, kitColorHex);
   const activeFill = info.mode === 'ai' ? 'rgba(148,163,184,0.28)' : theme.hex;
   const borderCol = info.mode === 'ai' ? 'rgba(148,163,184,0.4)' : theme.hex;
   const textCol = info.mode === 'ai' ? '#94a3b8' : theme.hex;
@@ -299,6 +394,6 @@ export function renderViewportBadgeHtml(slotIdx, humanSlots = [], mode = 'match'
     ${highlightRect}
   </svg>`;
 
-  return `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 6px;border-radius:5px;background:rgba(15,23,42,0.75);border:1px solid ${borderCol};color:${textCol};font-size:9px;font-weight:800;letter-spacing:0.05em;white-space:nowrap;" title="Match Viewport: ${info.detail}">${svg}<span>${info.label}</span></span>`;
+  return `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 6px;border-radius:5px;background:rgba(15,23,42,0.75);border:1px solid ${borderCol};color:${textCol};font-size:9px;font-weight:800;letter-spacing:0.05em;white-space:nowrap;" title="${theme.short} Match Viewport: ${info.detail}">${svg}<span>${theme.short} · ${info.label}</span></span>`;
 }
 

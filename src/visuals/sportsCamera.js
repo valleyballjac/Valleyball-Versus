@@ -8,6 +8,7 @@
  */
 
 import * as THREE from 'three';
+import { getCourtFloorY } from '../ai/courtHeightmap.js';
 
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const _camTarget = new THREE.Vector3();
@@ -141,11 +142,14 @@ export function updateSportsCamera(camera, athletes = [], ball = null, frameDelt
   const dynamicDistance = Math.min(68.0, Math.max(20.0, Math.max(requiredDistZ, requiredDistY, requiredDistX)));
   const dynamicHeight = Math.min(32.0, Math.max(11.0, dynamicDistance * 0.40 + 2.0));
 
-  // Positioned on the East sideline (+X), tracking longitudinal play (Z)
+  // Positioned on the East sideline (+X), tracking longitudinal play (Z) above court terrain
+  const desiredX = targetX + dynamicDistance;
+  const desiredZ = targetZ * 0.65;
+  const minSportsY = Math.max(1.5, getCourtFloorY(desiredX, desiredZ) + 1.35);
   _desiredPos.set(
-    targetX + dynamicDistance,
-    Math.max(1.5, targetY + dynamicHeight + heightOffset),
-    targetZ * 0.65, // Slight dolly lead along court length
+    desiredX,
+    Math.max(minSportsY, targetY + dynamicHeight + heightOffset),
+    desiredZ,
   );
 
   _tempTarget.set(targetX, targetY, targetZ);
@@ -160,6 +164,8 @@ export function updateSportsCamera(camera, athletes = [], ball = null, frameDelt
     _camTarget.lerp(_tempTarget, ease);
     camera.position.lerp(_desiredPos, ease);
   }
+  const floorCamY = getCourtFloorY(camera.position.x, camera.position.z) + 1.2;
+  if (camera.position.y < floorCamY) camera.position.y = floorCamY;
 
   camera.lookAt(_camTarget);
 }

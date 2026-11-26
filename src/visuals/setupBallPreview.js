@@ -164,37 +164,51 @@ export function createSetupBallPreview(scene) {
 
       // Framed cleanly for cinematicCamera setup view `(0, 1.55, 6.25) -> (0, 1.38, 0)`:
       // - Match Mode: elevates the spinning ball(s) into the open stadium sky ABOVE the
-      //   staged athletes (heads top out at ~1.72 m, z = 0.15) and slightly behind them
-      //   (z = -0.35) so both characters remain 100% unobstructed from head to toe.
+      //   staged athletes (heads top out at ~1.72 m, z = 0.15) with wide 3D separation.
       // - Practice Mode: floats the ball(s) cleanly to the right of the solo athlete
-      //   (athlete at x = +0.45) with zero overlap.
-      const baseX = isPractice ? 2.25 : 0.0;
-      const baseZ = isPractice ? -0.35 : -0.35;
+      //   (athlete at x = +0.45) with zero overlap or inter-ball clipping.
+      const baseX = isPractice ? 2.45 : 0.0;
+      const baseZ = isPractice ? -0.60 : -0.65;
 
       pedestalGroup.visible = true;
       pedestalGroup.position.set(baseX, 0.04, isPractice ? -0.10 : 0.10);
 
       if (isCarousel) {
-        // 3-Ball Slow Orbital Carousel (shows Small, Medium, and Large at true 1:1 scale)
-        const rx = isPractice ? 0.62 : 1.50;
-        const rz = isPractice ? 0.24 : 0.28;
-        const ringScale = isPractice ? 0.88 : 1.25;
+        // 3-Ball Floating Trio (Small r=0.20m, Medium r=0.50m, Large r=0.75m at 1:1 scale).
+        // Each ball occupies its own well-separated horizontal lane with a gentle micro-orbit
+        // so balls never intersect in 3D space and never eclipse each other in 2D camera view.
+        const ringScale = isPractice ? 1.05 : 1.45;
         pedestalGroup.scale.set(ringScale, 1, ringScale);
         applyRainbowColor(elapsed * 0.95, outerRingMat, innerDiscMat);
         outerRingMat.opacity = 0.50 + Math.sin(elapsed * 3.0) * 0.12;
         innerDiscMat.opacity = 0.11;
 
-        const orbitSpeed = 0.82;
+        const orbitSpeed = 0.85;
         for (let i = 0; i < allBalls.length; i++) {
           const b = allBalls[i];
           const mesh = b?.mesh;
           if (!mesh) continue;
           const phase = elapsed * orbitSpeed + (ORBIT_PHASE_OFFSETS[i] ?? (i * 2.1));
           const r = b.radius ?? 0.5;
-          const ox = baseX + Math.sin(phase) * rx;
-          const oz = baseZ + Math.cos(phase) * rz;
-          // Elevate cleanly above the ~1.72m athlete heads in Match Mode, or clearly to the right in Practice
-          const oy = (isPractice ? 1.98 : 2.52) + r * 0.58 + Math.sin(elapsed * 2.2 + i * 2.09) * 0.06;
+          let laneX;
+          let laneY;
+          let laneZ;
+          let wobbleX;
+          if (isPractice) {
+            laneX = i === 0 ? 1.28 : (i === 1 ? 2.55 : 4.25);
+            laneY = i === 0 ? 1.88 : (i === 1 ? 2.34 : 2.76);
+            laneZ = i === 0 ? -0.90 : (i === 1 ? -1.30 : -1.85);
+            wobbleX = 0.12;
+          } else {
+            laneX = i === 0 ? -2.05 : (i === 1 ? -0.15 : 2.05);
+            laneY = i === 0 ? 2.42 : (i === 1 ? 2.52 : 2.58);
+            laneZ = i === 0 ? -0.95 : (i === 1 ? -1.10 : -1.35);
+            wobbleX = 0.20;
+          }
+          const ox = laneX + Math.sin(phase) * wobbleX;
+          const oy = laneY + Math.cos(phase * 1.18) * 0.12;
+          const oz = laneZ + Math.cos(phase) * 0.14;
+          void r;
 
           mesh.visible = true;
           mesh.position.set(ox, oy, oz);

@@ -1,4 +1,9 @@
 import * as THREE from 'three';
+import { getCourtFloorY } from '../ai/courtHeightmap.js';
+
+function minCourtCameraY(x, z, clearance = 1.15) {
+  return Math.max(1.15, getCourtFloorY(x, z) + clearance);
+}
 
 /**
  * Cinematic Camera Rig for Valleyball.
@@ -49,6 +54,8 @@ export class CinematicCamera {
       this.freePitch = Math.max(-1.35, Math.min(1.35, this._freeEuler.x));
       this.freeFov = 62;
     }
+    const minY = minCourtCameraY(this.camera.position.x, this.camera.position.z);
+    if (this.camera.position.y < minY) this.camera.position.y = minY;
     this.camera.fov = this.freeFov;
     this.camera.updateProjectionMatrix();
   }
@@ -80,13 +87,15 @@ export class CinematicCamera {
 
   nudgeFreeHeight(deltaMeters = 0) {
     if (this.mode !== 'free' || !Number.isFinite(deltaMeters)) return this.camera.position.y;
-    this.camera.position.y = Math.max(1.0, Math.min(54.0, this.camera.position.y + deltaMeters));
+    const minY = minCourtCameraY(this.camera.position.x, this.camera.position.z);
+    this.camera.position.y = Math.max(minY, Math.min(54.0, this.camera.position.y + deltaMeters));
     return this.camera.position.y;
   }
 
   setFreeHeight(heightMeters = 12.0) {
     if (this.mode !== 'free' || !Number.isFinite(heightMeters)) return this.camera.position.y;
-    this.camera.position.y = Math.max(1.0, Math.min(54.0, heightMeters));
+    const minY = minCourtCameraY(this.camera.position.x, this.camera.position.z);
+    this.camera.position.y = Math.max(minY, Math.min(54.0, heightMeters));
     this._freeVel.y = 0;
     return this.camera.position.y;
   }
@@ -129,10 +138,17 @@ export class CinematicCamera {
     this._freeVel.lerp(this._freeDesiredVel, damp);
     this.camera.position.addScaledVector(this._freeVel, safeDt);
 
-    // Keep drone smoothly inside stadium envelope
+    // Keep drone smoothly inside stadium envelope and strictly above sloped Valley Court terrain
     this.camera.position.x = Math.max(-28.5, Math.min(28.5, this.camera.position.x));
-    this.camera.position.y = Math.max(1.0, Math.min(54.0, this.camera.position.y));
     this.camera.position.z = Math.max(-62.0, Math.min(62.0, this.camera.position.z));
+    const minY = minCourtCameraY(this.camera.position.x, this.camera.position.z);
+    if (this.camera.position.y <= minY) {
+      this.camera.position.y = minY;
+      if (this._freeVel.y < 0) this._freeVel.y = 0;
+    } else if (this.camera.position.y > 54.0) {
+      this.camera.position.y = 54.0;
+      if (this._freeVel.y > 0) this._freeVel.y = 0;
+    }
   }
 
   startTitleOrbit() {

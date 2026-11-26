@@ -1,12 +1,11 @@
 /**
  * Module: ui/replayDock
- * Role: Broadcast Replay Director Dock, Athlete POV switcher (P1-P4), 7-camera selector
- *   (Broadcast / Dynamic / Tactical / Chase / Ball-Track / 1st-Person / Free Drone),
- *   in-app clean WebGL canvas video clip recorder (.webm), `.vbreplay` save/load, and
- *   keyboard + gamepad transport controller.
+ * Role: Streamlined 2-row Broadcast Replay Dock with spatial D-pad controller navigation,
+ *   mouse-drag orbit/free-drone handoff across all 7 cameras, Numpad 1 to 7 shortcuts,
+ *   in-app WebGL canvas clip recorder (.webm), and .vbreplay save/load.
  * Frame Phase: Render (DOM transport updates + Free-Fly drone + gamepad director controls).
  * Active Architectural Laws:
- *   - LAW 1 (Single Authority): Delegates playback transport, follows & seeks exclusively
+ *   - LAW 1 (Single Authority): Delegates playback transport, follows, and seeks exclusively
  *     through `replayManager` and Free-Fly camera motion through `cinematicCamera`.
  */
 
@@ -15,13 +14,13 @@ import { setCleanBroadcastHud } from '../config/hudConfig.js';
 import { createMenuPadTracker, MENU_PAD } from '../input/menuPads.js';
 
 const CAMERA_BUTTONS = [
-  { id: 'broadcast', key: '1', label: 'BROADCAST' },
-  { id: 'sports', key: '2', label: 'DYNAMIC' },
-  { id: 'tactical', key: '3', label: 'TACTICAL' },
-  { id: 'chase', key: '4', label: 'CHASE' },
-  { id: 'thirdPerson', key: '5', label: 'BALL-TRACK' },
-  { id: 'firstPerson', key: '6', label: '1ST PERSON' },
-  { id: 'free', key: '7', label: 'DRONE [F]' },
+  { id: 'broadcast', key: '1', label: '1:TV', tip: 'Sideline Broadcast (1 / Numpad 1)' },
+  { id: 'sports', key: '2', label: '2:DYN', tip: 'Dynamic Action Broadcast (2 / Numpad 2)' },
+  { id: 'tactical', key: '3', label: '3:TAC', tip: 'Tactical Overhead (3 / Numpad 3)' },
+  { id: 'chase', key: '4', label: '4:CHS', tip: 'Chase Cam (4 / Numpad 4 · Drag to orbit)' },
+  { id: 'thirdPerson', key: '5', label: '5:BALL', tip: 'Ball-Track Cam (5 / Numpad 5 · Drag to orbit)' },
+  { id: 'firstPerson', key: '6', label: '6:POV', tip: '1st Person POV (6 / Numpad 6 · Drag to look)' },
+  { id: 'free', key: '7', label: '7:FLY', tip: 'Free Drone (7 / Numpad 7 / F · WASD or L-Stick)' },
 ];
 
 const FORWARD_SPEED_PILLS = [0.1, 0.25, 0.5, 1, 2, 4];
@@ -42,14 +41,13 @@ let markersEl = null;
 let goalsStripEl = null;
 let goalChipBtns = [];
 let heightReadoutEl = null;
-let droneHintEl = null;
 let targetGroupEl = null;
 let recBtnEl = null;
 let recBadgeEl = null;
 let fileInputEl = null;
-let speedBtns = [];
 let camBtns = [];
 let targetBtns = [];
+let dockFocusedBtn = null;
 
 let dockHiddenForCleanFootage = false;
 let lastGoalsSignature = '';
@@ -57,6 +55,8 @@ let lastPlayersSignature = '';
 let lastUiSignature = '';
 let lastBannerSignature = '';
 let isDraggingLook = false;
+let dragStartX = 0;
+let dragStartY = 0;
 let lastDragX = 0;
 let lastDragY = 0;
 let isScrubbingTimeline = false;
@@ -271,16 +271,106 @@ export function toggleReplayVideoClip() {
   }
 }
 
+/**
+ * Collects focusable dock buttons that pass checkVisibility() so hidden or detached
+ * elements at (0, 0) never become accidental D-pad targets.
+ */
+export function getVisibleDockButtons() {
+  if (!dockEl || typeof dockEl.querySelectorAll !== 'function') return [];
+  const all = Array.from(dockEl.querySelectorAll('button'));
+  return all.filter((btn) => {
+    if (!btn || btn.disabled) return false;
+    if (typeof btn.checkVisibility === 'function') {
+      return btn.checkVisibility();
+    }
+    return btn.style?.display !== 'none';
+  });
+}
+
+function applyDockSpatialFocusStyles() {
+  const buttons = getVisibleDockButtons();
+  if (dockFocusedBtn && !buttons.includes(dockFocusedBtn)) {
+    dockFocusedBtn = null;
+  }
+  for (let i = 0; i < buttons.length; i++) {
+    const b = buttons[i];
+    const focused = b === dockFocusedBtn;
+    b.dataset.dockFocused = focused ? 'true' : 'false';
+    if (focused) {
+      b.style.outline = '2.5px solid #fbbf24';
+      b.style.outlineOffset = '2px';
+    } else {
+      b.style.outline = 'none';
+      b.style.outlineOffset = '0px';
+    }
+  }
+}
+
+export function moveDockSpatialFocus(dx, dy) {
+  const candidates = getVisibleDockButtons();
+  if (candidates.length === 0) return null;
+
+  if (!dockFocusedBtn || !candidates.includes(dockFocusedBtn)) {
+    dockFocusedBtn = playBtnEl && candidates.includes(playBtnEl) ? playBtnEl : candidates[0];
+    applyDockSpatialFocusStyles();
+    return dockFocusedBtn;
+  }
+
+  if (typeof dockFocusedBtn.getBoundingClientRect === 'function') {
+    const fromRect = dockFocusedBtn.getBoundingClientRect();
+    if (fromRect.width > 0 || fromRect.height > 0) {
+      const fx = fromRect.left + fromRect.width * 0.5;
+      const fy = fromRect.top + fromRect.height * 0.5;
+      let best = null;
+      let bestScore = Infinity;
+
+      for (let i = 0; i < candidates.length; i++) {
+        const cand = candidates[i];
+        if (cand === dockFocusedBtn || typeof cand.getBoundingClientRect !== 'function') continue;
+        const r = cand.getBoundingClientRect();
+        if (r.width === 0 && r.height === 0) continue;
+        const cx = r.left + r.width * 0.5;
+        const cy = r.top + r.height * 0.5;
+        const vx = cx - fx;
+        const vy = cy - fy;
+        const primary = vx * dx + vy * dy;
+        if (primary <= 2) continue;
+        const cross = Math.abs(vx * dy - vy * dx);
+        const score = primary + cross * 2.6;
+        if (score < bestScore) {
+          bestScore = score;
+          best = cand;
+        }
+      }
+      if (best) {
+        dockFocusedBtn = best;
+        applyDockSpatialFocusStyles();
+        return dockFocusedBtn;
+      }
+    }
+  }
+
+  // Wrap-around fallback along horizontal axis or non-layout mock environments
+  if (dx !== 0) {
+    const curIdx = candidates.indexOf(dockFocusedBtn);
+    const nextIdx = (curIdx + (dx > 0 ? 1 : -1) + candidates.length) % candidates.length;
+    dockFocusedBtn = candidates[nextIdx];
+    applyDockSpatialFocusStyles();
+  }
+  return dockFocusedBtn;
+}
+
 function makeDockBtn(label, title, onClick, accent = null) {
   const b = document.createElement('button');
+  b.type = 'button';
   b.textContent = label;
   b.title = title;
   b.style.cssText = `
-    padding: 4px 8px;
+    padding: 4px 7px;
     font-size: 10px;
     font-weight: 800;
     font-family: inherit;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.04em;
     color: ${accent || '#e2e8f0'};
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid ${accent || 'rgba(255, 255, 255, 0.22)'};
@@ -288,7 +378,11 @@ function makeDockBtn(label, title, onClick, accent = null) {
     cursor: pointer;
     white-space: nowrap;
   `;
-  b.onclick = onClick;
+  b.onclick = () => {
+    dockFocusedBtn = b;
+    applyDockSpatialFocusStyles();
+    onClick?.();
+  };
   return b;
 }
 
@@ -304,10 +398,10 @@ function buildDock() {
     transform: translateX(-50%);
     display: none;
     flex-direction: column;
-    gap: 5px;
-    width: min(1220px, 97vw);
-    padding: 7px 12px;
-    background: rgba(8, 13, 22, 0.90);
+    gap: 6px;
+    width: min(1240px, 97vw);
+    padding: 8px 12px;
+    background: rgba(8, 13, 22, 0.92);
     border: 1px solid rgba(0, 229, 255, 0.35);
     border-top: 3px solid #00e5ff;
     border-radius: 10px;
@@ -317,10 +411,9 @@ function buildDock() {
     z-index: 620;
     user-select: none;
     box-sizing: border-box;
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.72);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.75);
   `;
 
-  // Hidden .vbreplay file input for loading saved replays
   fileInputEl = document.createElement('input');
   fileInputEl.type = 'file';
   fileInputEl.accept = '.vbreplay,application/octet-stream';
@@ -338,30 +431,33 @@ function buildDock() {
   });
   dockEl.appendChild(fileInputEl);
 
-  // Row 1: Interactive Click-and-Drag Timeline Scrubber + Playhead Thumb + Hover Tooltip + Colored Scorer Goal Pins
+  // ROW 1: Compact Status Pill + Interactive Timeline Scrubber + Goal Pins + Inline Goal Chips + Time
   const timelineRow = document.createElement('div');
-  timelineRow.style.cssText = 'display: flex; align-items: center; gap: 10px; width: 100%; padding-top: 12px;';
+  timelineRow.id = 'replay-row-timeline';
+  timelineRow.style.cssText = 'display: flex; align-items: center; gap: 8px; width: 100%; padding-top: 8px;';
 
   const replayBadge = document.createElement('span');
-  replayBadge.textContent = '● DIRECTOR SUITE';
-  replayBadge.style.cssText = 'font-size: 10px; font-weight: 900; letter-spacing: 0.1em; color: #00e5ff; white-space: nowrap;';
+  replayBadge.textContent = '● REPLAY';
+  replayBadge.style.cssText = 'font-size: 10px; font-weight: 900; letter-spacing: 0.08em; color: #00e5ff; white-space: nowrap;';
 
   statusPillEl = document.createElement('span');
   statusPillEl.id = 'replay-status-pill';
   statusPillEl.textContent = '▶ 1x';
-  statusPillEl.style.cssText = 'padding: 2px 7px; border-radius: 999px; background: rgba(0, 229, 255, 0.16); border: 1px solid rgba(0, 229, 255, 0.45); color: #00e5ff; font-size: 9.5px; font-weight: 900; letter-spacing: 0.06em; white-space: nowrap; min-width: 58px; text-align: center;';
+  statusPillEl.style.cssText = 'padding: 2px 7px; border-radius: 999px; background: rgba(0, 229, 255, 0.16); border: 1px solid rgba(0, 229, 255, 0.45); color: #00e5ff; font-size: 9.5px; font-weight: 900; letter-spacing: 0.05em; white-space: nowrap; min-width: 54px; text-align: center;';
 
   recBadgeEl = document.createElement('span');
   recBadgeEl.id = 'replay-rec-badge';
   recBadgeEl.textContent = '● REC 00:00';
-  recBadgeEl.style.cssText = 'display: none; padding: 2px 7px; border-radius: 999px; background: #ef4444; color: #ffffff; font-size: 9.5px; font-weight: 900; letter-spacing: 0.08em; white-space: nowrap;';
+  recBadgeEl.style.cssText = 'display: none; padding: 2px 7px; border-radius: 999px; background: #ef4444; color: #ffffff; font-size: 9.5px; font-weight: 900; letter-spacing: 0.06em; white-space: nowrap;';
 
   trackEl = document.createElement('div');
   trackEl.id = 'replay-timeline-track';
+  trackEl.title = 'Click or drag to scrub timeline';
   trackEl.style.cssText = `
     position: relative;
     flex: 1;
-    height: 24px;
+    min-width: 180px;
+    height: 22px;
     display: flex;
     align-items: center;
     cursor: pointer;
@@ -373,7 +469,7 @@ function buildDock() {
   railEl.style.cssText = `
     position: relative;
     width: 100%;
-    height: 10px;
+    height: 9px;
     background: rgba(255, 255, 255, 0.12);
     border: 1px solid rgba(255, 255, 255, 0.22);
     border-radius: 999px;
@@ -399,13 +495,13 @@ function buildDock() {
     position: absolute;
     left: 0%;
     top: 50%;
-    width: 16px;
-    height: 16px;
+    width: 15px;
+    height: 15px;
     transform: translate(-50%, -50%);
     border-radius: 50%;
     background: #ffffff;
     border: 3px solid #00e5ff;
-    box-shadow: 0 0 12px rgba(0, 229, 255, 0.9);
+    box-shadow: 0 0 10px rgba(0, 229, 255, 0.9);
     pointer-events: none;
     z-index: 4;
   `;
@@ -414,7 +510,7 @@ function buildDock() {
   hoverTipEl.id = 'replay-timeline-hovertip';
   hoverTipEl.style.cssText = `
     position: absolute;
-    bottom: 24px;
+    bottom: 22px;
     left: 0%;
     transform: translateX(-50%);
     display: none;
@@ -489,56 +585,60 @@ function buildDock() {
     if (!isScrubbingTimeline) hoverTipEl.style.display = 'none';
   });
 
-  timeLabelEl = document.createElement('span');
-  timeLabelEl.id = 'replay-time-label';
-  timeLabelEl.style.cssText = 'font-size: 11.5px; font-weight: 900; color: #ffffff; min-width: 96px; text-align: right; white-space: nowrap;';
-  timeLabelEl.textContent = '00:00 / 00:00';
-
-  timelineRow.append(replayBadge, statusPillEl, recBadgeEl, trackEl, timeLabelEl);
-  dockEl.appendChild(timelineRow);
-
-  // Row 1b: Clickable Goal Scorer Strip (shows who scored every goal, auto-hidden if 0 goals)
   goalsStripEl = document.createElement('div');
   goalsStripEl.id = 'replay-goals-strip';
-  goalsStripEl.style.cssText = 'display: none; align-items: center; gap: 5px; overflow-x: auto; padding: 2px 0 4px 0; scrollbar-width: thin;';
-  dockEl.appendChild(goalsStripEl);
+  goalsStripEl.style.cssText = 'display: none; align-items: center; gap: 4px; max-width: 260px; overflow-x: auto; scrollbar-width: none;';
 
-  // Row 2: Prominent Media Transport Controls + Slow-Mo + Speed Pills + Export / Clean / Exit
-  const controlsRow = document.createElement('div');
-  controlsRow.style.cssText = 'display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding-bottom: 5px; border-bottom: 1px solid rgba(255, 255, 255, 0.08);';
+  timeLabelEl = document.createElement('span');
+  timeLabelEl.id = 'replay-time-label';
+  timeLabelEl.style.cssText = 'font-size: 11px; font-weight: 900; color: #ffffff; min-width: 88px; text-align: right; white-space: nowrap;';
+  timeLabelEl.textContent = '00:00 / 00:00';
+
+  timelineRow.append(replayBadge, statusPillEl, recBadgeEl, trackEl, goalsStripEl, timeLabelEl);
+  dockEl.appendChild(timelineRow);
+
+  // ROW 2: Icon-First Transport + Follow Athlete + Height + 7 Cameras + Clip/Save/Load/Clean/Exit
+  const barRow = document.createElement('div');
+  barRow.id = 'replay-row-controls';
+  barRow.style.cssText = 'display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px;';
 
   const makeTransportBtn = (id, label, title, onClick, extraCss = '') => {
     const b = document.createElement('button');
     b.id = id;
+    b.type = 'button';
     b.textContent = label;
     b.title = title;
     b.style.cssText = `
-      padding: 5px 8px;
-      font-size: 10.5px;
+      padding: 4px 7px;
+      font-size: 10px;
       font-weight: 900;
       font-family: inherit;
-      letter-spacing: 0.05em;
+      letter-spacing: 0.04em;
       color: #f8fafc;
       background: rgba(255, 255, 255, 0.10);
-      border: 1.5px solid rgba(255, 255, 255, 0.28);
-      border-radius: 7px;
+      border: 1.5px solid rgba(255, 255, 255, 0.26);
+      border-radius: 6px;
       cursor: pointer;
       white-space: nowrap;
       transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
       ${extraCss}
     `;
-    b.onclick = onClick;
+    b.onclick = () => {
+      dockFocusedBtn = b;
+      applyDockSpatialFocusStyles();
+      onClick?.();
+    };
     return b;
   };
 
   const transportGroup = document.createElement('div');
-  transportGroup.style.cssText = 'display: flex; align-items: center; gap: 4px; flex-wrap: wrap;';
+  transportGroup.style.cssText = 'display: flex; align-items: center; gap: 3px;';
 
-  const prevGoalBtn = makeTransportBtn('replay-btn-prev-goal', '⏮', 'Jump to previous goal or match start (,)', () => {
+  const prevGoalBtn = makeTransportBtn('replay-btn-prev-goal', '⏮', 'Previous goal or match start (,)', () => {
     callbacks.onJumpGoal?.(-1);
   });
 
-  rewModeBtnEl = makeTransportBtn('replay-btn-rewind', '⏪ REW', 'Continuous Rewind (-1x / -2x / -4x) [R]', () => {
+  rewModeBtnEl = makeTransportBtn('replay-btn-rewind', '⏪', 'Continuous Rewind (-1x / -2x / -4x) [R]', () => {
     replayManager.cycleRewind();
     lastUiSignature = '';
   }, 'border-color: rgba(245, 158, 11, 0.55); color: #fcd34d;');
@@ -546,14 +646,14 @@ function buildDock() {
   const stepBackBtn = makeTransportBtn('replay-btn-step-back', '-5s', 'Skip back 5 seconds (J)', () => {
     const st = replayManager.getPlaybackStatus();
     callbacks.onSeek?.(Math.max(0, st.cursor - 300));
-  }, 'padding: 5px 7px; font-size: 10px;');
+  });
 
-  playBtnEl = makeTransportBtn('replay-btn-playpause', '⏸ PAUSE', 'Play / Pause (Space)', () => {
+  playBtnEl = makeTransportBtn('replay-btn-playpause', '⏸', 'Play / Pause (Space / Gamepad A)', () => {
     replayManager.togglePlaybackPaused();
     lastUiSignature = '';
-  }, 'padding: 5px 12px; font-size: 11px; min-width: 92px; background: #00e5ff; color: #06101c; border-color: #ffffff; box-shadow: 0 0 14px rgba(0, 229, 255, 0.45);');
+  }, 'padding: 4px 11px; font-size: 11px; min-width: 44px; background: #00e5ff; color: #06101c; border-color: #ffffff; box-shadow: 0 0 12px rgba(0, 229, 255, 0.4);');
 
-  slowMoBtnEl = makeTransportBtn('replay-btn-slomo', 'SLO-MO', 'Cycle Slow-Motion (0.5x / 0.25x / 0.1x / 1x) [M]', () => {
+  slowMoBtnEl = makeTransportBtn('replay-btn-slomo', 'SLO', 'Cycle Slow-Motion (0.5x / 0.25x / 0.1x / 1x) [M]', () => {
     replayManager.cycleSlowMo();
     lastUiSignature = '';
   }, 'border-color: rgba(16, 185, 129, 0.65); color: #6ee7b7;');
@@ -561,147 +661,115 @@ function buildDock() {
   const stepFwdBtn = makeTransportBtn('replay-btn-step-fwd', '+5s', 'Skip forward 5 seconds (L)', () => {
     const st = replayManager.getPlaybackStatus();
     callbacks.onSeek?.(Math.min(st.totalFrames, st.cursor + 300));
-  }, 'padding: 5px 7px; font-size: 10px;');
+  });
 
-  ffwModeBtnEl = makeTransportBtn('replay-btn-ffw', '⏩ FFW', 'Fast-Forward (2x / 4x / 1x) [ ] ]', () => {
+  ffwModeBtnEl = makeTransportBtn('replay-btn-ffw', '⏩', 'Fast-Forward (2x / 4x / 1x) [ ] ]', () => {
     replayManager.cycleFastForward();
     lastUiSignature = '';
   }, 'border-color: rgba(168, 85, 247, 0.65); color: #e9d5ff;');
 
-  const nextGoalBtn = makeTransportBtn('replay-btn-next-goal', '⏭', 'Jump to next goal or match end (.)', () => {
+  const nextGoalBtn = makeTransportBtn('replay-btn-next-goal', '⏭', 'Next goal or match end (.)', () => {
     callbacks.onJumpGoal?.(1);
   });
 
   transportGroup.append(prevGoalBtn, rewModeBtnEl, stepBackBtn, playBtnEl, slowMoBtnEl, stepFwdBtn, ffwModeBtnEl, nextGoalBtn);
 
-  const speedGroup = document.createElement('div');
-  speedGroup.style.cssText = 'display: flex; align-items: center; gap: 3px;';
-  speedBtns = FORWARD_SPEED_PILLS.map((spd) => {
-    const b = makeDockBtn(`${spd}x`, `Set playback speed ${spd}x ([ / ])`, () => {
-      replayManager.setPlaybackSpeed(spd);
-      replayManager.setPlaybackPaused(false);
-      lastUiSignature = '';
-    });
-    b.style.padding = '3px 6px';
-    b.dataset.speed = String(spd);
-    speedGroup.appendChild(b);
-    return b;
-  });
-
-  const rightGroup = document.createElement('div');
-  rightGroup.style.cssText = 'display: flex; align-items: center; gap: 4px; flex-wrap: wrap;';
-
-  recBtnEl = makeDockBtn('● REC [V]', 'Record clean WebGL canvas video clip (.webm, zero dock overlay)', () => {
-    toggleReplayVideoClip();
-  }, '#fb7185');
-  recBtnEl.id = 'replay-btn-rec';
-
-  const saveBtn = makeDockBtn('SAVE', 'Download current match replay file (.vbreplay)', () => {
-    replayManager.downloadLastReplay();
-  }, '#4ade80');
-  saveBtn.id = 'replay-btn-save';
-
-  const loadBtn = makeDockBtn('LOAD', 'Open a saved .vbreplay file from disk', () => {
-    fileInputEl?.click();
-  }, '#38bdf8');
-  loadBtn.id = 'replay-btn-load';
-
-  const cleanBtn = makeDockBtn('CLEAN [H]', 'Hide Dock and overlays for clean OBS footage (H to restore)', () => {
-    toggleReplayCleanFootage();
-  }, '#fbb417');
-  cleanBtn.id = 'replay-btn-clean';
-
-  const exitBtn = makeDockBtn('EXIT', 'Stop replay playback and return to menu', () => {
-    stopReplayVideoClip();
-    callbacks.onExitReplay?.();
-  }, '#ff2e55');
-  exitBtn.id = 'replay-btn-exit';
-
-  rightGroup.append(recBtnEl, saveBtn, loadBtn, cleanBtn, exitBtn);
-  controlsRow.append(transportGroup, speedGroup, rightGroup);
-  dockEl.appendChild(controlsRow);
-
-  // Row 3: Target Athlete Chips (P1..P4) + Camera Height (- / +) + All 7 Camera Presets
-  const cameraRow = document.createElement('div');
-  cameraRow.style.cssText = 'display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px;';
-
+  // Target Athlete Chips (P1..P4)
   targetGroupEl = document.createElement('div');
   targetGroupEl.id = 'replay-target-group';
-  targetGroupEl.style.cssText = 'display: flex; align-items: center; gap: 4px; flex-wrap: wrap;';
+  targetGroupEl.style.cssText = 'display: flex; align-items: center; gap: 3px;';
 
+  // Camera Height (- / H / +)
   const heightGroup = document.createElement('div');
   heightGroup.id = 'replay-height-group';
-  heightGroup.style.cssText = 'display: flex; align-items: center; gap: 3px;';
-  const heightLbl = document.createElement('span');
-  heightLbl.textContent = 'HEIGHT:';
-  heightLbl.style.cssText = 'font-size: 9.5px; font-weight: 900; color: #94a3b8; letter-spacing: 0.08em; margin-right: 2px;';
+  heightGroup.style.cssText = 'display: flex; align-items: center; gap: 2px;';
 
   const bindHoldHeightBtn = (btn, dir) => {
     btn.addEventListener('pointerdown', (ev) => {
       ev.preventDefault();
+      dockFocusedBtn = btn;
+      applyDockSpatialFocusStyles();
       heightButtonHoldDir = dir;
       heightButtonHoldStartMs = performance.now();
     });
   };
 
-  const heightDownBtn = makeDockBtn('-', 'Lower camera height (Hold or click, keys: - / PageDown / Q)', () => {}, '#38bdf8');
+  const heightDownBtn = makeDockBtn('-', 'Lower camera height (- / PageDown / Q · Clamped above court surface)', () => {
+    callbacks.onAdjustHeight?.(-1.5, false);
+    lastUiSignature = '';
+  }, '#38bdf8');
   heightDownBtn.id = 'replay-btn-height-down';
-  heightDownBtn.style.minWidth = '26px';
-  heightDownBtn.style.fontSize = '12px';
+  heightDownBtn.style.minWidth = '24px';
   bindHoldHeightBtn(heightDownBtn, -1);
 
-  heightReadoutEl = makeDockBtn('H 0.0m', 'Current camera height (Click to reset)', () => {
+  heightReadoutEl = makeDockBtn('H 0.0m', 'Camera height (Click or press 0 to reset · Drag viewport to look/orbit)', () => {
     callbacks.onAdjustHeight?.(0, true);
     lastUiSignature = '';
   }, '#cbd5e1');
   heightReadoutEl.id = 'replay-btn-height-reset';
-  heightReadoutEl.style.minWidth = '64px';
+  heightReadoutEl.style.minWidth = '56px';
 
-  const heightUpBtn = makeDockBtn('+', 'Raise camera height (Hold or click, keys: + / PageUp / E)', () => {}, '#38bdf8');
+  const heightUpBtn = makeDockBtn('+', 'Raise camera height (+ / PageUp / E)', () => {
+    callbacks.onAdjustHeight?.(1.5, false);
+    lastUiSignature = '';
+  }, '#38bdf8');
   heightUpBtn.id = 'replay-btn-height-up';
-  heightUpBtn.style.minWidth = '26px';
-  heightUpBtn.style.fontSize = '12px';
+  heightUpBtn.style.minWidth = '24px';
   bindHoldHeightBtn(heightUpBtn, 1);
 
-  heightGroup.append(heightLbl, heightDownBtn, heightReadoutEl, heightUpBtn);
+  heightGroup.append(heightDownBtn, heightReadoutEl, heightUpBtn);
 
+  // 7 Concise Camera Buttons (1..7 & Numpad 1..7)
   const camGroup = document.createElement('div');
-  camGroup.style.cssText = 'display: flex; align-items: center; gap: 4px; flex-wrap: wrap;';
-  const camLbl = document.createElement('span');
-  camLbl.textContent = 'VIEW:';
-  camLbl.style.cssText = 'font-size: 9.5px; font-weight: 900; color: #94a3b8; letter-spacing: 0.08em; margin-right: 2px;';
-  camGroup.appendChild(camLbl);
+  camGroup.id = 'replay-cam-group';
+  camGroup.style.cssText = 'display: flex; align-items: center; gap: 3px;';
 
   camBtns = CAMERA_BUTTONS.map((c) => {
-    const b = makeDockBtn(`${c.key}:${c.label}`, `Switch camera (${c.key})`, () => {
+    const b = makeDockBtn(c.label, c.tip, () => {
       callbacks.onSelectCamera?.(c.id);
     });
-    b.style.padding = '3px 6px';
+    b.style.padding = '4px 6px';
     b.id = `replay-cam-${c.id}`;
     b.dataset.cam = c.id;
     camGroup.appendChild(b);
     return b;
   });
 
-  cameraRow.append(targetGroupEl, heightGroup, camGroup);
-  dockEl.appendChild(cameraRow);
+  // Utility / Export Group
+  const rightGroup = document.createElement('div');
+  rightGroup.style.cssText = 'display: flex; align-items: center; gap: 3px;';
 
-  // Row 4: Contextual Shortcut / Free-Drone Hint Bar
-  droneHintEl = document.createElement('div');
-  droneHintEl.id = 'replay-free-drone-hint';
-  droneHintEl.style.cssText = `
-    display: flex;
-    justify-content: center;
-    flex-wrap: wrap;
-    gap: 12px;
-    padding-top: 4px;
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
-    font-size: 9.5px;
-    color: #94a3b8;
-  `;
-  dockEl.appendChild(droneHintEl);
+  recBtnEl = makeDockBtn('●REC', 'Record clean WebGL video clip (.webm) [V]', () => {
+    toggleReplayVideoClip();
+  }, '#fb7185');
+  recBtnEl.id = 'replay-btn-rec';
 
-  // Floating Broadcast Goal Scorer Callout Banner (appears cleanly during goal window)
+  const saveBtn = makeDockBtn('SAVE', 'Download .vbreplay file', () => {
+    replayManager.downloadLastReplay();
+  }, '#4ade80');
+  saveBtn.id = 'replay-btn-save';
+
+  const loadBtn = makeDockBtn('LOAD', 'Open a saved .vbreplay file', () => {
+    fileInputEl?.click();
+  }, '#38bdf8');
+  loadBtn.id = 'replay-btn-load';
+
+  const cleanBtn = makeDockBtn('HIDE', 'Hide dock & overlays for clean footage [H / Gamepad X]', () => {
+    toggleReplayCleanFootage();
+  }, '#fbb417');
+  cleanBtn.id = 'replay-btn-clean';
+
+  const exitBtn = makeDockBtn('EXIT', 'Exit replay and return to menu', () => {
+    stopReplayVideoClip();
+    callbacks.onExitReplay?.();
+  }, '#ff2e55');
+  exitBtn.id = 'replay-btn-exit';
+
+  rightGroup.append(recBtnEl, saveBtn, loadBtn, cleanBtn, exitBtn);
+  barRow.append(transportGroup, targetGroupEl, heightGroup, camGroup, rightGroup);
+  dockEl.appendChild(barRow);
+
+  // Floating Broadcast Goal Scorer Callout Banner
   goalBannerEl = document.createElement('div');
   goalBannerEl.id = 'replay-goal-banner';
   goalBannerEl.style.cssText = `
@@ -728,6 +796,9 @@ function buildDock() {
   `;
   document.body.appendChild(goalBannerEl);
 
+  dockEl._getFocusedButton = () => dockFocusedBtn;
+  dockEl._moveSpatialFocus = moveDockSpatialFocus;
+  dockEl._getVisibleButtons = getVisibleDockButtons;
   document.body.appendChild(dockEl);
   return dockEl;
 }
@@ -739,29 +810,25 @@ function rebuildPlayerTargetChips(meta) {
   targetGroupEl.innerHTML = '';
   targetBtns = [];
 
-  const lbl = document.createElement('span');
-  lbl.textContent = 'PLAYER [TAB]:';
-  lbl.style.cssText = 'font-size: 9.5px; font-weight: 900; color: #94a3b8; letter-spacing: 0.08em; margin-right: 2px;';
-  targetGroupEl.appendChild(lbl);
-
   for (let i = 0; i < count; i++) {
     const p = players[i] || {};
     const teamHex = toHexCss(p.primaryColor, i % 2 === 0 ? '#d90429' : '#1d4ed8');
     const shortName = `P${i + 1}`;
     const b = document.createElement('button');
+    b.type = 'button';
     b.id = `replay-target-p${i + 1}`;
     b.dataset.slot = String(i);
     b.dataset.hex = teamHex;
-    b.title = `Follow ${p.displayName || shortName} (${p.team === 'away' ? 'Away' : 'Home'})`;
+    b.title = `Follow ${p.displayName || shortName} (${p.team === 'away' ? 'Away' : 'Home'} · Tab / LB-RB)`;
     b.style.cssText = `
       display: inline-flex;
       align-items: center;
-      gap: 5px;
-      padding: 4px 8px;
+      gap: 4px;
+      padding: 4px 7px;
       font-size: 10px;
       font-weight: 900;
       font-family: inherit;
-      letter-spacing: 0.05em;
+      letter-spacing: 0.04em;
       color: #cbd5e1;
       background: rgba(255, 255, 255, 0.06);
       border: 1px solid rgba(255, 255, 255, 0.22);
@@ -769,8 +836,10 @@ function rebuildPlayerTargetChips(meta) {
       cursor: pointer;
       white-space: nowrap;
     `;
-    b.innerHTML = `<span style="width:8px;height:8px;border-radius:50%;background:${teamHex};display:inline-block;box-shadow:0 0 6px ${teamHex};"></span><span>${shortName}</span>`;
+    b.innerHTML = `<span style="width:7px;height:7px;border-radius:50%;background:${teamHex};display:inline-block;box-shadow:0 0 5px ${teamHex};"></span><span>${shortName}</span>`;
     b.onclick = () => {
+      dockFocusedBtn = b;
+      applyDockSpatialFocusStyles();
       callbacks.onSelectFollowSlot?.(i);
     };
     targetBtns.push(b);
@@ -838,19 +907,19 @@ function installReplayListeners() {
     } else if (e.code === 'BracketRight') {
       e.preventDefault();
       replayManager.cyclePlaybackSpeed(1);
-    } else if (e.code === 'Digit1') {
+    } else if (e.code === 'Digit1' || e.code === 'Numpad1') {
       callbacks.onSelectCamera?.('broadcast');
-    } else if (e.code === 'Digit2') {
+    } else if (e.code === 'Digit2' || e.code === 'Numpad2') {
       callbacks.onSelectCamera?.('sports');
-    } else if (e.code === 'Digit3') {
+    } else if (e.code === 'Digit3' || e.code === 'Numpad3') {
       callbacks.onSelectCamera?.('tactical');
-    } else if (e.code === 'Digit4') {
+    } else if (e.code === 'Digit4' || e.code === 'Numpad4') {
       callbacks.onSelectCamera?.('chase');
-    } else if (e.code === 'Digit5') {
+    } else if (e.code === 'Digit5' || e.code === 'Numpad5') {
       callbacks.onSelectCamera?.('thirdPerson');
-    } else if (e.code === 'Digit6') {
+    } else if (e.code === 'Digit6' || e.code === 'Numpad6') {
       callbacks.onSelectCamera?.('firstPerson');
-    } else if (e.code === 'Digit7' || e.code === 'KeyF') {
+    } else if (e.code === 'Digit7' || e.code === 'Numpad7' || e.code === 'KeyF') {
       callbacks.onSelectCamera?.('free');
     } else if (e.code === 'KeyV') {
       e.preventDefault();
@@ -871,12 +940,17 @@ function installReplayListeners() {
     heightButtonHoldDir = 0;
   });
 
+  // Mouse drag across ALL 7 replay camera modes:
+  // - Free Drone: rotates drone look directly
+  // - Chase / Ball-Track / 1st Person: orbits followed athlete camera
+  // - Broadcast / Dynamic / Tactical: hands off seamlessly into Free Drone from that exact pose
   window.addEventListener('mousedown', (e) => {
-    if (!replayManager.isPlayingBack() || replayManager.getCameraPreset() !== 'free') return;
-    if (callbacks.isMenuOpen?.()) return;
+    if (!replayManager.isPlayingBack() || callbacks.isMenuOpen?.()) return;
     if (dockEl && dockEl.contains(e.target)) return;
     if (e.button === 0 || e.button === 2) {
       isDraggingLook = true;
+      dragStartX = e.clientX;
+      dragStartY = e.clientY;
       lastDragX = e.clientX;
       lastDragY = e.clientY;
     }
@@ -884,7 +958,7 @@ function installReplayListeners() {
 
   window.addEventListener('mousemove', (e) => {
     if (!isDraggingLook) return;
-    if (!replayManager.isPlayingBack() || replayManager.getCameraPreset() !== 'free') {
+    if (!replayManager.isPlayingBack() || callbacks.isMenuOpen?.()) {
       isDraggingLook = false;
       return;
     }
@@ -892,7 +966,22 @@ function installReplayListeners() {
     const dy = e.clientY - lastDragY;
     lastDragX = e.clientX;
     lastDragY = e.clientY;
-    callbacks.onFreeLookDelta?.(-dx * 0.0042, -dy * 0.0036);
+    if (dx === 0 && dy === 0) return;
+
+    let preset = replayManager.getCameraPreset();
+    if (preset === 'broadcast' || preset === 'sports' || preset === 'tactical') {
+      const totalDrag = Math.hypot(e.clientX - dragStartX, e.clientY - dragStartY);
+      if (totalDrag < 5) return;
+      callbacks.onSelectCamera?.('free');
+      preset = replayManager.getCameraPreset();
+    }
+
+    if (preset === 'free') {
+      callbacks.onFreeLookDelta?.(-dx * 0.0042, -dy * 0.0036);
+    } else {
+      const cams = typeof window !== 'undefined' ? window.__vb?.playerCameras : null;
+      replayManager.orbitFollowCamera(-dx * 0.0045, dy * 0.0038, cams);
+    }
   });
 
   window.addEventListener('mouseup', () => {
@@ -904,9 +993,10 @@ function installReplayListeners() {
     const dir = heightButtonHoldDir;
     const heldMs = performance.now() - heightButtonHoldStartMs;
     heightButtonHoldDir = 0;
-    if (heldMs < 180) {
-      callbacks.onAdjustHeight?.(dir * 1.5, false);
+    if (heldMs >= 180) {
       lastUiSignature = '';
+    } else {
+      void dir;
     }
   };
   window.addEventListener('pointerup', endHeightButtonHold);
@@ -937,19 +1027,35 @@ function pollReplayDirectorGamepads() {
     const e = replayPads.pressed(pad);
     if (!e) continue;
 
-    if (e & MENU_PAD.a) replayManager.togglePlaybackPaused();
+    // If dock is hidden for clean footage, any face/D-pad button restores or toggles
+    if (dockHiddenForCleanFootage) {
+      if (e & (MENU_PAD.x | MENU_PAD.b | MENU_PAD.a)) {
+        toggleReplayCleanFootage(false);
+      }
+      continue;
+    }
+
+    // D-pad spatial focus cursor across all visible dock buttons
+    if (e & MENU_PAD.left) moveDockSpatialFocus(-1, 0);
+    else if (e & MENU_PAD.right) moveDockSpatialFocus(1, 0);
+    else if (e & MENU_PAD.up) moveDockSpatialFocus(0, -1);
+    else if (e & MENU_PAD.down) moveDockSpatialFocus(0, 1);
+
+    // A activates focused dock button (defaults to Play/Pause if none selected yet)
+    if (e & MENU_PAD.a) {
+      const visible = getVisibleDockButtons();
+      if (!dockFocusedBtn || !visible.includes(dockFocusedBtn)) {
+        dockFocusedBtn = playBtnEl && visible.includes(playBtnEl) ? playBtnEl : (visible[0] || null);
+        applyDockSpatialFocusStyles();
+      }
+      dockFocusedBtn?.click();
+    }
+
     if (e & MENU_PAD.x) toggleReplayCleanFootage();
     if (e & MENU_PAD.y) {
       const cur = replayManager.getPlaybackSpeed();
       const idx = FORWARD_SPEED_PILLS.indexOf(cur);
       replayManager.setPlaybackSpeed(FORWARD_SPEED_PILLS[(idx + 1) % FORWARD_SPEED_PILLS.length]);
-    }
-    if (e & MENU_PAD.left) {
-      const nextCam = replayManager.cycleCameraPreset(-1);
-      callbacks.onSelectCamera?.(nextCam);
-    } else if (e & MENU_PAD.right) {
-      const nextCam = replayManager.cycleCameraPreset(1);
-      callbacks.onSelectCamera?.(nextCam);
     }
     if (!isFree) {
       if (e & MENU_PAD.lb) {
@@ -958,13 +1064,6 @@ function pollReplayDirectorGamepads() {
       } else if (e & MENU_PAD.rb) {
         const nextSlot = replayManager.cycleFollowSlot(1);
         callbacks.onSelectFollowSlot?.(nextSlot);
-      }
-      if (e & MENU_PAD.down) {
-        const st = replayManager.getPlaybackStatus();
-        callbacks.onSeek?.(Math.max(0, st.cursor - 300));
-      } else if (e & MENU_PAD.up) {
-        const st = replayManager.getPlaybackStatus();
-        callbacks.onSeek?.(Math.min(st.totalFrames, st.cursor + 300));
       }
     }
   }
@@ -998,6 +1097,7 @@ export function resetReplayDockState() {
   lastUiSignature = '';
   lastBannerSignature = '';
   goalChipBtns = [];
+  dockFocusedBtn = null;
   replayPads.reset();
   if (hoverTipEl) hoverTipEl.style.display = 'none';
   if (goalBannerEl) goalBannerEl.style.display = 'none';
@@ -1068,7 +1168,7 @@ export function sampleFreeDroneInput() {
 }
 
 /**
- * Updates the Broadcast Replay Director Dock DOM during `render()`.
+ * Updates the 2-row Broadcast Replay Dock DOM during `render()`.
  */
 export function updateReplayDock({ isMenuOpen = false } = {}) {
   const el = buildDock();
@@ -1107,7 +1207,13 @@ export function updateReplayDock({ isMenuOpen = false } = {}) {
     return;
   }
 
-  if (el.style.display !== 'flex') el.style.display = 'flex';
+  if (el.style.display !== 'flex') {
+    el.style.display = 'flex';
+    if (!dockFocusedBtn && playBtnEl) {
+      dockFocusedBtn = playBtnEl;
+      applyDockSpatialFocusStyles();
+    }
+  }
   if (typeof document !== 'undefined' && document.pointerLockElement && typeof document.exitPointerLock === 'function') {
     try { document.exitPointerLock(); } catch (_) {}
   }
@@ -1117,7 +1223,6 @@ export function updateReplayDock({ isMenuOpen = false } = {}) {
   if (fillEl) fillEl.style.width = `${pct.toFixed(2)}%`;
   if (thumbEl) thumbEl.style.left = `${pct.toFixed(2)}%`;
 
-  // Rebuild P1..P4 target chips only when replay metadata changes
   const pCount = status.meta?.playerCount >= 4 ? 4 : 2;
   const playersSig = `${pCount}:${(status.meta?.players || []).map((p) => `${p.primaryColor}:${p.displayName}`).join(',')}`;
   if (playersSig !== lastPlayersSignature) {
@@ -1125,24 +1230,14 @@ export function updateReplayDock({ isMenuOpen = false } = {}) {
     rebuildPlayerTargetChips(status.meta);
   }
 
-  // Rebuild team/player-colored timeline goal markers AND clickable Goal Scorer Strip
   const goalsSig = `${total}:${playersSig}:${status.goals.map((g) => `${g.frame}:${g.scoredFor}:${g.scorerSlot}:${g.assistSlot}`).join('|')}`;
   if (markersEl && goalsSig !== lastGoalsSignature) {
     lastGoalsSignature = goalsSig;
     markersEl.innerHTML = '';
     goalChipBtns = [];
-    if (goalsStripEl) goalsStripEl.innerHTML = '';
-
     if (goalsStripEl) {
-      if (status.goals.length > 0) {
-        goalsStripEl.style.display = 'flex';
-        const gLbl = document.createElement('span');
-        gLbl.textContent = 'GOALS:';
-        gLbl.style.cssText = 'font-size: 9.5px; font-weight: 900; color: #94a3b8; letter-spacing: 0.08em; white-space: nowrap; margin-right: 2px;';
-        goalsStripEl.appendChild(gLbl);
-      } else {
-        goalsStripEl.style.display = 'none';
-      }
+      goalsStripEl.innerHTML = '';
+      goalsStripEl.style.display = status.goals.length > 0 ? 'flex' : 'none';
     }
 
     let prevPinPct = -99;
@@ -1160,6 +1255,7 @@ export function updateReplayDock({ isMenuOpen = false } = {}) {
       const richTitle = `Goal #${i + 1}: ${info.fullLabel}${assistPart} (${info.scoreLabel} at ${timeStr}, ${info.hoopLabel})`;
 
       const pin = document.createElement('button');
+      pin.type = 'button';
       pin.className = 'replay-goal-marker';
       pin.dataset.goalIndex = String(i);
       pin.title = `${richTitle} | Click to jump 3s before goal`;
@@ -1167,8 +1263,8 @@ export function updateReplayDock({ isMenuOpen = false } = {}) {
         position: absolute;
         left: ${leftPct.toFixed(2)}%;
         top: -5px;
-        width: 11px;
-        height: 20px;
+        width: 10px;
+        height: 19px;
         transform: translateX(-50%);
         background: ${info.colorHex};
         border: 1.5px solid ${info.borderHex};
@@ -1176,7 +1272,7 @@ export function updateReplayDock({ isMenuOpen = false } = {}) {
         cursor: pointer;
         pointer-events: auto;
         padding: 0;
-        box-shadow: 0 0 10px ${info.colorHex}aa;
+        box-shadow: 0 0 8px ${info.colorHex}aa;
         overflow: visible;
       `;
 
@@ -1185,16 +1281,16 @@ export function updateReplayDock({ isMenuOpen = false } = {}) {
       tag.style.cssText = `
         position: absolute;
         left: 50%;
-        top: ${stagger ? '-26px' : '-16px'};
+        top: ${stagger ? '-24px' : '-14px'};
         transform: translateX(-50%);
         padding: 0px 4px;
         border-radius: 3px;
         background: ${info.colorHex};
         color: ${info.textHex};
         border: 1px solid ${info.borderHex};
-        font-size: 8.5px;
+        font-size: 8px;
         font-weight: 900;
-        line-height: 12px;
+        line-height: 11px;
         letter-spacing: 0.04em;
         white-space: nowrap;
         pointer-events: none;
@@ -1213,23 +1309,25 @@ export function updateReplayDock({ isMenuOpen = false } = {}) {
       });
       pin.onclick = (ev) => {
         ev.stopPropagation();
+        dockFocusedBtn = pin;
+        applyDockSpatialFocusStyles();
         callbacks.onSeek?.(Math.max(0, (g.frame || 0) - 180));
       };
       markersEl.appendChild(pin);
 
-      // Clickable goal chip in Goal Scorer Strip
       if (goalsStripEl) {
         const chip = document.createElement('button');
+        chip.type = 'button';
         chip.className = 'replay-goal-chip';
         chip.dataset.goalIndex = String(i);
         chip.dataset.hex = info.colorHex;
-        chip.title = `${richTitle} | Click to jump 3s before goal`;
+        chip.title = `${richTitle} | Jump 3s before goal`;
         chip.style.cssText = `
           display: inline-flex;
           align-items: center;
-          gap: 5px;
-          padding: 3px 8px;
-          font-size: 10px;
+          gap: 4px;
+          padding: 2px 6px;
+          font-size: 9.5px;
           font-weight: 800;
           font-family: inherit;
           color: #e2e8f0;
@@ -1239,9 +1337,10 @@ export function updateReplayDock({ isMenuOpen = false } = {}) {
           cursor: pointer;
           white-space: nowrap;
         `;
-        const assistBadge = info.assistTag ? ` <span style="color:#94a3b8;font-weight:700;">(+${info.assistTag})</span>` : '';
-        chip.innerHTML = `<span style="width:8px;height:8px;border-radius:50%;background:${info.colorHex};border:1px solid ${info.borderHex};display:inline-block;flex-shrink:0;"></span><span style="color:#94a3b8;">#${i + 1}</span><span style="color:#ffffff;font-weight:900;">${info.fullLabel}</span>${assistBadge}<span style="color:#00e5ff;">${info.scoreLabel}</span><span style="color:#94a3b8;">${timeStr}</span>`;
+        chip.innerHTML = `<span style="width:6px;height:6px;border-radius:50%;background:${info.colorHex};display:inline-block;"></span><span>G${i + 1}</span><span style="color:#ffffff;font-weight:900;">${info.shortTag}</span>`;
         chip.onclick = () => {
+          dockFocusedBtn = chip;
+          applyDockSpatialFocusStyles();
           callbacks.onSeek?.(Math.max(0, (g.frame || 0) - 180));
         };
         goalChipBtns.push(chip);
@@ -1250,10 +1349,9 @@ export function updateReplayDock({ isMenuOpen = false } = {}) {
     }
   }
 
-  // Update Floating Broadcast Goal Scorer Banner (active during [goal.frame, goal.frame + 210])
   let activeBannerGoalIdx = -1;
   let activeNearGoalIdx = -1;
-  for (let i = status.goals.length - 1; i >= 0; i--) {
+  for (let i = status.goals.length - 1; i >= 0; i -= 1) {
     const gf = status.goals[i]?.frame ?? -9999;
     if (status.cursor >= gf && status.cursor <= gf + 210) {
       activeBannerGoalIdx = i;
@@ -1304,7 +1402,7 @@ export function updateReplayDock({ isMenuOpen = false } = {}) {
       statusPillEl.style.borderColor = 'rgba(251, 191, 36, 0.55)';
       statusPillEl.style.background = 'rgba(251, 191, 36, 0.16)';
     } else if (isRew) {
-      statusPillEl.textContent = `⏪ REW ${Math.abs(status.speed)}x`;
+      statusPillEl.textContent = `⏪ ${Math.abs(status.speed)}x`;
       statusPillEl.style.color = '#fbbf24';
       statusPillEl.style.borderColor = '#f59e0b';
       statusPillEl.style.background = 'rgba(245, 158, 11, 0.22)';
@@ -1314,7 +1412,7 @@ export function updateReplayDock({ isMenuOpen = false } = {}) {
       statusPillEl.style.borderColor = '#10b981';
       statusPillEl.style.background = 'rgba(16, 185, 129, 0.22)';
     } else if (isFfw) {
-      statusPillEl.textContent = `⏩ FFW ${status.speed}x`;
+      statusPillEl.textContent = `⏩ ${status.speed}x`;
       statusPillEl.style.color = '#e9d5ff';
       statusPillEl.style.borderColor = '#a855f7';
       statusPillEl.style.background = 'rgba(168, 85, 247, 0.24)';
@@ -1327,34 +1425,31 @@ export function updateReplayDock({ isMenuOpen = false } = {}) {
   }
   if (playBtnEl) {
     if (status.paused) {
-      playBtnEl.textContent = '▶ PLAY';
+      playBtnEl.textContent = '▶';
       playBtnEl.style.background = '#22c55e';
       playBtnEl.style.color = '#04120a';
       playBtnEl.style.borderColor = '#ffffff';
-      playBtnEl.style.boxShadow = '0 0 16px rgba(34, 197, 94, 0.6)';
     } else {
-      playBtnEl.textContent = '⏸ PAUSE';
+      playBtnEl.textContent = '⏸';
       playBtnEl.style.background = '#00e5ff';
       playBtnEl.style.color = '#06101c';
       playBtnEl.style.borderColor = '#ffffff';
-      playBtnEl.style.boxShadow = '0 0 14px rgba(0, 229, 255, 0.45)';
     }
   }
   if (slowMoBtnEl) {
-    slowMoBtnEl.textContent = isSlowMo ? `SLO ${status.speed}x` : 'SLO-MO';
+    slowMoBtnEl.textContent = isSlowMo ? `${status.speed}x` : 'SLO';
     slowMoBtnEl.style.background = isSlowMo ? '#10b981' : 'rgba(255, 255, 255, 0.10)';
     slowMoBtnEl.style.color = isSlowMo ? '#04120a' : '#6ee7b7';
     slowMoBtnEl.style.borderColor = isSlowMo ? '#ffffff' : 'rgba(16, 185, 129, 0.65)';
-    slowMoBtnEl.style.boxShadow = isSlowMo ? '0 0 14px rgba(16, 185, 129, 0.55)' : 'none';
   }
   if (rewModeBtnEl) {
-    rewModeBtnEl.textContent = isRew ? `⏪ ${Math.abs(status.speed)}x` : '⏪ REW';
+    rewModeBtnEl.textContent = isRew ? `⏪${Math.abs(status.speed)}x` : '⏪';
     rewModeBtnEl.style.background = isRew ? '#f59e0b' : 'rgba(255, 255, 255, 0.10)';
     rewModeBtnEl.style.color = isRew ? '#0b0a04' : '#fcd34d';
     rewModeBtnEl.style.borderColor = isRew ? '#ffffff' : 'rgba(245, 158, 11, 0.55)';
   }
   if (ffwModeBtnEl) {
-    ffwModeBtnEl.textContent = isFfw ? `⏩ ${status.speed}x` : '⏩ FFW';
+    ffwModeBtnEl.textContent = isFfw ? `⏩${status.speed}x` : '⏩';
     ffwModeBtnEl.style.background = isFfw ? '#a855f7' : 'rgba(255, 255, 255, 0.10)';
     ffwModeBtnEl.style.color = isFfw ? '#ffffff' : '#e9d5ff';
     ffwModeBtnEl.style.borderColor = isFfw ? '#ffffff' : 'rgba(168, 85, 247, 0.65)';
@@ -1377,25 +1472,16 @@ export function updateReplayDock({ isMenuOpen = false } = {}) {
     const hex = chip.dataset.hex || '#00e5ff';
     chip.style.background = active ? 'rgba(255, 255, 255, 0.18)' : 'rgba(255, 255, 255, 0.06)';
     chip.style.borderColor = active ? hex : 'rgba(255, 255, 255, 0.22)';
-    chip.style.boxShadow = active ? `0 0 10px ${hex}66` : 'none';
   }
   if (recBadgeEl) {
     recBadgeEl.style.display = recNow ? 'inline-block' : 'none';
     if (recNow) recBadgeEl.textContent = `● REC ${formatSeconds(recSec)}`;
   }
   if (recBtnEl) {
-    recBtnEl.textContent = recNow ? `■ STOP (${formatSeconds(recSec)}) [V]` : '● REC [V]';
+    recBtnEl.textContent = recNow ? `■ ${formatSeconds(recSec)}` : '●REC';
     recBtnEl.style.background = recNow ? '#ef4444' : 'rgba(255, 255, 255, 0.08)';
     recBtnEl.style.color = recNow ? '#ffffff' : '#fb7185';
     recBtnEl.style.borderColor = recNow ? '#ffffff' : '#fb7185';
-  }
-  for (const b of speedBtns) {
-    const spd = Number(b.dataset.speed);
-    const active = !status.paused && spd === status.speed;
-    const isSlowPill = spd < 1;
-    b.style.background = active ? (isSlowPill ? '#10b981' : '#00e5ff') : 'rgba(255, 255, 255, 0.08)';
-    b.style.color = active ? '#000000' : (isSlowPill ? '#6ee7b7' : '#cbd5e1');
-    b.style.borderColor = active ? (isSlowPill ? '#10b981' : '#00e5ff') : 'rgba(255, 255, 255, 0.22)';
   }
   for (const b of camBtns) {
     const active = b.dataset.cam === status.cameraPreset;
@@ -1409,13 +1495,6 @@ export function updateReplayDock({ isMenuOpen = false } = {}) {
     b.style.background = active ? 'rgba(255, 255, 255, 0.18)' : 'rgba(255, 255, 255, 0.05)';
     b.style.borderColor = active ? hex : 'rgba(255, 255, 255, 0.20)';
     b.style.color = active ? '#ffffff' : '#94a3b8';
-    b.style.boxShadow = active ? `0 0 10px ${hex}66` : 'none';
   }
-  if (droneHintEl) {
-    if (status.cameraPreset === 'free') {
-      droneHintEl.innerHTML = '<span><b style="color:#00e5ff;">FREE DRONE</b></span><span><b>WASD / L-Stick</b> Fly</span><span><b>+ / - / Q / E / LT / RT</b> Height</span><span><b>Drag / R-Stick</b> Look</span><span><b>Wheel</b> FOV Zoom</span><span><b>M</b> Slow-Mo · <b>Shift / RB</b> Fast · <b>Alt / LB</b> Slow Glide</span><span><b>V</b> .webm Clip</span>';
-    } else {
-      droneHintEl.innerHTML = '<span><b>Drag Timeline</b> Instant Scrub</span><span><b>Space / A</b> Play / Pause</span><span><b>M</b> Slow-Mo · <b>R</b> Rewind · <b>+ / -</b> Camera Height (0 Reset)</span><span><b>, / .</b> Prev / Next Goal</span><span><b>TAB / LB-RB</b> Athlete (P1 to P4)</span><span><b>1-7</b> Camera · <b>V</b> Clip · <b>H</b> Clean</span>';
-    }
-  }
+  applyDockSpatialFocusStyles();
 }

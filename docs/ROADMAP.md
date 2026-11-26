@@ -1,6 +1,6 @@
 # Valleyball Versus roadmap
 
-Last updated 2026-11-18. This is the one place for what comes next. [AGENTS.md](../AGENTS.md) holds the rules and [the Gameplay Source of Truth](VALLEYBALL_GAMEPLAY_SOURCE_OF_TRUTH.md) holds the rules of the sport.
+Last updated 2026-11-26. This is the one place for what comes next. [AGENTS.md](../AGENTS.md) holds the rules and [the Gameplay Source of Truth](VALLEYBALL_GAMEPLAY_SOURCE_OF_TRUTH.md) holds the rules of the sport.
 
 ## Shipped: v0.4.0
 
@@ -8,7 +8,7 @@ Brought full 1v1 and 2v2 team gameplay, per-controller lobby navigation, right-a
 
 ---
 
-## Shipped: v0.4.1 — Simplification, Efficiency, Menu & Controller Overhaul, Docs & Core Completeness
+## Shipped: v0.4.1: Simplification, Efficiency, Menu & Controller Overhaul, Docs & Core Completeness
 
 Streamlined the post-v0.4.0 codebase, eliminated dead/vestigial code, unlocked major CPU/GPU frame-time efficiencies, fixed silent 2v2 AI and physics bugs, standardized human + AI documentation across `src/`, completed `Overtime Tiebreaker Menu` and `2v2 Fixtures`, and overhauled the Main Menu, Controller Assignment, Player Setup, and Match Rules flows across Keyboard & Mouse, Standard Gamepad, and Fighting Pad / Arcade Stick.
 
@@ -16,9 +16,9 @@ Streamlined the post-v0.4.0 codebase, eliminated dead/vestigial code, unlocked m
 - [x] **Finish `ViewportManager` (`src/features/camera/viewportManager.js`)**: Move 1-screen, 2-way splitscreen, 4-way quad splitscreen, camera mode notifications, and post-processing out of `src/main.js`.
 - [x] **Finish `MatchManager` (`src/features/match/matchManager.js`)**: Fix `startMatch()` property names (`'N'`/`'S'`, `ticksRemaining`) and consolidate the 4 duplicate `matchState` reset blocks (`handleStartMatch`, `handleRematch`, `handleStartPractice`, `gui.js`).
 - [x] **Extract Dedicated Subsystems from `src/main.js`**:
-  - `src/ui/hudOverlay.js` — HUD telemetry DOM caching, FPS/perf readouts, drag/weight displays.
-  - `src/features/match/practiceMode.js` — Practice drill setup, 3-ball activation, `resetPracticeStats`.
-  - `src/debug/hotkeys.js` — Dev keyboard shortcuts (`KeyK` knockdown, `Backspace` respawn, camera/headgear cycling).
+  - `src/ui/hudOverlay.js`: HUD telemetry DOM caching, FPS/perf readouts, drag/weight displays.
+  - `src/features/match/practiceMode.js`: Practice drill setup, 3-ball activation, `resetPracticeStats`.
+  - `src/debug/hotkeys.js`: Dev keyboard shortcuts (`KeyK` knockdown, `Backspace` respawn, camera/headgear cycling).
 - [x] **Purge Dead Code & Unused Imports**:
   - Delete the ~250 lines of dead single-athlete G3.5 code in `src/main.js` (`spawnRagdoll`, `logL5Residuals`, `driveAttenuation`..`isTumbling`, dead `tracker`/`mountFollowerState`/`actionState`/`strikeState`, missing `models/actions.glb` reference).
   - Delete the 5 unused `src/features/*/index.js` barrel files, unused `AthleteManager` lifecycle methods, and all 42 `dead-import` entries in `baselines/audit-allow.json`.
@@ -57,11 +57,11 @@ Streamlined the post-v0.4.0 codebase, eliminated dead/vestigial code, unlocked m
 ### 5. Human + AI Code Comments, Menu/Controller Overhaul & CI Gate
 - [x] **Codebase-Wide Comment Pass**: Add clear **Module Headers** (Role, Frame Phase, Active Invariants), replace cryptic historical gate shorthand (`G3.5 Option B`) with plain-English *"Why"* explanations, fix all contradictory/stale comments, and document JSDoc units + scratch-buffer contracts.
 - [x] **Certify `corner-fan` Audit & Clean Up `scripts/`**: Update `scripts/audit_collision_coverage.mjs` so full `npm run audit` runs in CI, fix `scripts/generate_court_heightmap.mjs`, move arena GLB patchers to `scripts/arena-patches/`, commit `.github/workflows/desktop.yml` + `scripts/desktop_smoke.mjs`, and remove broken v0.2 Python capture and one-off marketing scripts.
-- [x] **Menu & Controller UX Overhaul**: Homogenized reversed-rainbow Title Screen (`P1` control only), Fighting Pad / Arcade Stick `D-Pad Move` mode, 4-diamond cardinal face-button prompts, live mini-screen viewport corner badges, per-controller color cursors (`P1` Cyan, `P2` Coral, `P3` Gold, `P4` Violet), `P2–P4` column locking, top-to-bottom Match Rules (`P1` rules only), per-player Ready lock, and silenced background menu ball impacts.
+- [x] **Menu & Controller UX Overhaul**: Homogenized reversed-rainbow Title Screen (`P1` control only), Fighting Pad / Arcade Stick `D-Pad Move` mode, 4-diamond cardinal face-button prompts, live mini-screen viewport corner badges, per-controller color cursors (`P1` Cyan, `P2` Coral, `P3` Gold, `P4` Violet), `P2 to P4` column locking, top-to-bottom Match Rules (`P1` rules only), per-player Ready lock, and silenced background menu ball impacts.
 
 ---
 
-## Shipped: v0.4.2 (Dec 27 Championship Build, 2026-11-22)
+## Shipped: v0.4.2 (Dec 27 Initial Build, 2026-11-22)
 
 Shipped the live local tournament and public web/desktop build ahead of the **December 27, 2026 Inaugural Championship** (1 to 2 local PC stations, 5-minute timed matches, Golden Goal overtime, Standard assist, 1.0m Medium Ball).
 
@@ -76,13 +76,24 @@ Shipped the live local tournament and public web/desktop build ahead of the **De
 - [x] **Multiplayer Reliability, Setup & How To Play Overhaul**: Fixed Match 1 P2 controller activation, added 3D spinning Match Ball preview, fixed Practice setup head spin and simplified Practice to Free Sandbox, fixed `A` advance in setup menus, and rebuilt How To Play across Standard Gamepad, Fighting Pad / Arcade Stick, and Keyboard & Mouse.
 - [x] **USB-Hub Reconnect & Defocus Safety**: Verified Electron `backgroundThrottling: false`, latched gamepad states across window blur, added hardware-ID reconnect recovery, and removed noisy synthetic `hoop_swish.wav`.
 
+---
+
+## Shipped: v0.4.3 (Tuned Competition & All-Platform Desktop Release, 2026-11-26)
+
+Rolls `v0.4.2.1` tournament hardening and `v0.4.2.2` live-room UX, natural limb alignment, and cross-platform distribution into the tuned build for the **December 27, 2026 Inaugural Championship**.
+
+- [x] **Live-Room Controller Drop-In, Hot-Swap & Disconnect Recovery (`src/input/inputRouter.js`, `src/ui/controllerDisconnectModal.js`, `controllerAssignment.js`, `victoryScreen.js`)**: Walk-up bench join, spare-pad and same-ID USB port hot-swap, mid-match controller disconnect modal, Victory screen Pick Sides / Swap Controllers, and solo Away host setup controls.
+- [x] **Natural Limb Alignment & Tournament Physics Tuning (`src/config/tuning.js`, `src/sim/tracker.js`, `src/sim/motor.js`, `src/sim/ragdoll.js`)**: Longitudinal thigh/pelvis untwist recovery (`twistInertiaFloor: 0.45`, `boostKp: 2.2`, `maxAngular: 0.09`), real Rapier + GLB stream-head grounding, `interceptDiveWindowTicks: 28` Brace+Dive save window, smooth club hand geometry, and `1.0m` Medium Ball match default.
+- [x] **Onboarding, Overtime & Broadcast Readability Polish (`src/features/ui/mainMenu/firstTimeSetupModal.js`, `settingsModal.js`, `overtimeMenu.js`, `inGameMenu.js`, `replayDock.js`, `practiceMode.js`)**: 3-card First-Time Setup wizard, 4-tab zero-scroll Main Menu Settings, 3-2-1 Overtime resume countdown (`Resume Live in Place` and `Respawn at Defending Goals`), flanking team-colored Pause Stat Boards, WCAG AA dark-kit contrast lift, 2-row spatial D-pad Replay Dock, and untimed Practice drills (`local_warmup`, `sparring_bot`, `newcomerDrill`).
+- [x] **All-Platform Desktop & Web Packaging (`.github/workflows/desktop.yml`, `electron/`)**: Native desktop builds for Windows (`setup.exe`, `portable.exe`), macOS (`universal.dmg`, `.zip`), and Linux (`x64.AppImage`, `.tar.gz`) alongside the HTML5 browser package (`release/valleyball-versus-itch.zip`).
+
 ### Remaining Pre-Championship Local Polish
 - [ ] **In-Game Music Manager (Stretch / Next Up)**: Bring `src/audio/musicManager.js` and soundtrack stems onto `main` with menu/in-game mix controls once core playtest and venue milestones are locked.
 - [ ] **Pre-Championship 4-Controller Soak**: Run a live 4-controller USB-hub soak session at a Monday playtest before Dec 27.
 
 ---
 
-## Next: v0.4.3+ (Post-Championship, Jan 2027+)
+## Next: v0.4.4+ (Post-Championship, Jan 2027+)
 
 Deferred intentionally so Dec 27 focus stays on local playtests, tournament execution, and community growth:
 
@@ -98,4 +109,4 @@ Deferred intentionally so Dec 27 focus stays on local playtests, tournament exec
 ### 3. Audio Atmosphere, 2v2 AI & Public Distribution
 - [ ] **Reactive Crowd Audio**: Dynamic crowd swells reacting to power spikes, rim clanks, clutch dives, and overtime tension.
 - [ ] **2v2 AI Chemistry & Evolutionary Re-Training**: Tune bot setter/spiker coordination and run `npm run train:bot` with the newly wired genome parameters.
-- [ ] **Cross-Platform Signed Builds & Steam Prep**: Run `.github/workflows/desktop.yml` across Windows, macOS, and Linux; add code signing, notarization, and `steamworks.js` once the Steam page is live.
+- [ ] **OS Code Signing, Notarization & Steam Prep**: Add Windows/macOS code signing, Apple notarization, and `steamworks.js` on top of the existing Windows/macOS/Linux desktop CI workflow once the Steam page is live.

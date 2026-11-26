@@ -1,7 +1,7 @@
 /**
  * Module: ui/practiceHud
- * Role: Compact top-left Practice Mode HUD showing active drill mode, live 60s Newcomer Drill
- *   4-step checklist, quick-toss ball summon hint (B / Select), and live hit accuracy counters.
+ * Role: Compact top-right Practice Mode HUD showing active untimed practice mode,
+ *   Newcomer 4-step checklist, quick-toss ball summon hint (Key B / Select), and live hit accuracy counters.
  * Frame Phase: Render (throttled DOM diff, 0 allocations on unchanged frames).
  * Active Architectural Laws:
  *   - LAW 1 (Single Authority): Pure read-only UI overlay; never writes simulation state.
@@ -11,12 +11,11 @@ import {
   practiceStats,
   newcomerDrill,
   getSelectedPracticeDrill,
-  getPracticeSessionSeconds,
 } from '../features/match/practiceMode.js';
 
 const DRILL_LABELS = {
   sandbox: 'FREE SANDBOX',
-  newcomer_drill: '60s NEWCOMER DRILL',
+  newcomer_drill: 'NEWCOMER CHECKLIST',
   ball_feeder: 'BALL FEEDER (4.5s LOB)',
   sparring_bot: 'SPARRING BOT (1v1)',
   local_warmup: 'LOCAL WARMUP (MULTIPLAYER)',
@@ -32,7 +31,7 @@ function ensureRoot() {
   rootEl.style.cssText = `
     position: fixed;
     top: 14px;
-    left: 14px;
+    right: 14px;
     display: none;
     flex-direction: column;
     gap: 6px;
@@ -86,10 +85,8 @@ export function updatePracticeHud({ gameState, isMenuOpen }) {
   const attempts = hits + whiffs;
   const acc = attempts > 0 ? Math.round((hits / attempts) * 100) : 0;
   const goals = practiceStats.goals || 0;
-  const secInt = Math.floor(getPracticeSessionSeconds());
-  const remSec = Math.ceil((newcomerDrill.ticksRemaining || 0) / 60);
 
-  const key = `${drillMode}|${hits}|${whiffs}|${goals}|${secInt}|${newcomerDrill.volleysDone}|${newcomerDrill.spikesDone}|${newcomerDrill.divesDone}|${newcomerDrill.goalsDone}|${newcomerDrill.completed}`;
+  const key = `${drillMode}|${hits}|${whiffs}|${goals}|${newcomerDrill.volleysDone}|${newcomerDrill.spikesDone}|${newcomerDrill.divesDone}|${newcomerDrill.goalsDone}|${newcomerDrill.completed}`;
   if (key === lastRenderKey) return;
   lastRenderKey = key;
 
@@ -97,9 +94,13 @@ export function updatePracticeHud({ gameState, isMenuOpen }) {
   let drillHtml = '';
 
   if (drillMode === 'newcomer_drill') {
+    const doneSteps = (newcomerDrill.volleysDone >= newcomerDrill.volleyTarget ? 1 : 0)
+      + (newcomerDrill.spikesDone >= newcomerDrill.spikeTarget ? 1 : 0)
+      + (newcomerDrill.divesDone >= newcomerDrill.diveTarget ? 1 : 0)
+      + (newcomerDrill.goalsDone >= newcomerDrill.goalTarget ? 1 : 0);
     const statusChip = newcomerDrill.completed
-      ? `<span style="color:#4ade80;font-weight:900;">DRILL COMPLETE (${newcomerDrill.completedAtSeconds}s)!</span>`
-      : `<span style="color:#fbb417;font-weight:900;">${remSec}s LEFT</span>`;
+      ? '<span style="color:#4ade80;font-weight:900;">4/4 COMPLETE · FREE PLAY</span>'
+      : `<span style="color:#38bdf8;font-weight:900;">${doneSteps}/4 STEPS</span>`;
     drillHtml = `
       <div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid rgba(255,255,255,0.1);padding-top:5px;margin-top:2px;">
         <span style="color:#c084fc;font-weight:800;font-size:10px;">NEWCOMER CHECKLIST</span>
@@ -121,7 +122,7 @@ export function updatePracticeHud({ gameState, isMenuOpen }) {
     </div>
     ${drillHtml}
     <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;border-top:1px solid rgba(255,255,255,0.1);padding-top:4px;font-size:10px;color:#94a3b8;white-space:nowrap;">
-      <span><b style="color:#00e5ff;">B / SELECT</b>: Toss Ball In Front</span>
+      <span><b style="color:#00e5ff;">KEY B / SELECT</b>: Toss Ball In Front</span>
       <span><b style="color:#cbd5e1;">ESC / START</b>: Menu</span>
     </div>
   `;

@@ -665,10 +665,12 @@ export function buildRagdoll(skeleton, characterRoot, spawnTransform, athleteInd
 
     const cachedMass = segment.body.mass();
     const pI = typeof segment.body.principalInertia === 'function' ? segment.body.principalInertia() : null;
-    const fr = typeof segment.body.principalInertiaLocalFrame === 'function' ? segment.body.principalInertiaLocalFrame() : null;
     const cachedPrincipalInertia = pI ? { x: pI.x, y: pI.y, z: pI.z } : null;
-    const cachedPrincipalFrameInv = fr ? new THREE.Quaternion(fr.x, fr.y, fr.z, fr.w).invert() : null;
     const cachedConservativeInertia = pI ? Math.min(pI.x, pI.y, pI.z) : null;
+    // DO NOT REMOVE: INVARIANT [NATURAL-LIMB-ALIGNMENT]
+    // Cache max transverse inertia alongside conservative min inertia so skinny limb capsules
+    // are never starved of longitudinal untwist authority inside tracker.js.
+    const cachedInertiaPerp = pI ? Math.max(pI.x, pI.y, pI.z) : null;
 
     rig.set(entry.key, {
       key: entry.key,
@@ -682,8 +684,8 @@ export function buildRagdoll(skeleton, characterRoot, spawnTransform, athleteInd
       bone,
       cachedMass,
       cachedPrincipalInertia,
-      cachedPrincipalFrameInv,
       cachedConservativeInertia,
+      cachedInertiaPerp,
       // Full matrices. They contain the armature's 0.01 scale and that is
       // correct — the sync divides it back out through the parent chain. Never
       // "fix" these by decomposing and dropping the scale.

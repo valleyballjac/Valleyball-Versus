@@ -2,9 +2,9 @@
  * Gamepad edge tracking for DOM menus.
  *
  * Each physical pad (keyed by Gamepad.index) keeps its own previous state, so a
- * second connected pad can never clear the first pad's edges. A pad's first
- * sample after reset() only seeds that state: a button still held from the
- * previous screen reads as already down, and must be released before it counts.
+ * second connected pad can never clear the first pad's edges. reset() seeds every
+ * already-connected pad so held buttons do not refire across transitions, while a
+ * newly woken or newly plugged pad starts from 0 so its first press registers.
  *
  * Usage, once per poll:
  *   tracker.update(pads);
@@ -55,6 +55,7 @@ function heldMask(pad) {
 export function createMenuPadTracker() {
   const held = new Map();
   const pressed = new Map();
+  const seen = new Set();
   return {
     /** Forget every pad; seed current physical state so held buttons don't refire while fast taps aren't swallowed. */
     reset() {
@@ -72,13 +73,23 @@ export function createMenuPadTracker() {
     },
     /** Samples every connected pad exactly once for this poll. */
     update(pads) {
+      seen.clear();
       for (let i = 0; i < pads.length; i++) {
         const pad = pads[i];
-        if (!pad) continue;
+        if (!pad || pad.connected === false) continue;
+        seen.add(pad.index);
         const now = heldMask(pad);
-        const before = held.has(pad.index) ? held.get(pad.index) : now;
+        const before = held.has(pad.index) ? held.get(pad.index) : 0;
         held.set(pad.index, now);
         pressed.set(pad.index, now & ~before);
+      }
+      if (held.size > seen.size) {
+        for (const idx of held.keys()) {
+          if (!seen.has(idx)) {
+            held.delete(idx);
+            pressed.delete(idx);
+          }
+        }
       }
     },
     /** Bits that went down on this pad during the latest update(). */

@@ -10,6 +10,7 @@
 import * as THREE from 'three';
 import { TUNING } from '../config/tuning.js';
 import { RAPIER, ENVIRONMENT_RAY_GROUPS } from '../sim/physics.js';
+import { getCourtFloorY } from '../ai/courtHeightmap.js';
 import { updateSportsCamera, resetSportsCamera } from './sportsCamera.js';
 
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
@@ -425,10 +426,13 @@ export class PlayerCamera {
       const fwdZ = -Math.cos(this.azimuth) * cosP;
 
       const fOffset = fp.forwardOffset ?? 0.12;
+      const camX = eyeX + fwdX * fOffset;
+      const camZ = eyeZ + fwdZ * fOffset;
+      const minEyeY = Math.max(0.6, getCourtFloorY(camX, camZ) + 0.55);
       this.camera.position.set(
-        eyeX + fwdX * fOffset,
-        Math.max(0.6, eyeY + fwdY * 0.04 + this.heightOffset),
-        eyeZ + fwdZ * fOffset,
+        camX,
+        Math.max(minEyeY, eyeY + fwdY * 0.04 + this.heightOffset),
+        camZ,
       );
 
       this._target.set(
@@ -462,7 +466,8 @@ export class PlayerCamera {
         : playerZ;
       const clampedZ = Math.min(tv.maxZ, Math.max(tv.minZ, leadZ + this.manualPitchOffset));
 
-      this._desiredPos.set(tv.sideX, Math.max(1.2, tv.heightY + this.heightOffset), clampedZ);
+      const minBroadcastY = Math.max(1.2, getCourtFloorY(tv.sideX, clampedZ) + 1.25);
+      this._desiredPos.set(tv.sideX, Math.max(minBroadcastY, tv.heightY + this.heightOffset), clampedZ);
       if (!this._broadcastLookInit) {
         this.camera.position.copy(this._desiredPos);
       } else {
@@ -471,6 +476,8 @@ export class PlayerCamera {
           1 - Math.exp(-tv.smoothEase * frameDelta),
         );
       }
+      const floorBroadcastY = getCourtFloorY(this.camera.position.x, this.camera.position.z) + 1.15;
+      if (this.camera.position.y < floorBroadcastY) this.camera.position.y = floorBroadcastY;
 
       this._target.copy(focusTarget);
       if (ballPos) {
@@ -519,9 +526,11 @@ export class PlayerCamera {
       const aheadDist = Math.abs(top.lookAheadZ ?? 8.0);
       const desiredZ = Math.max(-58, Math.min(58, p.z - attackDirZ * backDist + attackDirZ * this.manualPitchOffset));
 
+      const desiredTacX = p.x * 0.4 + screenRightX * this.manualAzimuthOffset;
+      const minTacY = Math.max(2.0, getCourtFloorY(desiredTacX, desiredZ) + 1.5);
       this._desiredPos.set(
-        p.x * 0.4 + screenRightX * this.manualAzimuthOffset,
-        Math.max(2.0, p.y - tuning.targetHeight + top.heightY + this.heightOffset),
+        desiredTacX,
+        Math.max(minTacY, p.y - tuning.targetHeight + top.heightY + this.heightOffset),
         desiredZ,
       );
       this._target.set(
@@ -539,6 +548,8 @@ export class PlayerCamera {
         this.camera.position.lerp(this._desiredPos, easeAlpha);
         this._smoothedTacticalLookTarget.lerp(this._target, easeAlpha);
       }
+      const floorTacY = getCourtFloorY(this.camera.position.x, this.camera.position.z) + 1.25;
+      if (this.camera.position.y < floorTacY) this.camera.position.y = floorTacY;
       this.camera.lookAt(this._smoothedTacticalLookTarget);
       this._applyCameraEffects(tuning, frameDelta);
       return;
@@ -673,7 +684,8 @@ export class PlayerCamera {
       this._computeArmDirection(desiredDistance, effAzimuth, effPitch);
       this._applySpringArm(world, tuning, desiredDistance, frameDelta);
       if (this.heightOffset !== 0) {
-        this.camera.position.y = Math.max(1.0, this.camera.position.y + this.heightOffset);
+        const minThirdY = Math.max(1.0, getCourtFloorY(this.camera.position.x, this.camera.position.z) + 1.05);
+        this.camera.position.y = Math.max(minThirdY, this.camera.position.y + this.heightOffset);
       }
 
       // 5. Look-At Target: Look slightly forward over athlete's shoulder towards the ball
@@ -725,7 +737,8 @@ export class PlayerCamera {
       this._computeArmDirection(desiredDistance, this.azimuth, this.pitch);
       this._applySpringArm(world, tuning, desiredDistance, frameDelta);
       if (this.heightOffset !== 0) {
-        this.camera.position.y = Math.max(1.0, this.camera.position.y + this.heightOffset);
+        const minChaseY = Math.max(1.0, getCourtFloorY(this.camera.position.x, this.camera.position.z) + 1.05);
+        this.camera.position.y = Math.max(minChaseY, this.camera.position.y + this.heightOffset);
       }
       this.camera.lookAt(this._smoothedTarget);
       this._applyCameraEffects(tuning, frameDelta);

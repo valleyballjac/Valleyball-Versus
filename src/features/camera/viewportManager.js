@@ -13,6 +13,7 @@ import { PlayerCamera } from '../../visuals/playerCamera.js';
 import { CinematicCamera } from '../../visuals/cinematicCamera.js';
 import { updateCelestialSkybox, setSkyboxQuality } from '../../visuals/skybox.js';
 import { getHudPrefs, setHudPrefs } from '../../config/hudConfig.js';
+import { getPlayerSlotTheme } from '../ui/mainMenu/constants.js';
 
 const MAX_LIVE_PIXEL_RATIO = 1.5;
 
@@ -266,6 +267,10 @@ class ViewportManager {
     }
   }
 
+  _isSplitscreenState(gameState, humanSlots) {
+    return gameState === 'match' || gameState === 'overtime_menu' || (gameState === 'practice' && humanSlots.length >= 2);
+  }
+
   /**
    * Cycles a player's camera mode across all available views.
    *
@@ -274,7 +279,8 @@ class ViewportManager {
   cycleCameraMode(playerIndex = 0) {
     const pc = this.playerCameras[playerIndex] || this.playerCameras[0];
     const gameState = this.getGameState();
-    const isSplitscreen = (gameState === 'match' || gameState === 'overtime_menu') && !!TUNING.camera.splitscreen && this.getActiveHumanSlots().length >= 2;
+    const humanSlots = this.getActiveHumanSlots();
+    const isSplitscreen = this._isSplitscreenState(gameState, humanSlots) && !!TUNING.camera.splitscreen && humanSlots.length >= 2;
     const mode = pc.cycleMode(isSplitscreen);
     this.syncPlayerCameraMode(playerIndex, mode);
     if (mode !== 'broadcast' && mode !== 'sports') this.leaveSharedCameraForOtherSlot(playerIndex);
@@ -305,8 +311,10 @@ class ViewportManager {
     const pc = this.playerCameras[playerIndex] || this.playerCameras[0];
     const gameState = this.getGameState();
     const humanSlots = this.getActiveHumanSlots();
-    const wasShared = humanSlots.length > 0 && humanSlots.every((s) => this.playerCameras[s]?.mode === 'broadcast');
-    const isSplitscreen = (gameState === 'match' || gameState === 'overtime_menu') && !!TUNING.camera.splitscreen && humanSlots.length >= 2 && !wasShared;
+    const wasShared = humanSlots.length > 0 && humanSlots.every(
+      (s) => this.playerCameras[s]?.mode === 'broadcast' || this.playerCameras[s]?.mode === 'sports',
+    );
+    const isSplitscreen = this._isSplitscreenState(gameState, humanSlots) && !!TUNING.camera.splitscreen && humanSlots.length >= 2 && !wasShared;
     const mode = pc.cycleArenaView(delta, isSplitscreen);
     this.syncPlayerCameraMode(playerIndex, mode);
     if (mode === 'broadcast' && TUNING.camera.splitscreen) {
@@ -349,7 +357,7 @@ class ViewportManager {
     const isSharedCam = humanSlots.length > 0 && humanSlots.every(
       (s) => this.playerCameras[s]?.mode === 'broadcast' || this.playerCameras[s]?.mode === 'sports',
     );
-    const isMatchState = gameState === 'match' || gameState === 'overtime_menu';
+    const isMatchState = this._isSplitscreenState(gameState, humanSlots);
     const isSplitscreen = isMatchState && !!TUNING.camera.splitscreen && (humanSlots.length >= 2 || (athletes.length >= 2 && !!TUNING.camera.forceQuadSplitscreen)) && !isSharedCam;
     const isQuadSplit = isSplitscreen && (humanSlots.length > 2 || (athletes.length >= 4 && !!TUNING.camera.forceQuadSplitscreen));
 
@@ -523,14 +531,24 @@ class ViewportManager {
     const gameState = this.getGameState();
     const athletes = this.getAthletes();
     const humanSlots = this.getActiveHumanSlots();
-    const isMatchState = gameState === 'match' || gameState === 'overtime_menu';
-    const isSplitscreen = isMatchState && !!TUNING.camera.splitscreen && athletes.length >= 2;
+    const isSharedCam = humanSlots.length > 0 && humanSlots.every(
+      (s) => this.playerCameras[s]?.mode === 'broadcast' || this.playerCameras[s]?.mode === 'sports',
+    );
+    const isMatchState = this._isSplitscreenState(gameState, humanSlots);
+    const isSplitscreen = isMatchState && !!TUNING.camera.splitscreen && (humanSlots.length >= 2 || (athletes.length >= 2 && !!TUNING.camera.forceQuadSplitscreen)) && !isSharedCam;
     const isQuadSplit = isSplitscreen && (humanSlots.length > 2 || (athletes.length >= 4 && !!TUNING.camera.forceQuadSplitscreen));
 
     const displayName = CAMERA_MODE_DISPLAY_NAMES[mode] || mode.toUpperCase();
-    const isHomeSlot = playerIndex === 0 || playerIndex === 2;
+    const ath = athletes[playerIndex];
+    const cfg = TUNING.players?.[playerIndex];
+    const team = ath?.team || cfg?.team || ((playerIndex === 0 || playerIndex === 2) ? 'home' : 'away');
+    const fallbackColor = team === 'away'
+      ? (TUNING.teams?.away?.primaryColor ?? 0x1d4ed8)
+      : (TUNING.teams?.home?.primaryColor ?? 0xd90429);
+    const rawPrimary = ath?.primaryColor ?? cfg?.primaryColor ?? fallbackColor;
+    const slotTheme = getPlayerSlotTheme(playerIndex, rawPrimary);
     const playerPrefix = isSplitscreen
-      ? `<span style="color: ${isHomeSlot ? '#ef4444' : '#3b82f6'}; font-weight: 800; margin-right: 6px;">P${playerIndex + 1}</span>`
+      ? `<span style="color: ${slotTheme.hex}; font-weight: 800; margin-right: 6px;">P${playerIndex + 1}</span>`
       : '';
 
     toast.innerHTML = `${playerPrefix}<span style="color: #7dd3fc; margin-right: 6px;">CAMERA:</span><span style="color: #ffffff; font-weight: 800;">${displayName}</span>`;
@@ -626,7 +644,7 @@ class ViewportManager {
       (s) => this.playerCameras[s]?.mode === 'broadcast' || this.playerCameras[s]?.mode === 'sports',
     );
     const isFreeDrone = this.cinematicCamera.mode === 'free';
-    const isMatchState = gameState === 'match' || gameState === 'overtime_menu' || (gameState === 'practice' && humanSlots.length >= 2);
+    const isMatchState = this._isSplitscreenState(gameState, humanSlots);
     const isSplitscreen = !isFreeDrone && isMatchState && !!TUNING.camera.splitscreen && (humanSlots.length >= 2 || (athletes.length >= 2 && !!TUNING.camera.forceQuadSplitscreen)) && !isSharedCam && !victoryActive;
     const isQuadSplit = isSplitscreen && (humanSlots.length > 2 || (athletes.length >= 4 && !!TUNING.camera.forceQuadSplitscreen));
     this.lastIsSplitscreen = isSplitscreen;

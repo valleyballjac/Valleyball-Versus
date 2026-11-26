@@ -22,6 +22,7 @@ import { recordBallTeamTouch } from '../src/mechanics/scoring.js';
 import { describeGoalScorer } from '../src/ui/replayDock.js';
 import * as THREE from 'three';
 import { CinematicCamera } from '../src/visuals/cinematicCamera.js';
+import { getCourtFloorY } from '../src/ai/courtHeightmap.js';
 
 test('ReplayRecorder.recordOvertime preserves exact spawns through binary v2 encode/decode', async () => {
   const rec = new ReplayRecorder({
@@ -366,13 +367,16 @@ test('Replay Director camera height movement (+ / -), clamping, and reset work a
   assert.equal(mockCams[0].heightOffset, 0);
   assert.equal(mockCams[1].heightOffset, 0);
 
-  // Free Drone height nudge and clamp
+  // Free Drone height nudge and dynamic terrain-surface floor clamp
   const drone = new CinematicCamera();
   drone.startFreeFly();
   drone.setFreeHeight(12);
   assert.equal(drone.getFreeHeight(), 12);
   assert.equal(drone.nudgeFreeHeight(2.5), 14.5);
-  assert.equal(drone.nudgeFreeHeight(-100), 1.0);
+  const expectedEastMinY = getCourtFloorY(22, 0) + 1.15;
+  assert.ok(Math.abs(drone.nudgeFreeHeight(-100) - expectedEastMinY) < 0.05, 'Drone above East sideline bank clamps safely above sloped court surface');
+  drone.camera.position.set(0, 10, 0);
+  assert.ok(Math.abs(drone.nudgeFreeHeight(-100) - 1.15) < 0.05, 'Drone at center basin (y=0) clamps at 1.15m clearance');
   assert.equal(drone.nudgeFreeHeight(200), 54.0);
 });
 

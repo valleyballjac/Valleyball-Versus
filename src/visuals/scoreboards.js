@@ -373,7 +373,11 @@ export function updateScoreboards(handle, probe) {
   const phase = flashing ? Math.floor(probe.celebrationTicks / cfg.flashTicks) % 2 : 0;
 
   const isMatchMode = probe.mode === 'match';
-  const seconds = Math.floor(probe.ticksRemaining / 60);
+  const isPracticeCountUp = probe.mode === 'practice' && Number.isFinite(probe.practiceSeconds);
+  const seconds = isPracticeCountUp
+    ? Math.max(0, Math.floor(probe.practiceSeconds))
+    : Math.floor(probe.ticksRemaining / 60);
+  const clockModeKey = isMatchMode ? 'match' : (isPracticeCountUp ? 'practice_up' : 'idle');
   const overtimePeriod = probe.overtimePeriod || 0;
   const isGoldenGoal = !!probe.isGoldenGoal;
   const matchOver = !!probe.matchOver;
@@ -381,7 +385,7 @@ export function updateScoreboards(handle, probe) {
   // 1. DECOUPLED MICRO-CLOCK OVERLAY UPDATE (65 KB payload shared across all 4 boards)
   // Avoids formatting clock strings until the integer second or match state actually changes.
   const clockInputsChanged =
-    handle.lastClockMode !== isMatchMode ||
+    handle.lastClockMode !== clockModeKey ||
     handle.lastClockSeconds !== seconds ||
     handle.lastClockOvertimePeriod !== overtimePeriod ||
     handle.lastClockGoldenGoal !== isGoldenGoal ||
@@ -390,7 +394,9 @@ export function updateScoreboards(handle, probe) {
 
   if (clockInputsChanged) {
     let clockText;
-    if (!isMatchMode) {
+    if (isPracticeCountUp) {
+      clockText = `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+    } else if (!isMatchMode) {
       clockText = 'PRACTICE';
     } else if (matchOver) {
       clockText = 'FULL TIME';
@@ -401,7 +407,7 @@ export function updateScoreboards(handle, probe) {
       clockText = overtimePeriod > 0 ? `OT ${mmss}` : mmss;
     }
 
-    handle.lastClockMode = isMatchMode;
+    handle.lastClockMode = clockModeKey;
     handle.lastClockSeconds = seconds;
     handle.lastClockOvertimePeriod = overtimePeriod;
     handle.lastClockGoldenGoal = isGoldenGoal;

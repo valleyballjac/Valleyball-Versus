@@ -10,6 +10,7 @@
 
 import { CONTROL_BITS } from '../input/inputRouter.js';
 import { TUNING } from '../config/tuning.js';
+import { getHudPrefs, subscribeHudPrefs } from '../config/hudConfig.js';
 const actions = [
   ['move', 'Move'], ['look', 'Look'], ['sprint', 'Sprint'], ['slide', 'Slide'],
   ['jump', 'Jump'], ['dive', 'Dive'], ['cut', 'Cut'], ['volley', 'Volley'],
@@ -23,8 +24,22 @@ const padLabels = ['LS', 'RS', 'LT', 'RT', 'A', 'X', 'RB', 'B', 'Y', 'LB', 'Back
 const padIndices = ['Axis 0/1', 'Axis 2/3', 'Btn 6', 'Btn 7', 'Btn 0', 'Btn 2', 'Btn 5', 'Btn 1', 'Btn 3', 'Btn 4', 'Btn 8'];
 const slots = [null, null, null, null];
 let root = null;
-let enabled = TUNING.controlsHud.userEnabled;
+let enabled = Boolean(getHudPrefs().controlsOverlay);
 let visible = false;
+let hudPrefsSubscribed = false;
+
+function syncEnabledFromHudPrefs(prefs) {
+  const next = Boolean(prefs?.controlsOverlay);
+  enabled = next;
+  if (!next) hideControlsOverlay();
+}
+
+function ensureHudPrefsSubscription() {
+  if (hudPrefsSubscribed) return;
+  hudPrefsSubscribed = true;
+  subscribeHudPrefs(syncEnabledFromHudPrefs);
+}
+ensureHudPrefsSubscription();
 
 function makeLayout(labels, parent) {
   const nodes = [];
@@ -46,6 +61,8 @@ function makeLayout(labels, parent) {
 }
 
 export function initControlsOverlay() {
+  ensureHudPrefsSubscription();
+  enabled = Boolean(getHudPrefs().controlsOverlay);
   if (root) return;
   root = document.getElementById('controls-overlay');
   if (!root) return;
@@ -76,6 +93,7 @@ export function initControlsOverlay() {
 
 export function setControlsOverlayEnabled(value) {
   enabled = !!value;
+  if (!enabled) hideControlsOverlay();
 }
 
 function clearSlot(slot) {

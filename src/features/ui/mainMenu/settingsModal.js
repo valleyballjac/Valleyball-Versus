@@ -1,15 +1,60 @@
-import { TUNING } from '../../../config/tuning.js';
-import { getHudPrefs, setHudPrefs, setCleanBroadcastHud, subscribeHudPrefs } from '../../../config/hudConfig.js';
+import {
+  getHudPrefs,
+  setHudPrefs,
+  setCleanBroadcastHud,
+  subscribeHudPrefs,
+  applyHudPreset,
+  getActiveHudPresetId,
+  getRenderQualitySettings,
+  setRenderQualitySettings,
+  getCameraShakeMode,
+  setCameraShakeMode,
+  setDefaultCameraMode,
+} from '../../../config/hudConfig.js';
 import { soundManager } from '../../../audio/soundManager.js';
 import { setVibrationEnabled, isVibrationEnabled } from '../../../input/inputRouter.js';
 import { CAMERA_OPTIONS } from './constants.js';
 
 /**
- * Main Menu Settings Modal (Decoupled from In-Game Pause)
+ * Main Menu Settings Modal: 4-tab zero-scroll layout (HUD & Guides | Graphics | Audio | Camera & Controls).
  */
 let mainMenuSettingsModalEl = null;
+function ensureSettingsTabStyles() {
+  if (typeof document === 'undefined' || !document.head || typeof document.head.appendChild !== 'function') return;
+  if (document.getElementById?.('vb-settings-tabs-style')) return;
+  const style = document.createElement('style');
+  style.id = 'vb-settings-tabs-style';
+  style.textContent = `
+    #settings-tablist [role="tab"] {
+      position: relative;
+      flex: 1 1 0;
+      padding: 9px 10px;
+      font-size: 11px;
+      font-weight: 800;
+      font-family: inherit;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #94a3b8;
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    #settings-tablist [role="tab"][aria-selected="true"] {
+      color: #38bdf8;
+    }
+    #settings-tablist [role="tab"][aria-selected="true"]::after {
+      content: "";
+      position: absolute;
+      inset: auto 8px 0 8px;
+      border-block-end: 3px solid #38bdf8;
+    }
+  `;
+  document.head.appendChild(style);
+}
 
 export function buildMainMenuSettingsModal(rootEl, playerConfigs = [], callbacks = {}) {
+  ensureSettingsTabStyles();
   mainMenuSettingsModalEl = document.createElement('div');
   mainMenuSettingsModalEl.id = 'main-menu-settings-modal';
   mainMenuSettingsModalEl.style.cssText = `
@@ -20,25 +65,30 @@ export function buildMainMenuSettingsModal(rootEl, playerConfigs = [], callbacks
     justify-content: center;
     background: rgba(4, 7, 12, 0.88);
     backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
     pointer-events: auto;
     z-index: 1000;
   `;
+
+  let showTuningGuiState = false;
+  let activeTabIdx = 0;
+  let settingsFocusIndex = 1;
 
   const box = document.createElement('div');
   box.style.cssText = `
     display: flex;
     flex-direction: column;
-    max-width: 580px;
-    width: 92%;
-    max-height: 88vh;
-    overflow-y: auto;
+    max-width: 640px;
+    width: 94%;
     background: rgba(11, 17, 26, 0.98);
     border: 1px solid rgba(120, 170, 210, 0.35);
     border-radius: 14px;
-    padding: 24px 32px;
+    padding: 20px 28px 22px;
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.9), 0 0 30px rgba(56, 189, 248, 0.15);
     font-family: inherit;
     color: #cfe3f5;
+    overflow: hidden;
+    box-sizing: border-box;
   `;
 
   // Header
@@ -49,30 +99,346 @@ export function buildMainMenuSettingsModal(rootEl, playerConfigs = [], callbacks
     align-items: center;
     border-bottom: 2px solid;
     border-image: linear-gradient(90deg, #FF2A42 0%, #FF6B00 14.3%, #FFD000 28.6%, #10E56A 42.9%, #00E5FF 57.2%, #1F65FF 71.5%, #6B11FF 85.8%, #E000B8 100%) 1;
-    padding-bottom: 12px;
-    margin-bottom: 20px;
+    padding-bottom: 10px;
+    margin-bottom: 12px;
   `;
   header.innerHTML = `
     <div>
-      <div style="font-size: 20px; font-weight: 900; letter-spacing: 0.1em; color: #ffffff;">SETTINGS</div>
-      <div style="font-size: 11px; color: #94a3b8; font-weight: 700; letter-spacing: 0.08em; margin-top: 2px;">GLOBAL AUDIO, DISPLAY & CAMERA PREFERENCES</div>
+      <div style="font-size: 19px; font-weight: 900; letter-spacing: 0.1em; color: #ffffff;">SETTINGS</div>
+      <div style="font-size: 10.5px; color: #94a3b8; font-weight: 700; letter-spacing: 0.08em; margin-top: 2px;">SWITCH CATEGORIES WITH CLICK, Q / E, TAB, OR LB / RB</div>
     </div>
   `;
   box.appendChild(header);
 
-  function createSectionHeader(title) {
-    const el = document.createElement('div');
-    el.style.cssText = 'font-size: 11px; font-weight: 800; letter-spacing: 0.12em; color: #38bdf8; margin: 12px 0 8px 0; text-transform: uppercase;';
-    el.textContent = title;
-    return el;
-  }
+  // Accessible single-row horizontal tablist (no wrapping, no layout-shifting active styles)
+  const tabDefs = [
+    { id: 'hud', label: 'HUD & Guides' },
+    { id: 'graphics', label: 'Graphics' },
+    { id: 'audio', label: 'Audio' },
+    { id: 'camera', label: 'Camera & Controls' },
+  ];
 
-  // 1. AUDIO SECTION
-  box.appendChild(createSectionHeader('🔊 Audio Levels'));
+  const tablistEl = document.createElement('div');
+  tablistEl.id = 'settings-tablist';
+  tablistEl.setAttribute?.('role', 'tablist');
+  tablistEl.setAttribute?.('aria-label', 'Settings Categories');
+  tablistEl.style.cssText = `
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 4px;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.22);
+    margin-bottom: 14px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  `;
 
-  // Master Volume
+  const tabBtns = [];
+  const panelEls = [];
+  const panelWrappers = [];
+
+  const panelsHost = document.createElement('div');
+  panelsHost.style.cssText = 'display: grid; grid-template-columns: 1fr; min-height: 256px;';
+
+  tabDefs.forEach((def, idx) => {
+    const tBtn = document.createElement('button');
+    tBtn.type = 'button';
+    tBtn.id = `settings-tab-${def.id}`;
+    tBtn.setAttribute?.('role', 'tab');
+    tBtn.setAttribute?.('aria-selected', idx === 0 ? 'true' : 'false');
+    tBtn.textContent = def.label;
+    tBtn.onclick = () => selectTab(idx, false);
+    tabBtns.push(tBtn);
+    tablistEl.appendChild(tBtn);
+
+    const panel = document.createElement('div');
+    panel.id = `settings-panel-${def.id}`;
+    panel.setAttribute?.('role', 'tabpanel');
+    panel.setAttribute?.('aria-labelledby', tBtn.id);
+    if (idx !== 0) {
+      panel.hidden = true;
+      panel.style.display = 'none';
+    } else {
+      panel.style.display = 'block';
+    }
+    const inner = document.createElement('div');
+    inner.style.cssText = 'display: flex; flex-direction: column; gap: 10px; padding: 2px 0;';
+    panel.appendChild(inner);
+    panelEls.push(panel);
+    panelWrappers.push(inner);
+    panelsHost.appendChild(panel);
+  });
+
+  box.appendChild(tablistEl);
+  box.appendChild(panelsHost);
+
+  const [hudWrap, gfxWrap, audioWrap, camWrap] = panelWrappers;
+
+  const notifyRenderSettings = (payload) => {
+    if (callbacks.onRenderSettingsChange) callbacks.onRenderSettingsChange(payload);
+    else if (typeof window !== 'undefined' && window.__vb?.applyRenderSettings) window.__vb.applyRenderSettings(payload);
+  };
+
+  const buildToggleRow = (parentEl, labelText, opts, currentVal, onPick) => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display: flex; justify-content: space-between; align-items: center; padding: 3px 4px;';
+    const lbl = document.createElement('span');
+    lbl.style.cssText = 'font-size: 12px; font-weight: 700; color: #cbd5e1;';
+    lbl.textContent = labelText;
+    const grp = document.createElement('div');
+    grp.style.cssText = 'display: flex; gap: 6px;';
+    const btns = [];
+    opts.forEach((opt) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = opt.label;
+      const isSel = currentVal === opt.id;
+      b.style.cssText = `
+        padding: 6px 12px; font-size: 11px; font-weight: 700; font-family: inherit;
+        border-radius: 4px; cursor: pointer; border: 1px solid rgba(120, 170, 210, 0.3); transition: background 0.12s ease, color 0.12s ease;
+        background: ${isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)'};
+        color: ${isSel ? '#ffffff' : '#94a3b8'};
+      `;
+      b.onclick = () => onPick(opt.id);
+      btns.push(b);
+      grp.appendChild(b);
+    });
+    row.append(lbl, grp);
+    parentEl.appendChild(row);
+    return { row, btns };
+  };
+
+  // =========================================================================
+  // TAB 0: HUD & GUIDES
+  // =========================================================================
+  const hudPresetRow = document.createElement('div');
+  hudPresetRow.id = 'settings-hud-preset-row';
+  hudPresetRow.style.cssText = `
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    padding: 9px 12px;
+    background: rgba(56, 189, 248, 0.08);
+    border: 1px solid rgba(56, 189, 248, 0.25);
+    border-radius: 8px;
+  `;
+  const hudPresetHeader = document.createElement('div');
+  hudPresetHeader.style.cssText = 'display: flex; justify-content: space-between; align-items: center;';
+  const hudPresetLabel = document.createElement('span');
+  hudPresetLabel.style.cssText = 'font-size: 12px; font-weight: 800; letter-spacing: 0.06em; color: #e0f2fe; text-transform: uppercase;';
+  hudPresetLabel.textContent = 'HUD Preset';
+  const hudPresetBadge = document.createElement('span');
+  hudPresetBadge.id = 'settings-hud-preset-badge';
+  hudPresetBadge.style.cssText = 'font-size: 10px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; background: rgba(15, 23, 42, 0.75); border: 1px solid rgba(56, 189, 248, 0.35); color: #38bdf8;';
+  hudPresetHeader.append(hudPresetLabel, hudPresetBadge);
+
+  const hudPresetGroup = document.createElement('div');
+  hudPresetGroup.style.cssText = 'display: flex; flex-wrap: wrap; gap: 6px;';
+  const hudPresetOpts = [
+    { id: 'minimal', btnId: 'btn-hud-preset-minimal', label: 'Minimal / Clean Broadcast', shortLabel: 'Minimal' },
+    { id: 'standard', btnId: 'btn-hud-preset-standard', label: 'Standard', shortLabel: 'Standard' },
+    { id: 'rookie', btnId: 'btn-hud-preset-rookie', label: 'Rookie / Live Room', shortLabel: 'Rookie' },
+  ];
+  const hudPresetBtns = [];
+  const initPresetId = getActiveHudPresetId();
+  hudPresetBadge.textContent = hudPresetOpts.find((o) => o.id === initPresetId)?.shortLabel || 'Custom';
+  hudPresetBadge.style.color = initPresetId === 'custom' ? '#fbbf24' : '#38bdf8';
+
+  hudPresetOpts.forEach((opt) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.id = opt.btnId;
+    b.textContent = opt.label;
+    const isSel = initPresetId === opt.id;
+    b.style.cssText = `
+      flex: 1 1 auto; padding: 6px 10px; font-size: 11px; font-weight: 700; font-family: inherit;
+      border-radius: 4px; cursor: pointer; border: 1px solid rgba(120, 170, 210, 0.3);
+      background: ${isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)'};
+      color: ${isSel ? '#ffffff' : '#94a3b8'};
+    `;
+    b.onclick = () => {
+      applyHudPreset(opt.id);
+      notifyRenderSettings({ showControlsOverlay: Boolean(getHudPrefs().controlsOverlay) });
+    };
+    hudPresetBtns.push(b);
+    hudPresetGroup.appendChild(b);
+  });
+  hudPresetRow.append(hudPresetHeader, hudPresetGroup);
+  hudWrap.appendChild(hudPresetRow);
+
+  const initHud = getHudPrefs();
+  const overlayOpts = [
+    { id: false, label: 'Hidden (Default)' },
+    { id: true, label: 'Visible' },
+  ];
+  const { row: overlayRow, btns: overlayBtns } = buildToggleRow(
+    hudWrap,
+    'Controls Overlay (HUD)',
+    overlayOpts,
+    Boolean(initHud.controlsOverlay),
+    (val) => {
+      setHudPrefs({ controlsOverlay: val });
+      notifyRenderSettings({ showControlsOverlay: val });
+    },
+  );
+
+  const scorebugOpts = [
+    { id: 'off', label: 'Off' },
+    { id: 'splitscreen', label: 'Split-Screen' },
+    { id: 'always', label: 'Always' },
+  ];
+  const { row: scorebugRow, btns: scorebugBtns } = buildToggleRow(
+    hudWrap,
+    'Broadcast Scorebug',
+    scorebugOpts,
+    initHud.scorebugMode,
+    (val) => setHudPrefs({ scorebugMode: val }),
+  );
+
+  const boolOpts = [
+    { id: false, label: 'Off' },
+    { id: true, label: 'On' },
+  ];
+  const { row: dropRingRow, btns: dropRingBtns } = buildToggleRow(
+    hudWrap,
+    'Ball Rainbow Halo',
+    boolOpts,
+    initHud.ballDropRing,
+    (val) => setHudPrefs({ ballDropRing: val }),
+  );
+  const { row: strikeGuideRow, btns: strikeGuideBtns } = buildToggleRow(
+    hudWrap,
+    'Strike Range Guide',
+    boolOpts,
+    initHud.strikeRangeGuide,
+    (val) => setHudPrefs({ strikeRangeGuide: val }),
+  );
+  const { row: orientRow, btns: orientBtns } = buildToggleRow(
+    hudWrap,
+    'Ball Pip & Swap Cues',
+    boolOpts,
+    initHud.orientationCues,
+    (val) => setHudPrefs({ orientationCues: val }),
+  );
+
+  const cleanRow = document.createElement('div');
+  cleanRow.style.cssText = 'display: flex; justify-content: space-between; align-items: center; padding: 3px 4px;';
+  const cleanLabel = document.createElement('span');
+  cleanLabel.style.cssText = 'font-size: 12px; font-weight: 700; color: #cbd5e1;';
+  cleanLabel.textContent = 'Clean Broadcast Footage';
+  const cleanBtn = document.createElement('button');
+  cleanBtn.type = 'button';
+  cleanBtn.textContent = 'Hide All Guides';
+  cleanBtn.style.cssText = `
+    padding: 6px 12px; font-size: 11px; font-weight: 700; font-family: inherit;
+    border-radius: 4px; cursor: pointer; border: 1px solid rgba(56, 189, 248, 0.45);
+    background: rgba(56, 189, 248, 0.14); color: #e0f2fe;
+  `;
+  cleanBtn.onclick = () => {
+    setCleanBroadcastHud();
+    notifyRenderSettings({ showControlsOverlay: false });
+  };
+  cleanRow.append(cleanLabel, cleanBtn);
+  hudWrap.appendChild(cleanRow);
+
+  // =========================================================================
+  // TAB 1: GRAPHICS
+  // =========================================================================
+  const initRender = getRenderQualitySettings();
+  const gfxOpts = [
+    { id: 'low', label: 'Low (Fast)' },
+    { id: 'balanced', label: 'Balanced' },
+    { id: 'high', label: 'High' },
+  ];
+  const dprOpts = [
+    { id: '1.0', label: '1.0x (Fast)' },
+    { id: '1.25', label: '1.25x (Balanced)' },
+    { id: 'native', label: 'Native (Ultra)' },
+  ];
+  const shadowOpts = [
+    { id: 'off', label: 'Off' },
+    { id: 'balanced', label: 'Balanced (1 Tower)' },
+    { id: 'high', label: 'High (4 Towers)' },
+  ];
+
+  let dprBtns = [];
+  let shadowBtns = [];
+
+  const syncGraphicsHighlight = () => {
+    const cur = getRenderQualitySettings();
+    gfxBtns.forEach((b, idx) => {
+      const s = gfxOpts[idx].id === cur.graphicsPreset;
+      b.style.background = s ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
+      b.style.color = s ? '#ffffff' : '#94a3b8';
+    });
+    dprBtns.forEach((b, idx) => {
+      const s = dprOpts[idx].id === cur.pixelRatioPreset;
+      b.style.background = s ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
+      b.style.color = s ? '#ffffff' : '#94a3b8';
+    });
+    shadowBtns.forEach((b, idx) => {
+      const s = shadowOpts[idx].id === cur.shadowQuality;
+      b.style.background = s ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
+      b.style.color = s ? '#ffffff' : '#94a3b8';
+    });
+  };
+
+  const { row: gfxRow, btns: gfxBtns } = buildToggleRow(
+    gfxWrap,
+    'Graphics Preset',
+    gfxOpts,
+    initRender.graphicsPreset,
+    (val) => {
+      const next = setRenderQualitySettings({ graphicsPreset: val });
+      syncGraphicsHighlight();
+      notifyRenderSettings({
+        graphicsPreset: next.graphicsPreset,
+        pixelRatioPreset: next.pixelRatioPreset,
+        shadowQuality: next.shadowQuality,
+        showControlsOverlay: Boolean(getHudPrefs().controlsOverlay),
+      });
+    },
+  );
+
+  const dprCtrl = buildToggleRow(
+    gfxWrap,
+    'Resolution Scale',
+    dprOpts,
+    initRender.pixelRatioPreset,
+    (val) => {
+      setRenderQualitySettings({ pixelRatioPreset: val });
+      syncGraphicsHighlight();
+      notifyRenderSettings({
+        pixelRatioPreset: val,
+        showControlsOverlay: Boolean(getHudPrefs().controlsOverlay),
+      });
+    },
+  );
+  const dprRow = dprCtrl.row;
+  dprBtns = dprCtrl.btns;
+
+  const shadowCtrl = buildToggleRow(
+    gfxWrap,
+    'Stadium Shadows',
+    shadowOpts,
+    initRender.shadowQuality,
+    (val) => {
+      setRenderQualitySettings({ shadowQuality: val });
+      syncGraphicsHighlight();
+      notifyRenderSettings({
+        shadowQuality: val,
+        showControlsOverlay: Boolean(getHudPrefs().controlsOverlay),
+      });
+    },
+  );
+  const shadowRow = shadowCtrl.row;
+  shadowBtns = shadowCtrl.btns;
+
+  // =========================================================================
+  // TAB 2: AUDIO
+  // =========================================================================
   const masterRow = document.createElement('div');
-  masterRow.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;';
+  masterRow.style.cssText = 'display: flex; justify-content: space-between; align-items: center; padding: 6px 4px;';
   const masterLabel = document.createElement('span');
   masterLabel.style.cssText = 'font-size: 12px; font-weight: 700; color: #cbd5e1;';
   masterLabel.textContent = 'Master Volume';
@@ -85,19 +451,9 @@ export function buildMainMenuSettingsModal(rootEl, playerConfigs = [], callbacks
   masterSlider.value = String(Math.round((soundManager.getMasterVolume?.() ?? 0.8) * 100));
   masterVal.textContent = `${masterSlider.value}%`;
   masterSlider.style.cssText = 'flex: 1; margin: 0 16px; accent-color: #38bdf8; cursor: pointer;';
-  masterSlider.oninput = (e) => {
-    const val = Number(e.target.value) / 100;
-    masterVal.textContent = `${e.target.value}%`;
-    soundManager.setMasterVolume(val);
-  };
-  masterRow.appendChild(masterLabel);
-  masterRow.appendChild(masterSlider);
-  masterRow.appendChild(masterVal);
-  box.appendChild(masterRow);
 
-  // SFX Volume
   const sfxRow = document.createElement('div');
-  sfxRow.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;';
+  sfxRow.style.cssText = 'display: flex; justify-content: space-between; align-items: center; padding: 6px 4px;';
   const sfxLabel = document.createElement('span');
   sfxLabel.style.cssText = 'font-size: 12px; font-weight: 700; color: #cbd5e1;';
   sfxLabel.textContent = 'SFX & Ball Audio';
@@ -110,277 +466,61 @@ export function buildMainMenuSettingsModal(rootEl, playerConfigs = [], callbacks
   sfxSlider.value = String(Math.round((soundManager.getSfxVolume?.() ?? 0.8) * 100));
   sfxVal.textContent = `${sfxSlider.value}%`;
   sfxSlider.style.cssText = 'flex: 1; margin: 0 16px; accent-color: #10b981; cursor: pointer;';
+
+  masterRow.append(masterLabel, masterSlider, masterVal);
+  sfxRow.append(sfxLabel, sfxSlider, sfxVal);
+  audioWrap.append(masterRow, sfxRow);
+
+  const muteOpts = [
+    { id: false, label: 'Unmuted' },
+    { id: true, label: 'Muted' },
+  ];
+  const { row: muteRow, btns: muteBtns } = buildToggleRow(
+    audioWrap,
+    'Mute Audio',
+    muteOpts,
+    Boolean(soundManager.isMuted?.()),
+    (muted) => {
+      soundManager.setMuted?.(muted);
+      syncAudioUI();
+    },
+  );
+
+  const syncAudioUI = () => {
+    const mVol = Math.round((soundManager.getMasterVolume?.() ?? 0.8) * 100);
+    const sVol = Math.round((soundManager.getSfxVolume?.() ?? 0.8) * 100);
+    masterSlider.value = String(mVol);
+    masterVal.textContent = `${mVol}%`;
+    sfxSlider.value = String(sVol);
+    sfxVal.textContent = `${sVol}%`;
+    const isMuted = Boolean(soundManager.isMuted?.());
+    muteBtns.forEach((b, idx) => {
+      const s = muteOpts[idx].id === isMuted;
+      b.style.background = s ? (isMuted ? '#ef4444' : '#2563eb') : 'rgba(255, 255, 255, 0.06)';
+      b.style.color = s ? '#ffffff' : '#94a3b8';
+    });
+  };
+
+  masterSlider.oninput = (e) => {
+    const val = Number(e.target.value) / 100;
+    masterVal.textContent = `${e.target.value}%`;
+    soundManager.setMasterVolume(val);
+    if (val > 0 && soundManager.isMuted?.()) {
+      soundManager.setMuted(false);
+      syncAudioUI();
+    }
+  };
   sfxSlider.oninput = (e) => {
     const val = Number(e.target.value) / 100;
     sfxVal.textContent = `${e.target.value}%`;
     soundManager.setSfxVolume(val);
   };
-  sfxRow.appendChild(sfxLabel);
-  sfxRow.appendChild(sfxSlider);
-  sfxRow.appendChild(sfxVal);
-  box.appendChild(sfxRow);
 
-  // 2. DISPLAY & GRAPHICS SECTION
-  box.appendChild(createSectionHeader('🖥️ Display & Graphics'));
-
-  // Graphics Quality Preset (Low / Balanced / High)
-  const gfxRow = document.createElement('div');
-  gfxRow.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;';
-  const gfxLabel = document.createElement('span');
-  gfxLabel.style.cssText = 'font-size: 12px; font-weight: 700; color: #cbd5e1;';
-  gfxLabel.textContent = 'Graphics Preset';
-  const gfxGroup = document.createElement('div');
-  gfxGroup.style.cssText = 'display: flex; gap: 6px;';
-  const gfxOpts = [
-    { id: 'low', label: 'Low (Fast)' },
-    { id: 'balanced', label: 'Balanced' },
-    { id: 'high', label: 'High' },
-  ];
-  const gfxBtns = [];
-  const initGfx = getHudPrefs().graphicsPreset || 'balanced';
-  gfxOpts.forEach((opt) => {
-    const b = document.createElement('button');
-    b.textContent = opt.label;
-    const isSel = initGfx === opt.id;
-    b.style.cssText = `
-      padding: 6px 12px; font-size: 11px; font-weight: 700; font-family: inherit;
-      border-radius: 4px; cursor: pointer; border: 1px solid rgba(120, 170, 210, 0.3); transition: all 0.12s ease;
-      background: ${isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)'};
-      color: ${isSel ? '#ffffff' : '#94a3b8'};
-    `;
-    b.onclick = () => {
-      setHudPrefs({ graphicsPreset: opt.id });
-      const nextShadow = opt.id === 'low' ? 'off' : (opt.id === 'high' ? 'high' : 'balanced');
-      shadowBtns.forEach((btn, idx) => {
-        const s = shadowOpts[idx].id === nextShadow;
-        btn.style.background = s ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
-        btn.style.color = s ? '#ffffff' : '#94a3b8';
-      });
-      if (callbacks.onRenderSettingsChange) callbacks.onRenderSettingsChange({ graphicsPreset: opt.id });
-      else if (window.__vb?.applyRenderSettings) window.__vb.applyRenderSettings({ graphicsPreset: opt.id });
-    };
-    gfxBtns.push(b);
-    gfxGroup.appendChild(b);
-  });
-  gfxRow.appendChild(gfxLabel);
-  gfxRow.appendChild(gfxGroup);
-  box.appendChild(gfxRow);
-
-  // Stadium Shadows
-  const shadowRow = document.createElement('div');
-  shadowRow.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;';
-  const shadowLabel = document.createElement('span');
-  shadowLabel.style.cssText = 'font-size: 12px; font-weight: 700; color: #cbd5e1;';
-  shadowLabel.textContent = 'Stadium Shadows';
-  const shadowGroup = document.createElement('div');
-  shadowGroup.style.cssText = 'display: flex; gap: 6px;';
-  const shadowOpts = [
-    { id: 'off', label: 'Off' },
-    { id: 'balanced', label: 'Balanced' },
-    { id: 'high', label: 'High (4 Towers)' },
-  ];
-  const shadowBtns = [];
-  shadowOpts.forEach((opt) => {
-    const b = document.createElement('button');
-    b.textContent = opt.label;
-    const isSel = (TUNING.render?.shadowQuality || 'balanced') === opt.id;
-    b.style.cssText = `
-      padding: 6px 12px; font-size: 11px; font-weight: 700; font-family: inherit;
-      border-radius: 4px; cursor: pointer; border: 1px solid rgba(120, 170, 210, 0.3); transition: all 0.12s ease;
-      background: ${isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)'};
-      color: ${isSel ? '#ffffff' : '#94a3b8'};
-    `;
-    b.onclick = () => {
-      if (!TUNING.render) TUNING.render = {};
-      TUNING.render.shadowQuality = opt.id;
-      shadowBtns.forEach((btn, idx) => {
-        const s = shadowOpts[idx].id === opt.id;
-        btn.style.background = s ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
-        btn.style.color = s ? '#ffffff' : '#94a3b8';
-      });
-      if (callbacks.onRenderSettingsChange) callbacks.onRenderSettingsChange({ shadowQuality: opt.id });
-      else if (window.__vb?.applyRenderSettings) window.__vb.applyRenderSettings({ shadowQuality: opt.id });
-    };
-    shadowBtns.push(b);
-    shadowGroup.appendChild(b);
-  });
-  shadowRow.appendChild(shadowLabel);
-  shadowRow.appendChild(shadowGroup);
-  box.appendChild(shadowRow);
-
-  // Controls Overlay (HUD)
-  const overlayRow = document.createElement('div');
-  overlayRow.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;';
-  const overlayLabel = document.createElement('span');
-  overlayLabel.style.cssText = 'font-size: 12px; font-weight: 700; color: #cbd5e1;';
-  overlayLabel.textContent = 'Controls Overlay (HUD)';
-  const overlayGroup = document.createElement('div');
-  overlayGroup.style.cssText = 'display: flex; gap: 6px;';
-  const overlayOpts = [
-    { id: false, label: 'Hidden (Default)' },
-    { id: true, label: 'Visible' },
-  ];
-  const overlayBtns = [];
-  overlayOpts.forEach((opt) => {
-    const b = document.createElement('button');
-    b.textContent = opt.label;
-    const isSel = (opt.id === false);
-    b.style.cssText = `
-      padding: 6px 14px; font-size: 11px; font-weight: 700; font-family: inherit;
-      border-radius: 4px; cursor: pointer; border: 1px solid rgba(120, 170, 210, 0.3); transition: all 0.12s ease;
-      background: ${isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)'};
-      color: ${isSel ? '#ffffff' : '#94a3b8'};
-    `;
-    b.onclick = () => {
-      overlayBtns.forEach((btn, idx) => {
-        const s = overlayOpts[idx].id === opt.id;
-        btn.style.background = s ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
-        btn.style.color = s ? '#ffffff' : '#94a3b8';
-      });
-      if (callbacks.onRenderSettingsChange) callbacks.onRenderSettingsChange({ showControlsOverlay: opt.id });
-      else if (window.__vb?.applyRenderSettings) window.__vb.applyRenderSettings({ showControlsOverlay: opt.id });
-    };
-    overlayBtns.push(b);
-    overlayGroup.appendChild(b);
-  });
-  overlayRow.appendChild(overlayLabel);
-  overlayRow.appendChild(overlayGroup);
-  box.appendChild(overlayRow);
-
-  // 2b. OPTIONAL READABILITY HUD SECTION (All Default OFF)
-  box.appendChild(createSectionHeader('👁️ Optional Readability HUD'));
-
-  const buildMainHudToggle = (labelText, opts, currentVal, onPick) => {
-    const row = document.createElement('div');
-    row.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;';
-    const lbl = document.createElement('span');
-    lbl.style.cssText = 'font-size: 12px; font-weight: 700; color: #cbd5e1;';
-    lbl.textContent = labelText;
-    const grp = document.createElement('div');
-    grp.style.cssText = 'display: flex; gap: 6px;';
-    const btns = [];
-    opts.forEach((opt) => {
-      const b = document.createElement('button');
-      b.textContent = opt.label;
-      const isSel = currentVal === opt.id;
-      b.style.cssText = `
-        padding: 6px 12px; font-size: 11px; font-weight: 700; font-family: inherit;
-        border-radius: 4px; cursor: pointer; border: 1px solid rgba(120, 170, 210, 0.3); transition: all 0.12s ease;
-        background: ${isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)'};
-        color: ${isSel ? '#ffffff' : '#94a3b8'};
-      `;
-      b.onclick = () => onPick(opt.id);
-      btns.push(b);
-      grp.appendChild(b);
-    });
-    row.appendChild(lbl);
-    row.appendChild(grp);
-    box.appendChild(row);
-    return { row, btns };
-  };
-
-  const initHud = getHudPrefs();
-  const scorebugOpts = [
-    { id: 'off', label: 'Off' },
-    { id: 'splitscreen', label: 'Split-Screen' },
-    { id: 'always', label: 'Always' },
-  ];
-  const { row: scorebugRow, btns: scorebugBtns } = buildMainHudToggle(
-    'Broadcast Scorebug',
-    scorebugOpts,
-    initHud.scorebugMode,
-    (val) => setHudPrefs({ scorebugMode: val }),
-  );
-
-  const dropRingOpts = [
-    { id: false, label: 'Off' },
-    { id: true, label: 'On' },
-  ];
-  const { row: dropRingRow, btns: dropRingBtns } = buildMainHudToggle(
-    'Ball Rainbow Halo',
-    dropRingOpts,
-    initHud.ballDropRing,
-    (val) => setHudPrefs({ ballDropRing: val }),
-  );
-
-  const strikeGuideOpts = [
-    { id: false, label: 'Off' },
-    { id: true, label: 'On' },
-  ];
-  const { row: strikeGuideRow, btns: strikeGuideBtns } = buildMainHudToggle(
-    'Strike Range Guide',
-    strikeGuideOpts,
-    initHud.strikeRangeGuide,
-    (val) => setHudPrefs({ strikeRangeGuide: val }),
-  );
-
-  const orientOpts = [
-    { id: false, label: 'Off' },
-    { id: true, label: 'On' },
-  ];
-  const { row: orientRow, btns: orientBtns } = buildMainHudToggle(
-    'Ball Pip & Swap Cues',
-    orientOpts,
-    initHud.orientationCues,
-    (val) => setHudPrefs({ orientationCues: val }),
-  );
-
-  const cleanRow = document.createElement('div');
-  cleanRow.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;';
-  const cleanLabel = document.createElement('span');
-  cleanLabel.style.cssText = 'font-size: 12px; font-weight: 700; color: #cbd5e1;';
-  cleanLabel.textContent = 'Clean Broadcast Footage';
-  const cleanBtn = document.createElement('button');
-  cleanBtn.textContent = 'Hide All Guides';
-  cleanBtn.style.cssText = `
-    padding: 6px 12px; font-size: 11px; font-weight: 700; font-family: inherit;
-    border-radius: 4px; cursor: pointer; border: 1px solid rgba(56, 189, 248, 0.45);
-    background: rgba(56, 189, 248, 0.14); color: #e0f2fe; transition: all 0.12s ease;
-  `;
-  cleanBtn.onclick = () => {
-    setCleanBroadcastHud();
-    if (callbacks.onRenderSettingsChange) callbacks.onRenderSettingsChange({ showControlsOverlay: false });
-    else if (window.__vb?.applyRenderSettings) window.__vb.applyRenderSettings({ showControlsOverlay: false });
-  };
-  cleanRow.appendChild(cleanLabel);
-  cleanRow.appendChild(cleanBtn);
-  box.appendChild(cleanRow);
-
-  const syncMainHudButtons = (prefs) => {
-    gfxBtns.forEach((btn, idx) => {
-      const s = gfxOpts[idx].id === prefs.graphicsPreset;
-      btn.style.background = s ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
-      btn.style.color = s ? '#ffffff' : '#94a3b8';
-    });
-    scorebugBtns.forEach((btn, idx) => {
-      const s = scorebugOpts[idx].id === prefs.scorebugMode;
-      btn.style.background = s ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
-      btn.style.color = s ? '#ffffff' : '#94a3b8';
-    });
-    dropRingBtns.forEach((btn, idx) => {
-      const s = dropRingOpts[idx].id === prefs.ballDropRing;
-      btn.style.background = s ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
-      btn.style.color = s ? '#ffffff' : '#94a3b8';
-    });
-    strikeGuideBtns.forEach((btn, idx) => {
-      const s = strikeGuideOpts[idx].id === prefs.strikeRangeGuide;
-      btn.style.background = s ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
-      btn.style.color = s ? '#ffffff' : '#94a3b8';
-    });
-    orientBtns.forEach((btn, idx) => {
-      const s = orientOpts[idx].id === prefs.orientationCues;
-      btn.style.background = s ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
-      btn.style.color = s ? '#ffffff' : '#94a3b8';
-    });
-  };
-  subscribeHudPrefs(syncMainHudButtons);
-  mainMenuSettingsModalEl._syncHudPrefs = () => syncMainHudButtons(getHudPrefs());
-
-  // 3. CAMERA & CONTROLS SECTION
-  box.appendChild(createSectionHeader('🎥 Camera Angle'));
-
+  // =========================================================================
+  // TAB 3: CAMERA & CONTROLS
+  // =========================================================================
   const camRow = document.createElement('div');
-  camRow.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;';
+  camRow.style.cssText = 'display: flex; justify-content: space-between; align-items: center; padding: 3px 4px;';
   const camLabel = document.createElement('span');
   camLabel.style.cssText = 'font-size: 12px; font-weight: 700; color: #cbd5e1;';
   camLabel.textContent = 'Default Camera Mode';
@@ -401,416 +541,391 @@ export function buildMainMenuSettingsModal(rootEl, playerConfigs = [], callbacks
   camSelect.onchange = (e) => {
     const val = e.target.value;
     if (playerConfigs[0]) playerConfigs[0].cameraMode = val;
-    TUNING.camera.mode = val;
-    if (window.__vb?.setPlayerConfig) window.__vb.setPlayerConfig(0, { cameraMode: val });
-    // Same value as the lobby's P1 "Preferred Camera"; keep that dropdown showing it.
-    const lobbySelect = document.getElementById('select-camera-p1');
+    setDefaultCameraMode(val);
+    if (typeof window !== 'undefined' && window.__vb?.setPlayerConfig) window.__vb.setPlayerConfig(0, { cameraMode: val });
+    const lobbySelect = typeof document !== 'undefined' ? document.getElementById('select-camera-p1') : null;
     if (lobbySelect) lobbySelect.value = val;
   };
-  // The lobby can change P1's camera too, so re-read it whenever Settings opens.
-  mainMenuSettingsModalEl._syncCamera = () => {
-    camSelect.value = playerConfigs[0]?.cameraMode || 'chase';
-  };
-  camRow.appendChild(camLabel);
-  camRow.appendChild(camSelect);
-  box.appendChild(camRow);
+  camRow.append(camLabel, camSelect);
+  camWrap.appendChild(camRow);
 
-  // Screen Shake Preference (Off / Subtle / Full)
-  const shakeRow = document.createElement('div');
-  shakeRow.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;';
-  const shakeLabel = document.createElement('span');
-  shakeLabel.style.cssText = 'font-size: 12px; font-weight: 700; color: #cbd5e1;';
-  shakeLabel.textContent = 'Screen Shake';
-  const shakeGroup = document.createElement('div');
-  shakeGroup.style.cssText = 'display: flex; gap: 6px;';
   const shakeOpts = [
-    { id: 'off', label: 'Off', enabled: false, mult: 0.0 },
-    { id: 'subtle', label: 'Subtle', enabled: true, mult: 0.6 },
-    { id: 'full', label: 'Full', enabled: true, mult: 1.0 },
+    { id: 'off', label: 'Off' },
+    { id: 'subtle', label: 'Subtle' },
+    { id: 'full', label: 'Full' },
   ];
-  const shakeBtns = [];
-  const currentShakeMode = TUNING.camera?.shake?.mode || (TUNING.camera?.shake?.enabled === false ? 'off' : 'subtle');
-  shakeOpts.forEach((opt) => {
-    const b = document.createElement('button');
-    b.textContent = opt.label;
-    const isSel = (opt.id === currentShakeMode);
-    b.style.cssText = `
-      padding: 6px 14px; font-size: 11px; font-weight: 700; font-family: inherit;
-      border-radius: 4px; cursor: pointer; border: 1px solid rgba(120, 170, 210, 0.3); transition: all 0.12s ease;
-      background: ${isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)'};
-      color: ${isSel ? '#ffffff' : '#94a3b8'};
-    `;
-    b.onclick = () => {
-      if (!TUNING.camera) TUNING.camera = {};
-      if (!TUNING.camera.shake) TUNING.camera.shake = {};
-      TUNING.camera.shake.enabled = opt.enabled;
-      TUNING.camera.shake.mode = opt.id;
-      TUNING.camera.shake.multiplier = opt.mult;
+  const { row: shakeRow, btns: shakeBtns } = buildToggleRow(
+    camWrap,
+    'Screen Shake',
+    shakeOpts,
+    getCameraShakeMode(),
+    (val) => {
+      setCameraShakeMode(val);
       shakeBtns.forEach((btn, idx) => {
-        const s = shakeOpts[idx].id === opt.id;
+        const s = shakeOpts[idx].id === val;
         btn.style.background = s ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
         btn.style.color = s ? '#ffffff' : '#94a3b8';
       });
-    };
-    shakeBtns.push(b);
-    shakeGroup.appendChild(b);
-  });
-  shakeRow.appendChild(shakeLabel);
-  shakeRow.appendChild(shakeGroup);
-  box.appendChild(shakeRow);
+    },
+  );
 
-  // 4. CONTROLS & HAPTICS SECTION
-  box.appendChild(createSectionHeader('🎮 Controls & Haptics'));
-
-  const vibRow = document.createElement('div');
-  vibRow.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;';
-  const vibLabel = document.createElement('span');
-  vibLabel.style.cssText = 'font-size: 12px; font-weight: 700; color: #cbd5e1;';
-  vibLabel.textContent = 'Controller Vibration';
-  const vibGroup = document.createElement('div');
-  vibGroup.style.cssText = 'display: flex; gap: 6px;';
   const vibOpts = [
     { id: true, label: 'On' },
     { id: false, label: 'Off' },
   ];
-  const vibBtns = [];
-  vibOpts.forEach((opt) => {
-    const b = document.createElement('button');
-    b.textContent = opt.label;
-    const isSel = (opt.id === isVibrationEnabled());
-    b.style.cssText = `
-      padding: 6px 14px; font-size: 11px; font-weight: 700; font-family: inherit;
-      border-radius: 4px; cursor: pointer; border: 1px solid rgba(120, 170, 210, 0.3); transition: all 0.12s ease;
-      background: ${isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)'};
-      color: ${isSel ? '#ffffff' : '#94a3b8'};
-    `;
-    b.onclick = () => {
-      setVibrationEnabled(opt.id);
+  const { row: vibRow, btns: vibBtns } = buildToggleRow(
+    camWrap,
+    'Controller Vibration',
+    vibOpts,
+    isVibrationEnabled(),
+    (val) => {
+      setVibrationEnabled(val);
       vibBtns.forEach((btn, idx) => {
-        const s = vibOpts[idx].id === opt.id;
+        const s = vibOpts[idx].id === val;
         btn.style.background = s ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
         btn.style.color = s ? '#ffffff' : '#94a3b8';
       });
-    };
-    vibBtns.push(b);
-    vibGroup.appendChild(b);
-  });
-  vibRow.appendChild(vibLabel);
-  vibRow.appendChild(vibGroup);
-  box.appendChild(vibRow);
+    },
+  );
+
+  const { row: tuningRow, btns: tuningBtns } = buildToggleRow(
+    camWrap,
+    'Valleyball Tuning GUI',
+    boolOpts,
+    showTuningGuiState,
+    (val) => {
+      showTuningGuiState = val;
+      tuningBtns.forEach((btn, idx) => {
+        const s = boolOpts[idx].id === val;
+        btn.style.background = s ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
+        btn.style.color = s ? '#ffffff' : '#94a3b8';
+      });
+      notifyRenderSettings({ showTuningGui: val });
+    },
+  );
 
   // Close Button
   const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
   closeBtn.id = 'btn-close-main-menu-settings';
   closeBtn.textContent = 'BACK / CLOSE [ESC / B]';
   closeBtn.style.cssText = `
-    margin-top: 8px; padding: 12px; font-size: 13px; font-weight: 900; font-family: inherit;
+    margin-top: 14px; padding: 11px; font-size: 12.5px; font-weight: 900; font-family: inherit;
     letter-spacing: 0.1em; color: #ffffff; background: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.25); border-radius: 8px; cursor: pointer; transition: all 0.15s ease;
+    border: 1px solid rgba(255, 255, 255, 0.25); border-radius: 8px; cursor: pointer;
   `;
-  closeBtn.onmouseenter = () => { closeBtn.style.background = 'rgba(255, 255, 255, 0.2)'; closeBtn.style.borderColor = '#ffffff'; };
-  closeBtn.onmouseleave = () => { closeBtn.style.background = 'rgba(255, 255, 255, 0.1)'; closeBtn.style.borderColor = 'rgba(255, 255, 255, 0.25)'; };
   closeBtn.onclick = hideMainMenuSettingsModal;
   box.appendChild(closeBtn);
 
   mainMenuSettingsModalEl.appendChild(box);
   if (rootEl) rootEl.appendChild(mainMenuSettingsModalEl);
 
-  // Navigation rows for controller & keyboard support
-  let settingsFocusIndex = 0;
-  const navRows = [
-    {
-      el: masterRow,
-      onLeft: () => {
-        const val = Math.max(0, parseInt(masterSlider.value, 10) - 5);
-        masterSlider.value = String(val);
-        masterSlider.dispatchEvent(new Event('input'));
-        soundManager.playTone(360, 0.04, 'sine', 0.15);
-      },
-      onRight: () => {
-        const val = Math.min(100, parseInt(masterSlider.value, 10) + 5);
-        masterSlider.value = String(val);
-        masterSlider.dispatchEvent(new Event('input'));
-        soundManager.playTone(480, 0.04, 'sine', 0.15);
-      },
-      onAction: () => {},
+  const syncMainHudButtons = (prefs) => {
+    const activePreset = getActiveHudPresetId();
+    hudPresetBtns.forEach((btn, idx) => {
+      const s = hudPresetOpts[idx].id === activePreset;
+      btn.style.background = s ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
+      btn.style.color = s ? '#ffffff' : '#94a3b8';
+    });
+    hudPresetBadge.textContent = hudPresetOpts.find((o) => o.id === activePreset)?.shortLabel || 'Custom';
+    hudPresetBadge.style.color = activePreset === 'custom' ? '#fbbf24' : '#38bdf8';
+    const overlayEnabled = Boolean(prefs.controlsOverlay);
+    overlayBtns.forEach((btn, idx) => {
+      const s = overlayOpts[idx].id === overlayEnabled;
+      btn.style.background = s ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
+      btn.style.color = s ? '#ffffff' : '#94a3b8';
+    });
+    scorebugBtns.forEach((btn, idx) => {
+      const s = scorebugOpts[idx].id === prefs.scorebugMode;
+      btn.style.background = s ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
+      btn.style.color = s ? '#ffffff' : '#94a3b8';
+    });
+    dropRingBtns.forEach((btn, idx) => {
+      const s = boolOpts[idx].id === prefs.ballDropRing;
+      btn.style.background = s ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
+      btn.style.color = s ? '#ffffff' : '#94a3b8';
+    });
+    strikeGuideBtns.forEach((btn, idx) => {
+      const s = boolOpts[idx].id === prefs.strikeRangeGuide;
+      btn.style.background = s ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
+      btn.style.color = s ? '#ffffff' : '#94a3b8';
+    });
+    orientBtns.forEach((btn, idx) => {
+      const s = boolOpts[idx].id === prefs.orientationCues;
+      btn.style.background = s ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
+      btn.style.color = s ? '#ffffff' : '#94a3b8';
+    });
+    syncGraphicsHighlight();
+  };
+  subscribeHudPrefs(syncMainHudButtons);
+  syncMainHudButtons(getHudPrefs());
+
+  const tabBarNavRow = {
+    el: tablistEl,
+    isTabBar: true,
+    onLeft: () => selectTab((activeTabIdx - 1 + tabDefs.length) % tabDefs.length, true),
+    onRight: () => selectTab((activeTabIdx + 1) % tabDefs.length, true),
+    onAction: () => selectTab((activeTabIdx + 1) % tabDefs.length, true),
+  };
+
+  const closeNavRow = {
+    el: closeBtn,
+    isButton: true,
+    onLeft: () => {},
+    onRight: () => {},
+    onAction: () => {
+      soundManager.playTone(330, 0.08, 'sine', 0.2);
+      hideMainMenuSettingsModal();
     },
-    {
-      el: sfxRow,
-      onLeft: () => {
-        const val = Math.max(0, parseInt(sfxSlider.value, 10) - 5);
-        sfxSlider.value = String(val);
-        sfxSlider.dispatchEvent(new Event('input'));
-        soundManager.playTone(360, 0.04, 'sine', 0.15);
+  };
+
+  const cycleHelper = (opts, btns, curVal, dir) => {
+    const curIdx = opts.findIndex((o) => o.id === curVal);
+    const nextIdx = curIdx === -1 ? 0 : (curIdx + dir + opts.length) % opts.length;
+    btns[nextIdx]?.click();
+    soundManager.playTone(dir < 0 ? 440 : 520, 0.05, 'sine', 0.15);
+  };
+
+  const tabRowsByIdx = [
+    // Tab 0: HUD & Guides
+    [
+      {
+        el: hudPresetRow,
+        onLeft: () => cycleHelper(hudPresetOpts, hudPresetBtns, getActiveHudPresetId(), -1),
+        onRight: () => cycleHelper(hudPresetOpts, hudPresetBtns, getActiveHudPresetId(), 1),
+        onAction: () => cycleHelper(hudPresetOpts, hudPresetBtns, getActiveHudPresetId(), 1),
       },
-      onRight: () => {
-        const val = Math.min(100, parseInt(sfxSlider.value, 10) + 5);
-        sfxSlider.value = String(val);
-        sfxSlider.dispatchEvent(new Event('input'));
-        soundManager.playTone(480, 0.04, 'sine', 0.15);
+      {
+        el: overlayRow,
+        onLeft: () => cycleHelper(overlayOpts, overlayBtns, Boolean(getHudPrefs().controlsOverlay), -1),
+        onRight: () => cycleHelper(overlayOpts, overlayBtns, Boolean(getHudPrefs().controlsOverlay), 1),
+        onAction: () => cycleHelper(overlayOpts, overlayBtns, Boolean(getHudPrefs().controlsOverlay), 1),
       },
-      onAction: () => {},
-    },
-    {
-      el: gfxRow,
-      onLeft: () => {
-        const curIdx = gfxOpts.findIndex((o) => o.id === getHudPrefs().graphicsPreset);
-        const nextIdx = (curIdx - 1 + gfxOpts.length) % gfxOpts.length;
-        gfxBtns[nextIdx]?.click();
-        soundManager.playTone(440, 0.05, 'sine', 0.15);
+      {
+        el: scorebugRow,
+        onLeft: () => cycleHelper(scorebugOpts, scorebugBtns, getHudPrefs().scorebugMode, -1),
+        onRight: () => cycleHelper(scorebugOpts, scorebugBtns, getHudPrefs().scorebugMode, 1),
+        onAction: () => cycleHelper(scorebugOpts, scorebugBtns, getHudPrefs().scorebugMode, 1),
       },
-      onRight: () => {
-        const curIdx = gfxOpts.findIndex((o) => o.id === getHudPrefs().graphicsPreset);
-        const nextIdx = (curIdx + 1) % gfxOpts.length;
-        gfxBtns[nextIdx]?.click();
-        soundManager.playTone(520, 0.05, 'sine', 0.15);
+      {
+        el: dropRingRow,
+        onLeft: () => cycleHelper(boolOpts, dropRingBtns, Boolean(getHudPrefs().ballDropRing), -1),
+        onRight: () => cycleHelper(boolOpts, dropRingBtns, Boolean(getHudPrefs().ballDropRing), 1),
+        onAction: () => cycleHelper(boolOpts, dropRingBtns, Boolean(getHudPrefs().ballDropRing), 1),
       },
-      onAction: () => {
-        const curIdx = gfxOpts.findIndex((o) => o.id === getHudPrefs().graphicsPreset);
-        const nextIdx = (curIdx + 1) % gfxOpts.length;
-        gfxBtns[nextIdx]?.click();
-        soundManager.playTone(520, 0.05, 'sine', 0.15);
+      {
+        el: strikeGuideRow,
+        onLeft: () => cycleHelper(boolOpts, strikeGuideBtns, Boolean(getHudPrefs().strikeRangeGuide), -1),
+        onRight: () => cycleHelper(boolOpts, strikeGuideBtns, Boolean(getHudPrefs().strikeRangeGuide), 1),
+        onAction: () => cycleHelper(boolOpts, strikeGuideBtns, Boolean(getHudPrefs().strikeRangeGuide), 1),
       },
-    },
-    {
-      el: shadowRow,
-      onLeft: () => {
-        const curIdx = shadowOpts.findIndex((o) => (TUNING.render?.shadowQuality || 'balanced') === o.id);
-        const nextIdx = (curIdx - 1 + shadowOpts.length) % shadowOpts.length;
-        shadowBtns[nextIdx]?.click();
-        soundManager.playTone(440, 0.05, 'sine', 0.15);
+      {
+        el: orientRow,
+        onLeft: () => cycleHelper(boolOpts, orientBtns, Boolean(getHudPrefs().orientationCues), -1),
+        onRight: () => cycleHelper(boolOpts, orientBtns, Boolean(getHudPrefs().orientationCues), 1),
+        onAction: () => cycleHelper(boolOpts, orientBtns, Boolean(getHudPrefs().orientationCues), 1),
       },
-      onRight: () => {
-        const curIdx = shadowOpts.findIndex((o) => (TUNING.render?.shadowQuality || 'balanced') === o.id);
-        const nextIdx = (curIdx + 1) % shadowOpts.length;
-        shadowBtns[nextIdx]?.click();
-        soundManager.playTone(520, 0.05, 'sine', 0.15);
+      {
+        el: cleanRow,
+        onLeft: () => {},
+        onRight: () => {},
+        onAction: () => {
+          cleanBtn.click();
+          soundManager.playTone(360, 0.05, 'sine', 0.15);
+        },
       },
-      onAction: () => {
-        const curIdx = shadowOpts.findIndex((o) => (TUNING.render?.shadowQuality || 'balanced') === o.id);
-        const nextIdx = (curIdx + 1) % shadowOpts.length;
-        shadowBtns[nextIdx]?.click();
-        soundManager.playTone(520, 0.05, 'sine', 0.15);
+    ],
+    // Tab 1: Graphics
+    [
+      {
+        el: gfxRow,
+        onLeft: () => cycleHelper(gfxOpts, gfxBtns, getRenderQualitySettings().graphicsPreset, -1),
+        onRight: () => cycleHelper(gfxOpts, gfxBtns, getRenderQualitySettings().graphicsPreset, 1),
+        onAction: () => cycleHelper(gfxOpts, gfxBtns, getRenderQualitySettings().graphicsPreset, 1),
       },
-    },
-    {
-      el: overlayRow,
-      onLeft: () => {
-        const target = overlayBtns.find((_, idx) => overlayOpts[idx].id === !overlayOpts[0].id);
-        target?.click();
-        soundManager.playTone(440, 0.05, 'sine', 0.15);
+      {
+        el: dprRow,
+        onLeft: () => cycleHelper(dprOpts, dprBtns, getRenderQualitySettings().pixelRatioPreset, -1),
+        onRight: () => cycleHelper(dprOpts, dprBtns, getRenderQualitySettings().pixelRatioPreset, 1),
+        onAction: () => cycleHelper(dprOpts, dprBtns, getRenderQualitySettings().pixelRatioPreset, 1),
       },
-      onRight: () => {
-        const target = overlayBtns.find((_, idx) => overlayOpts[idx].id === !overlayOpts[0].id);
-        target?.click();
-        soundManager.playTone(520, 0.05, 'sine', 0.15);
+      {
+        el: shadowRow,
+        onLeft: () => cycleHelper(shadowOpts, shadowBtns, getRenderQualitySettings().shadowQuality, -1),
+        onRight: () => cycleHelper(shadowOpts, shadowBtns, getRenderQualitySettings().shadowQuality, 1),
+        onAction: () => cycleHelper(shadowOpts, shadowBtns, getRenderQualitySettings().shadowQuality, 1),
       },
-      onAction: () => {
-        const isCurrentlyHidden = overlayBtns[0].style.color === 'rgb(255, 255, 255)' || overlayBtns[0].style.color === '#ffffff';
-        overlayBtns[isCurrentlyHidden ? 1 : 0]?.click();
-        soundManager.playTone(520, 0.05, 'sine', 0.15);
+    ],
+    // Tab 2: Audio
+    [
+      {
+        el: masterRow,
+        onLeft: () => {
+          masterSlider.value = String(Math.max(0, parseInt(masterSlider.value, 10) - 5));
+          masterSlider.dispatchEvent(new Event('input'));
+          soundManager.playTone(360, 0.04, 'sine', 0.15);
+        },
+        onRight: () => {
+          masterSlider.value = String(Math.min(100, parseInt(masterSlider.value, 10) + 5));
+          masterSlider.dispatchEvent(new Event('input'));
+          soundManager.playTone(480, 0.04, 'sine', 0.15);
+        },
+        onAction: () => {},
       },
-    },
-    {
-      el: scorebugRow,
-      onLeft: () => {
-        const curIdx = scorebugOpts.findIndex((o) => o.id === getHudPrefs().scorebugMode);
-        const nextIdx = (curIdx - 1 + scorebugOpts.length) % scorebugOpts.length;
-        scorebugBtns[nextIdx]?.click();
-        soundManager.playTone(440, 0.05, 'sine', 0.15);
+      {
+        el: sfxRow,
+        onLeft: () => {
+          sfxSlider.value = String(Math.max(0, parseInt(sfxSlider.value, 10) - 5));
+          sfxSlider.dispatchEvent(new Event('input'));
+          soundManager.playTone(360, 0.04, 'sine', 0.15);
+        },
+        onRight: () => {
+          sfxSlider.value = String(Math.min(100, parseInt(sfxSlider.value, 10) + 5));
+          sfxSlider.dispatchEvent(new Event('input'));
+          soundManager.playTone(480, 0.04, 'sine', 0.15);
+        },
+        onAction: () => {},
       },
-      onRight: () => {
-        const curIdx = scorebugOpts.findIndex((o) => o.id === getHudPrefs().scorebugMode);
-        const nextIdx = (curIdx + 1) % scorebugOpts.length;
-        scorebugBtns[nextIdx]?.click();
-        soundManager.playTone(520, 0.05, 'sine', 0.15);
+      {
+        el: muteRow,
+        onLeft: () => cycleHelper(muteOpts, muteBtns, Boolean(soundManager.isMuted?.()), -1),
+        onRight: () => cycleHelper(muteOpts, muteBtns, Boolean(soundManager.isMuted?.()), 1),
+        onAction: () => cycleHelper(muteOpts, muteBtns, Boolean(soundManager.isMuted?.()), 1),
       },
-      onAction: () => {
-        const curIdx = scorebugOpts.findIndex((o) => o.id === getHudPrefs().scorebugMode);
-        const nextIdx = (curIdx + 1) % scorebugOpts.length;
-        scorebugBtns[nextIdx]?.click();
-        soundManager.playTone(520, 0.05, 'sine', 0.15);
+    ],
+    // Tab 3: Camera & Controls
+    [
+      {
+        el: camRow,
+        onLeft: () => {
+          const curIdx = CAMERA_OPTIONS.findIndex((o) => o.id === camSelect.value);
+          const nextIdx = (curIdx - 1 + CAMERA_OPTIONS.length) % CAMERA_OPTIONS.length;
+          camSelect.value = CAMERA_OPTIONS[nextIdx].id;
+          camSelect.dispatchEvent(new Event('change'));
+          soundManager.playTone(440, 0.05, 'sine', 0.15);
+        },
+        onRight: () => {
+          const curIdx = CAMERA_OPTIONS.findIndex((o) => o.id === camSelect.value);
+          const nextIdx = (curIdx + 1) % CAMERA_OPTIONS.length;
+          camSelect.value = CAMERA_OPTIONS[nextIdx].id;
+          camSelect.dispatchEvent(new Event('change'));
+          soundManager.playTone(520, 0.05, 'sine', 0.15);
+        },
+        onAction: () => {
+          const curIdx = CAMERA_OPTIONS.findIndex((o) => o.id === camSelect.value);
+          const nextIdx = (curIdx + 1) % CAMERA_OPTIONS.length;
+          camSelect.value = CAMERA_OPTIONS[nextIdx].id;
+          camSelect.dispatchEvent(new Event('change'));
+          soundManager.playTone(520, 0.05, 'sine', 0.15);
+        },
       },
-    },
-    {
-      el: dropRingRow,
-      onLeft: () => {
-        setHudPrefs({ ballDropRing: !getHudPrefs().ballDropRing });
-        soundManager.playTone(440, 0.05, 'sine', 0.15);
+      {
+        el: shakeRow,
+        onLeft: () => cycleHelper(shakeOpts, shakeBtns, getCameraShakeMode(), -1),
+        onRight: () => cycleHelper(shakeOpts, shakeBtns, getCameraShakeMode(), 1),
+        onAction: () => cycleHelper(shakeOpts, shakeBtns, getCameraShakeMode(), 1),
       },
-      onRight: () => {
-        setHudPrefs({ ballDropRing: !getHudPrefs().ballDropRing });
-        soundManager.playTone(520, 0.05, 'sine', 0.15);
+      {
+        el: vibRow,
+        onLeft: () => cycleHelper(vibOpts, vibBtns, isVibrationEnabled(), -1),
+        onRight: () => cycleHelper(vibOpts, vibBtns, isVibrationEnabled(), 1),
+        onAction: () => cycleHelper(vibOpts, vibBtns, isVibrationEnabled(), 1),
       },
-      onAction: () => {
-        setHudPrefs({ ballDropRing: !getHudPrefs().ballDropRing });
-        soundManager.playTone(520, 0.05, 'sine', 0.15);
+      {
+        el: tuningRow,
+        onLeft: () => cycleHelper(boolOpts, tuningBtns, showTuningGuiState, -1),
+        onRight: () => cycleHelper(boolOpts, tuningBtns, showTuningGuiState, 1),
+        onAction: () => cycleHelper(boolOpts, tuningBtns, showTuningGuiState, 1),
       },
-    },
-    {
-      el: strikeGuideRow,
-      onLeft: () => {
-        setHudPrefs({ strikeRangeGuide: !getHudPrefs().strikeRangeGuide });
-        soundManager.playTone(440, 0.05, 'sine', 0.15);
-      },
-      onRight: () => {
-        setHudPrefs({ strikeRangeGuide: !getHudPrefs().strikeRangeGuide });
-        soundManager.playTone(520, 0.05, 'sine', 0.15);
-      },
-      onAction: () => {
-        setHudPrefs({ strikeRangeGuide: !getHudPrefs().strikeRangeGuide });
-        soundManager.playTone(520, 0.05, 'sine', 0.15);
-      },
-    },
-    {
-      el: orientRow,
-      onLeft: () => {
-        setHudPrefs({ orientationCues: !getHudPrefs().orientationCues });
-        soundManager.playTone(440, 0.05, 'sine', 0.15);
-      },
-      onRight: () => {
-        setHudPrefs({ orientationCues: !getHudPrefs().orientationCues });
-        soundManager.playTone(520, 0.05, 'sine', 0.15);
-      },
-      onAction: () => {
-        setHudPrefs({ orientationCues: !getHudPrefs().orientationCues });
-        soundManager.playTone(520, 0.05, 'sine', 0.15);
-      },
-    },
-    {
-      el: cleanRow,
-      onLeft: () => {},
-      onRight: () => {},
-      onAction: () => {
-        cleanBtn.click();
-        soundManager.playTone(360, 0.05, 'sine', 0.15);
-      },
-    },
-    {
-      el: camRow,
-      onLeft: () => {
-        const curIdx = CAMERA_OPTIONS.findIndex((o) => o.id === camSelect.value);
-        const nextIdx = (curIdx - 1 + CAMERA_OPTIONS.length) % CAMERA_OPTIONS.length;
-        camSelect.value = CAMERA_OPTIONS[nextIdx].id;
-        camSelect.dispatchEvent(new Event('change'));
-        soundManager.playTone(440, 0.05, 'sine', 0.15);
-      },
-      onRight: () => {
-        const curIdx = CAMERA_OPTIONS.findIndex((o) => o.id === camSelect.value);
-        const nextIdx = (curIdx + 1) % CAMERA_OPTIONS.length;
-        camSelect.value = CAMERA_OPTIONS[nextIdx].id;
-        camSelect.dispatchEvent(new Event('change'));
-        soundManager.playTone(520, 0.05, 'sine', 0.15);
-      },
-      onAction: () => {
-        const curIdx = CAMERA_OPTIONS.findIndex((o) => o.id === camSelect.value);
-        const nextIdx = (curIdx + 1) % CAMERA_OPTIONS.length;
-        camSelect.value = CAMERA_OPTIONS[nextIdx].id;
-        camSelect.dispatchEvent(new Event('change'));
-        soundManager.playTone(520, 0.05, 'sine', 0.15);
-      },
-    },
-    {
-      el: shakeRow,
-      onLeft: () => {
-        const curMode = TUNING.camera?.shake?.mode || 'subtle';
-        const curIdx = shakeOpts.findIndex((o) => o.id === curMode);
-        const nextIdx = (curIdx - 1 + shakeOpts.length) % shakeOpts.length;
-        shakeBtns[nextIdx]?.click();
-        soundManager.playTone(440, 0.05, 'sine', 0.15);
-      },
-      onRight: () => {
-        const curMode = TUNING.camera?.shake?.mode || 'subtle';
-        const curIdx = shakeOpts.findIndex((o) => o.id === curMode);
-        const nextIdx = (curIdx + 1) % shakeOpts.length;
-        shakeBtns[nextIdx]?.click();
-        soundManager.playTone(520, 0.05, 'sine', 0.15);
-      },
-      onAction: () => {
-        const curMode = TUNING.camera?.shake?.mode || 'subtle';
-        const curIdx = shakeOpts.findIndex((o) => o.id === curMode);
-        const nextIdx = (curIdx + 1) % shakeOpts.length;
-        shakeBtns[nextIdx]?.click();
-        soundManager.playTone(520, 0.05, 'sine', 0.15);
-      },
-    },
-    {
-      el: vibRow,
-      onLeft: () => {
-        const cur = isVibrationEnabled();
-        const target = vibBtns.find((_, idx) => vibOpts[idx].id === !cur);
-        target?.click();
-        soundManager.playTone(440, 0.05, 'sine', 0.15);
-      },
-      onRight: () => {
-        const cur = isVibrationEnabled();
-        const target = vibBtns.find((_, idx) => vibOpts[idx].id === !cur);
-        target?.click();
-        soundManager.playTone(520, 0.05, 'sine', 0.15);
-      },
-      onAction: () => {
-        const cur = isVibrationEnabled();
-        const target = vibBtns.find((_, idx) => vibOpts[idx].id === !cur);
-        target?.click();
-        soundManager.playTone(520, 0.05, 'sine', 0.15);
-      },
-    },
-    {
-      el: closeBtn,
-      isButton: true,
-      onLeft: () => {},
-      onRight: () => {},
-      onAction: () => {
-        soundManager.playTone(330, 0.08, 'sine', 0.2);
-        hideMainMenuSettingsModal();
-      },
-    },
+    ],
   ];
 
-  function updateSettingsFocusUI() {
-    navRows.forEach((row, idx) => {
-      const isSel = idx === settingsFocusIndex;
-      if (row.isButton) {
-        if (isSel) {
-          row.el.style.outline = '2px solid #ffffff';
-          row.el.style.outlineOffset = '2px';
-          row.el.style.background = 'rgba(255, 255, 255, 0.25)';
-          row.el.style.borderColor = '#ffffff';
-          row.el.style.boxShadow = '0 0 16px rgba(255, 255, 255, 0.5)';
-          row.el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-        } else {
-          row.el.style.outline = 'none';
-          row.el.style.background = 'rgba(255, 255, 255, 0.1)';
-          row.el.style.borderColor = 'rgba(255, 255, 255, 0.25)';
-          row.el.style.boxShadow = 'none';
-        }
-      } else {
-        if (isSel) {
-          row.el.style.outline = '2px solid #ffffff';
-          row.el.style.outlineOffset = '3px';
-          row.el.style.background = 'rgba(255, 255, 255, 0.08)';
-          row.el.style.borderRadius = '6px';
-          row.el.style.boxShadow = '0 0 16px rgba(255, 255, 255, 0.35)';
-          row.el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-        } else {
-          row.el.style.outline = 'none';
-          row.el.style.background = 'transparent';
-          row.el.style.boxShadow = 'none';
-        }
-      }
-    });
+  function getActiveRows() {
+    return [tabBarNavRow, ...(tabRowsByIdx[activeTabIdx] || []), closeNavRow];
   }
 
+  function clearAllRowHighlights() {
+    tabRowsByIdx.flat().forEach((row) => {
+      row.el.style.outline = 'none';
+      row.el.style.background = row.el === hudPresetRow ? 'rgba(56, 189, 248, 0.08)' : 'transparent';
+      row.el.style.boxShadow = 'none';
+    });
+    tablistEl.style.outline = 'none';
+    closeBtn.style.outline = 'none';
+    closeBtn.style.background = 'rgba(255, 255, 255, 0.1)';
+    closeBtn.style.borderColor = 'rgba(255, 255, 255, 0.25)';
+    closeBtn.style.boxShadow = 'none';
+  }
+
+  function updateSettingsFocusUI() {
+    clearAllRowHighlights();
+    const rows = getActiveRows();
+    if (settingsFocusIndex >= rows.length) settingsFocusIndex = rows.length - 1;
+    if (settingsFocusIndex < 0) settingsFocusIndex = 0;
+
+    const row = rows[settingsFocusIndex];
+    if (!row) return;
+    if (row.isButton) {
+      row.el.style.outline = '2px solid #ffffff';
+      row.el.style.outlineOffset = '2px';
+      row.el.style.background = 'rgba(255, 255, 255, 0.22)';
+      row.el.style.borderColor = '#ffffff';
+      row.el.style.boxShadow = '0 0 16px rgba(255, 255, 255, 0.45)';
+    } else if (row.isTabBar) {
+      row.el.style.outline = '2px solid #38bdf8';
+      row.el.style.outlineOffset = '3px';
+      row.el.style.borderRadius = '6px';
+    } else {
+      row.el.style.outline = '2px solid #ffffff';
+      row.el.style.outlineOffset = '3px';
+      row.el.style.background = 'rgba(255, 255, 255, 0.08)';
+      row.el.style.borderRadius = '6px';
+      row.el.style.boxShadow = '0 0 14px rgba(255, 255, 255, 0.3)';
+    }
+  }
+
+  function selectTab(idx, keepTabBarFocus = false) {
+    const clamped = ((idx % tabDefs.length) + tabDefs.length) % tabDefs.length;
+    activeTabIdx = clamped;
+    tabBtns.forEach((btn, i) => {
+      const sel = i === clamped;
+      btn.setAttribute?.('aria-selected', sel ? 'true' : 'false');
+      btn.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+    });
+    panelEls.forEach((panel, i) => {
+      const sel = i === clamped;
+      panel.hidden = !sel;
+      panel.style.display = sel ? 'block' : 'none';
+    });
+    settingsFocusIndex = keepTabBarFocus ? 0 : 1;
+    soundManager.playTone(460, 0.04, 'sine', 0.14);
+    updateSettingsFocusUI();
+  }
+
+  mainMenuSettingsModalEl._syncCamera = () => {
+    camSelect.value = playerConfigs[0]?.cameraMode || 'chase';
+  };
+  mainMenuSettingsModalEl._syncHudPrefs = () => {
+    syncMainHudButtons(getHudPrefs());
+    syncAudioUI();
+  };
+  mainMenuSettingsModalEl._cycleTab = (delta) => selectTab(activeTabIdx + delta, settingsFocusIndex === 0);
+  mainMenuSettingsModalEl._selectTab = (idOrIdx) => {
+    const idx = typeof idOrIdx === 'number' ? idOrIdx : tabDefs.findIndex((t) => t.id === idOrIdx);
+    if (idx >= 0) selectTab(idx, false);
+  };
+  mainMenuSettingsModalEl._getActiveTabId = () => tabDefs[activeTabIdx]?.id || 'hud';
   mainMenuSettingsModalEl._moveFocus = (delta) => {
-    settingsFocusIndex = (settingsFocusIndex + delta + navRows.length) % navRows.length;
+    const rows = getActiveRows();
+    settingsFocusIndex = (settingsFocusIndex + delta + rows.length) % rows.length;
     soundManager.playTone(400, 0.04, 'sine', 0.15);
     updateSettingsFocusUI();
   };
-  mainMenuSettingsModalEl._handleLeft = () => navRows[settingsFocusIndex]?.onLeft?.();
-  mainMenuSettingsModalEl._handleRight = () => navRows[settingsFocusIndex]?.onRight?.();
-  mainMenuSettingsModalEl._handleAction = () => navRows[settingsFocusIndex]?.onAction?.();
+  mainMenuSettingsModalEl._handleLeft = () => getActiveRows()[settingsFocusIndex]?.onLeft?.();
+  mainMenuSettingsModalEl._handleRight = () => getActiveRows()[settingsFocusIndex]?.onRight?.();
+  mainMenuSettingsModalEl._handleAction = () => getActiveRows()[settingsFocusIndex]?.onAction?.();
   mainMenuSettingsModalEl._updateFocusUI = () => {
-    settingsFocusIndex = 0;
+    settingsFocusIndex = 1;
     updateSettingsFocusUI();
   };
 
@@ -822,9 +937,7 @@ export function showMainMenuSettingsModal() {
     mainMenuSettingsModalEl.style.display = 'flex';
     mainMenuSettingsModalEl._syncCamera?.();
     mainMenuSettingsModalEl._syncHudPrefs?.();
-    if (mainMenuSettingsModalEl._updateFocusUI) {
-      mainMenuSettingsModalEl._updateFocusUI();
-    }
+    mainMenuSettingsModalEl._updateFocusUI?.();
   }
 }
 
@@ -837,4 +950,3 @@ export function hideMainMenuSettingsModal() {
 export function getMainMenuSettingsModalEl() {
   return mainMenuSettingsModalEl;
 }
-

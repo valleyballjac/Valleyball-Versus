@@ -366,10 +366,6 @@ export function createBallDropRings(scene) {
           rEntry.mesh.visible = false;
           continue;
         }
-        if (gameState === 'practice' && i > 0) {
-          rEntry.mesh.visible = false;
-          continue;
-        }
 
         const ax = ath.motor.mesh.position.x;
         const az = ath.motor.mesh.position.z;

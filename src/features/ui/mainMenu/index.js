@@ -21,6 +21,12 @@ import {
   hideMainMenuSettingsModal,
 } from './settingsModal.js';
 import {
+  buildFirstTimeSetupModal,
+  showFirstTimeSetupModal,
+  hideFirstTimeSetupModal,
+} from './firstTimeSetupModal.js';
+import { shouldAutoShowFirstTimeSetup } from '../../../config/hudConfig.js';
+import {
   buildHowToPlayModal,
   showHowToPlayModal,
   hideHowToPlayModal,
@@ -91,6 +97,7 @@ export * from './toast.js';
 export * from './mobileNotice.js';
 export * from './flyoverOverlay.js';
 export * from './settingsModal.js';
+export * from './firstTimeSetupModal.js';
 export * from './howToPlayModal.js';
 export * from './controllerAssignment.js';
 export {
@@ -118,6 +125,52 @@ let callbacks = {
   onBallPreviewChange: null,
 };
 
+function handleQuickStartFromAssignment(data = {}) {
+  const fmt = data?.mode === '2v2' ? '2v2' : '1v1';
+  setCurrentSetupMode('match');
+  setMatchFormat(fmt);
+  applyControllerAssignments(data?.assignments || null, 'match');
+  enforceColorExclusivity();
+  const count = fmt === '2v2' ? 4 : 2;
+  const activeConfigs = getPlayerConfigs().slice(0, count);
+  syncExplicitMappingsWithConfigs(activeConfigs, count);
+  hideMainMenu();
+  const rawBall = getSelectedMatchBall();
+  const matchBall = (rawBall === 'small' || rawBall === 'medium' || rawBall === 'large' || rawBall === 'random')
+    ? rawBall
+    : 'medium';
+  setSelectedMatchBall(matchBall);
+  callbacks.onStartMatch?.(activeConfigs, {
+    ball: matchBall,
+    duration: getSelectedMatchDuration() || 300,
+    arena: getSelectedMatchArena() || 'court',
+  });
+}
+
+function openMatchControllerAssignment(preserveExisting = false, initialMode = null) {
+  if (!rootEl) return;
+  const playerSetupEl = getPlayerSetupEl();
+  if (playerSetupEl && playerSetupEl.style.display === 'flex') {
+    playerSetupEl.style.display = 'none';
+    if (callbacks.onExitSetup) callbacks.onExitSetup();
+  }
+  callbacks.onBallPreviewChange?.({ visible: false });
+  resetMenuPadTargets();
+  if (state.titleScreenEl) state.titleScreenEl.style.display = 'none';
+  rootEl.style.pointerEvents = 'auto';
+  const targetMode = initialMode || (preserveExisting ? getControllerAssignmentMode() : '1v1');
+  showControllerAssignment(targetMode, {
+    onProceed: (data) => showPlayerSetup('match', data),
+    onQuickStart: handleQuickStartFromAssignment,
+    onBack: () => showTitleScreen(),
+  }, { preserveExisting });
+  startMenuGamepadPolling();
+}
+
+export function openMatchPickSides(mode = null) {
+  openMatchControllerAssignment(true, mode);
+}
+
 export function initMainMenu(cbs = {}) {
   Object.assign(callbacks, cbs);
 
@@ -143,48 +196,11 @@ export function initMainMenu(cbs = {}) {
   // Build Modals and Overlays
   buildHowToPlayModal(rootEl);
   buildMainMenuSettingsModal(rootEl, getPlayerConfigs(), callbacks);
+  buildFirstTimeSetupModal(rootEl, {
+    onRenderSettingsChange: callbacks.onRenderSettingsChange,
+    onComplete: () => updateTitleFocusUI(),
+  });
   buildFlyoverOverlay(rootEl, callbacks.onSkipFlyover);
-
-  const handleQuickStartFromAssignment = (data = {}) => {
-    const fmt = data?.mode === '2v2' ? '2v2' : '1v1';
-    setCurrentSetupMode('match');
-    setMatchFormat(fmt);
-    applyControllerAssignments(data?.assignments || null, 'match');
-    enforceColorExclusivity();
-    const count = fmt === '2v2' ? 4 : 2;
-    const activeConfigs = getPlayerConfigs().slice(0, count);
-    syncExplicitMappingsWithConfigs(activeConfigs, count);
-    hideMainMenu();
-    const rawBall = getSelectedMatchBall();
-    const matchBall = (rawBall === 'small' || rawBall === 'medium' || rawBall === 'large' || rawBall === 'random')
-      ? rawBall
-      : 'random';
-    setSelectedMatchBall(matchBall);
-    callbacks.onStartMatch?.(activeConfigs, {
-      ball: matchBall,
-      duration: getSelectedMatchDuration() || 300,
-      arena: getSelectedMatchArena() || 'court',
-    });
-  };
-
-  const openMatchControllerAssignment = (preserveExisting = false, initialMode = null) => {
-    const playerSetupEl = getPlayerSetupEl();
-    if (playerSetupEl && playerSetupEl.style.display === 'flex') {
-      playerSetupEl.style.display = 'none';
-      if (callbacks.onExitSetup) callbacks.onExitSetup();
-    }
-    callbacks.onBallPreviewChange?.({ visible: false });
-    resetMenuPadTargets();
-    if (state.titleScreenEl) state.titleScreenEl.style.display = 'none';
-    rootEl.style.pointerEvents = 'auto';
-    const targetMode = initialMode || (preserveExisting ? getControllerAssignmentMode() : '1v1');
-    showControllerAssignment(targetMode, {
-      onProceed: (data) => showPlayerSetup('match', data),
-      onQuickStart: handleQuickStartFromAssignment,
-      onBack: () => showTitleScreen(),
-    }, { preserveExisting });
-    startMenuGamepadPolling();
-  };
 
   // Build Screens
   buildControllerAssignmentScreen(rootEl, {
@@ -219,6 +235,9 @@ export function initMainMenu(cbs = {}) {
   initMobileNotice();
   if (typeof window !== 'undefined') window.playerSetup = playerSetup;
   showTitleScreen();
+  if (shouldAutoShowFirstTimeSetup()) {
+    showFirstTimeSetupModal();
+  }
 }
 
 export function showTitleScreen() {
@@ -353,7 +372,7 @@ export function showPlayerSetup(mode = 'match', options = {}) {
     if (matchBallHeaderDescEl) matchBallHeaderDescEl.textContent = 'Select regulation ball or randomize (Gamepad LB / RB to cycle)';
     curBallOpts = MATCH_BALL_OPTIONS;
     setCurrentBallOptions(MATCH_BALL_OPTIONS);
-    setSelectedMatchBall('random');
+    setSelectedMatchBall('medium');
   }
 
   renderMatchBallCards(curBallOpts);
@@ -414,6 +433,7 @@ export function hideMainMenu() {
   hideControllerAssignment();
   hideHowToPlayModal();
   hideMainMenuSettingsModal();
+  hideFirstTimeSetupModal();
   if (rootEl) rootEl.style.pointerEvents = 'none';
   if (state.titleScreenEl) state.titleScreenEl.style.display = 'none';
   const playerSetupEl = getPlayerSetupEl();

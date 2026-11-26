@@ -1,25 +1,36 @@
 /**
  * @file inGameMenu.js
- * Responsibility: In-game pause/settings menu overlay (camera modes, render presets, controls reference, and live Hustle Board stats).
- * Upstream: Initialized by `src/main.js` and toggled via `Escape` or Start button.
- * Downstream: Calls `src/ui/mainMenu.js`, `src/config/tuning.js`, `src/audio/soundManager.js`, and `src/input/inputRouter.js`.
- * Key invariants:
- * - Opening the in-game menu does not freeze the simulation clock (`loop.paused` stays false).
+ * Responsibility: Ultra-lean, zero-scroll in-game pause menu centered on Resume Game,
+ * flanked by team-colored Home and Away Stat Boards (with rainbow stat numbers) during matches
+ * and the untimed Hustle Board during practice.
+ * Upstream: Initialized by `src/main.js` and toggled via `Escape` or controller `Start`.
+ * Downstream: Calls `src/ui/mainMenu.js`, `src/config/hudConfig.js`, `src/features/match/matchManager.js`,
+ * `src/audio/soundManager.js`, and `src/input/menuPads.js`.
  */
 
 import { getColorName } from './mainMenu.js';
 import { TUNING } from '../config/tuning.js';
-import { getHudPrefs, setHudPrefs, setCleanBroadcastHud, subscribeHudPrefs } from '../config/hudConfig.js';
+import {
+  getHudPrefs,
+  subscribeHudPrefs,
+  applyHudPreset,
+  getActiveHudPresetId,
+} from '../config/hudConfig.js';
+import { buildMatchStatsReport } from '../features/match/matchManager.js';
 import { soundManager } from '../audio/soundManager.js';
-import { setVibrationEnabled, isVibrationEnabled } from '../input/inputRouter.js';
 import { createMenuPadTracker, MENU_PAD } from '../input/menuPads.js';
 
 let menuOverlayEl = null;
+let centerCardEl = null;
+let homeStatBoardEl = null;
+let awayStatBoardEl = null;
+let hustleBoardSection = null;
 let isOpen = false;
 let clockBannerEl = null;
 let pauseOwnerBadgeEl = null;
 let activePauseOwner = null;
 const PAUSE_SLOT_HEX = ['#00e5ff', '#ff2e55', '#fbb417', '#a855f7'];
+
 let callbacks = {
   onResume: null,
   onOpen: null,
@@ -32,49 +43,22 @@ let callbacks = {
   getCameraRows: null,
 };
 
-let hustleBoardSection = null;
-let finishPracticeBtn = null;
+let camSectionEl = null;
 const camBoxes = [null, null, null, null];
 const camSelObjs = [null, null, null, null];
 
-let gfxPresetRowEl = null;
-let gfxPresetButtons = [];
-let gfxPresetOptions = [];
-let dprRowEl = null;
-let dprButtons = [];
-let dprOptions = [];
-let shadowRowEl = null;
-let shadowButtons = [];
-let shadowOptions = [];
-let controlsRowEl = null;
-let controlsButtons = [];
-let controlsOptions = [];
-let scorebugRowEl = null;
-let scorebugButtons = [];
-let scorebugOptions = [];
-let dropRingRowEl = null;
-let dropRingButtons = [];
-let dropRingOptions = [];
-let strikeGuideRowEl = null;
-let strikeGuideButtons = [];
-let strikeGuideOptions = [];
-let orientRowEl = null;
-let orientButtons = [];
-let orientOptions = [];
-let cleanHudRowEl = null;
-let cleanHudBtnEl = null;
-let tuningRowEl = null;
-let tuningButtons = [];
-let tuningOptions = [];
+let hudPresetRowEl = null;
+let hudPresetButtons = [];
+let hudPresetOptions = [];
+let hudPresetBadgeEl = null;
+
 let volRowEl = null;
 let volSliderEl = null;
-let muteRowEl = null;
 let muteBtnEl = null;
-let vibrationRowEl = null;
-let vibrationButtons = [];
-let vibrationOptions = [];
+
 let resumeBtnEl = null;
 let rematchBtnEl = null;
+let finishPracticeBtn = null;
 let mainMenuBtnEl = null;
 
 let inGameFocusIndex = 0;
@@ -82,12 +66,61 @@ let inGameNavRows = [];
 let inGamePollHandle = null;
 const inGamePads = createMenuPadTracker();
 
-let currentRenderSettings = {
-  pixelRatioPreset: '1.25',
-  shadowQuality: 'balanced',
-  showControlsOverlay: false,
-  showTuningGui: false,
+const CAMERA_MODES = ['chase', 'thirdPerson', 'firstPerson', 'tactical', 'broadcast'];
+const CAMERA_LABELS = {
+  chase: 'CHASE CAM',
+  thirdPerson: 'BALL TRACK',
+  firstPerson: '1ST PERSON',
+  tactical: 'TACTICAL',
+  broadcast: 'BROADCAST [SHARED]',
 };
+
+// Rainbow stat number palette (preserved across all team kit borders)
+const STAT_RAINBOW = {
+  goals: '#ff2a42',
+  assists: '#ff8a00',
+  touches: '#ffd000',
+  accuracy: '#10e56a',
+  sweetSpots: '#00e5ff',
+  spikes: '#3b82f6',
+  dives: '#a855f7',
+  divingHits: '#ec4899',
+};
+
+function toHex(colorNum, fallback = 0xd90429) {
+  const n = typeof colorNum === 'number' && Number.isFinite(colorNum) ? colorNum : fallback;
+  return '#' + (n & 0xffffff).toString(16).padStart(6, '0');
+}
+
+function getColorLuminanceByte(colorNum) {
+  const n = typeof colorNum === 'number' && Number.isFinite(colorNum) ? (colorNum & 0xffffff) : 0xd90429;
+  const r = (n >> 16) & 255;
+  const g = (n >> 8) & 255;
+  const b = n & 255;
+  return (r * 299 + g * 587 + b * 114) / 1000;
+}
+
+function getTeamBorderStyles(primaryColor) {
+  const hex = toHex(primaryColor);
+  const ultraDark = getColorLuminanceByte(primaryColor) < 32;
+  return {
+    hex,
+    ultraDark,
+    borderCss: `2px solid ${hex}`,
+    shadowCss: ultraDark
+      ? '0 0 0 1.5px rgba(226, 232, 240, 0.72), 0 16px 40px rgba(0, 0, 0, 0.82)'
+      : `0 16px 40px rgba(0, 0, 0, 0.82), 0 0 22px ${hex}38`,
+    badgeBorderHex: ultraDark ? '#cbd5e1' : hex,
+    badgeBgCss: ultraDark ? 'rgba(24, 24, 27, 0.92)' : `${hex}26`,
+    dotShadowCss: ultraDark ? '0 0 6px rgba(226, 232, 240, 0.7)' : `0 0 8px ${hex}`,
+  };
+}
+
+function resumeFromInGameMenu() {
+  if (!isOpen) return;
+  hideInGameMenu();
+  if (callbacks.onResume) callbacks.onResume();
+}
 
 export function initInGameMenu({
   onResume,
@@ -99,11 +132,19 @@ export function initInGameMenu({
   onRenderSettingsChange,
   onCameraChange,
   getCameraRows,
-  initialRenderSettings = {},
 }) {
   if (menuOverlayEl) return;
-  callbacks = { onResume, onOpen, onRematch, onPracticeMode, onFinishPractice, onMainMenu, onRenderSettingsChange, onCameraChange, getCameraRows };
-  Object.assign(currentRenderSettings, initialRenderSettings);
+  callbacks = {
+    onResume,
+    onOpen,
+    onRematch,
+    onPracticeMode,
+    onFinishPractice,
+    onMainMenu,
+    onRenderSettingsChange,
+    onCameraChange,
+    getCameraRows,
+  };
 
   menuOverlayEl = document.createElement('div');
   menuOverlayEl.id = 'ingame-menu-overlay';
@@ -111,9 +152,14 @@ export function initInGameMenu({
     position: fixed;
     inset: 0;
     display: none;
+    flex-direction: row;
     align-items: center;
     justify-content: center;
-    background: rgba(4, 7, 12, 0.78);
+    gap: 18px;
+    padding: 16px 20px;
+    box-sizing: border-box;
+    overflow: hidden;
+    background: rgba(4, 7, 12, 0.80);
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
     z-index: 900;
@@ -122,711 +168,208 @@ export function initInGameMenu({
     color: #cfe3f5;
   `;
 
-  const container = document.createElement('div');
-  container.style.cssText = `
-    display: flex;
+  // Left Flanking Stat Board (Home Team in Match)
+  homeStatBoardEl = document.createElement('aside');
+  homeStatBoardEl.id = 'ingame-stat-board-home';
+  homeStatBoardEl.style.cssText = `
+    display: none;
     flex-direction: column;
-    padding: 24px 36px 28px;
-    background: rgba(11, 17, 26, 0.94);
-    border: 1px solid rgba(120, 170, 210, 0.35);
+    gap: 10px;
+    width: 264px;
+    max-width: 25vw;
+    flex-shrink: 0;
+    padding: 14px 16px;
+    box-sizing: border-box;
     border-radius: 12px;
-    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.8), 0 0 20px rgba(59, 130, 246, 0.15);
-    max-width: 580px;
-    width: 92%;
-    max-height: 88vh;
-    overflow-y: auto;
+    background: rgba(11, 17, 26, 0.94);
+    overflow: hidden;
   `;
 
-  // 1. Header
+  // Center Ultra-Lean Pause Card (Strictly Zero Scroll)
+  centerCardEl = document.createElement('div');
+  centerCardEl.id = 'ingame-pause-card';
+  centerCardEl.style.cssText = `
+    display: flex;
+    flex-direction: column;
+    gap: 11px;
+    padding: 18px 24px 16px;
+    box-sizing: border-box;
+    background: rgba(11, 17, 26, 0.96);
+    border: 1px solid rgba(120, 170, 210, 0.38);
+    border-radius: 12px;
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.85), 0 0 22px rgba(59, 130, 246, 0.16);
+    width: 472px;
+    max-width: 92vw;
+    max-height: 92vh;
+    overflow: hidden;
+    flex-shrink: 0;
+  `;
+
+  // Right Flanking Stat Board (Away Team in Match)
+  awayStatBoardEl = document.createElement('aside');
+  awayStatBoardEl.id = 'ingame-stat-board-away';
+  awayStatBoardEl.style.cssText = `
+    display: none;
+    flex-direction: column;
+    gap: 10px;
+    width: 264px;
+    max-width: 25vw;
+    flex-shrink: 0;
+    padding: 14px 16px;
+    box-sizing: border-box;
+    border-radius: 12px;
+    background: rgba(11, 17, 26, 0.94);
+    overflow: hidden;
+  `;
+
+  // Right Flanking Hustle Board (Practice Mode Only, Untimed)
+  hustleBoardSection = document.createElement('aside');
+  hustleBoardSection.id = 'ingame-hustle-board-section';
+  hustleBoardSection.style.cssText = `
+    display: none;
+    flex-direction: column;
+    gap: 10px;
+    width: 280px;
+    max-width: 28vw;
+    flex-shrink: 0;
+    padding: 14px 16px;
+    box-sizing: border-box;
+    border-radius: 12px;
+    background: rgba(11, 17, 26, 0.94);
+    border: 2px solid rgba(56, 189, 248, 0.45);
+    overflow: hidden;
+  `;
+
+  // 1. Header inside Center Pause Card
   const header = document.createElement('div');
   header.style.cssText = `
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 10px;
     border-bottom: 2px solid;
     border-image: linear-gradient(90deg, #FF2A42 0%, #FF6B00 14.3%, #FFD000 28.6%, #10E56A 42.9%, #00E5FF 57.2%, #1F65FF 71.5%, #6B11FF 85.8%, #E000B8 100%) 1;
-    padding-bottom: 12px;
-    margin-bottom: 16px;
+    padding-bottom: 10px;
   `;
 
   const titleBox = document.createElement('div');
   titleBox.innerHTML = `
-    <div style="font-size: 15px; font-weight: 700; letter-spacing: 0.06em; display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px;">
+    <div style="font-size: 14px; font-weight: 700; letter-spacing: 0.06em; display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px;">
       <span style="font-family: 'Syncopate', sans-serif; font-weight: 700; background: linear-gradient(90deg, #FF2A42 0%, #FF6B00 14.3%, #FFD000 28.6%, #10E56A 42.9%, #00E5FF 57.2%, #1F65FF 71.5%, #6B11FF 85.8%, #E000B8 100%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;">VALLEYBALL</span>
-      <span style="font-family: 'Syncopate', sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 0.22em; color: #F5F5F7;">VERSUS</span>
-      <span style="color: rgba(255,255,255,0.3); font-size: 14px;">/</span>
-      <span style="color: #ffffff; font-size: 14px; font-weight: 800;">SETTINGS</span>
-      <span style="font-size: 10px; font-weight: 800; color: #00e5ff; background: rgba(0, 229, 255, 0.12); border: 1px solid rgba(0, 229, 255, 0.35); padding: 2px 6px; border-radius: 4px; margin-left: 2px;">v0.4.2</span>
-    </div>
-    <div style="font-size: 11px; color: #fbbf24; margin-top: 2px;">
-      ⚡ Play clock continues running in real time
+      <span style="font-family: 'Syncopate', sans-serif; font-size: 10px; font-weight: 700; letter-spacing: 0.2em; color: #F5F5F7;">VERSUS</span>
+      <span style="color: rgba(255,255,255,0.3); font-size: 13px;">/</span>
+      <span style="color: #ffffff; font-size: 13px; font-weight: 800;">PAUSED</span>
+      <span style="font-size: 10px; font-weight: 800; color: #00e5ff; background: rgba(0, 229, 255, 0.12); border: 1px solid rgba(0, 229, 255, 0.35); padding: 1px 5px; border-radius: 4px;">v0.4.3</span>
     </div>
   `;
 
   const rightBadges = document.createElement('div');
-  rightBadges.style.cssText = 'display: flex; flex-direction: column; align-items: flex-end; gap: 4px;';
+  rightBadges.style.cssText = 'display: flex; flex-direction: column; align-items: flex-end; gap: 3px;';
 
   clockBannerEl = document.createElement('div');
+  clockBannerEl.id = 'ingame-clock-banner';
   clockBannerEl.style.cssText = `
-    font-size: 12px;
-    font-weight: 700;
-    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 800;
+    padding: 3px 8px;
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid rgba(255, 255, 255, 0.18);
     border-radius: 4px;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.05em;
     color: #e2e8f0;
+    white-space: nowrap;
   `;
-  clockBannerEl.textContent = 'MATCH ACTIVE';
+  clockBannerEl.textContent = 'MATCH PAUSED';
 
   pauseOwnerBadgeEl = document.createElement('div');
   pauseOwnerBadgeEl.id = 'ingame-pause-owner-badge';
   pauseOwnerBadgeEl.style.cssText = `
     display: none;
-    font-size: 10px;
+    font-size: 9.5px;
     font-weight: 900;
-    padding: 2px 8px;
+    padding: 2px 7px;
     border-radius: 4px;
     letter-spacing: 0.08em;
     background: rgba(0, 229, 255, 0.14);
     border: 1px solid #00e5ff;
     color: #00e5ff;
+    white-space: nowrap;
   `;
 
-  rightBadges.appendChild(clockBannerEl);
-  rightBadges.appendChild(pauseOwnerBadgeEl);
+  rightBadges.append(clockBannerEl, pauseOwnerBadgeEl);
+  header.append(titleBox, rightBadges);
+  centerCardEl.appendChild(header);
 
-  header.appendChild(titleBox);
-  header.appendChild(rightBadges);
-  container.appendChild(header);
-
-  // 1b. Hustle Board Live Readout (Practice Mode Only)
-  hustleBoardSection = document.createElement('div');
-  hustleBoardSection.id = 'ingame-hustle-board-section';
-  hustleBoardSection.style.cssText = `
-    display: none;
-    flex-direction: column;
-    gap: 8px;
-    background: rgba(16, 24, 38, 0.85);
-    border: 1px solid rgba(56, 189, 248, 0.35);
-    border-radius: 8px;
-    padding: 12px 14px;
-    margin-bottom: 14px;
-  `;
-  container.appendChild(hustleBoardSection);
-
-  finishPracticeBtn = document.createElement('button');
-  finishPracticeBtn.id = 'btn-finish-practice';
-  finishPracticeBtn.textContent = 'FINISH PRACTICE & VIEW HUSTLE BOARD ➔';
-  finishPracticeBtn.style.cssText = `
-    display: none;
+  // 2. Top Primary Action: RESUME GAME (always focus index 0)
+  resumeBtnEl = document.createElement('button');
+  resumeBtnEl.id = 'btn-ingame-resume';
+  resumeBtnEl.type = 'button';
+  resumeBtnEl.textContent = '▶ RESUME GAME';
+  resumeBtnEl.style.cssText = `
     width: 100%;
-    padding: 12px;
-    margin-bottom: 14px;
-    font-size: 13px;
-    font-weight: 800;
+    padding: 13px 16px;
+    font-size: 15px;
+    font-weight: 900;
     font-family: inherit;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.1em;
     text-transform: uppercase;
-    color: #ffffff;
-    background: #10b981;
-    border: none;
-    border-radius: 6px;
+    border-radius: 8px;
     cursor: pointer;
-    box-shadow: 0 4px 14px rgba(16, 185, 129, 0.4);
-    transition: all 0.15s ease;
+    transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
   `;
-  finishPracticeBtn.onmouseenter = () => { finishPracticeBtn.style.background = '#34d399'; };
-  finishPracticeBtn.onmouseleave = () => { finishPracticeBtn.style.background = '#10b981'; };
-  finishPracticeBtn.onclick = () => {
-    hideInGameMenu();
-    if (callbacks.onFinishPractice) callbacks.onFinishPractice();
-  };
-  container.appendChild(finishPracticeBtn);
+  resumeBtnEl.onclick = () => resumeFromInGameMenu();
+  centerCardEl.appendChild(resumeBtnEl);
 
-  // Helper for Section Titles
-  function createSectionHeading(text) {
-    const heading = document.createElement('div');
-    heading.textContent = text;
-    heading.style.cssText = `
-      font-size: 12px;
-      font-weight: 800;
-      letter-spacing: 0.12em;
-      color: #ffffff;
-      text-transform: uppercase;
-      margin: 16px 0 8px;
-    `;
-    return heading;
-  }
+  // 3. Active Human Cameras Section
+  camSectionEl = document.createElement('div');
+  camSectionEl.id = 'ingame-cam-section';
+  camSectionEl.style.cssText = 'display: flex; flex-direction: column; gap: 6px;';
 
-  // 2. Performance Settings Section
-  container.appendChild(createSectionHeading('GRAPHICS & PERFORMANCE'));
+  const camHeading = document.createElement('div');
+  camHeading.textContent = 'PLAYER CAMERAS';
+  camHeading.style.cssText = 'font-size: 10.5px; font-weight: 800; letter-spacing: 0.12em; color: #94a3b8;';
+  camSectionEl.appendChild(camHeading);
 
-  // Graphics Quality Preset Row (Low / Balanced / High)
-  gfxPresetRowEl = document.createElement('div');
-  gfxPresetRowEl.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;';
-  const gfxLabel = document.createElement('div');
-  gfxLabel.textContent = 'Graphics Preset';
-  gfxLabel.style.cssText = 'font-size: 12px; color: #cbd5e1;';
-  const gfxButtonGroup = document.createElement('div');
-  gfxButtonGroup.style.cssText = 'display: flex; gap: 6px;';
-  gfxPresetOptions = [
-    { id: 'low', label: 'Low (Fast)' },
-    { id: 'balanced', label: 'Balanced' },
-    { id: 'high', label: 'High' },
-  ];
-  gfxPresetButtons = [];
-  const initGfxPreset = getHudPrefs().graphicsPreset || 'balanced';
-  gfxPresetOptions.forEach((opt) => {
-    const btn = document.createElement('button');
-    btn.textContent = opt.label;
-    btn.style.cssText = `
-      padding: 6px 12px;
-      font-size: 11px;
-      font-weight: 700;
-      font-family: inherit;
-      border-radius: 4px;
-      cursor: pointer;
-      border: 1px solid rgba(120, 170, 210, 0.3);
-      transition: all 0.12s ease;
-      background: ${initGfxPreset === opt.id ? '#2563eb' : 'rgba(255, 255, 255, 0.06)'};
-      color: ${initGfxPreset === opt.id ? '#ffffff' : '#94a3b8'};
-    `;
-    btn.onclick = () => {
-      setHudPrefs({ graphicsPreset: opt.id });
-      const nextDpr = opt.id === 'low' ? '1.0' : (opt.id === 'high' ? 'native' : '1.25');
-      const nextShadow = opt.id === 'low' ? 'off' : (opt.id === 'high' ? 'high' : 'balanced');
-      currentRenderSettings.pixelRatioPreset = nextDpr;
-      currentRenderSettings.shadowQuality = nextShadow;
-      dprButtons.forEach((b, idx) => {
-        const isSel = dprOptions[idx].id === nextDpr;
-        b.style.background = isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
-        b.style.color = isSel ? '#ffffff' : '#94a3b8';
-      });
-      shadowButtons.forEach((b, idx) => {
-        const isSel = shadowOptions[idx].id === nextShadow;
-        b.style.background = isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
-        b.style.color = isSel ? '#ffffff' : '#94a3b8';
-      });
-      if (callbacks.onRenderSettingsChange) callbacks.onRenderSettingsChange({ graphicsPreset: opt.id });
-    };
-    gfxPresetButtons.push(btn);
-    gfxButtonGroup.appendChild(btn);
-  });
-  gfxPresetRowEl.appendChild(gfxLabel);
-  gfxPresetRowEl.appendChild(gfxButtonGroup);
-  container.appendChild(gfxPresetRowEl);
-
-  // Resolution Scale Row
-  dprRowEl = document.createElement('div');
-  const dprRow = dprRowEl;
-  dprRow.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;';
-  const dprLabel = document.createElement('div');
-  dprLabel.textContent = 'Resolution Scale';
-  dprLabel.style.cssText = 'font-size: 12px; color: #cbd5e1;';
-  const dprButtonGroup = document.createElement('div');
-  dprButtonGroup.style.cssText = 'display: flex; gap: 6px;';
-
-  dprOptions = [
-    { id: '1.0', label: '1.0x (Fast)' },
-    { id: '1.25', label: '1.25x (Balanced)' },
-    { id: 'native', label: 'Native (Ultra)' },
-  ];
-
-  dprButtons = [];
-  dprOptions.forEach((opt) => {
-    const btn = document.createElement('button');
-    btn.textContent = opt.label;
-    btn.style.cssText = `
-      padding: 6px 12px;
-      font-size: 11px;
-      font-weight: 700;
-      font-family: inherit;
-      border-radius: 4px;
-      cursor: pointer;
-      border: 1px solid rgba(120, 170, 210, 0.3);
-      transition: all 0.12s ease;
-      background: ${currentRenderSettings.pixelRatioPreset === opt.id ? '#2563eb' : 'rgba(255, 255, 255, 0.06)'};
-      color: ${currentRenderSettings.pixelRatioPreset === opt.id ? '#ffffff' : '#94a3b8'};
-    `;
-    btn.onclick = () => {
-      currentRenderSettings.pixelRatioPreset = opt.id;
-      dprButtons.forEach((b, idx) => {
-        const isSel = dprOptions[idx].id === opt.id;
-        b.style.background = isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
-        b.style.color = isSel ? '#ffffff' : '#94a3b8';
-      });
-      if (callbacks.onRenderSettingsChange) callbacks.onRenderSettingsChange({ ...currentRenderSettings });
-    };
-    dprButtons.push(btn);
-    dprButtonGroup.appendChild(btn);
-  });
-  dprRow.appendChild(dprLabel);
-  dprRow.appendChild(dprButtonGroup);
-  container.appendChild(dprRow);
-
-  // Shadow Quality Row
-  shadowRowEl = document.createElement('div');
-  const shadowRow = shadowRowEl;
-  shadowRow.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;';
-  const shadowLabel = document.createElement('div');
-  shadowLabel.textContent = 'Stadium Shadows';
-  shadowLabel.style.cssText = 'font-size: 12px; color: #cbd5e1;';
-  const shadowButtonGroup = document.createElement('div');
-  shadowButtonGroup.style.cssText = 'display: flex; gap: 6px;';
-
-  shadowOptions = [
-    { id: 'off', label: 'Off' },
-    { id: 'balanced', label: 'Balanced (1 Tower)' },
-    { id: 'high', label: 'High (4 Towers)' },
-  ];
-
-  shadowButtons = [];
-  shadowOptions.forEach((opt) => {
-    const btn = document.createElement('button');
-    btn.textContent = opt.label;
-    btn.style.cssText = `
-      padding: 6px 12px;
-      font-size: 11px;
-      font-weight: 700;
-      font-family: inherit;
-      border-radius: 4px;
-      cursor: pointer;
-      border: 1px solid rgba(120, 170, 210, 0.3);
-      transition: all 0.12s ease;
-      background: ${currentRenderSettings.shadowQuality === opt.id ? '#2563eb' : 'rgba(255, 255, 255, 0.06)'};
-      color: ${currentRenderSettings.shadowQuality === opt.id ? '#ffffff' : '#94a3b8'};
-    `;
-    btn.onclick = () => {
-      currentRenderSettings.shadowQuality = opt.id;
-      shadowButtons.forEach((b, idx) => {
-        const isSel = shadowOptions[idx].id === opt.id;
-        b.style.background = isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
-        b.style.color = isSel ? '#ffffff' : '#94a3b8';
-      });
-      if (callbacks.onRenderSettingsChange) callbacks.onRenderSettingsChange({ ...currentRenderSettings });
-    };
-    shadowButtons.push(btn);
-    shadowButtonGroup.appendChild(btn);
-  });
-  shadowRow.appendChild(shadowLabel);
-  shadowRow.appendChild(shadowButtonGroup);
-  container.appendChild(shadowRow);
-
-  // Controls Overlay Row
-  controlsRowEl = document.createElement('div');
-  const controlsRow = controlsRowEl;
-  controlsRow.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;';
-  const controlsLabel = document.createElement('div');
-  controlsLabel.textContent = 'Controls Overlay';
-  controlsLabel.style.cssText = 'font-size: 12px; color: #cbd5e1;';
-  const controlsButtonGroup = document.createElement('div');
-  controlsButtonGroup.style.cssText = 'display: flex; gap: 6px;';
-
-  controlsOptions = [
-    { id: true, label: 'Visible' },
-    { id: false, label: 'Hidden' },
-  ];
-  controlsButtons = [];
-  controlsOptions.forEach((opt) => {
-    const btn = document.createElement('button');
-    btn.textContent = opt.label;
-    btn.style.cssText = `
-      padding: 6px 14px;
-      font-size: 11px;
-      font-weight: 700;
-      font-family: inherit;
-      border-radius: 4px;
-      cursor: pointer;
-      border: 1px solid rgba(120, 170, 210, 0.3);
-      transition: all 0.12s ease;
-      background: ${(currentRenderSettings.showControlsOverlay ?? false) === opt.id ? '#2563eb' : 'rgba(255, 255, 255, 0.06)'};
-      color: ${(currentRenderSettings.showControlsOverlay ?? false) === opt.id ? '#ffffff' : '#94a3b8'};
-    `;
-    btn.onclick = () => {
-      currentRenderSettings.showControlsOverlay = opt.id;
-      controlsButtons.forEach((b, idx) => {
-        const isSel = controlsOptions[idx].id === opt.id;
-        b.style.background = isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
-        b.style.color = isSel ? '#ffffff' : '#94a3b8';
-      });
-      if (callbacks.onRenderSettingsChange) callbacks.onRenderSettingsChange({ ...currentRenderSettings });
-    };
-    controlsButtons.push(btn);
-    controlsButtonGroup.appendChild(btn);
-  });
-  controlsRow.appendChild(controlsLabel);
-  controlsRow.appendChild(controlsButtonGroup);
-  container.appendChild(controlsRow);
-
-  // Readability & Optional HUD Toggles (All Default OFF)
-  const buildHudToggleRow = (labelText, options, currentVal, onSelect) => {
-    const row = document.createElement('div');
-    row.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;';
-    const lbl = document.createElement('div');
-    lbl.textContent = labelText;
-    lbl.style.cssText = 'font-size: 12px; color: #cbd5e1;';
-    const grp = document.createElement('div');
-    grp.style.cssText = 'display: flex; gap: 6px;';
-    const btns = [];
-    options.forEach((opt) => {
-      const btn = document.createElement('button');
-      btn.textContent = opt.label;
-      btn.style.cssText = `
-        padding: 6px 12px;
-        font-size: 11px;
-        font-weight: 700;
-        font-family: inherit;
-        border-radius: 4px;
-        cursor: pointer;
-        border: 1px solid rgba(120, 170, 210, 0.3);
-        transition: all 0.12s ease;
-        background: ${currentVal === opt.id ? '#2563eb' : 'rgba(255, 255, 255, 0.06)'};
-        color: ${currentVal === opt.id ? '#ffffff' : '#94a3b8'};
-      `;
-      btn.onclick = () => onSelect(opt.id);
-      btns.push(btn);
-      grp.appendChild(btn);
-    });
-    row.appendChild(lbl);
-    row.appendChild(grp);
-    container.appendChild(row);
-    return { row, btns };
-  };
-
-  const initialHudPrefs = getHudPrefs();
-  scorebugOptions = [
-    { id: 'off', label: 'Off' },
-    { id: 'splitscreen', label: 'Split-Screen' },
-    { id: 'always', label: 'Always' },
-  ];
-  const scorebugCtrl = buildHudToggleRow('Broadcast Scorebug', scorebugOptions, initialHudPrefs.scorebugMode, (val) => {
-    setHudPrefs({ scorebugMode: val });
-  });
-  scorebugRowEl = scorebugCtrl.row;
-  scorebugButtons = scorebugCtrl.btns;
-
-  dropRingOptions = [
-    { id: false, label: 'Off' },
-    { id: true, label: 'On' },
-  ];
-  const dropRingCtrl = buildHudToggleRow('Ball Rainbow Halo', dropRingOptions, initialHudPrefs.ballDropRing, (val) => {
-    setHudPrefs({ ballDropRing: val });
-  });
-  dropRingRowEl = dropRingCtrl.row;
-  dropRingButtons = dropRingCtrl.btns;
-
-  strikeGuideOptions = [
-    { id: false, label: 'Off' },
-    { id: true, label: 'On' },
-  ];
-  const strikeGuideCtrl = buildHudToggleRow('Strike Range Guide', strikeGuideOptions, initialHudPrefs.strikeRangeGuide, (val) => {
-    setHudPrefs({ strikeRangeGuide: val });
-  });
-  strikeGuideRowEl = strikeGuideCtrl.row;
-  strikeGuideButtons = strikeGuideCtrl.btns;
-
-  orientOptions = [
-    { id: false, label: 'Off' },
-    { id: true, label: 'On' },
-  ];
-  const orientCtrl = buildHudToggleRow('Ball Pip & Swap Cues', orientOptions, initialHudPrefs.orientationCues, (val) => {
-    setHudPrefs({ orientationCues: val });
-  });
-  orientRowEl = orientCtrl.row;
-  orientButtons = orientCtrl.btns;
-
-  // One-click Clean Footage reset for live play or replay broadcast capture
-  cleanHudRowEl = document.createElement('div');
-  cleanHudRowEl.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;';
-  const cleanHudLabel = document.createElement('div');
-  cleanHudLabel.textContent = 'Clean Broadcast Footage';
-  cleanHudLabel.style.cssText = 'font-size: 12px; color: #cbd5e1;';
-  cleanHudBtnEl = document.createElement('button');
-  cleanHudBtnEl.textContent = 'Hide All Guides';
-  cleanHudBtnEl.style.cssText = `
-    padding: 6px 12px;
-    font-size: 11px;
-    font-weight: 700;
-    font-family: inherit;
-    border-radius: 4px;
-    cursor: pointer;
-    border: 1px solid rgba(56, 189, 248, 0.45);
-    background: rgba(56, 189, 248, 0.14);
-    color: #e0f2fe;
-    transition: all 0.12s ease;
-  `;
-  cleanHudBtnEl.onclick = () => {
-    setCleanBroadcastHud();
-    currentRenderSettings.showControlsOverlay = false;
-    controlsButtons.forEach((b, idx) => {
-      const isSel = controlsOptions[idx].id === false;
-      b.style.background = isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
-      b.style.color = isSel ? '#ffffff' : '#94a3b8';
-    });
-    if (callbacks.onRenderSettingsChange) callbacks.onRenderSettingsChange({ showControlsOverlay: false });
-  };
-  cleanHudRowEl.appendChild(cleanHudLabel);
-  cleanHudRowEl.appendChild(cleanHudBtnEl);
-  container.appendChild(cleanHudRowEl);
-
-  const syncHudToggleButtons = (prefs) => {
-    gfxPresetButtons.forEach((b, idx) => {
-      const isSel = gfxPresetOptions[idx].id === prefs.graphicsPreset;
-      b.style.background = isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
-      b.style.color = isSel ? '#ffffff' : '#94a3b8';
-    });
-    scorebugButtons.forEach((b, idx) => {
-      const isSel = scorebugOptions[idx].id === prefs.scorebugMode;
-      b.style.background = isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
-      b.style.color = isSel ? '#ffffff' : '#94a3b8';
-    });
-    dropRingButtons.forEach((b, idx) => {
-      const isSel = dropRingOptions[idx].id === prefs.ballDropRing;
-      b.style.background = isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
-      b.style.color = isSel ? '#ffffff' : '#94a3b8';
-    });
-    strikeGuideButtons.forEach((b, idx) => {
-      const isSel = strikeGuideOptions[idx].id === prefs.strikeRangeGuide;
-      b.style.background = isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
-      b.style.color = isSel ? '#ffffff' : '#94a3b8';
-    });
-    orientButtons.forEach((b, idx) => {
-      const isSel = orientOptions[idx].id === prefs.orientationCues;
-      b.style.background = isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
-      b.style.color = isSel ? '#ffffff' : '#94a3b8';
-    });
-  };
-  subscribeHudPrefs(syncHudToggleButtons);
-  menuOverlayEl._syncHudPrefs = () => syncHudToggleButtons(getHudPrefs());
-
-  // Valleyball Tuning GUI Row
-  tuningRowEl = document.createElement('div');
-  const tuningRow = tuningRowEl;
-  tuningRow.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;';
-  const tuningLabel = document.createElement('div');
-  tuningLabel.textContent = 'Valleyball Tuning GUI';
-  tuningLabel.style.cssText = 'font-size: 12px; color: #cbd5e1;';
-  const tuningButtonGroup = document.createElement('div');
-  tuningButtonGroup.style.cssText = 'display: flex; gap: 6px;';
-
-  tuningOptions = [
-    { id: false, label: 'Off' },
-    { id: true, label: 'On' },
-  ];
-  tuningButtons = [];
-  tuningOptions.forEach((opt) => {
-    const btn = document.createElement('button');
-    btn.textContent = opt.label;
-    btn.style.cssText = `
-      padding: 6px 14px;
-      font-size: 11px;
-      font-weight: 700;
-      font-family: inherit;
-      border-radius: 4px;
-      cursor: pointer;
-      border: 1px solid rgba(120, 170, 210, 0.3);
-      transition: all 0.12s ease;
-      background: ${(currentRenderSettings.showTuningGui ?? false) === opt.id ? '#2563eb' : 'rgba(255, 255, 255, 0.06)'};
-      color: ${(currentRenderSettings.showTuningGui ?? false) === opt.id ? '#ffffff' : '#94a3b8'};
-    `;
-    btn.onclick = () => {
-      currentRenderSettings.showTuningGui = opt.id;
-      tuningButtons.forEach((b, idx) => {
-        const isSel = tuningOptions[idx].id === opt.id;
-        b.style.background = isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
-        b.style.color = isSel ? '#ffffff' : '#94a3b8';
-      });
-      if (callbacks.onRenderSettingsChange) callbacks.onRenderSettingsChange({ ...currentRenderSettings });
-    };
-    tuningButtons.push(btn);
-    tuningButtonGroup.appendChild(btn);
-  });
-  tuningRow.appendChild(tuningLabel);
-  tuningRow.appendChild(tuningButtonGroup);
-  container.appendChild(tuningRow);
-
-  // 3. Audio Section
-  container.appendChild(createSectionHeading('AUDIO'));
-
-  // Master Volume Row
-  const volRow = document.createElement('div');
-  volRowEl = volRow;
-  volRow.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;';
-  const volLabel = document.createElement('div');
-  const initialVol = Math.round(soundManager.getMasterVolume() * 100);
-  volLabel.innerHTML = `Master Volume <span id="ingame-volume-val" style="color: #60a5fa; font-weight: 700; margin-left: 6px;">${initialVol}%</span>`;
-  volLabel.style.cssText = 'font-size: 12px; color: #cbd5e1; display: flex; align-items: center;';
-
-  const volSlider = document.createElement('input');
-  volSliderEl = volSlider;
-  volSlider.type = 'range';
-  volSlider.min = '0';
-  volSlider.max = '100';
-  volSlider.value = String(initialVol);
-  volSlider.style.cssText = 'width: 130px; cursor: pointer; accent-color: #2563eb;';
-
-  // Audio Mute Row
-  const muteRow = document.createElement('div');
-  muteRowEl = muteRow;
-  muteRow.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;';
-  const muteLabel = document.createElement('div');
-  muteLabel.textContent = 'Mute Audio';
-  muteLabel.style.cssText = 'font-size: 12px; color: #cbd5e1;';
-
-  const muteBtn = document.createElement('button');
-  muteBtnEl = muteBtn;
-  const updateMuteBtnState = (isMuted) => {
-    muteBtn.textContent = isMuted ? 'Muted' : 'Unmuted';
-    muteBtn.style.background = isMuted ? '#ef4444' : 'rgba(255, 255, 255, 0.06)';
-    muteBtn.style.color = isMuted ? '#ffffff' : '#94a3b8';
-  };
-  muteBtn.style.cssText = `
-    padding: 6px 14px;
-    font-size: 11px;
-    font-weight: 700;
-    font-family: inherit;
-    border-radius: 4px;
-    cursor: pointer;
-    border: 1px solid rgba(120, 170, 210, 0.3);
-    transition: all 0.12s ease;
-  `;
-  updateMuteBtnState(soundManager.isMuted());
-
-  volSlider.oninput = (e) => {
-    const val = parseInt(e.target.value, 10);
-    const valSpan = volLabel.querySelector('#ingame-volume-val');
-    if (valSpan) valSpan.textContent = `${val}%`;
-    soundManager.setMasterVolume(val / 100);
-    if (val > 0 && soundManager.isMuted()) {
-      soundManager.setMuted(false);
-      updateMuteBtnState(false);
-    }
-  };
-
-  muteBtn.onclick = () => {
-    const nowMuted = !soundManager.isMuted();
-    soundManager.setMuted(nowMuted);
-    updateMuteBtnState(nowMuted);
-  };
-
-  volRow.appendChild(volLabel);
-  volRow.appendChild(volSlider);
-  container.appendChild(volRow);
-
-  muteRow.appendChild(muteLabel);
-  muteRow.appendChild(muteBtn);
-  container.appendChild(muteRow);
-
-  menuOverlayEl._updateAudioUI = () => {
-    const vol = Math.round(soundManager.getMasterVolume() * 100);
-    volSlider.value = String(vol);
-    const valSpan = volLabel.querySelector('#ingame-volume-val');
-    if (valSpan) valSpan.textContent = `${vol}%`;
-    updateMuteBtnState(soundManager.isMuted());
-    const vibEnabled = isVibrationEnabled();
-    vibrationButtons.forEach((b, idx) => {
-      const isSel = vibrationOptions[idx].id === vibEnabled;
-      b.style.background = isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
-      b.style.color = isSel ? '#ffffff' : '#94a3b8';
-    });
-  };
-
-  // 3b. Controls & Haptics Section
-  container.appendChild(createSectionHeading('CONTROLS & HAPTICS'));
-
-  // Controller Vibration Row
-  const vibrationRow = document.createElement('div');
-  vibrationRow.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;';
-  const vibrationLabel = document.createElement('div');
-  vibrationLabel.textContent = 'Controller Vibration';
-  vibrationLabel.style.cssText = 'font-size: 12px; color: #cbd5e1;';
-  const vibrationButtonGroup = document.createElement('div');
-  vibrationButtonGroup.style.cssText = 'display: flex; gap: 6px;';
-
-  const vibrationOptions = [
-    { id: true, label: 'On' },
-    { id: false, label: 'Off' },
-  ];
-  const vibrationButtons = [];
-  vibrationOptions.forEach((opt) => {
-    const btn = document.createElement('button');
-    btn.textContent = opt.label;
-    btn.style.cssText = `
-      padding: 6px 14px;
-      font-size: 11px;
-      font-weight: 700;
-      font-family: inherit;
-      border-radius: 4px;
-      cursor: pointer;
-      border: 1px solid rgba(120, 170, 210, 0.3);
-      transition: all 0.12s ease;
-      background: ${isVibrationEnabled() === opt.id ? '#2563eb' : 'rgba(255, 255, 255, 0.06)'};
-      color: ${isVibrationEnabled() === opt.id ? '#ffffff' : '#94a3b8'};
-    `;
-    btn.onclick = () => {
-      setVibrationEnabled(opt.id);
-      vibrationButtons.forEach((b, idx) => {
-        const isSel = vibrationOptions[idx].id === opt.id;
-        b.style.background = isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
-        b.style.color = isSel ? '#ffffff' : '#94a3b8';
-      });
-    };
-    vibrationButtons.push(btn);
-    vibrationButtonGroup.appendChild(btn);
-  });
-  vibrationRow.appendChild(vibrationLabel);
-  vibrationRow.appendChild(vibrationButtonGroup);
-  vibrationRowEl = vibrationRow;
-  container.appendChild(vibrationRow);
-
-  // 4. Camera Modes Section (grouped by Team 1 [P1, P3] and Team 2 [P2, P4])
-  container.appendChild(createSectionHeading('CAMERAS'));
   const camGrid = document.createElement('div');
   camGrid.id = 'ingame-cam-grid';
-  camGrid.style.cssText = 'display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;';
+  camGrid.style.cssText = 'display: grid; grid-template-columns: 1fr 1fr; gap: 8px;';
 
   const team1CamGroup = document.createElement('div');
   team1CamGroup.id = 'ingame-cam-team-1';
-  team1CamGroup.style.cssText = 'display: flex; flex-direction: column; gap: 8px;';
+  team1CamGroup.style.cssText = 'display: flex; flex-direction: column; gap: 6px;';
 
   const team2CamGroup = document.createElement('div');
   team2CamGroup.id = 'ingame-cam-team-2';
-  team2CamGroup.style.cssText = 'display: flex; flex-direction: column; gap: 8px;';
+  team2CamGroup.style.cssText = 'display: flex; flex-direction: column; gap: 6px;';
 
-  // Titles and options are filled per open by refreshCameraRows().
   function createCamSelector(playerIndex) {
     const box = document.createElement('div');
-    box.style.cssText = 'background: rgba(255, 255, 255, 0.04); padding: 8px 10px; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.1);';
+    box.style.cssText = 'background: rgba(255, 255, 255, 0.04); padding: 6px 8px; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.12);';
     const t = document.createElement('div');
-    t.style.cssText = 'font-size: 10.5px; font-weight: 800; color: #cbd5e1; margin-bottom: 6px; letter-spacing: 0.04em;';
+    t.style.cssText = 'font-size: 10px; font-weight: 800; color: #cbd5e1; margin-bottom: 4px; letter-spacing: 0.03em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;';
 
     const controlRow = document.createElement('div');
-    controlRow.style.cssText = 'display: flex; gap: 5px; align-items: center;';
+    controlRow.style.cssText = 'display: flex; gap: 4px; align-items: center;';
 
     const prevBtn = document.createElement('button');
     prevBtn.type = 'button';
     prevBtn.textContent = '<';
-    prevBtn.style.cssText = 'padding: 5px 8px; font-family: inherit; font-size: 11px; font-weight: 900; background: rgba(255,255,255,0.08); color: #ffffff; border: 1px solid rgba(120, 170, 210, 0.35); border-radius: 4px; cursor: pointer;';
+    prevBtn.style.cssText = 'padding: 4px 7px; font-family: inherit; font-size: 11px; font-weight: 900; background: rgba(255,255,255,0.08); color: #ffffff; border: 1px solid rgba(120, 170, 210, 0.35); border-radius: 4px; cursor: pointer;';
 
     const sel = document.createElement('select');
-    sel.style.cssText = 'flex: 1; min-width: 0; padding: 5px 6px; font-family: inherit; font-size: 11.5px; font-weight: 700; background: #0f172a; color: #f8fafc; border: 1px solid rgba(120, 170, 210, 0.3); border-radius: 4px; cursor: pointer;';
+    sel.style.cssText = 'flex: 1; min-width: 0; padding: 4px 5px; font-family: inherit; font-size: 11px; font-weight: 700; background: #0f172a; color: #f8fafc; border: 1px solid rgba(120, 170, 210, 0.3); border-radius: 4px; cursor: pointer;';
     sel.onchange = () => applyCameraChoice(playerIndex, sel.value);
 
     const nextBtn = document.createElement('button');
     nextBtn.type = 'button';
     nextBtn.textContent = '>';
-    nextBtn.style.cssText = 'padding: 5px 8px; font-family: inherit; font-size: 11px; font-weight: 900; background: rgba(255,255,255,0.08); color: #ffffff; border: 1px solid rgba(120, 170, 210, 0.35); border-radius: 4px; cursor: pointer;';
+    nextBtn.style.cssText = 'padding: 4px 7px; font-family: inherit; font-size: 11px; font-weight: 900; background: rgba(255,255,255,0.08); color: #ffffff; border: 1px solid rgba(120, 170, 210, 0.35); border-radius: 4px; cursor: pointer;';
 
     prevBtn.onclick = () => cycleCam(playerIndex, sel, -1);
     nextBtn.onclick = () => cycleCam(playerIndex, sel, 1);
 
-    controlRow.appendChild(prevBtn);
-    controlRow.appendChild(sel);
-    controlRow.appendChild(nextBtn);
-
-    box.appendChild(t);
-    box.appendChild(controlRow);
+    controlRow.append(prevBtn, sel, nextBtn);
+    box.append(t, controlRow);
     return { box, select: sel, title: t };
   }
 
@@ -841,143 +384,401 @@ export function initInGameMenu({
       team2CamGroup.appendChild(camSel.box);
     }
   }
-  camGrid.appendChild(team1CamGroup);
-  camGrid.appendChild(team2CamGroup);
-  container.appendChild(camGrid);
+  camGrid.append(team1CamGroup, team2CamGroup);
+  camSectionEl.appendChild(camGrid);
+  centerCardEl.appendChild(camSectionEl);
 
-  // 4. Action Buttons
+  // 4. Quick Settings Rows: 1-Row HUD Preset + 1-Row Master Volume & Mute
+  const quickSettingsBox = document.createElement('div');
+  quickSettingsBox.style.cssText = 'display: flex; flex-direction: column; gap: 8px; padding-top: 6px; border-top: 1px solid rgba(120, 170, 210, 0.16);';
+
+  hudPresetRowEl = document.createElement('div');
+  hudPresetRowEl.id = 'ingame-hud-preset-row';
+  hudPresetRowEl.style.cssText = 'display: flex; justify-content: space-between; align-items: center; padding: 5px 8px; border-radius: 6px;';
+  const hudPresetLeft = document.createElement('div');
+  hudPresetLeft.style.cssText = 'display: flex; align-items: center; gap: 7px;';
+  const hudPresetLabel = document.createElement('div');
+  hudPresetLabel.textContent = 'HUD Preset';
+  hudPresetLabel.style.cssText = 'font-size: 12px; font-weight: 700; color: #e2e8f0;';
+  hudPresetBadgeEl = document.createElement('span');
+  hudPresetBadgeEl.id = 'ingame-hud-preset-badge';
+  hudPresetBadgeEl.style.cssText = 'font-size: 9.5px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; padding: 1px 6px; border-radius: 999px; background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(56, 189, 248, 0.35); color: #38bdf8;';
+  hudPresetLeft.append(hudPresetLabel, hudPresetBadgeEl);
+
+  const hudPresetGroup = document.createElement('div');
+  hudPresetGroup.style.cssText = 'display: flex; gap: 5px;';
+  hudPresetOptions = [
+    { id: 'minimal', btnId: 'btn-ingame-hud-preset-minimal', label: 'Minimal' },
+    { id: 'standard', btnId: 'btn-ingame-hud-preset-standard', label: 'Standard' },
+    { id: 'rookie', btnId: 'btn-ingame-hud-preset-rookie', label: 'Rookie' },
+  ];
+  hudPresetButtons = [];
+  const initHudPresetId = getActiveHudPresetId();
+  hudPresetBadgeEl.textContent = hudPresetOptions.find((o) => o.id === initHudPresetId)?.label || 'Custom';
+  hudPresetOptions.forEach((opt) => {
+    const btn = document.createElement('button');
+    btn.id = opt.btnId;
+    btn.type = 'button';
+    btn.textContent = opt.label;
+    const isSel = initHudPresetId === opt.id;
+    btn.style.cssText = `
+      padding: 5px 10px;
+      font-size: 11px;
+      font-weight: 700;
+      font-family: inherit;
+      border-radius: 4px;
+      cursor: pointer;
+      border: 1px solid rgba(120, 170, 210, 0.32);
+      transition: all 0.12s ease;
+      background: ${isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)'};
+      color: ${isSel ? '#ffffff' : '#94a3b8'};
+    `;
+    btn.onclick = () => {
+      applyHudPreset(opt.id);
+      const nextOverlay = Boolean(getHudPrefs().controlsOverlay);
+      if (callbacks.onRenderSettingsChange) {
+        callbacks.onRenderSettingsChange({ showControlsOverlay: nextOverlay });
+      }
+    };
+    hudPresetButtons.push(btn);
+    hudPresetGroup.appendChild(btn);
+  });
+  hudPresetRowEl.append(hudPresetLeft, hudPresetGroup);
+  quickSettingsBox.appendChild(hudPresetRowEl);
+
+  const syncHudToggleButtons = () => {
+    const activePreset = getActiveHudPresetId();
+    hudPresetButtons.forEach((b, idx) => {
+      const isSel = hudPresetOptions[idx].id === activePreset;
+      b.style.background = isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
+      b.style.color = isSel ? '#ffffff' : '#94a3b8';
+    });
+    if (hudPresetBadgeEl) {
+      hudPresetBadgeEl.textContent = hudPresetOptions.find((o) => o.id === activePreset)?.label || 'Custom';
+      hudPresetBadgeEl.style.color = activePreset === 'custom' ? '#fbbf24' : '#38bdf8';
+    }
+  };
+  subscribeHudPrefs(syncHudToggleButtons);
+  syncHudToggleButtons();
+  menuOverlayEl._syncHudPrefs = syncHudToggleButtons;
+
+  // Master Volume + inline Mute button row
+  volRowEl = document.createElement('div');
+  volRowEl.id = 'ingame-volume-row';
+  volRowEl.style.cssText = 'display: flex; justify-content: space-between; align-items: center; padding: 5px 8px; border-radius: 6px;';
+  const volLabel = document.createElement('div');
+  volLabel.style.cssText = 'font-size: 12px; font-weight: 700; color: #e2e8f0; display: flex; align-items: center;';
+  const volTitleSpan = document.createElement('span');
+  volTitleSpan.textContent = 'Master Volume';
+  const volValSpan = document.createElement('span');
+  volValSpan.id = 'ingame-volume-val';
+  volValSpan.style.cssText = 'color: #60a5fa; font-weight: 800; margin-left: 6px;';
+  const initialVol = Math.round(soundManager.getMasterVolume() * 100);
+  volValSpan.textContent = `${initialVol}%`;
+  volLabel.append(volTitleSpan, volValSpan);
+
+  const volControls = document.createElement('div');
+  volControls.style.cssText = 'display: flex; align-items: center; gap: 8px;';
+
+  volSliderEl = document.createElement('input');
+  volSliderEl.id = 'ingame-volume-slider';
+  volSliderEl.type = 'range';
+  volSliderEl.min = '0';
+  volSliderEl.max = '100';
+  volSliderEl.value = String(initialVol);
+  volSliderEl.style.cssText = 'width: 118px; cursor: pointer; accent-color: #2563eb;';
+
+  muteBtnEl = document.createElement('button');
+  muteBtnEl.id = 'btn-ingame-mute';
+  muteBtnEl.type = 'button';
+  muteBtnEl.style.cssText = `
+    padding: 5px 10px;
+    font-size: 11px;
+    font-weight: 700;
+    font-family: inherit;
+    border-radius: 4px;
+    cursor: pointer;
+    border: 1px solid rgba(120, 170, 210, 0.32);
+    transition: all 0.12s ease;
+  `;
+
+  const updateMuteBtnState = (isMuted) => {
+    muteBtnEl.textContent = isMuted ? 'Muted' : 'Mute';
+    muteBtnEl.style.background = isMuted ? '#ef4444' : 'rgba(255, 255, 255, 0.06)';
+    muteBtnEl.style.color = isMuted ? '#ffffff' : '#94a3b8';
+  };
+  updateMuteBtnState(soundManager.isMuted());
+
+  volSliderEl.oninput = (e) => {
+    const val = parseInt(e.target.value, 10);
+    volValSpan.textContent = `${val}%`;
+    soundManager.setMasterVolume(val / 100);
+    if (val > 0 && soundManager.isMuted()) {
+      soundManager.setMuted(false);
+      updateMuteBtnState(false);
+    }
+  };
+
+  muteBtnEl.onclick = () => {
+    const nowMuted = !soundManager.isMuted();
+    soundManager.setMuted(nowMuted);
+    updateMuteBtnState(nowMuted);
+  };
+
+  volControls.append(volSliderEl, muteBtnEl);
+  volRowEl.append(volLabel, volControls);
+  quickSettingsBox.appendChild(volRowEl);
+  centerCardEl.appendChild(quickSettingsBox);
+
+  menuOverlayEl._updateAudioUI = () => {
+    const vol = Math.round(soundManager.getMasterVolume() * 100);
+    volSliderEl.value = String(vol);
+    volValSpan.textContent = `${vol}%`;
+    updateMuteBtnState(soundManager.isMuted());
+  };
+
+  // 5. Secondary Bottom Action Row (REMATCH or FINISH PRACTICE + MAIN MENU)
   const actionsBox = document.createElement('div');
-  actionsBox.style.cssText = 'display: flex; gap: 12px; margin-top: 14px; border-top: 1px solid rgba(120, 170, 210, 0.2); padding-top: 18px;';
+  actionsBox.style.cssText = 'display: flex; gap: 10px; padding-top: 10px; border-top: 1px solid rgba(120, 170, 210, 0.2);';
 
-  const resumeBtn = document.createElement('button');
-  resumeBtnEl = resumeBtn;
-  resumeBtn.textContent = 'BACK / RESUME [ESC]';
-  resumeBtn.style.cssText = `
+  rematchBtnEl = document.createElement('button');
+  rematchBtnEl.id = 'btn-ingame-rematch';
+  rematchBtnEl.type = 'button';
+  rematchBtnEl.textContent = 'REMATCH';
+  rematchBtnEl.style.cssText = `
     flex: 1;
-    padding: 12px;
-    font-size: 14px;
-    font-weight: 900;
-    font-family: inherit;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: #000000;
-    background: #ffffff;
-    border: 2px solid #ffffff;
-    border-radius: 6px;
-    cursor: pointer;
-    box-shadow: 0 4px 18px rgba(255, 255, 255, 0.45), 0 0 25px rgba(0, 229, 255, 0.25);
-    transition: all 0.15s ease;
-  `;
-  resumeBtn.onmouseenter = () => {
-    resumeBtn.style.transform = 'scale(1.02)';
-    resumeBtn.style.boxShadow = '0 6px 24px rgba(255, 255, 255, 0.6), 0 0 30px rgba(255, 46, 85, 0.3)';
-  };
-  resumeBtn.onmouseleave = () => {
-    resumeBtn.style.transform = 'scale(1)';
-    resumeBtn.style.boxShadow = '0 4px 18px rgba(255, 255, 255, 0.45), 0 0 25px rgba(0, 229, 255, 0.25)';
-  };
-  resumeBtn.onclick = () => {
-    hideInGameMenu();
-    if (callbacks.onResume) callbacks.onResume();
-  };
-
-  const mainMenuBtn = document.createElement('button');
-  mainMenuBtnEl = mainMenuBtn;
-  mainMenuBtn.id = 'btn-ingame-main-menu';
-  mainMenuBtn.textContent = 'MAIN MENU';
-  mainMenuBtn.style.cssText = `
-    flex: 1;
-    padding: 12px;
-    font-size: 14px;
-    font-weight: 800;
-    font-family: inherit;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: #cfe3f5;
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    border-radius: 6px;
-    cursor: pointer;
-    transition: all 0.15s ease;
-  `;
-  mainMenuBtn.onmouseenter = () => { mainMenuBtn.style.background = 'rgba(255, 255, 255, 0.15)'; };
-  mainMenuBtn.onmouseleave = () => { mainMenuBtn.style.background = 'rgba(255, 255, 255, 0.08)'; };
-  mainMenuBtn.onclick = () => {
-    hideInGameMenu();
-    if (callbacks.onMainMenu) callbacks.onMainMenu();
-  };
-
-  const rematchBtn = document.createElement('button');
-  rematchBtnEl = rematchBtn;
-  rematchBtn.id = 'btn-ingame-rematch';
-  rematchBtn.textContent = 'RESTART MATCH';
-  rematchBtn.style.cssText = `
-    flex: 1;
-    padding: 12px;
-    font-size: 14px;
+    padding: 10px 12px;
+    font-size: 12.5px;
     font-weight: 800;
     font-family: inherit;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: #00e5ff;
     background: rgba(0, 229, 255, 0.10);
-    border: 1px solid rgba(0, 229, 255, 0.40);
+    border: 1px solid rgba(0, 229, 255, 0.42);
     border-radius: 6px;
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: all 0.12s ease;
   `;
-  rematchBtn.onmouseenter = () => { rematchBtn.style.background = 'rgba(0, 229, 255, 0.20)'; };
-  rematchBtn.onmouseleave = () => { rematchBtn.style.background = 'rgba(0, 229, 255, 0.10)'; };
-  rematchBtn.onclick = () => {
+  rematchBtnEl.onclick = () => {
     hideInGameMenu();
     if (callbacks.onRematch) callbacks.onRematch();
   };
 
-  actionsBox.appendChild(resumeBtn);
-  actionsBox.appendChild(rematchBtn);
-  actionsBox.appendChild(mainMenuBtn);
-  container.appendChild(actionsBox);
+  finishPracticeBtn = document.createElement('button');
+  finishPracticeBtn.id = 'btn-finish-practice';
+  finishPracticeBtn.type = 'button';
+  finishPracticeBtn.textContent = 'FINISH PRACTICE';
+  finishPracticeBtn.style.cssText = `
+    display: none;
+    flex: 1;
+    padding: 10px 12px;
+    font-size: 12.5px;
+    font-weight: 800;
+    font-family: inherit;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #04130d;
+    background: #10b981;
+    border: 1px solid #34d399;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.12s ease;
+  `;
+  finishPracticeBtn.onclick = () => {
+    hideInGameMenu();
+    if (callbacks.onFinishPractice) callbacks.onFinishPractice();
+  };
+
+  mainMenuBtnEl = document.createElement('button');
+  mainMenuBtnEl.id = 'btn-ingame-main-menu';
+  mainMenuBtnEl.type = 'button';
+  mainMenuBtnEl.textContent = 'MAIN MENU';
+  mainMenuBtnEl.style.cssText = `
+    flex: 1;
+    padding: 10px 12px;
+    font-size: 12.5px;
+    font-weight: 800;
+    font-family: inherit;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #cfe3f5;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.12s ease;
+  `;
+  mainMenuBtnEl.onclick = () => {
+    hideInGameMenu();
+    if (callbacks.onMainMenu) callbacks.onMainMenu();
+  };
+
+  actionsBox.append(rematchBtnEl, finishPracticeBtn, mainMenuBtnEl);
+  centerCardEl.appendChild(actionsBox);
 
   const legendFooter = document.createElement('div');
   legendFooter.style.cssText = `
-    margin-top: 12px;
-    padding-top: 10px;
-    border-top: 1px solid rgba(255, 255, 255, 0.10);
-    font-size: 10.5px;
+    padding-top: 6px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    font-size: 10px;
     font-weight: 800;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.06em;
     color: #94a3b8;
     text-align: center;
   `;
-  legendFooter.innerHTML = '🎮 <b style="color:#ffffff;">↕</b> NAVIGATE &middot; <b style="color:#ffffff;">◀ ▶ / A</b> CHANGE &middot; <b style="color:#00e5ff;">B / START / ESC</b> RESUME';
-  container.appendChild(legendFooter);
+  legendFooter.innerHTML = '<b style="color:#ffffff;">↕</b> NAVIGATE &middot; <b style="color:#ffffff;">◀ ▶ / A</b> CHANGE &middot; <b style="color:#00e5ff;">B / START / ESC</b> RESUME';
+  centerCardEl.appendChild(legendFooter);
 
-  menuOverlayEl.appendChild(container);
+  menuOverlayEl.append(homeStatBoardEl, centerCardEl, awayStatBoardEl, hustleBoardSection);
+  menuOverlayEl._getFocusIndex = () => inGameFocusIndex;
+  menuOverlayEl._getNavRows = () => inGameNavRows;
   document.body.appendChild(menuOverlayEl);
-
 }
 
-const CAMERA_MODES = ['chase', 'thirdPerson', 'firstPerson', 'tactical', 'broadcast'];
-const CAMERA_LABELS = {
-  chase: 'CHASE CAM',
-  thirdPerson: 'BALL TRACK',
-  firstPerson: '1ST PERSON',
-  tactical: 'TACTICAL',
-  broadcast: 'BROADCAST [SHARED]',
-};
+function renderTeamStatBoardCard(boardEl, teamData, is2v2) {
+  if (!boardEl || !teamData) return;
+  const styles = getTeamBorderStyles(teamData.primaryColor);
+  const kitName = getColorName(teamData.primaryColor).toUpperCase();
+  const rosterSlots = (teamData.players || []).map((p) => p.shortLabel).join(' & ') || teamData.kitLabel;
 
-/**
- * Shows a camera row only for each human player, titled with their colour, side and
- * camera keys, and offers only modes that player can actually get: in splitscreen,
- * Broadcast exists only as the shared view both players are already on.
- */
+  boardEl.style.border = styles.borderCss;
+  boardEl.style.boxShadow = styles.shadowCss;
+  boardEl.dataset.teamColor = styles.hex;
+
+  const statCells = [
+    { label: 'GOALS', value: teamData.goals ?? 0, color: STAT_RAINBOW.goals },
+    ...(is2v2 ? [{ label: 'ASSISTS', value: teamData.assists ?? 0, color: STAT_RAINBOW.assists }] : []),
+    { label: 'TOUCHES', value: teamData.totalTouches ?? 0, color: STAT_RAINBOW.touches },
+    { label: 'ACCURACY', value: `${teamData.accuracy ?? 0}%`, sub: `${teamData.hits ?? 0}H / ${teamData.whiffs ?? 0}W`, color: STAT_RAINBOW.accuracy },
+    { label: 'SWEET SPOTS', value: teamData.sweetSpotHits ?? 0, color: STAT_RAINBOW.sweetSpots },
+    { label: 'SPIKES', value: teamData.spikes ?? 0, color: STAT_RAINBOW.spikes },
+    { label: 'DIVES', value: teamData.dives ?? 0, color: STAT_RAINBOW.dives },
+    { label: 'DIVING HITS', value: teamData.divingHits ?? 0, color: STAT_RAINBOW.divingHits },
+  ];
+
+  const cellsHtml = statCells.map((cell) => `
+    <div style="background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.07); border-radius: 6px; padding: 7px 8px; display: flex; flex-direction: column; justify-content: center;">
+      <div style="font-size: 9px; font-weight: 800; letter-spacing: 0.08em; color: #94a3b8;">${cell.label}</div>
+      <div style="font-size: 18px; font-weight: 900; color: ${cell.color}; margin-top: 2px; line-height: 1.1;">${cell.value}</div>
+      ${cell.sub ? `<div style="font-size: 8.5px; color: #64748b; margin-top: 1px;">${cell.sub}</div>` : ''}
+    </div>
+  `).join('');
+
+  boardEl.innerHTML = `
+    <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; padding-bottom: 8px; border-bottom: 1px solid rgba(255, 255, 255, 0.12);">
+      <div style="display: flex; flex-direction: column; gap: 4px; min-width: 0;">
+        <span class="ingame-stat-team-badge" style="display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 999px; border: 1.5px solid ${styles.badgeBorderHex}; background: ${styles.badgeBgCss}; font-size: 10px; font-weight: 900; letter-spacing: 0.08em; color: #f8fafc; width: fit-content;">
+          <span style="width: 7px; height: 7px; border-radius: 50%; background: ${styles.hex}; box-shadow: ${styles.dotShadowCss}; flex-shrink: 0;"></span>
+          <span>${teamData.kitLabel} &middot; ${kitName}</span>
+        </span>
+        <span style="font-size: 9.5px; font-weight: 700; color: #94a3b8; letter-spacing: 0.06em;">${rosterSlots}</span>
+      </div>
+      <div style="font-size: 28px; font-weight: 900; color: #ffffff; line-height: 1;">${teamData.goals ?? 0}</div>
+    </div>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px;">
+      ${cellsHtml}
+    </div>
+  `;
+}
+
+function refreshMatchAndPracticeSideBoards(isPractice, isReplay) {
+  if (isPractice) {
+    if (homeStatBoardEl) homeStatBoardEl.style.display = 'none';
+    if (awayStatBoardEl) awayStatBoardEl.style.display = 'none';
+    if (hustleBoardSection) {
+      const vb = typeof window !== 'undefined' ? window.__vb : null;
+      const stats = vb?.practiceStats || {};
+      const p1Color = vb?.athletes?.[0]?.primaryColor ?? TUNING.players?.[0]?.primaryColor ?? TUNING.athlete?.palette?.homePrimary ?? 0xd90429;
+      const styles = getTeamBorderStyles(p1Color);
+      const kitName = getColorName(p1Color).toUpperCase();
+      const hits = stats.hits || 0;
+      const whiffs = stats.whiffs || 0;
+      const attempts = hits + whiffs;
+      const acc = attempts > 0 ? Math.round((hits / attempts) * 100) : 0;
+
+      hustleBoardSection.style.display = 'flex';
+      hustleBoardSection.style.border = styles.borderCss;
+      hustleBoardSection.style.boxShadow = styles.shadowCss;
+      hustleBoardSection.dataset.teamColor = styles.hex;
+      hustleBoardSection.innerHTML = `
+        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255, 255, 255, 0.14); padding-bottom: 8px;">
+          <span style="display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 999px; border: 1.5px solid ${styles.badgeBorderHex}; background: ${styles.badgeBgCss}; font-size: 10px; font-weight: 900; letter-spacing: 0.08em; color: #f8fafc;">
+            <span style="width: 7px; height: 7px; border-radius: 50%; background: ${styles.hex}; box-shadow: ${styles.dotShadowCss};"></span>
+            <span>HUSTLE BOARD &middot; ${kitName}</span>
+          </span>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px;">
+          <div style="background: rgba(255,255,255,0.04); padding: 7px 8px; border-radius: 6px;">
+            <div style="font-size: 9px; color: #94a3b8; font-weight: 800;">GOALS</div>
+            <div style="font-size: 18px; font-weight: 900; color: ${STAT_RAINBOW.goals}; margin-top: 2px;">${stats.goals || 0}</div>
+          </div>
+          <div style="background: rgba(255,255,255,0.04); padding: 7px 8px; border-radius: 6px;">
+            <div style="font-size: 9px; color: #94a3b8; font-weight: 800;">ACCURACY</div>
+            <div style="font-size: 18px; font-weight: 900; color: ${STAT_RAINBOW.accuracy}; margin-top: 2px;">${acc}%</div>
+            <div style="font-size: 8.5px; color: #64748b;">${hits}H / ${whiffs}W</div>
+          </div>
+          <div style="background: rgba(255,255,255,0.04); padding: 7px 8px; border-radius: 6px;">
+            <div style="font-size: 9px; color: #94a3b8; font-weight: 800;">SWEET SPOTS</div>
+            <div style="font-size: 18px; font-weight: 900; color: ${STAT_RAINBOW.sweetSpots}; margin-top: 2px;">${stats.sweetSpots || 0}</div>
+          </div>
+          <div style="background: rgba(255,255,255,0.04); padding: 7px 8px; border-radius: 6px;">
+            <div style="font-size: 9px; color: #94a3b8; font-weight: 800;">SPIKES</div>
+            <div style="font-size: 18px; font-weight: 900; color: ${STAT_RAINBOW.spikes}; margin-top: 2px;">${stats.spikes || 0}</div>
+          </div>
+          <div style="background: rgba(255,255,255,0.04); padding: 7px 8px; border-radius: 6px;">
+            <div style="font-size: 9px; color: #94a3b8; font-weight: 800;">DIVES</div>
+            <div style="font-size: 18px; font-weight: 900; color: ${STAT_RAINBOW.dives}; margin-top: 2px;">${stats.dives || 0}</div>
+          </div>
+          <div style="background: rgba(255,255,255,0.04); padding: 7px 8px; border-radius: 6px;">
+            <div style="font-size: 9px; color: #94a3b8; font-weight: 800;">DIVING HITS</div>
+            <div style="font-size: 18px; font-weight: 900; color: ${STAT_RAINBOW.divingHits}; margin-top: 2px;">${stats.divingHits || 0}</div>
+          </div>
+          <div style="background: rgba(255,255,255,0.04); padding: 7px 8px; border-radius: 6px; grid-column: span 2;">
+            <div style="font-size: 9px; color: #94a3b8; font-weight: 800;">TOTAL TOUCHES</div>
+            <div style="font-size: 18px; font-weight: 900; color: ${STAT_RAINBOW.touches}; margin-top: 2px;">${stats.totalTouches || 0}</div>
+          </div>
+        </div>
+      `;
+    }
+    return;
+  }
+
+  if (hustleBoardSection) hustleBoardSection.style.display = 'none';
+  if (isReplay) {
+    if (homeStatBoardEl) homeStatBoardEl.style.display = 'none';
+    if (awayStatBoardEl) awayStatBoardEl.style.display = 'none';
+    return;
+  }
+
+  const vb = typeof window !== 'undefined' ? window.__vb : null;
+  const report = buildMatchStatsReport({
+    match: vb?.matchState || null,
+    athletes: vb?.athletes || [],
+    athleteMatchStats: vb?.athleteMatchStats || [],
+    playerConfigs: vb?.getPlayerConfigs?.() || TUNING.players || [],
+  });
+
+  if (homeStatBoardEl) {
+    homeStatBoardEl.style.display = 'flex';
+    renderTeamStatBoardCard(homeStatBoardEl, report.teams.home, report.is2v2);
+  }
+  if (awayStatBoardEl) {
+    awayStatBoardEl.style.display = 'flex';
+    renderTeamStatBoardCard(awayStatBoardEl, report.teams.away, report.is2v2);
+  }
+}
+
 function refreshCameraRows() {
   const rows = callbacks.getCameraRows ? callbacks.getCameraRows() : [];
+  let anyVisible = false;
   camSelObjs.forEach((obj, i) => {
     if (!obj) return;
     const row = rows[i];
-    obj.box.style.display = row && row.visible ? 'block' : 'none';
-    if (!row || !row.visible) return;
+    const vis = Boolean(row && row.visible);
+    if (vis) anyVisible = true;
+    obj.box.style.display = vis ? 'block' : 'none';
+    if (!vis) return;
     obj.title.textContent = row.hint ? `${row.label} · ${row.hint}` : row.label;
     obj.select.innerHTML = '';
     for (const m of CAMERA_MODES) {
@@ -989,6 +790,9 @@ function refreshCameraRows() {
     }
     obj.select.value = row.mode;
   });
+  if (camSectionEl) {
+    camSectionEl.style.display = anyVisible ? 'flex' : 'none';
+  }
   const t1Group = document.getElementById('ingame-cam-team-1');
   const t2Group = document.getElementById('ingame-cam-team-2');
   const camGrid = document.getElementById('ingame-cam-grid');
@@ -1003,73 +807,13 @@ function refreshCameraRows() {
 
 function applyCameraChoice(playerIdx, mode) {
   if (callbacks.onCameraChange) callbacks.onCameraChange(playerIdx, mode);
-  // Leaving a shared Broadcast view also moves the other player, so redraw both rows.
   refreshCameraRows();
 }
 
-// ---------------------------------------------------------------------------
-// In-Game Menu Navigation & Polling
-// ---------------------------------------------------------------------------
-function cycleGfxPreset(dir = 1) {
-  const curIdx = gfxPresetOptions.findIndex((o) => o.id === getHudPrefs().graphicsPreset);
-  const nextIdx = (curIdx + dir + gfxPresetOptions.length) % gfxPresetOptions.length;
-  gfxPresetButtons[nextIdx]?.click();
-  updateInGameFocusUI();
-}
-
-function cycleDpr(dir = 1) {
-  const curIdx = dprOptions.findIndex((o) => o.id === currentRenderSettings.pixelRatioPreset);
-  const nextIdx = (curIdx + dir + dprOptions.length) % dprOptions.length;
-  dprButtons[nextIdx]?.click();
-  updateInGameFocusUI();
-}
-
-function cycleShadow(dir = 1) {
-  const curIdx = shadowOptions.findIndex((o) => o.id === currentRenderSettings.shadowQuality);
-  const nextIdx = (curIdx + dir + shadowOptions.length) % shadowOptions.length;
-  shadowButtons[nextIdx]?.click();
-  updateInGameFocusUI();
-}
-
-function cycleControls() {
-  const nextVal = !(currentRenderSettings.showControlsOverlay ?? false);
-  const targetBtn = controlsButtons.find((_, idx) => controlsOptions[idx].id === nextVal);
-  targetBtn?.click();
-  updateInGameFocusUI();
-}
-
-function cycleScorebug(dir = 1) {
-  const curIdx = scorebugOptions.findIndex((o) => o.id === getHudPrefs().scorebugMode);
-  const nextIdx = (curIdx + dir + scorebugOptions.length) % scorebugOptions.length;
-  scorebugButtons[nextIdx]?.click();
-  updateInGameFocusUI();
-}
-
-function cycleDropRing() {
-  const nextVal = !getHudPrefs().ballDropRing;
-  const targetBtn = dropRingButtons.find((_, idx) => dropRingOptions[idx].id === nextVal);
-  targetBtn?.click();
-  updateInGameFocusUI();
-}
-
-function cycleStrikeGuide() {
-  const nextVal = !getHudPrefs().strikeRangeGuide;
-  const targetBtn = strikeGuideButtons.find((_, idx) => strikeGuideOptions[idx].id === nextVal);
-  targetBtn?.click();
-  updateInGameFocusUI();
-}
-
-function cycleOrientCues() {
-  const nextVal = !getHudPrefs().orientationCues;
-  const targetBtn = orientButtons.find((_, idx) => orientOptions[idx].id === nextVal);
-  targetBtn?.click();
-  updateInGameFocusUI();
-}
-
-function cycleTuning() {
-  const nextVal = !(currentRenderSettings.showTuningGui ?? false);
-  const targetBtn = tuningButtons.find((_, idx) => tuningOptions[idx].id === nextVal);
-  targetBtn?.click();
+function cycleHudPreset(dir = 1) {
+  const curIdx = hudPresetOptions.findIndex((o) => o.id === getActiveHudPresetId());
+  const nextIdx = curIdx === -1 ? (dir > 0 ? 1 : 0) : (curIdx + dir + hudPresetOptions.length) % hudPresetOptions.length;
+  hudPresetButtons[nextIdx]?.click();
   updateInGameFocusUI();
 }
 
@@ -1083,17 +827,6 @@ function adjustVolume(delta) {
 
 function toggleMute() {
   muteBtnEl?.click();
-}
-
-function toggleVibration() {
-  const nextVal = !isVibrationEnabled();
-  setVibrationEnabled(nextVal);
-  vibrationButtons.forEach((b, idx) => {
-    const isSel = vibrationOptions[idx].id === nextVal;
-    b.style.background = isSel ? '#2563eb' : 'rgba(255, 255, 255, 0.06)';
-    b.style.color = isSel ? '#ffffff' : '#94a3b8';
-  });
-  soundManager.playTone(nextVal ? 520 : 360, 0.05, 'sine', 0.2);
   updateInGameFocusUI();
 }
 
@@ -1104,125 +837,21 @@ function cycleCam(playerIdx, sel, dir = 1) {
 }
 
 function getActiveInGameRows() {
-  const isPractice = window.__vb?.getGameState?.() === 'practice' || window.__vb?.matchState?.mode === 'practice';
   const rows = [];
-  if (isPractice && finishPracticeBtn) {
+  if (resumeBtnEl) {
     rows.push({
-      el: finishPracticeBtn,
+      el: resumeBtnEl,
       isButton: true,
-      onAction: () => finishPracticeBtn.click(),
+      isPrimaryResume: true,
+      onAction: () => resumeBtnEl.click(),
       onLeft: () => {},
       onRight: () => {},
-    });
-  }
-  if (gfxPresetRowEl) {
-    rows.push({
-      el: gfxPresetRowEl,
-      onLeft: () => cycleGfxPreset(-1),
-      onRight: () => cycleGfxPreset(1),
-      onAction: () => cycleGfxPreset(1),
-    });
-  }
-  if (dprRowEl) {
-    rows.push({
-      el: dprRowEl,
-      onLeft: () => cycleDpr(-1),
-      onRight: () => cycleDpr(1),
-      onAction: () => cycleDpr(1),
-    });
-  }
-  if (shadowRowEl) {
-    rows.push({
-      el: shadowRowEl,
-      onLeft: () => cycleShadow(-1),
-      onRight: () => cycleShadow(1),
-      onAction: () => cycleShadow(1),
-    });
-  }
-  if (controlsRowEl) {
-    rows.push({
-      el: controlsRowEl,
-      onLeft: () => cycleControls(),
-      onRight: () => cycleControls(),
-      onAction: () => cycleControls(),
-    });
-  }
-  if (scorebugRowEl) {
-    rows.push({
-      el: scorebugRowEl,
-      onLeft: () => cycleScorebug(-1),
-      onRight: () => cycleScorebug(1),
-      onAction: () => cycleScorebug(1),
-    });
-  }
-  if (dropRingRowEl) {
-    rows.push({
-      el: dropRingRowEl,
-      onLeft: () => cycleDropRing(),
-      onRight: () => cycleDropRing(),
-      onAction: () => cycleDropRing(),
-    });
-  }
-  if (strikeGuideRowEl) {
-    rows.push({
-      el: strikeGuideRowEl,
-      onLeft: () => cycleStrikeGuide(),
-      onRight: () => cycleStrikeGuide(),
-      onAction: () => cycleStrikeGuide(),
-    });
-  }
-  if (orientRowEl) {
-    rows.push({
-      el: orientRowEl,
-      onLeft: () => cycleOrientCues(),
-      onRight: () => cycleOrientCues(),
-      onAction: () => cycleOrientCues(),
-    });
-  }
-  if (cleanHudRowEl && cleanHudBtnEl) {
-    rows.push({
-      el: cleanHudRowEl,
-      onLeft: () => {},
-      onRight: () => {},
-      onAction: () => cleanHudBtnEl.click(),
-    });
-  }
-  if (tuningRowEl) {
-    rows.push({
-      el: tuningRowEl,
-      onLeft: () => cycleTuning(),
-      onRight: () => cycleTuning(),
-      onAction: () => cycleTuning(),
-    });
-  }
-  if (volRowEl) {
-    rows.push({
-      el: volRowEl,
-      onLeft: () => adjustVolume(-5),
-      onRight: () => adjustVolume(5),
-      onAction: () => adjustVolume(5),
-    });
-  }
-  if (muteRowEl) {
-    rows.push({
-      el: muteRowEl,
-      onLeft: () => toggleMute(),
-      onRight: () => toggleMute(),
-      onAction: () => toggleMute(),
-    });
-  }
-  if (vibrationRowEl) {
-    rows.push({
-      el: vibrationRowEl,
-      onLeft: () => toggleVibration(),
-      onRight: () => toggleVibration(),
-      onAction: () => toggleVibration(),
     });
   }
   for (const i of [0, 2, 1, 3]) {
     const box = camBoxes[i];
     const selObj = camSelObjs[i];
-    if (box && box.style.display !== 'none') {
+    if (box && box.style.display !== 'none' && camSectionEl?.style.display !== 'none') {
       rows.push({
         el: box,
         onLeft: () => cycleCam(i, selObj?.select, -1),
@@ -1231,34 +860,53 @@ function getActiveInGameRows() {
       });
     }
   }
-  const actionBtns = [
-    resumeBtnEl,
-    (!isPractice && rematchBtnEl && rematchBtnEl.style.display !== 'none') ? rematchBtnEl : null,
+  if (hudPresetRowEl) {
+    rows.push({
+      el: hudPresetRowEl,
+      onLeft: () => cycleHudPreset(-1),
+      onRight: () => cycleHudPreset(1),
+      onAction: () => cycleHudPreset(1),
+    });
+  }
+  if (volRowEl) {
+    rows.push({
+      el: volRowEl,
+      onLeft: () => adjustVolume(-5),
+      onRight: () => adjustVolume(5),
+      onAction: () => toggleMute(),
+    });
+  }
+
+  const bottomBtns = [
+    (rematchBtnEl && rematchBtnEl.style.display !== 'none') ? rematchBtnEl : null,
+    (finishPracticeBtn && finishPracticeBtn.style.display !== 'none') ? finishPracticeBtn : null,
     mainMenuBtnEl,
   ].filter(Boolean);
 
-  if (actionBtns.length > 0) {
-    const firstActionRowIdx = rows.length;
-    actionBtns.forEach((btn, idx) => {
+  if (bottomBtns.length > 0) {
+    const firstBottomIdx = rows.length;
+    bottomBtns.forEach((btn, idx) => {
       rows.push({
         el: btn,
         isButton: true,
         onAction: () => btn.click(),
         onLeft: () => {
-          const prevOffset = (idx - 1 + actionBtns.length) % actionBtns.length;
-          inGameFocusIndex = firstActionRowIdx + prevOffset;
+          if (bottomBtns.length < 2) return;
+          const prevOffset = (idx - 1 + bottomBtns.length) % bottomBtns.length;
+          inGameFocusIndex = firstBottomIdx + prevOffset;
           updateInGameFocusUI();
           soundManager.playTone(400, 0.04, 'sine', 0.15);
         },
         onRight: () => {
-          const nextOffset = (idx + 1) % actionBtns.length;
-          inGameFocusIndex = firstActionRowIdx + nextOffset;
+          if (bottomBtns.length < 2) return;
+          const nextOffset = (idx + 1) % bottomBtns.length;
+          inGameFocusIndex = firstBottomIdx + nextOffset;
           updateInGameFocusUI();
           soundManager.playTone(400, 0.04, 'sine', 0.15);
         },
         onUp: () => {
-          if (firstActionRowIdx > 0) {
-            inGameFocusIndex = firstActionRowIdx - 1;
+          if (firstBottomIdx > 0) {
+            inGameFocusIndex = firstBottomIdx - 1;
             updateInGameFocusUI();
             soundManager.playTone(400, 0.04, 'sine', 0.15);
           }
@@ -1280,43 +928,62 @@ function updateInGameFocusUI() {
   if (inGameFocusIndex >= inGameNavRows.length) inGameFocusIndex = inGameNavRows.length - 1;
   if (inGameFocusIndex < 0) inGameFocusIndex = 0;
 
+  const vb = typeof window !== 'undefined' ? window.__vb : null;
+  const isPractice = vb?.getGameState?.() === 'practice' || vb?.matchState?.mode === 'practice';
+  const isReplay = Boolean(vb?.replay?.isPlayingBack?.());
+  const baseResumeLabel = isReplay ? 'RESUME REPLAY' : (isPractice ? 'RESUME PRACTICE' : 'RESUME GAME');
+
   inGameNavRows.forEach((row, idx) => {
     const isSel = idx === inGameFocusIndex;
-    if (row.isButton) {
+    row.el.dataset.focused = isSel ? 'true' : 'false';
+    if (row.isPrimaryResume) {
+      row.el.textContent = isSel ? `▶ ${baseResumeLabel} [ESC]` : baseResumeLabel;
       if (isSel) {
-        row.el.style.outline = '2px solid #ffffff';
+        row.el.style.background = 'linear-gradient(90deg, #00e5ff 0%, #38bdf8 58%, #fbbf24 100%)';
+        row.el.style.color = '#03111c';
+        row.el.style.border = '2px solid #ffffff';
+        row.el.style.outline = '3px solid #fbbf24';
+        row.el.style.outlineOffset = '2px';
+        row.el.style.transform = 'scale(1.015)';
+        row.el.style.boxShadow = '0 0 26px rgba(0, 229, 255, 0.65), 0 0 14px rgba(251, 191, 36, 0.45)';
+      } else {
+        row.el.style.background = 'rgba(0, 229, 255, 0.14)';
+        row.el.style.color = '#e0f2fe';
+        row.el.style.border = '2px solid rgba(0, 229, 255, 0.55)';
+        row.el.style.outline = 'none';
+        row.el.style.transform = 'scale(1)';
+        row.el.style.boxShadow = 'none';
+      }
+    } else if (row.isButton) {
+      if (isSel) {
+        row.el.style.outline = '2.5px solid #fbbf24';
         row.el.style.outlineOffset = '2px';
         row.el.style.transform = 'scale(1.02)';
-        row.el.style.boxShadow = '0 0 20px rgba(255, 255, 255, 0.5), 0 0 25px rgba(0, 229, 255, 0.25)';
+        row.el.style.boxShadow = '0 0 18px rgba(251, 191, 36, 0.45)';
         if (row.el === mainMenuBtnEl) {
           row.el.style.background = 'rgba(255, 255, 255, 0.2)';
           row.el.style.borderColor = '#ffffff';
           row.el.style.color = '#ffffff';
         }
-        row.el.scrollIntoView({ block: 'nearest', behavior: 'auto' });
       } else {
         row.el.style.outline = 'none';
         row.el.style.transform = 'scale(1)';
+        row.el.style.boxShadow = 'none';
         if (row.el === mainMenuBtnEl) {
           row.el.style.background = 'rgba(255, 255, 255, 0.08)';
-          row.el.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+          row.el.style.borderColor = 'rgba(255, 255, 255, 0.22)';
           row.el.style.color = '#cfe3f5';
         }
-        row.el.style.boxShadow = row.el === resumeBtnEl ? '0 4px 18px rgba(255, 255, 255, 0.45), 0 0 25px rgba(0, 229, 255, 0.25)' : (row.el === finishPracticeBtn ? '0 4px 14px rgba(16, 185, 129, 0.4)' : 'none');
       }
+    } else if (isSel) {
+      row.el.style.outline = '2px solid #00e5ff';
+      row.el.style.outlineOffset = '2px';
+      row.el.style.background = 'rgba(0, 229, 255, 0.10)';
+      row.el.style.boxShadow = '0 0 14px rgba(0, 229, 255, 0.28)';
     } else {
-      if (isSel) {
-        row.el.style.outline = '2px solid #ffffff';
-        row.el.style.outlineOffset = '3px';
-        row.el.style.background = 'rgba(255, 255, 255, 0.08)';
-        row.el.style.borderRadius = '6px';
-        row.el.style.boxShadow = '0 0 16px rgba(255, 255, 255, 0.35)';
-        row.el.scrollIntoView({ block: 'nearest', behavior: 'auto' });
-      } else {
-        row.el.style.outline = 'none';
-        row.el.style.background = camBoxes.includes(row.el) ? 'rgba(255, 255, 255, 0.04)' : 'transparent';
-        row.el.style.boxShadow = 'none';
-      }
+      row.el.style.outline = 'none';
+      row.el.style.background = camBoxes.includes(row.el) ? 'rgba(255, 255, 255, 0.04)' : 'transparent';
+      row.el.style.boxShadow = 'none';
     }
   });
 }
@@ -1333,6 +1000,7 @@ function startInGameMenuPolling() {
         inGameNavRows[inGameFocusIndex].onUp();
       } else {
         inGameFocusIndex = (inGameFocusIndex - 1 + inGameNavRows.length) % inGameNavRows.length;
+        soundManager.playTone(400, 0.04, 'sine', 0.15);
         updateInGameFocusUI();
       }
     } else if (e.code === 'ArrowDown' || e.code === 'KeyS') {
@@ -1342,6 +1010,7 @@ function startInGameMenuPolling() {
         inGameNavRows[inGameFocusIndex].onDown();
       } else {
         inGameFocusIndex = (inGameFocusIndex + 1) % inGameNavRows.length;
+        soundManager.playTone(400, 0.04, 'sine', 0.15);
         updateInGameFocusUI();
       }
     } else if (e.code === 'ArrowLeft' || e.code === 'KeyA') {
@@ -1358,14 +1027,11 @@ function startInGameMenuPolling() {
       inGameNavRows[inGameFocusIndex]?.onAction?.();
     } else if (e.code === 'Escape') {
       e.preventDefault();
-      hideInGameMenu();
-      if (callbacks.onResume) callbacks.onResume();
+      resumeFromInGameMenu();
     }
   };
   window.addEventListener('keydown', onKeyDown);
 
-  // Per-pad edges, seeded from what is held now: the Start press that opened the
-  // menu must be released before Start can close it.
   inGamePads.reset();
 
   inGamePollHandle = setInterval(() => {
@@ -1391,8 +1057,6 @@ function startInGameMenuPolling() {
 
     for (const pad of pads) {
       if (!pad) continue;
-      // Pause Ownership: only the controller that paused the game drives the pause menu
-      // (keyboard Escape/Arrows always remain active as host fallback).
       if (ownerPadConnected && pad.index !== activePauseOwner.padIndex) continue;
       const e = inGamePads.pressed(pad);
 
@@ -1401,6 +1065,7 @@ function startInGameMenuPolling() {
           inGameNavRows[inGameFocusIndex].onUp();
         } else {
           inGameFocusIndex = (inGameFocusIndex - 1 + inGameNavRows.length) % inGameNavRows.length;
+          soundManager.playTone(400, 0.04, 'sine', 0.15);
           updateInGameFocusUI();
         }
       }
@@ -1409,6 +1074,7 @@ function startInGameMenuPolling() {
           inGameNavRows[inGameFocusIndex].onDown();
         } else {
           inGameFocusIndex = (inGameFocusIndex + 1) % inGameNavRows.length;
+          soundManager.playTone(400, 0.04, 'sine', 0.15);
           updateInGameFocusUI();
         }
       }
@@ -1420,12 +1086,10 @@ function startInGameMenuPolling() {
       }
       if (e & MENU_PAD.a) {
         inGameNavRows[inGameFocusIndex]?.onAction?.();
-        // The action may have closed the menu (Resume, Main Menu, Finish Practice).
         if (!isOpen) return;
       }
       if (e & (MENU_PAD.b | MENU_PAD.back | MENU_PAD.start)) {
-        hideInGameMenu();
-        if (callbacks.onResume) callbacks.onResume();
+        resumeFromInGameMenu();
         return;
       }
     }
@@ -1473,79 +1137,25 @@ export function showInGameMenu(owner = null) {
   }
   if (callbacks.onOpen) callbacks.onOpen();
   menuOverlayEl.style.display = 'flex';
+
   refreshCameraRows();
-  if (menuOverlayEl._updateAudioUI) {
-    menuOverlayEl._updateAudioUI();
-  }
-  if (menuOverlayEl._syncHudPrefs) {
-    menuOverlayEl._syncHudPrefs();
-  }
+  if (menuOverlayEl._updateAudioUI) menuOverlayEl._updateAudioUI();
+  if (menuOverlayEl._syncHudPrefs) menuOverlayEl._syncHudPrefs();
 
-  const isPractice = window.__vb?.getGameState?.() === 'practice' || window.__vb?.matchState?.mode === 'practice';
+  const vb = typeof window !== 'undefined' ? window.__vb : null;
+  const isPractice = vb?.getGameState?.() === 'practice' || vb?.matchState?.mode === 'practice';
+  const isReplay = Boolean(vb?.replay?.isPlayingBack?.());
 
-  if (isPractice) {
-    if (hustleBoardSection) {
-      hustleBoardSection.style.display = 'flex';
-      const stats = window.__vb?.practiceStats || {};
-      const rawSec = window.__vb?.practiceSessionSeconds;
-      const sec = typeof rawSec === 'function' ? rawSec() : (Number(rawSec) || 0);
-      const minStr = String(Math.floor(sec / 60)).padStart(2, '0');
-      const secStr = String(Math.floor(sec % 60)).padStart(2, '0');
-      const hits = stats.hits || 0;
-      const whiffs = stats.whiffs || 0;
-      const attempts = hits + whiffs;
-      const acc = attempts > 0 ? Math.round((hits / attempts) * 100) : 0;
+  if (finishPracticeBtn) finishPracticeBtn.style.display = isPractice ? 'block' : 'none';
+  if (rematchBtnEl) rematchBtnEl.style.display = (!isPractice && !isReplay) ? 'block' : 'none';
 
-      hustleBoardSection.innerHTML = `
-        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255, 255, 255, 0.15); padding-bottom: 6px;">
-          <span style="font-size: 13px; font-weight: 800; letter-spacing: 0.1em; color: #ffffff;">⚡ HUSTLE BOARD · LIVE STATS</span>
-          <span style="font-size: 11px; font-weight: 700; color: #ffffff;">TIME ${minStr}:${secStr}</span>
-        </div>
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(75px, 1fr)); gap: 8px; margin-top: 6px;">
-          <div style="background: rgba(255,255,255,0.04); padding: 8px; border-radius: 6px; text-align: center;">
-            <div style="font-size: 10px; color: #94a3b8; font-weight: 700;">GOALS</div>
-            <div style="font-size: 22px; font-weight: 900; color: #10b981; margin-top: 2px;">${stats.goals || 0}</div>
-          </div>
-          <div style="background: rgba(255,255,255,0.04); padding: 8px; border-radius: 6px; text-align: center;">
-            <div style="font-size: 10px; color: #94a3b8; font-weight: 700;">ACCURACY</div>
-            <div style="font-size: 22px; font-weight: 900; color: #38bdf8; margin-top: 2px;">${acc}%</div>
-            <div style="font-size: 9px; color: #64748b;">${hits}H / ${whiffs}W</div>
-          </div>
-          <div style="background: rgba(255,255,255,0.04); padding: 8px; border-radius: 6px; text-align: center;">
-            <div style="font-size: 10px; color: #94a3b8; font-weight: 700;">SWEET SPOTS</div>
-            <div style="font-size: 22px; font-weight: 900; color: #fbbf24; margin-top: 2px;">★ ${stats.sweetSpots || 0}</div>
-          </div>
-          <div style="background: rgba(255,255,255,0.04); padding: 8px; border-radius: 6px; text-align: center;">
-            <div style="font-size: 10px; color: #94a3b8; font-weight: 700;">SPIKES</div>
-            <div style="font-size: 20px; font-weight: 800; color: #f43f5e; margin-top: 2px;">${stats.spikes || 0}</div>
-          </div>
-          <div style="background: rgba(255,255,255,0.04); padding: 8px; border-radius: 6px; text-align: center;">
-            <div style="font-size: 10px; color: #94a3b8; font-weight: 700;">DIVES</div>
-            <div style="font-size: 20px; font-weight: 800; color: #a855f7; margin-top: 2px;">${stats.dives || 0}</div>
-          </div>
-          <div style="background: rgba(255,255,255,0.04); padding: 8px; border-radius: 6px; text-align: center;">
-            <div style="font-size: 10px; color: #94a3b8; font-weight: 700;">DIVING HITS</div>
-            <div style="font-size: 20px; font-weight: 800; color: #ec4899; margin-top: 2px;">${stats.divingHits || 0}</div>
-          </div>
-          <div style="background: rgba(255,255,255,0.04); padding: 8px; border-radius: 6px; text-align: center;">
-            <div style="font-size: 10px; color: #94a3b8; font-weight: 700;">TOUCHES</div>
-            <div style="font-size: 20px; font-weight: 800; color: #e2e8f0; margin-top: 2px;">${stats.totalTouches || 0}</div>
-          </div>
-        </div>
-      `;
-    }
-    if (finishPracticeBtn) finishPracticeBtn.style.display = 'block';
-    if (rematchBtnEl) rematchBtnEl.style.display = 'none';
-  } else {
-    if (hustleBoardSection) hustleBoardSection.style.display = 'none';
-    if (finishPracticeBtn) finishPracticeBtn.style.display = 'none';
-    if (rematchBtnEl) rematchBtnEl.style.display = 'block';
+  refreshMatchAndPracticeSideBoards(isPractice, isReplay);
+
+  if (vb?.matchState) {
+    updateInGameMenuBanner(vb.matchState);
   }
 
-  if (window.__vb?.matchState) {
-    updateInGameMenuBanner(window.__vb.matchState);
-  }
-
+  // Always focus RESUME GAME at the top on open
   inGameFocusIndex = 0;
   updateInGameFocusUI();
   startInGameMenuPolling();
@@ -1557,22 +1167,10 @@ export function hideInGameMenu() {
   activePauseOwner = null;
   stopInGameMenuPolling();
   menuOverlayEl.style.display = 'none';
-  const rows = getActiveInGameRows();
-  rows.forEach((r) => {
-    if (r.isButton) {
-      r.el.style.outline = 'none';
-      r.el.style.transform = 'scale(1)';
-      r.el.style.boxShadow = '';
-    } else {
-      r.el.style.outline = 'none';
-      r.el.style.background = camBoxes.includes(r.el) ? 'rgba(255, 255, 255, 0.04)' : 'transparent';
-      r.el.style.boxShadow = 'none';
-    }
-  });
 }
 
 export function toggleInGameMenu(owner = null) {
-  if (isOpen) hideInGameMenu();
+  if (isOpen) resumeFromInGameMenu();
   else showInGameMenu(owner);
   return isOpen;
 }
@@ -1602,5 +1200,5 @@ export function updateInGameMenuBanner(match) {
   const awayColor = TUNING.athlete?.palette?.awayPrimary ?? 0x1d4ed8;
   const homeName = getColorName(homeColor).toUpperCase();
   const awayName = getColorName(awayColor).toUpperCase();
-  clockBannerEl.textContent = `TIME: ${timeStr} · ${homeName} ${match.scoreHome} - ${match.scoreAway} ${awayName}`;
+  clockBannerEl.textContent = `${timeStr} · ${homeName} ${match.scoreHome} - ${match.scoreAway} ${awayName}`;
 }

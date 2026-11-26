@@ -210,6 +210,19 @@ class AthleteManager {
   }
 
   /**
+   * Returns the number of currently enabled athlete slots without allocating.
+   *
+   * @returns {number}
+   */
+  getEnabledCount() {
+    let count = 0;
+    for (let i = 0; i < this.athletes.length; i++) {
+      if (this.athletes[i]?.isEnabled) count++;
+    }
+    return count;
+  }
+
+  /**
    * Enables or disables all instantiated athletes.
    *
    * @param {boolean} enabled
@@ -351,6 +364,7 @@ class AthleteManager {
    */
   resetStats() {
     for (const a of this.athletes) {
+      if (!a) continue;
       if (a.strikeState) {
         resetStrikeState(a.strikeState);
         a.strikeState.resolvedCount = 0;
@@ -358,11 +372,39 @@ class AthleteManager {
       }
       if (a.actionState) {
         a.actionState.slideTime = 0;
-        a.actionState.slideCooldown = 0;
+        a.actionState.slideNeedsRelease = false;
+        a.actionState.slideLowSpeedTicks = 0;
         a.actionState.divePending = false;
+        a.actionState.lastDiveTick = -Infinity;
         a.actionState.diveStunUntil = -Infinity;
+        a.actionState.prevGrounded = true;
+        a.actionState.diveDir?.set?.(0, 0, 0);
+        a.actionState.lastCutTick = -Infinity;
         a.actionState.cleatAnchorUntil = -Infinity;
+        a.actionState.cutDir?.set?.(0, 0, 0);
         a.actionState.braceMix = 0;
+        a.actionState.lastInterceptDiveTick = -Infinity;
+        a.actionState.interceptDiveContactTick = -Infinity;
+        if (a.actionState._result) {
+          a.actionState._result.allowJump = false;
+          a.actionState._result.sliding = false;
+          a.actionState._result.diveSkidding = false;
+          a.actionState._result.diveStunned = false;
+          a.actionState._result.actionCommitted = false;
+          a.actionState._result.actionResistance = 1;
+          a.actionState._result.slideMix = null;
+          a.actionState._result.diveMix = null;
+          a.actionState._result.braceMix = null;
+          a.actionState._result.slidePhase = null;
+          a.actionState._result.divePhase = null;
+          a.actionState._result.lastDiveTick = -Infinity;
+          a.actionState._result.cutFired = false;
+          a.actionState._result.cutDir = null;
+          a.actionState._result.lastCutTick = -Infinity;
+        }
+      }
+      if (a.motor) {
+        a.motor.lastJumpTick = -Infinity;
       }
       if (a.tracker) {
         a.tracker.weight = TUNING.tracking.startWeight;
@@ -372,6 +414,9 @@ class AthleteManager {
         a.tracker.offMount = 0;
         a.tracker.mountDistance = 0;
         a.tracker.warnedMount = false;
+        a.tracker.lastImpactKey = '';
+        a.tracker.lastImpactExcess = 0;
+        a.tracker.lastImpactTick = -1e9;
       }
       if (a.impactEvents) {
         a.impactEvents.length = 0;

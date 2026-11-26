@@ -29,7 +29,7 @@ const victoryPads = createMenuPadTracker();
 
 let bannerElement = null;
 let btnRowElement = null;
-let defaultCallbacks = { onRematch: null, onWatchReplay: null, onPracticeMode: null, onMainMenu: null };
+let defaultCallbacks = { onRematch: null, onPickSides: null, onWatchReplay: null, onPracticeMode: null, onMainMenu: null };
 
 function parseHexRgb(hex) {
   const clean = String(hex || '#ffffff').replace('#', '');
@@ -72,9 +72,9 @@ export function readableOnDark(hex, bgHex = '#0e141e', minRatio = 4.5) {
   return '#f8fafc';
 }
 
-export function initVictoryScreen({ onRematch, onWatchReplay, onPracticeMode, onMainMenu }) {
+export function initVictoryScreen({ onRematch, onPickSides, onWatchReplay, onPracticeMode, onMainMenu }) {
   if (overlayElement) return;
-  defaultCallbacks = { onRematch, onWatchReplay, onPracticeMode, onMainMenu };
+  defaultCallbacks = { onRematch, onPickSides, onWatchReplay, onPracticeMode, onMainMenu };
 
   overlayElement = document.createElement('div');
   overlayElement.id = 'victory-overlay';
@@ -98,13 +98,15 @@ export function initVictoryScreen({ onRematch, onWatchReplay, onPracticeMode, on
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding: 26px 36px;
+    padding: 16px 24px;
     background: rgba(14, 20, 30, 0.95);
     border: 2px solid rgba(120, 170, 210, 0.35);
     border-radius: 14px;
     box-shadow: 0 12px 40px rgba(0, 0, 0, 0.7);
-    max-width: 780px;
-    width: 92%;
+    max-width: 860px;
+    max-height: 96vh;
+    width: 94%;
+    box-sizing: border-box;
     text-align: center;
   `;
 
@@ -114,7 +116,7 @@ export function initVictoryScreen({ onRematch, onWatchReplay, onPracticeMode, on
     align-items: center;
     justify-content: center;
     gap: 8px;
-    margin-bottom: 6px;
+    margin-bottom: 4px;
   `;
   brandBadge.innerHTML = `
     <span style="font-family: 'Syncopate', sans-serif; font-size: 16px; font-weight: 700; letter-spacing: 0.08em; background: linear-gradient(90deg, #FF2A42 0%, #FF6B00 14.3%, #FFD000 28.6%, #10E56A 42.9%, #00E5FF 57.2%, #1F65FF 71.5%, #6B11FF 85.8%, #E000B8 100%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;">VALLEYBALL</span>
@@ -126,7 +128,7 @@ export function initVictoryScreen({ onRematch, onWatchReplay, onPracticeMode, on
   brandDivider.style.cssText = `
     height: 2px;
     width: 60px;
-    margin: 0 auto 12px auto;
+    margin: 0 auto 8px auto;
     background: linear-gradient(90deg, #FF2A42 0%, #FF6B00 14.3%, #FFD000 28.6%, #10E56A 42.9%, #00E5FF 57.2%, #1F65FF 71.5%, #6B11FF 85.8%, #E000B8 100%);
     border-radius: 1px;
     opacity: 0.85;
@@ -136,19 +138,19 @@ export function initVictoryScreen({ onRematch, onWatchReplay, onPracticeMode, on
   bannerElement = document.createElement('div');
   bannerElement.textContent = 'FULL TIME';
   bannerElement.style.cssText = `
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 700;
     letter-spacing: 0.18em;
     color: #7d97ad;
-    margin-bottom: 8px;
+    margin-bottom: 4px;
   `;
 
   titleElement = document.createElement('div');
   titleElement.style.cssText = `
-    font-size: 32px;
+    font-size: 28px;
     font-weight: 900;
     letter-spacing: 0.06em;
-    margin-bottom: 16px;
+    margin-bottom: 8px;
     text-transform: uppercase;
   `;
 
@@ -157,37 +159,46 @@ export function initVictoryScreen({ onRematch, onWatchReplay, onPracticeMode, on
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 24px;
-    font-size: 48px;
+    gap: 22px;
+    font-size: 42px;
     font-weight: 900;
-    margin-bottom: 12px;
+    margin-bottom: 6px;
   `;
 
   subtitleElement = document.createElement('div');
   subtitleElement.style.cssText = `
-    font-size: 13px;
+    font-size: 12.5px;
     color: #9cb5cb;
-    margin-bottom: 18px;
+    margin-bottom: 12px;
   `;
 
   statsContainer = document.createElement('div');
   statsContainer.id = 'victory-stats-box';
   statsContainer.style.cssText = `
     width: 100%;
-    margin-bottom: 24px;
+    box-sizing: border-box;
+    pointer-events: none;
+    overflow: hidden;
+    margin-bottom: 14px;
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid rgba(120, 170, 210, 0.2);
     border-radius: 8px;
-    padding: 12px 18px;
+    padding: 10px 16px;
     font-size: 12px;
   `;
 
   btnRowElement = document.createElement('div');
+  btnRowElement.id = 'victory-actions-row';
   btnRowElement.style.cssText = `
+    position: relative;
+    z-index: 2;
+    flex-shrink: 0;
     display: flex;
-    gap: 16px;
+    flex-wrap: nowrap;
+    gap: 8px;
     width: 100%;
     justify-content: center;
+    align-items: center;
   `;
 
   container.appendChild(bannerElement);
@@ -244,17 +255,27 @@ export function showVictoryScreen(
   const homeWon = match.scoreHome > match.scoreAway;
   const awayWon = match.scoreAway > match.scoreHome;
 
-  const homeHex = '#' + (TUNING.athlete?.palette?.homePrimary ?? 0xd90429).toString(16).padStart(6, '0');
-  const awayHex = '#' + (TUNING.athlete?.palette?.awayPrimary ?? 0x1d4ed8).toString(16).padStart(6, '0');
+  const homePrimary = report.teams?.home?.primaryColor ?? TUNING.athlete?.palette?.homePrimary ?? 0xd90429;
+  const awayPrimary = report.teams?.away?.primaryColor ?? TUNING.athlete?.palette?.awayPrimary ?? 0x1d4ed8;
+  const homeHex = '#' + (homePrimary & 0xffffff).toString(16).padStart(6, '0');
+  const awayHex = '#' + (awayPrimary & 0xffffff).toString(16).padStart(6, '0');
   const homeInk = readableOnDark(homeHex);
   const awayInk = readableOnDark(awayHex);
   const p1IsHome = (report.players?.[0]?.team || TUNING.players?.[0]?.team || 'home') === 'home';
   const team1SideKey = p1IsHome ? 'home' : 'away';
   const team2SideKey = p1IsHome ? 'away' : 'home';
+  const team1RawHex = p1IsHome ? homeHex : awayHex;
+  const team2RawHex = p1IsHome ? awayHex : homeHex;
   const team1Color = p1IsHome ? homeInk : awayInk;
   const team2Color = p1IsHome ? awayInk : homeInk;
-  const team1ColorName = getColorName(p1IsHome ? homeHex : awayHex).toUpperCase();
-  const team2ColorName = getColorName(p1IsHome ? awayHex : homeHex).toUpperCase();
+  const team1ColorName = getColorName(team1RawHex).toUpperCase();
+  const team2ColorName = getColorName(team2RawHex).toUpperCase();
+  const isUltraDarkHex = (hex) => {
+    const [r, g, b] = parseHexRgb(hex);
+    return (r * 299 + g * 587 + b * 114) / 1000 < 32;
+  };
+  const t1BorderHex = isUltraDarkHex(team1RawHex) ? '#cbd5e1' : team1RawHex;
+  const t2BorderHex = isUltraDarkHex(team2RawHex) ? '#cbd5e1' : team2RawHex;
 
   const team1Roster = is2v2 ? 'TEAM 1 · P1 & P3' : 'TEAM 1 · P1';
   const team2Roster = is2v2 ? 'TEAM 2 · P2 & P4' : 'TEAM 2 · P2';
@@ -264,15 +285,15 @@ export function showVictoryScreen(
   if (homeWon) {
     const winnerColorName = getColorName(homeHex).toUpperCase();
     const winnerTeamLabel = p1IsHome ? team1Roster : team2Roster;
-    titleElement.textContent = `${winnerColorName} (${winnerTeamLabel}) WINS!`;
+    titleElement.textContent = `${winnerColorName} (${winnerTeamLabel}) WINS`;
     titleElement.style.color = homeInk;
   } else if (awayWon) {
     const winnerColorName = getColorName(awayHex).toUpperCase();
     const winnerTeamLabel = p1IsHome ? team2Roster : team1Roster;
-    titleElement.textContent = `${winnerColorName} (${winnerTeamLabel}) WINS!`;
+    titleElement.textContent = `${winnerColorName} (${winnerTeamLabel}) WINS`;
     titleElement.style.color = awayInk;
   } else {
-    titleElement.textContent = 'MATCH DRAW!';
+    titleElement.textContent = 'MATCH DRAW';
     titleElement.style.color = '#f3f4f6';
   }
 
@@ -324,11 +345,24 @@ export function showVictoryScreen(
   const t1TeamGoals = p1IsHome ? (match.scoreHome || 0) : (match.scoreAway || 0);
   const t2TeamGoals = p1IsHome ? (match.scoreAway || 0) : (match.scoreHome || 0);
 
+  statsContainer.style.borderTop = '1.5px solid rgba(120, 170, 210, 0.28)';
+  statsContainer.style.borderBottom = '1.5px solid rgba(120, 170, 210, 0.28)';
+  statsContainer.style.borderLeft = `4px solid ${t1BorderHex}`;
+  statsContainer.style.borderRight = `4px solid ${t2BorderHex}`;
+  statsContainer.dataset.team1Border = team1RawHex;
+  statsContainer.dataset.team2Border = team2RawHex;
+
   statsContainer.innerHTML = `
-    <div style="display: grid; grid-template-columns: 1fr 150px 1fr; gap: 10px; align-items: center; margin-bottom: 4px; font-weight: 900; font-size: 11px; letter-spacing: 0.08em;">
-      <span style="color: ${team1Color}; text-align: left;">${team1Header}</span>
+    <div style="display: grid; grid-template-columns: 1fr 140px 1fr; gap: 8px; align-items: center; margin-bottom: 6px; font-weight: 900; font-size: 10.5px; letter-spacing: 0.06em;">
+      <span class="victory-team-badge" style="justify-self: start; display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px; border: 1.5px solid ${t1BorderHex}; background: ${isUltraDarkHex(team1RawHex) ? 'rgba(24,24,27,0.92)' : `${team1RawHex}26`}; color: ${team1Color};">
+        <span style="width: 7px; height: 7px; border-radius: 50%; background: ${team1RawHex}; flex-shrink: 0;"></span>
+        <span>${team1Header}</span>
+      </span>
       <span style="color: #64748b; text-align: center;">TEAM &amp; PLAYER STATS</span>
-      <span style="color: ${team2Color}; text-align: right;">${team2Header}</span>
+      <span class="victory-team-badge" style="justify-self: end; display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px; border: 1.5px solid ${t2BorderHex}; background: ${isUltraDarkHex(team2RawHex) ? 'rgba(24,24,27,0.92)' : `${team2RawHex}26`}; color: ${team2Color};">
+        <span>${team2Header}</span>
+        <span style="width: 7px; height: 7px; border-radius: 50%; background: ${team2RawHex}; flex-shrink: 0;"></span>
+      </span>
     </div>
     <div style="display: grid; grid-template-columns: 1fr 150px 1fr; gap: 10px; align-items: center; padding-bottom: 6px; margin-bottom: 2px; border-bottom: 1px solid rgba(120,170,210,0.25); font-size: 10px; letter-spacing: 0.08em;">
       ${t1SubHeaders}
@@ -356,15 +390,16 @@ export function showVictoryScreen(
   rematchBtn.id = 'btn-rematch';
   rematchBtn.textContent = 'REMATCH';
   rematchBtn.style.cssText = `
-    padding: 12px 28px;
-    font-size: 14px;
+    padding: 11px 18px;
+    font-size: 12.5px;
     font-weight: 900;
     font-family: inherit;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.07em;
     color: #000000;
     background: #ffffff;
     border: 2px solid #ffffff;
     border-radius: 6px;
+    white-space: nowrap;
     cursor: pointer;
     box-shadow: 0 4px 18px rgba(255, 255, 255, 0.45), 0 0 25px rgba(0, 229, 255, 0.25);
     transition: all 0.15s ease;
@@ -382,40 +417,20 @@ export function showVictoryScreen(
     if (defaultCallbacks.onRematch) defaultCallbacks.onRematch();
   };
 
-  const practiceBtn = document.createElement('button');
-  practiceBtn.textContent = 'PRACTICE MODE';
-  practiceBtn.style.cssText = `
-    padding: 12px 24px;
-    font-size: 14px;
-    font-weight: 700;
-    font-family: inherit;
-    letter-spacing: 0.06em;
-    color: #cfe3f5;
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    border-radius: 6px;
-    cursor: pointer;
-    transition: all 0.15s ease;
-  `;
-  practiceBtn.onmouseenter = () => { practiceBtn.style.background = 'rgba(255, 255, 255, 0.15)'; };
-  practiceBtn.onmouseleave = () => { practiceBtn.style.background = 'rgba(255, 255, 255, 0.08)'; };
-  practiceBtn.onclick = () => {
-    hideVictoryScreen();
-    if (defaultCallbacks.onPracticeMode) defaultCallbacks.onPracticeMode();
-  };
-
   const mainMenuBtn = document.createElement('button');
+  mainMenuBtn.id = 'btn-victory-main-menu';
   mainMenuBtn.textContent = 'MAIN MENU';
   mainMenuBtn.style.cssText = `
-    padding: 12px 24px;
-    font-size: 14px;
-    font-weight: 700;
+    padding: 11px 16px;
+    font-size: 12.5px;
+    font-weight: 800;
     font-family: inherit;
     letter-spacing: 0.06em;
     color: #cfe3f5;
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid rgba(255, 255, 255, 0.2);
     border-radius: 6px;
+    white-space: nowrap;
     cursor: pointer;
     transition: all 0.15s ease;
   `;
@@ -425,12 +440,33 @@ export function showVictoryScreen(
     if (defaultCallbacks.onMainMenu) defaultCallbacks.onMainMenu();
   };
 
-  rematchBtn.id = 'btn-rematch';
-  practiceBtn.id = 'btn-victory-practice';
-  mainMenuBtn.id = 'btn-victory-main-menu';
+  const pickSidesBtn = document.createElement('button');
+  pickSidesBtn.id = 'btn-victory-pick-sides';
+  pickSidesBtn.textContent = 'PICK SIDES / SWAP CONTROLLERS';
+  pickSidesBtn.style.cssText = `
+    padding: 11px 14px;
+    font-size: 12px;
+    font-weight: 800;
+    font-family: inherit;
+    letter-spacing: 0.05em;
+    color: #c4b5fd;
+    background: rgba(168, 85, 247, 0.14);
+    border: 1px solid rgba(168, 85, 247, 0.5);
+    border-radius: 6px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.15s ease;
+  `;
+  pickSidesBtn.onmouseenter = () => { pickSidesBtn.style.background = 'rgba(168, 85, 247, 0.26)'; };
+  pickSidesBtn.onmouseleave = () => { pickSidesBtn.style.background = 'rgba(168, 85, 247, 0.14)'; };
+  pickSidesBtn.onclick = () => {
+    hideVictoryScreen();
+    if (defaultCallbacks.onPickSides) defaultCallbacks.onPickSides();
+  };
 
-  const navButtons = [rematchBtn];
+  const navButtons = [rematchBtn, pickSidesBtn];
   btnRowElement.appendChild(rematchBtn);
+  btnRowElement.appendChild(pickSidesBtn);
 
   const lastReplay = replayManager.getLastReplay();
   if (lastReplay && defaultCallbacks.onWatchReplay) {
@@ -438,8 +474,8 @@ export function showVictoryScreen(
     watchReplayBtn.id = 'btn-watch-replay';
     watchReplayBtn.textContent = 'WATCH REPLAY';
     watchReplayBtn.style.cssText = `
-      padding: 12px 22px;
-      font-size: 14px;
+      padding: 11px 15px;
+      font-size: 12.5px;
       font-weight: 800;
       font-family: inherit;
       letter-spacing: 0.06em;
@@ -447,6 +483,7 @@ export function showVictoryScreen(
       background: rgba(0, 229, 255, 0.12);
       border: 1px solid rgba(0, 229, 255, 0.45);
       border-radius: 6px;
+      white-space: nowrap;
       cursor: pointer;
       transition: all 0.15s ease;
     `;
@@ -461,34 +498,44 @@ export function showVictoryScreen(
 
     const saveReplayBtn = document.createElement('button');
     saveReplayBtn.id = 'btn-save-replay';
-    saveReplayBtn.textContent = lastReplay.savedPath ? 'REPLAY SAVED' : 'SAVE .VBREPLAY';
+    const alreadySaved = Boolean(lastReplay.userSaved);
+    saveReplayBtn.textContent = alreadySaved ? 'Replay Saved' : 'Save Replay?';
     saveReplayBtn.title = lastReplay.savedPath || lastReplay.filename || 'Download .vbreplay file';
     saveReplayBtn.style.cssText = `
-      padding: 12px 18px;
-      font-size: 13px;
-      font-weight: 700;
+      padding: 11px 15px;
+      font-size: 12.5px;
+      font-weight: 800;
       font-family: inherit;
-      letter-spacing: 0.05em;
-      color: #cfe3f5;
-      background: rgba(255, 255, 255, 0.08);
-      border: 1px solid rgba(255, 255, 255, 0.2);
+      letter-spacing: 0.04em;
+      color: ${alreadySaved ? '#34d399' : '#cfe3f5'};
+      background: ${alreadySaved ? 'rgba(16, 185, 129, 0.14)' : 'rgba(255, 255, 255, 0.08)'};
+      border: 1px solid ${alreadySaved ? '#10b981' : 'rgba(255, 255, 255, 0.2)'};
       border-radius: 6px;
+      white-space: nowrap;
       cursor: pointer;
       transition: all 0.15s ease;
     `;
-    saveReplayBtn.onmouseenter = () => { saveReplayBtn.style.background = 'rgba(255, 255, 255, 0.15)'; };
-    saveReplayBtn.onmouseleave = () => { saveReplayBtn.style.background = 'rgba(255, 255, 255, 0.08)'; };
+    saveReplayBtn.onmouseenter = () => {
+      if (!lastReplay.userSaved) saveReplayBtn.style.background = 'rgba(255, 255, 255, 0.15)';
+    };
+    saveReplayBtn.onmouseleave = () => {
+      if (!lastReplay.userSaved) saveReplayBtn.style.background = 'rgba(255, 255, 255, 0.08)';
+    };
     saveReplayBtn.onclick = () => {
+      if (lastReplay.userSaved) return;
       replayManager.downloadLastReplay(lastReplay);
-      saveReplayBtn.textContent = 'DOWNLOADED';
+      lastReplay.userSaved = true;
+      saveReplayBtn.textContent = 'Replay Saved';
+      saveReplayBtn.style.color = '#34d399';
+      saveReplayBtn.style.background = 'rgba(16, 185, 129, 0.14)';
+      saveReplayBtn.style.borderColor = '#10b981';
     };
     btnRowElement.appendChild(saveReplayBtn);
     navButtons.push(saveReplayBtn);
   }
 
-  btnRowElement.appendChild(practiceBtn);
   btnRowElement.appendChild(mainMenuBtn);
-  navButtons.push(practiceBtn, mainMenuBtn);
+  navButtons.push(mainMenuBtn);
 
   startVictoryGamepadPolling(navButtons);
 }
@@ -543,12 +590,17 @@ export function showPracticeSummary(
     badgeColor = '#38bdf8';
   }
 
-  subtitleElement.innerHTML = `<span style="color: ${badgeColor}; font-weight: 800; letter-spacing: 0.08em;">${badge}</span> <span style="color: #64748b; margin: 0 6px;">·</span> <span>${timeStr} DRILL TIME</span>`;
+  const pracPrimary = TUNING.players?.[0]?.primaryColor ?? TUNING.athlete?.palette?.homePrimary ?? 0xd90429;
+  const pracHex = '#' + (pracPrimary & 0xffffff).toString(16).padStart(6, '0');
+  const pracInk = readableOnDark(pracHex);
+  statsContainer.style.border = `1.5px solid ${pracInk}`;
+
+  subtitleElement.innerHTML = `<span style="color: ${badgeColor}; font-weight: 800; letter-spacing: 0.08em;">${badge}</span> <span style="color: #64748b; margin: 0 6px;">·</span> <span>${timeStr} SESSION TIME</span>`;
 
   statsContainer.innerHTML = `
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-weight: 800; font-size: 11px; letter-spacing: 0.08em;">
-      <span style="color: #38bdf8;">HUSTLE BOARD TELEMETRY</span>
-      <span style="color: #94a3b8;">SOLO DRILL SUMMARY</span>
+      <span style="display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 999px; border: 1.5px solid ${pracInk}; background: ${pracHex}24; color: ${pracInk};">HUSTLE BOARD TELEMETRY</span>
+      <span style="color: #94a3b8;">PRACTICE SUMMARY</span>
     </div>
     <div style="display: flex; justify-content: space-between; padding: 6px 0; border-top: 1px solid rgba(255,255,255,0.06); font-weight: 700;">
       <span style="color: #94a3b8; font-size: 11px;">TARGET GOALS SCORED</span>

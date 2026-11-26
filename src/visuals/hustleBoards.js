@@ -516,7 +516,9 @@ function isDarkColor(hex) {
   const g = (num >> 8) & 255;
   const b = num & 255;
   const brightness = (r * 299 + g * 587 + b * 114) / 1000;
-  return brightness < 110;
+  // Only ultra-dark kits (such as Obsidian #18181b) need a light outer keyline against #0b111e;
+  // Crimson Red, Cobalt Blue, and Royal Purple retain their true vibrant team borders.
+  return brightness < 32;
 }
 
 function drawHustleBoard(ctx, rawW, rawH, data, outlineColor) {
@@ -549,8 +551,13 @@ function drawHustleBoardVirtual(ctx, W, H, data, outlineColor) {
   }
 
   // Outer glowing architectural border in dynamic team color (no CPU shadowBlur)
-  ctx.strokeStyle = effectiveOutline;
-  ctx.lineWidth = Math.max(4, Math.round(8 * scale));
+  if (darkOutline) {
+    ctx.strokeStyle = 'rgba(226, 232, 240, 0.78)';
+    ctx.lineWidth = Math.max(6, Math.round(11 * scale));
+    ctx.strokeRect(5, 5, W - 10, H - 10);
+  }
+  ctx.strokeStyle = outlineColor;
+  ctx.lineWidth = Math.max(4, Math.round(7 * scale));
   ctx.strokeRect(6, 6, W - 12, H - 12);
 
   // HEADER BAR (Maximized)
@@ -573,7 +580,7 @@ function drawHustleBoardVirtual(ctx, W, H, data, outlineColor) {
   ctx.fillStyle = outlineColor;
   ctx.fillText('⚡ HUSTLE BOARD', 36, 16 + headerH / 2);
 
-  // Telemetry Badge Pill in Header (right-aligned, streamlined padding)
+  // Telemetry Badge Pill in Header (right-aligned, team-tinted background + team border)
   const badge = data.badgeText || 'LIVE TELEMETRY';
   ctx.font = `900 ${Math.round(24 * scale)}px ${ATHLETIC_FONT}`;
   const badgeWidth = ctx.measureText(badge).width + Math.round(36 * scale);
@@ -581,9 +588,9 @@ function drawHustleBoardVirtual(ctx, W, H, data, outlineColor) {
   const badgeX = W - 32 - badgeWidth;
   const badgeY = 16 + (headerH - badgeHeight) / 2;
 
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
+  ctx.fillStyle = darkOutline ? 'rgba(24, 24, 27, 0.92)' : `${outlineColor}38`;
   ctx.strokeStyle = effectiveOutline;
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 2.5;
   ctx.beginPath();
   ctx.roundRect(badgeX, badgeY, badgeWidth, badgeHeight, 6);
   ctx.fill();
@@ -600,7 +607,7 @@ function drawHustleBoardVirtual(ctx, W, H, data, outlineColor) {
     ctx.textBaseline = 'middle';
     ctx.fillStyle = '#f59e0b';
     ctx.font = `900 ${Math.round(54 * scale)}px ${ATHLETIC_FONT}`;
-    ctx.fillText('★  TARGET GOAL SCORED!  ★', W / 2, H * 0.40);
+    ctx.fillText('★  TARGET GOAL SCORED  ★', W / 2, H * 0.40);
 
     ctx.font = `900 ${Math.round(40 * scale)}px ${ATHLETIC_FONT}`;
     ctx.fillText(`TOTAL TARGET GOALS: ${data.goals}`, W / 2, H * 0.60);

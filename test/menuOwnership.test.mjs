@@ -243,7 +243,7 @@ test('P2 cannot kick room back or jump pages, and unassigned Pad 2 cannot hijack
 
 test('Practice Mode self-toss, 60s Newcomer Drill completion, and temporary HUD overrides work cleanly', () => {
   resetHudPrefs();
-  assert.equal(getHudPrefs().ballDropRing, false);
+  assert.equal(getHudPrefs().ballDropRing, true);
   assert.equal(getHudPrefs().strikeRangeGuide, false);
 
   setSelectedPracticeDrill('newcomer_drill');
@@ -280,7 +280,7 @@ test('Practice Mode self-toss, 60s Newcomer Drill completion, and temporary HUD 
 
   // Leaving Practice restores user HUD prefs cleanly
   restorePracticeHudOverrides();
-  assert.equal(getHudPrefs().ballDropRing, false);
+  assert.equal(getHudPrefs().ballDropRing, true);
   assert.equal(getHudPrefs().strikeRangeGuide, false);
   setSelectedPracticeDrill('sandbox');
 });

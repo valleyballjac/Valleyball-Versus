@@ -1,12 +1,12 @@
 /**
  * Module: features/match/practiceMode
- * Role: Practice sandbox, 60s Newcomer Drill, Ball Feeder, Sparring Bot, and Local Warmup
+ * Role: Untimed Practice sandbox, Newcomer Checklist, Ball Feeder, Sparring Bot, and Local Warmup
  *   state, 1-button self-toss ball summoning, telemetry accumulator, and non-persistent guide overrides.
- * Frame Phase: Fixed Update (60 Hz tick increment, feeder lobs, drill progress) and UI Transition.
+ * Frame Phase: Fixed Update (60 Hz tick increment, feeder lobs, checklist progress) and UI Transition.
  * Active Architectural Laws:
  *   - LAW 1 (Single Authority): Single authority for `practiceStats`, `practiceSessionTicks`,
  *     `selectedPracticeBallType`, `selectedPracticeDrill`, and `newcomerDrill`.
- *   - LAW 6 (Deterministic Match): All drill timings and feeder cadences use integer 60 Hz ticks.
+ *   - LAW 6 (Deterministic Match): All session timings and feeder cadences use integer 60 Hz ticks.
  */
 
 import { getHudPrefs, setHudPrefs } from '../../config/hudConfig.js';
@@ -29,8 +29,7 @@ export const practiceStats = {
 
 export const newcomerDrill = {
   active: false,
-  durationTicks: 3600, // 60 seconds at 60 Hz
-  ticksRemaining: 3600,
+  untimed: true,
   volleyTarget: 3,
   spikeTarget: 1,
   diveTarget: 1,
@@ -72,7 +71,6 @@ export function resetPracticeStats(athlete0 = null) {
   feederShotCount = 0;
 
   newcomerDrill.active = selectedPracticeDrill === 'newcomer_drill';
-  newcomerDrill.ticksRemaining = newcomerDrill.durationTicks;
   newcomerDrill.volleysDone = 0;
   newcomerDrill.spikesDone = 0;
   newcomerDrill.divesDone = 0;
@@ -194,9 +192,6 @@ export function summonPracticeBall(athlete, balls, tick, resetBallFn) {
  */
 export function stepPracticeDrillTick({ tick, athletes, balls, resetBallFn }) {
   practiceSessionTicks += 1;
-  if (newcomerDrill.active) {
-    newcomerDrill.ticksRemaining = Math.max(0, newcomerDrill.durationTicks - practiceSessionTicks);
-  }
   if (selectedPracticeDrill === 'ball_feeder' && practiceSessionTicks > 30 && practiceSessionTicks % FEEDER_INTERVAL_TICKS === 0) {
     const p1 = athletes?.[0];
     if (p1?.motor?.body && balls?.length > 0 && typeof resetBallFn === 'function') {
@@ -237,6 +232,7 @@ export function configurePracticeRoster({
   syncPlayerCameraMode,
   onApplyPlayerTuning,
   connectedPadCount = 0,
+  ensureRoster = null,
 }) {
   const mode = drillMode || 'sandbox';
   setSelectedPracticeDrill(mode);
@@ -251,15 +247,18 @@ export function configurePracticeRoster({
     activeCount = Math.max(2, Math.min(4, connectedPadCount || 2));
   }
 
-  athleteManager.ensureRoster(activeCount);
+  const rosterAthletes = (typeof ensureRoster === 'function'
+    ? ensureRoster(activeCount)
+    : athleteManager.ensureRoster(activeCount)) || athletes;
+  athleteManager.resetStats?.();
   athleteManager.teleportToPracticeSpawn(arenaPreset);
 
-  if (playerConfig && athletes[0]) {
-    athletes[0].setTeamAndVariant(playerConfig.team || 'home', playerConfig.variant || 'classic', {
+  if (playerConfig && rosterAthletes[0]) {
+    rosterAthletes[0].setTeamAndVariant(playerConfig.team || 'home', playerConfig.variant || 'classic', {
       primaryColor: playerConfig.primaryColor,
     });
-    if (playerConfig.headwear !== undefined && athletes[0].headwear !== playerConfig.headwear) {
-      athletes[0].setHeadwear(playerConfig.headwear);
+    if (playerConfig.headwear !== undefined && rosterAthletes[0].headwear !== playerConfig.headwear) {
+      rosterAthletes[0].setHeadwear(playerConfig.headwear);
     }
     playerCameras[0]?.setMode(playerConfig.cameraMode || 'chase', false);
     syncPlayerCameraMode?.(0, playerCameras[0]?.mode || 'chase');
@@ -267,10 +266,18 @@ export function configurePracticeRoster({
 
   let splitscreen = false;
   const spawnPos = (arenaPreset && arenaPreset.spawn) || { x: 0, y: 1.5, z: 0 };
-  if (mode === 'sparring_bot' && athletes[0] && athletes[1]) {
-    athletes[0].teleportTo({ x: 0, y: Math.max(1.5, spawnPos.y), z: 10 }, Math.PI);
-    athletes[1].setTeamAndVariant('away', 'classic', { primaryColor: 0x1d4ed8 });
-    athletes[1].teleportTo({ x: 0, y: Math.max(1.5, spawnPos.y), z: -10 }, 0);
+  if (mode === 'sparring_bot' && rosterAthletes[0] && rosterAthletes[1]) {
+    rosterAthletes[0].teleportTo({ x: 0, y: Math.max(1.5, spawnPos.y), z: 10 }, Math.PI);
+    rosterAthletes[0].setEnabled(true);
+    if (playerCameras[0]) {
+      playerCameras[0].azimuth = 0;
+      playerCameras[0].manualAzimuthOffset = 0;
+      playerCameras[0].manualPitchOffset = 0;
+      playerCameras[0].resetSmoothing();
+    }
+    rosterAthletes[1].setTeamAndVariant('away', 'classic', { primaryColor: 0x1d4ed8 });
+    rosterAthletes[1].teleportTo({ x: 0, y: Math.max(1.5, spawnPos.y), z: -10 }, 0);
+    rosterAthletes[1].setEnabled(true);
     const sparringBot = createBotController({
       difficulty: 'medium',
       slotIndex: 1,
@@ -287,10 +294,11 @@ export function configurePracticeRoster({
       { x: -3.5, z: -6, yaw: 0, team: 'away', color: 0xa855f7 },
     ];
     for (let i = 0; i < activeCount; i++) {
-      if (!athletes[i]) continue;
+      if (!rosterAthletes[i]) continue;
       const o = offsets[i];
-      if (i > 0) athletes[i].setTeamAndVariant(o.team, 'classic', { primaryColor: o.color });
-      athletes[i].teleportTo({ x: o.x, y: Math.max(1.5, spawnPos.y), z: o.z }, o.yaw);
+      if (i > 0) rosterAthletes[i].setTeamAndVariant(o.team, 'classic', { primaryColor: o.color });
+      rosterAthletes[i].teleportTo({ x: o.x, y: Math.max(1.5, spawnPos.y), z: o.z }, o.yaw);
+      rosterAthletes[i].setEnabled(true);
       if (playerCameras[i]) {
         playerCameras[i].setMode('chase', false);
         playerCameras[i].azimuth = o.yaw === 0 ? Math.PI : 0;
@@ -300,8 +308,8 @@ export function configurePracticeRoster({
       }
     }
     splitscreen = activeCount >= 2;
-  } else if (athletes[0]) {
-    athletes[0].teleportTo({ x: spawnPos.x, y: Math.max(1.5, spawnPos.y), z: spawnPos.z }, Math.PI);
+  } else if (rosterAthletes[0]) {
+    rosterAthletes[0].teleportTo({ x: spawnPos.x, y: Math.max(1.5, spawnPos.y), z: spawnPos.z }, Math.PI);
     if (playerCameras[0]) {
       playerCameras[0].azimuth = 0;
       playerCameras[0].manualAzimuthOffset = 0;

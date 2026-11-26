@@ -29,7 +29,7 @@ const padTracker = createMenuPadTracker();
 
 let selectedFormat = 'golden_goal'; // 'golden_goal' | 'timed' | 'draw'
 let selectedDuration = 120; // 60 | 120 | 180 | 300
-let selectedPosition = 'respawn'; // 'in_place' | 'respawn'
+let selectedPosition = 'in_place'; // 'in_place' | 'respawn'
 
 let callbacks = {
   onConfirm: null,
@@ -64,7 +64,7 @@ const POSITION_OPTIONS = [
   {
     id: 'in_place',
     label: 'RESUME LIVE IN PLACE',
-    sub: 'Unfreeze athletes & ball immediately where they stand',
+    sub: 'Keep athletes & ball where they stand (3s countdown)',
   },
   {
     id: 'respawn',
@@ -435,6 +435,7 @@ function refreshOvertimeMenuUI() {
 
   positionBtns.forEach(({ btn, opt }) => {
     const sel = opt.id === selectedPosition;
+    btn.dataset.selected = sel ? 'true' : 'false';
     btn.style.background = sel ? 'rgba(16, 185, 129, 0.2)' : 'rgba(255, 255, 255, 0.05)';
     btn.style.borderColor = sel ? '#10b981' : 'rgba(255, 255, 255, 0.16)';
     btn.style.boxShadow = sel ? '0 0 14px rgba(16, 185, 129, 0.35)' : 'none';

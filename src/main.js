@@ -9,7 +9,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 import { TUNING, assetUrl } from './config/tuning.js';
-import { getHudPrefs, setHudPrefs, setCleanBroadcastHud } from './config/hudConfig.js';
+import { getHudPrefs, setHudPrefs, setCleanBroadcastHud, syncTeamPaletteColors } from './config/hudConfig.js';
 import { getCourtFloorY, isCourtFloorSampleAvailable } from './ai/courtHeightmap.js';
 import { getHeadwearLabel } from './config/cosmetics.js';
 import { Loop } from './core/Loop.js';
@@ -88,6 +88,8 @@ import {
   setExplicitDeviceMappings,
   assignDefaultDeviceForSlot,
   syncExplicitMappingsWithConfigs,
+  getDisconnectedMappedSlots,
+  clearDeviceMappingForSlot,
 } from './input/inputRouter.js';
 import { createMenuPadTracker, MENU_PAD } from './input/menuPads.js';
 import { updateSportsCamera } from './visuals/sportsCamera.js';
@@ -104,14 +106,19 @@ import { initOvertimeMenu, showOvertimeMenu, hideOvertimeMenu, isOvertimeMenuOpe
 import { initVictoryScreen, showVictoryScreen, hideVictoryScreen, showPracticeSummary, isVictoryScreenVisible } from './ui/victoryScreen.js';
 import { initControlsOverlay, updateControlsOverlay, setControlsOverlayEnabled, hideControlsOverlay } from './ui/controlsOverlay.js';
 import { logClipInventory } from './debug/clipInventory.js';
-import { initCountdownOverlay, updateCountdownOverlay, resetCountdownOverlay } from './ui/countdownOverlay.js';
+import {
+  initCountdownOverlay, updateCountdownOverlay, resetCountdownOverlay,
+  startResumeCountdown, cancelResumeCountdown, isResumeCountdownActive,
+} from './ui/countdownOverlay.js';
 import { initInGameMenu, toggleInGameMenu, hideInGameMenu, updateInGameMenuBanner, isInGameMenuOpen } from './ui/inGameMenu.js';
+import { initControllerDisconnectModal, showControllerDisconnectModal, hideControllerDisconnectModal, isDisconnectModalOpen } from './ui/controllerDisconnectModal.js';
 import { updatePracticeHud, hidePracticeHud } from './ui/practiceHud.js';
 import { initReplayDock, updateReplayDock, resetReplayDockState, sampleFreeDroneInput } from './ui/replayDock.js';
 import {
   initMainMenu,
   initMobileNotice,
   showTitleScreen,
+  openMatchPickSides,
   showPlayerSetup,
   hideMainMenu,
   isMainMenuActive,
@@ -1392,11 +1399,10 @@ function render(alpha) {
     }
   }
 
-  // Pause simulation while menu is open during live match, practice, or replay playback
-  // so players and broadcasters can change settings without bots or clock advancing.
-  loop.paused = isInGameMenuOpen() && (
-    replayManager.isPlayingBack() || gameState === 'match' || gameState === 'practice'
-  );
+  // Pause simulation while menu is open or while 3-2-1 live resume countdown runs
+  const isPauseOverlayOpen = isInGameMenuOpen() || isDisconnectModalOpen();
+  loop.paused = (isPauseOverlayOpen && (replayManager.isPlayingBack() || gameState === 'match' || gameState === 'practice'))
+    || (gameState === 'match' && isResumeCountdownActive());
 
   const isVictoryActive = (gameState === 'match') && !!(matchState && matchState.matchOver) && victoryCameraActive;
 
@@ -1425,10 +1431,15 @@ function render(alpha) {
     if (!isInGameMenuOpen()) cinematicCamera.updateFreeFly(frameDelta, sampleFreeDroneInput());
   } else if (gameState !== 'overtime_menu') {
     updateCameras();
+    if (isResumeCountdownActive()) clearGameplayInputQueues();
   }
 
-  if (consumeMenuToggle() && gameState !== 'menu' && gameState !== 'flyover' && gameState !== 'overtime_menu' && !isInGameMenuOpen()) {
+  if (consumeMenuToggle() && gameState !== 'menu' && gameState !== 'flyover' && gameState !== 'overtime_menu' && !isInGameMenuOpen() && !isDisconnectModalOpen()) {
     toggleInGameMenu(consumeMenuToggleOwner());
+  }
+  if (gameState === 'match' && !matchState?.matchOver && !replayManager.isPlayingBack() && !isInGameMenuOpen() && !isMainMenuActive() && !isOvertimeMenuOpen() && !isDisconnectModalOpen()) {
+    const disconnected = getDisconnectedMappedSlots();
+    if (disconnected.length > 0) showControllerDisconnectModal(disconnected);
   }
 
   const match = matchState ? matchProbe(matchState) : null;
@@ -1436,6 +1447,7 @@ function render(alpha) {
     match.isGoldenGoal = Boolean(matchState.isGoldenGoal);
     match.overtimeMode = matchState.overtimeMode || null;
     match.overtimePeriod = matchState.overtimePeriod || 0;
+    if (gameState === 'practice') match.practiceSeconds = Math.floor(getPracticeSessionSeconds());
   }
 
   const isPracticeActive = (gameState === 'practice');
@@ -1452,8 +1464,8 @@ function render(alpha) {
   }
 
   if (match) {
-    if (gameState === 'match') {
-      updateCountdownOverlay(match.countdownSecondsRemaining, match.isCountingDown, frameDelta);
+    if (gameState === 'match' || gameState === 'practice') {
+      updateCountdownOverlay(match.countdownSecondsRemaining, match.isCountingDown, isPauseOverlayOpen ? 0 : frameDelta);
     }
     updateInGameMenuBanner(match);
   }
@@ -1481,7 +1493,7 @@ function render(alpha) {
 
   _readabilityHudArgs.gameState = gameState;
   _readabilityHudArgs.isVictoryActive = isVictoryActive;
-  _readabilityHudArgs.isMenuOpen = isInGameMenuOpen() || isMainMenuActive() || isOvertimeMenuOpen();
+  _readabilityHudArgs.isMenuOpen = isInGameMenuOpen() || isMainMenuActive() || isOvertimeMenuOpen() || isDisconnectModalOpen();
   _readabilityHudArgs.match = match;
   _readabilityHudArgs.practiceStats = practiceStats;
   _readabilityHudArgs.athletes = athletes;
@@ -1598,6 +1610,10 @@ function applyOvertimeAgreement({ format, durationSeconds = 120, positionMode = 
   } else {
     matchState.isCountingDown = false;
     matchState.countdownTicksRemaining = 0;
+    resetCountdownOverlay();
+    if (!replayManager.isPlayingBack() && activeFixture === null) {
+      startResumeCountdown(3.0, 'OVERTIME STARTING IN');
+    }
   }
   replayManager.recordOvertime({ format, durationSeconds, positionMode, dropPos, spawns: otSpawns });
 
@@ -1643,7 +1659,7 @@ function handleRematch() {
     if (matchState) matchState.preMatchSpawnPos = balls[0]._preMatchSpawnPos;
   }
   replayManager.beginMatchRecording({
-    seed: currentMatchSeed, configs: lastMatchConfigs || TUNING.players, athletes, playerCount: athletes.length,
+    seed: currentMatchSeed, configs: lastMatchConfigs || TUNING.players, athletes, playerCount: lastMatchConfigs?.length >= 4 ? 4 : 2,
     ball: balls[0]?.id || currentMatchBallType, durationSeconds: TUNING.match.durationSeconds || 300,
     arena: activeArenaType(), initialDrop: balls[0]?._preMatchSpawnPos, initialSpawns: lastMatchSpawns,
   });
@@ -1798,11 +1814,12 @@ function handleStartMatch(configs, matchRulesOrBall = {}) {
   const matchCount = (configs && configs.length >= 4) ? 4 : 2;
   syncExplicitMappingsWithConfigs(configs, matchCount);
   ensureAthletesRegistered(matchCount, configs);
+  const activeCount = Math.min(athletes.length, matchCount);
   botControllers = [];
   activeBotSlots = [];
-  if (athletes.length > 0 && configs && configs.length > 0) {
+  if (activeCount > 0 && configs && configs.length > 0) {
     let humanCount = 0;
-    for (let i = 0; i < athletes.length; i++) {
+    for (let i = 0; i < activeCount; i++) {
       const pConfig = configs[i];
       if (pConfig && pConfig.type === 'ai') {
         const bot = createBotController({
@@ -1820,19 +1837,23 @@ function handleStartMatch(configs, matchRulesOrBall = {}) {
     }
 
     // Decided fresh every match: fullscreen for <= 1 human or replay, splitscreen for 2+ live humans.
-    TUNING.camera.splitscreen = (!matchRulesOrBall?.isReplay && humanCount >= 2) || !!TUNING.camera.forceQuadSplitscreen;
+    syncMatchSplitscreen(humanCount, Boolean(matchRulesOrBall?.isReplay));
   }
 
   // Honor shared fullscreen Broadcast / Sports if chosen by any human player in multiplayer
-  const humanRequestedBroadcast = athletes.some(
-    (_, i) => !activeBotSlots.includes(i) && (configs?.[i]?.cameraMode === 'broadcast' || configs?.[i]?.cameraMode === 'sports'),
-  );
-  const sharedStartMode = (TUNING.camera.splitscreen && humanRequestedBroadcast)
-    ? (configs?.find((c, i) => !activeBotSlots.includes(i) && (c?.cameraMode === 'broadcast' || c?.cameraMode === 'sports'))?.cameraMode || 'broadcast')
-    : null;
+  let sharedStartMode = null;
+  if (TUNING.camera.splitscreen) {
+    for (let i = 0; i < activeCount; i++) {
+      const camMode = configs?.[i]?.cameraMode;
+      if (!activeBotSlots.includes(i) && (camMode === 'broadcast' || camMode === 'sports')) {
+        sharedStartMode = camMode;
+        break;
+      }
+    }
+  }
 
   // 1. Apply configurations across all active athletes (2 in 1v1, 4 in 2v2)
-  for (let i = 0; i < athletes.length; i++) {
+  for (let i = 0; i < activeCount; i++) {
     const cfg = configs?.[i];
     const ath = athletes[i];
     if (!cfg || !ath) continue;
@@ -1850,26 +1871,17 @@ function handleStartMatch(configs, matchRulesOrBall = {}) {
     syncPlayerCameraMode(i, playerCameras[i]?.mode || camMode);
   }
 
-  // 2. Dynamic Scoreboard & Palette Colors matching player choices
-  const homeIdx = configs && configs[0]?.team === 'home' ? 0 : 1;
-  const awayIdx = 1 - homeIdx;
-  const homeColor = configs?.[homeIdx]?.primaryColor ?? 0xd90429;
-  const awayColor = configs?.[awayIdx]?.primaryColor ?? 0x1d4ed8;
-
-  if (TUNING.athlete && TUNING.athlete.palette) {
-    TUNING.athlete.palette.homePrimary = homeColor;
-    TUNING.athlete.palette.awayPrimary = awayColor;
-  }
-  if (TUNING.teams) {
-    if (TUNING.teams.home) {
-      TUNING.teams.home.primaryColor = homeColor;
-      TUNING.teams.home.name = configs?.[homeIdx]?.displayName || `${getColorName(homeColor)} (Home)`;
-    }
-    if (TUNING.teams.away) {
-      TUNING.teams.away.primaryColor = awayColor;
-      TUNING.teams.away.name = configs?.[awayIdx]?.displayName || `${getColorName(awayColor)} (Away)`;
-    }
-  }
+  // 2. Dynamic Scoreboard & Palette Colors matching player choices (1v1 & 2v2)
+  const homeCfg = configs?.find((c) => c && c.team === 'home') || configs?.[0] || null;
+  const awayCfg = configs?.find((c) => c && c.team === 'away') || configs?.[1] || null;
+  const homeColor = homeCfg?.primaryColor ?? 0xd90429;
+  const awayColor = awayCfg?.primaryColor ?? 0x1d4ed8;
+  syncTeamPaletteColors({
+    homeColor,
+    awayColor,
+    homeName: homeCfg?.displayName || `${getColorName(homeColor)} (Home)`,
+    awayName: awayCfg?.displayName || `${getColorName(awayColor)} (Away)`,
+  });
   if (scoreboards) {
     updateScoreboards(scoreboards, matchState);
   }
@@ -1933,7 +1945,7 @@ function practicePlayerConfig() {
 }
 
 function handleStartPractice(playerConfig = null, ballChoice = 'all', drillMode = getSelectedPracticeDrill()) {
-  hideMainMenu(); setupBallPreview.hide(allBalls); hideInGameMenu(); hideVictoryScreen(); hideOvertimeMenu();
+  hideMainMenu(); setupBallPreview.hide(allBalls); hideInGameMenu(); hideVictoryScreen(); hideOvertimeMenu(); resetCountdownOverlay();
   replayManager.cancelRecording(); replayManager.stopPlayback(); resetReplayDockState();
   cinematicCamera.stopFreeFly(); clearGameplayInputQueues();
   turfParticles.reset(); goalCelebration.reset(); victoryCameraActive = false;
@@ -1941,7 +1953,7 @@ function handleStartPractice(playerConfig = null, ballChoice = 'all', drillMode 
   setSelectedPracticeBallType(ballChoice);
   const padCount = typeof navigator?.getGamepads === 'function' ? Array.from(navigator.getGamepads()).filter((p) => p?.connected).length : 0;
   const roster = configurePracticeRoster({
-    playerConfig, drillMode, athleteManager, athletes, playerCameras, arenaPreset, createBotController, syncPlayerCameraMode, connectedPadCount: padCount,
+    playerConfig, drillMode, athleteManager, athletes, playerCameras, arenaPreset, createBotController, syncPlayerCameraMode, connectedPadCount: padCount, ensureRoster: ensureAthletesRegistered,
     onApplyPlayerTuning: (cfg, split) => {
       TUNING.camera.splitscreen = split;
       if (!cfg) return;
@@ -1978,97 +1990,64 @@ function launchMenuBalls() {
   setActiveMatchBall('all');
   for (let i = 0; i < balls.length; i++) {
     const b = balls[i];
-    if (b && b.body) {
-      const angle = (i / Math.max(balls.length, 1)) * Math.PI * 2 + Math.random() * 0.5;
-      const dist = 3.0 + Math.random() * 4.0;
-      b.body.setTranslation({
-        x: Math.cos(angle) * dist,
-        y: 6.0 + i * 2.0,
-        z: Math.sin(angle) * dist,
-      }, true);
-      b.body.setLinvel({
-        x: (Math.random() - 0.5) * 8.0,
-        y: 2.0 + Math.random() * 4.0,
-        z: (Math.random() - 0.5) * 8.0,
-      }, true);
-      b.body.setAngvel({
-        x: (Math.random() - 0.5) * 4.0,
-        y: (Math.random() - 0.5) * 4.0,
-        z: (Math.random() - 0.5) * 4.0,
-      }, true);
-    }
+    if (!b?.body) continue;
+    const angle = (i / Math.max(balls.length, 1)) * Math.PI * 2 + Math.random() * 0.5;
+    const dist = 3.0 + Math.random() * 4.0;
+    b.body.setTranslation({ x: Math.cos(angle) * dist, y: 6.0 + i * 2.0, z: Math.sin(angle) * dist }, true);
+    b.body.setLinvel({ x: (Math.random() - 0.5) * 8.0, y: 2.0 + Math.random() * 4.0, z: (Math.random() - 0.5) * 8.0 }, true);
+    b.body.setAngvel({ x: (Math.random() - 0.5) * 4.0, y: (Math.random() - 0.5) * 4.0, z: (Math.random() - 0.5) * 4.0 }, true);
   }
 }
 
-function returnToMainMenu() {
+function syncMatchSplitscreen(humanCount, isReplay = false) {
+  TUNING.camera.splitscreen = (!isReplay && humanCount >= 2) || !!TUNING.camera.forceQuadSplitscreen;
+}
+
+function switchSlotToBot(slotIdx) {
+  if (slotIdx < 0 || slotIdx >= athletes.length || activeBotSlots.includes(slotIdx)) return;
+  clearDeviceMappingForSlot(slotIdx);
+  const cfg = lastMatchConfigs?.[slotIdx];
+  if (cfg) cfg.type = 'ai';
+  botControllers.push(createBotController({
+    difficulty: cfg?.difficulty || 'medium', slotIndex: slotIdx, aggressiveness: cfg?.aggressiveness ?? 0.60,
+    seed: ((currentMatchSeed ^ Math.imul(slotIdx + 1, 0x9e3779b1)) >>> 0),
+  }));
+  activeBotSlots.push(slotIdx);
+  syncMatchSplitscreen(getActiveHumanSlots().length);
+  applyViewportSize();
+  clearGameplayInputQueues();
+}
+
+function exitToMenu(targetScreen = 'title') {
   loop.paused = false;
-  replayManager.cancelRecording();
-  replayManager.stopPlayback();
-  exitGamePointerLock();
+  replayManager.cancelRecording(); replayManager.stopPlayback(); exitGamePointerLock();
   if (victoryScreenTimer) { clearTimeout(victoryScreenTimer); victoryScreenTimer = null; }
-  hideInGameMenu(); hideVictoryScreen(); hideOvertimeMenu();
+  hideInGameMenu(); hideVictoryScreen(); hideOvertimeMenu(); hideControllerDisconnectModal();
   resetCountdownOverlay(); hideFlyoverOverlay();
-
-  // Clear AI bots
-  botControllers = [];
-  activeBotSlots = [];
-
-  gameState = 'menu';
-  TUNING.match.mode = 'match';
-
-  // 1. Reset match state completely
-  matchManager.resetForTitle();
-  matchState = matchManager.getState();
-  matchState.mode = 'menu';
-
-  // 2. Reset practice drill stats & replay/camera states
+  botControllers = []; activeBotSlots = []; gameState = 'menu'; TUNING.match.mode = 'match';
+  matchManager.resetForTitle(); matchState = matchManager.getState(); matchState.mode = 'menu';
   restorePracticeHudOverrides(); hidePracticeHud();
   cinematicCamera.stopFreeFly(); resetReplayDockState();
-  resetPracticeStats();
-  athleteMatchStats.forEach((s, idx) => resetPlayerMatchStats(s, idx));
-
-  // 3. Reset athletes, physics velocities, trackers and knockdowns
+  resetPracticeStats(); athleteMatchStats.forEach((s, idx) => resetPlayerMatchStats(s, idx));
   athleteManager.resetStats();
   for (let i = 0; i < athletes.length; i++) {
     const a = athletes[i];
     if (!a) continue;
-    if (a.motor?.body) {
-      a.motor.body.setEnabled(true);
-      a.motor.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
-      a.motor.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
-    }
-    if (a.ragdoll?.rig) {
-      for (const item of a.ragdoll.rig.values()) {
-        item.body.setEnabled(true);
-        item.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
-        item.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
-      }
-    }
+    if (a.motor?.body) { a.motor.body.setEnabled(true); a.motor.body.setLinvel({ x: 0, y: 0, z: 0 }, true); a.motor.body.setAngvel({ x: 0, y: 0, z: 0 }, true); }
+    if (a.ragdoll?.rig) { for (const item of a.ragdoll.rig.values()) { item.body.setEnabled(true); item.body.setLinvel({ x: 0, y: 0, z: 0 }, true); item.body.setAngvel({ x: 0, y: 0, z: 0 }, true); } }
     if (a.ragdoll?.group) a.ragdoll.group.visible = true;
   }
-
-  // 4. Stage active title athletes on stream heads and disable extra 2v2 slots
   athleteManager.stageForTitle();
-  if (athletes.length >= 2) {
-    athletes[0].teleportTo(TUNING.match.streamHeads.sw, Math.PI);
-    athletes[1].teleportTo(TUNING.match.streamHeads.ne, 0);
-  }
-
-  // 5. Reset camera smoothing and manual stick/mouse offsets
-  for (const pc of playerCameras) {
-    pc.manualAzimuthOffset = 0;
-    pc.manualPitchOffset = 0;
-    pc.manualIdleTimer = 0;
-    pc.resetSmoothing();
-  }
-
-  victoryCameraActive = false;
-  cinematicCamera.startTitleOrbit();
+  if (athletes.length >= 2) { athletes[0].teleportTo(TUNING.match.streamHeads.sw, Math.PI); athletes[1].teleportTo(TUNING.match.streamHeads.ne, 0); }
+  for (const pc of playerCameras) { pc.manualAzimuthOffset = 0; pc.manualPitchOffset = 0; pc.manualIdleTimer = 0; pc.resetSmoothing(); }
+  victoryCameraActive = false; cinematicCamera.startTitleOrbit();
   showTitleScreen();
-  launchMenuBalls();
-  applyViewportSize();
-  console.log('[mainMenu] returned to title screen (all parameters reset cleanly)');
+  if (targetScreen === 'assignment') {
+    openMatchPickSides(lastMatchConfigs?.length >= 4 ? '2v2' : '1v1');
+  }
+  launchMenuBalls(); applyViewportSize();
 }
+const returnToMainMenu = () => exitToMenu('title');
 
 function handleEnterSetup(mode = 'match') {
   for (const b of allBalls) {
@@ -2105,14 +2084,13 @@ function handlePlayerConfigChange(idx, config) {
     }
   }
 
-  // Update TUNING palette live during setup as well
-  const p1Team = TUNING.players[0]?.team || 'home';
-  const homeIdx = p1Team === 'home' ? 0 : 1;
-  const awayIdx = 1 - homeIdx;
-  if (TUNING.athlete?.palette) {
-    TUNING.athlete.palette.homePrimary = TUNING.players[homeIdx]?.primaryColor ?? 0xd90429;
-    TUNING.athlete.palette.awayPrimary = TUNING.players[awayIdx]?.primaryColor ?? 0x1d4ed8;
-  }
+  // Update TUNING palette live during setup as well (1v1 & 2v2)
+  const homeSlot = TUNING.players.find((p) => p && p.team === 'home') || TUNING.players[0];
+  const awaySlot = TUNING.players.find((p) => p && p.team === 'away') || TUNING.players[1];
+  syncTeamPaletteColors({
+    homeColor: homeSlot?.primaryColor ?? 0xd90429,
+    awayColor: awaySlot?.primaryColor ?? 0x1d4ed8,
+  });
   if (scoreboards) {
     updateScoreboards(scoreboards, matchState);
   }
@@ -2216,9 +2194,10 @@ async function boot() {
       && !isInGameMenuOpen()
       && !isMainMenuActive()
       && !isVictoryScreenVisible()
-      && !isOvertimeMenuOpen();
-    sampleAllInputs(_playerCameraList, gameState === 'practice' ? 1 : athletes.length, gameState === 'practice' ? 'practice' : 'match', activeBotSlots, isGameplayActive);
-    updateControlsOverlay(getControlsSnapshot(), gameState, isInGameMenuOpen(), isVictoryScreenVisible(), !!matchState?.matchOver, !!matchState?.isCountingDown, isMainMenuActive());
+      && !isOvertimeMenuOpen()
+      && !isDisconnectModalOpen();
+    sampleAllInputs(_playerCameraList, athleteManager.getEnabledCount(), gameState === 'practice' ? 'practice' : 'match', activeBotSlots, isGameplayActive);
+    updateControlsOverlay(getControlsSnapshot(), gameState, isInGameMenuOpen() || isDisconnectModalOpen(), isVictoryScreenVisible(), !!matchState?.matchOver, !!matchState?.isCountingDown, isMainMenuActive());
   });
 
   applyViewportSize();
@@ -2230,21 +2209,33 @@ async function boot() {
       `${baselineCounts.joints} joints`,
   );
 
+  const triggerLiveMatchResume = () => {
+    clearGameplayInputQueues();
+    if (gameState === 'match' && !matchState?.matchOver && !matchState?.isCountingDown && !replayManager.isPlayingBack()) {
+      startResumeCountdown(3.0, 'RESUMING MATCH');
+    }
+  };
   initCountdownOverlay();
   initOvertimeMenu({
     onConfirm: applyOvertimeAgreement,
   });
+  initControllerDisconnectModal({
+    onResume: triggerLiveMatchResume,
+    onSwitchToBot: (slotIdx) => { switchSlotToBot(slotIdx); triggerLiveMatchResume(); },
+    onReturnToSetup: () => exitToMenu('assignment'),
+  });
 
   initVictoryScreen({
     onRematch: handleRematch,
+    onPickSides: () => exitToMenu('assignment'),
     onWatchReplay: () => window.__vb.playReplay(),
     onPracticeMode: () => handleStartPractice(practicePlayerConfig(), getSelectedPracticeBallType()),
     onMainMenu: returnToMainMenu,
   });
 
   initInGameMenu({
-    onResume: () => {},
-    onOpen: hideControlsOverlay,
+    onResume: triggerLiveMatchResume,
+    onOpen: () => { cancelResumeCountdown(); hideControlsOverlay(); },
     onRematch: handleRematch,
     onPracticeMode: () => handleStartPractice(practicePlayerConfig(), getSelectedPracticeBallType()),
     onFinishPractice: handleFinishPractice,
@@ -2271,7 +2262,7 @@ async function boot() {
     },
     getCameraRows: () => {
       return [0, 1, 2, 3].map((i) => {
-        const present = gameState === 'practice' ? i === 0 : (i < athletes.length && !!athletes[i]?.isEnabled);
+        const present = i < athletes.length && !!athletes[i]?.isEnabled;
         const cfg = TUNING.players[i] || {};
         const teamNum = (i === 0 || i === 2) ? 1 : 2;
         const side = gameState === 'practice' ? '' : ` · TEAM ${teamNum} (${cfg.team === 'away' ? 'AWAY' : 'HOME'})`;
@@ -2345,18 +2336,13 @@ async function boot() {
   });
 
   window.__vb.setTeamConfig = (teamId, options) => {
-    if (!TUNING.teams || !TUNING.teams[teamId]) return;
+    if (!TUNING.teams?.[teamId]) return;
     Object.assign(TUNING.teams[teamId], options);
-    for (const a of athletes) {
-      if (a.team === teamId) {
-        a.refreshVisuals();
-      }
-    }
-    if (guiInstance) guiInstance.controllersRecursive().forEach((c) => c.updateDisplay());
+    for (const a of athletes) if (a.team === teamId) a.refreshVisuals();
+    guiInstance?.controllersRecursive().forEach((c) => c.updateDisplay());
   };
-
   window.__vb.setPlayerConfig = (playerIndex, options) => {
-    if (!TUNING.players || !TUNING.players[playerIndex]) return;
+    if (!TUNING.players?.[playerIndex]) return;
     Object.assign(TUNING.players[playerIndex], options);
     const a = athletes[playerIndex];
     if (a) {
@@ -2366,23 +2352,19 @@ async function boot() {
       if (options.colorOverride !== undefined) a.colorOverride = options.colorOverride;
       a.refreshVisuals();
     }
-    if (options.cameraMode && playerCameras[playerIndex]) {
-      playerCameras[playerIndex].mode = options.cameraMode;
-    }
-    if (guiInstance) guiInstance.controllersRecursive().forEach((c) => c.updateDisplay());
+    if (options.cameraMode && playerCameras[playerIndex]) playerCameras[playerIndex].mode = options.cameraMode;
+    guiInstance?.controllersRecursive().forEach((c) => c.updateDisplay());
   };
-
   window.__vb.setSplitscreen = (enabled) => {
     TUNING.camera.splitscreen = !!enabled;
     applyViewportSize();
-    if (guiInstance) guiInstance.controllersRecursive().forEach((c) => c.updateDisplay());
+    guiInstance?.controllersRecursive().forEach((c) => c.updateDisplay());
   };
-
   window.__vb.setForceQuadSplitscreen = (enabled) => {
     TUNING.camera.splitscreen = true;
     TUNING.camera.forceQuadSplitscreen = !!enabled;
     applyViewportSize();
-    if (guiInstance) guiInstance.controllersRecursive().forEach((c) => c.updateDisplay());
+    guiInstance?.controllersRecursive().forEach((c) => c.updateDisplay());
   };
 
   window.__vb.snapshotRing = new WorldSnapshotRingBuffer(360);

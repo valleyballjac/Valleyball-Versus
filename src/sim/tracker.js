@@ -30,11 +30,18 @@ const _relVel = new THREE.Vector3();
 const _bodyQuatInverse = new THREE.Quaternion();
 const _errorQuat = new THREE.Quaternion();
 const _axis = new THREE.Vector3();
-const _axisLocal = new THREE.Vector3();
-const _frameInv = new THREE.Quaternion();
+const _segAxis = new THREE.Vector3();
 const _bodyQuat = new THREE.Quaternion();
 const _preLinvel = new THREE.Vector3();
 const _preAngvel = new THREE.Vector3();
+
+// DO NOT REMOVE: INVARIANT [NATURAL-LIMB-ALIGNMENT]
+// Spherical ragdoll joints (hips, spine, chest, shoulders) carry zero angle limits in
+// Rapier 0.19.3. They rely on floored untwist inertia and upright angular recovery to
+// prevent limbs, legs, and pelvis from twisting out of anatomical alignment.
+const SPHERICAL_RECOVERY_BODIES = new Set([
+  'spine', 'chest', 'thighL', 'thighR', 'upperArmL', 'upperArmR',
+]);
 
 export function createTracker() {
   return {
@@ -213,7 +220,36 @@ function applyArmDamping(rig, motor, animTarget, offMount = 0) {
   // would not catch, so the recovery signal takes the damping off as well.
   const moving = Math.min(1, Math.hypot(v.x, v.z) / fade);
   const down = Math.max(animTarget ? animTarget.standUpNeed : 0, offMount);
-  const still = (1 - moving) * (1 - down);
+
+  // DO NOT REMOVE: INVARIANT [NATURAL-LIMB-ALIGNMENT]
+  // Gate the 150.0 idle anti-buzz damper on BOTH linear and rotational arm-pose settledness
+  // so arms spawned in bind T-pose (or twisted/displaced while stationary) converge all the way
+  // into their natural At Rest orientation (< 8 deg) before high solver damping locks in.
+  let maxArmErrSq = 0;
+  let maxArmQuatGap = 0;
+  if (animTarget && animTarget.targets) {
+    for (const key of ARM_CHAIN_DAMPED) {
+      const item = rig.get(key);
+      const target = animTarget.targets.get(key);
+      if (!item || !target) continue;
+      const bp = item.body.translation();
+      const dx = target.currPos.x - bp.x;
+      const dy = target.currPos.y - bp.y;
+      const dz = target.currPos.z - bp.z;
+      const dSq = dx * dx + dy * dy + dz * dz;
+      if (dSq > maxArmErrSq) maxArmErrSq = dSq;
+
+      const rot = item.body.rotation();
+      const tq = target.currQuat;
+      const absDot = Math.abs(rot.x * tq.x + rot.y * tq.y + rot.z * tq.z + rot.w * tq.w);
+      const qGap = Math.max(0, 1 - absDot);
+      if (qGap > maxArmQuatGap) maxArmQuatGap = qGap;
+    }
+  }
+  const posSettled = 1 - Math.min(1, Math.max(0, (Math.sqrt(maxArmErrSq) - 0.15) / 0.12));
+  const rotSettled = 1 - Math.min(1, Math.max(0, (maxArmQuatGap - 0.025) / 0.040));
+  const armSettled = Math.min(posSettled, rotSettled);
+  const still = (1 - moving) * (1 - down) * armSettled;
 
   for (const key of ARM_CHAIN_DAMPED) {
     const item = rig.get(key);
@@ -475,59 +511,61 @@ function applyGains(tracker, rig, animTarget, motor, dt, offMount = 0) {
     const angle = 2 * Math.acos(Math.min(1, Math.max(-1, _errorQuat.w)));
     if (angle > MIN_ANGLE) {
       const sin = Math.sqrt(Math.max(0, 1 - _errorQuat.w * _errorQuat.w));
-      if (sin > 1e-5) {
+      if (sin > 1e-4) {
         _axis.set(_errorQuat.x, _errorQuat.y, _errorQuat.z).divideScalar(sin);
       } else {
-        _axis.set(0, 1, 0);
+        _axis.set(0, 1, 0).applyQuaternion(_bodyQuat);
       }
+
+      // Guard against near-pi quaternion axis flapping while keeping untwist damping active.
+      const singularityScale = angle > (Math.PI - 0.12)
+        ? Math.max(0.15, (Math.PI - angle) / 0.12)
+        : 1.0;
 
       let angKp = TUNING.tracking.angularKp;
       let maxAngular = TUNING.tracking.maxAngularImpulse;
 
-      // Leg form recovery: spherical hip joints twist on slides. Boost angular torque
-      // on thighs when upright so legs snap cleanly forward.
-      const isThigh = (key === 'thighL' || key === 'thighR');
-      if (isThigh && TUNING.tracking.thighTwistRecovery?.enabled) {
-        const slideMix = animTarget?.slideMix || 0;
-        if (slideMix < 0.25) {
-          angKp *= (TUNING.tracking.thighTwistRecovery.boostKp || 1.8);
-          maxAngular = Math.max(maxAngular, TUNING.tracking.thighTwistRecovery.maxAngular || 0.08);
-        }
+      // DO NOT REMOVE: INVARIANT [NATURAL-LIMB-ALIGNMENT]
+      // Spherical joints (hips, spine, chest, shoulders) twist under floor friction,
+      // cuts, slides, and collisions. Boost angular untwist torque when upright so
+      // legs, pelvis, and limbs stay smoothly aligned with natural anatomical pose.
+      const twistCfg = TUNING.tracking.thighTwistRecovery;
+      const slideMix = animTarget?.slideMix || 0;
+      const diveMix = animTarget?.diveMix || 0;
+      const isUprightRecovery = weight > 0.45 && slideMix < 0.25 && diveMix < 0.15;
+      if (twistCfg?.enabled && isUprightRecovery && SPHERICAL_RECOVERY_BODIES.has(key)) {
+        angKp *= (twistCfg.boostKp || 2.2);
+        maxAngular = Math.max(maxAngular, twistCfg.maxAngular || 0.09);
+      }
+      if (key === 'pelvis' && weight > 0.5) {
+        angKp *= 1.5;
       }
 
-      // THE ANGULAR SPRING AND CAP ARE SCALED BY ROTATIONAL INERTIA ALONG THE
-      // ROTATION AXIS (normalized to the pelvis reference inertia, 0.0793 kg·m²),
-      // mirroring the linear `* mass` scaling above. Without this, light/narrow
-      // bodies (head, arms, hands, legs) receive 20x-100x higher angular
-      // acceleration for the same orientation error and buzz 2-7° every 2-3 ticks.
+      // Deterministic geometric directional inertia along the rotation axis using
+      // body-local +Y (avoiding degenerate principalInertiaLocalFrame on capsules),
+      // floored on longitudinal roll so twist recovery is never starved.
       let inertiaScale = 1;
       if (TUNING.tracking.angularPerInertia) {
         const pI = item.cachedPrincipalInertia
           || (typeof body.principalInertia === 'function' ? body.principalInertia() : null);
-        const frInv = item.cachedPrincipalFrameInv
-          || (typeof body.principalInertiaLocalFrame === 'function'
-            ? (() => {
-                const fr = body.principalInertiaLocalFrame();
-                return _frameInv.set(fr.x, fr.y, fr.z, fr.w).invert();
-              })()
-            : null);
-        if (pI && frInv) {
-          _axisLocal.copy(_axis).applyQuaternion(_bodyQuatInverse);
-          _axisLocal.applyQuaternion(frInv);
-          const Iaxis =
-            pI.x * _axisLocal.x * _axisLocal.x +
-            pI.y * _axisLocal.y * _axisLocal.y +
-            pI.z * _axisLocal.z * _axisLocal.z;
-          const refInertia = TUNING.tracking.angularRefInertia || 0.0793;
-          if (Number.isFinite(Iaxis) && Iaxis > 0 && refInertia > 0) {
-            inertiaScale = Iaxis / refInertia;
-          }
+        const Ilong = item.cachedConservativeInertia ?? (pI ? Math.min(pI.x, pI.y, pI.z) : 0);
+        const Iperp = item.cachedInertiaPerp ?? (pI ? Math.max(pI.x, pI.y, pI.z) : 0);
+        const refInertia = TUNING.tracking.angularRefInertia || 0.0793;
+        if (Iperp > 0 && refInertia > 0) {
+          _segAxis.set(0, 1, 0).applyQuaternion(_bodyQuat);
+          const cosLong = _axis.dot(_segAxis);
+          const sinSq = Math.max(0, 1 - cosLong * cosLong);
+          const Iaxis = Ilong + (Iperp - Ilong) * sinSq;
+          const twistFloor = twistCfg?.enabled !== false ? (twistCfg?.twistInertiaFloor ?? 0.45) : 0;
+          const Ieffective = Math.max(Iaxis, Iperp * twistFloor);
+          const minScale = twistCfg?.enabled !== false ? (twistCfg?.minInertiaScale ?? 0.001) : 0.001;
+          inertiaScale = Math.max(minScale, Ieffective / refInertia);
         }
       }
 
       _impulseVec
         .copy(_axis)
-        .multiplyScalar(angle * angKp * inertiaScale * kpScale * groupScale * dt);
+        .multiplyScalar(angle * angKp * inertiaScale * singularityScale * kpScale * groupScale * dt);
 
       const capNow = maxAngular * inertiaScale;
       if (_impulseVec.lengthSq() > capNow * capNow) _impulseVec.setLength(capNow);

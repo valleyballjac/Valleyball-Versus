@@ -18,7 +18,7 @@
 import * as THREE from 'three';
 import { TUNING } from '../config/tuning.js';
 import { RAPIER, getWorld } from './physics.js';
-import { createMotor, updateMotor, syncMotorSnapshot } from './motor.js';
+import { createMotor, updateMotor, syncMotorSnapshot, probeMotorSpawnGrounded } from './motor.js';
 import {
   createAnimTarget,
   updateAnimTarget,
@@ -202,7 +202,13 @@ export function createAthlete({
       animTarget.nodes.idle.action.time = (((idlePhase % 1) + 1) % 1) * idleDur;
     }
 
-    const initialGrounded = motor.grounded && motor.body.translation().y <= 1.5;
+    // DO NOT REMOVE: INVARIANT [NATURAL-LIMB-ALIGNMENT]
+    // Probe actual court surface under the motor (including elevated y=8.34m stream heads)
+    // so spawned/teleported athletes start grounded in idle pose rather than airborne jump pose.
+    const initialGrounded = probeMotorSpawnGrounded(motor);
+    motor.grounded = initialGrounded;
+    groundedRun = initialGrounded ? TUNING.jump.groundedDebounceTicks : 0;
+    wasGrounded = initialGrounded;
     if (!initialGrounded) {
       animTarget.airborneMix = 1.0;
       animTarget.jumpPhase = TUNING.jump.apexHold;

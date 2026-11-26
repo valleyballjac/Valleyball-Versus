@@ -1,6 +1,6 @@
 /**
  * Module: ui/countdownOverlay
- * Role: Pre-match and post-goal 3-2-1-GO! countdown overlay plus splitscreen viewport border frames and player watermarks.
+ * Role: Pre-match, overtime, and unpause 3-2-1-GO countdown overlay plus splitscreen viewport border frames and player watermarks.
  * Frame Phase: Render (UI Update)
  * Active Architectural Laws:
  *   - LAW 8 (60 FPS Frame-Time Budget): Caches the splitscreen frame layout signature (`mode`, `w`, `h`, team hexes/names, watermark opacity)
@@ -12,6 +12,8 @@ let numberEl = null;
 let labelEl = null;
 let lastDisplayedSec = -1;
 let goTimer = 0;
+let resumeTimerSec = 0;
+let resumeBannerText = 'RESUMING MATCH';
 let overlayVisible = false;
 let cachedVictoryOverlayEl = null;
 let cachedSplitDividerEl = null;
@@ -169,6 +171,7 @@ export function initCountdownOverlay() {
 export function resetCountdownOverlay() {
   lastDisplayedSec = -1;
   goTimer = 0;
+  resumeTimerSec = 0;
   watermarkHoldTimer = 3.5;
   if (overlayEl) {
     overlayEl.style.display = 'none';
@@ -176,6 +179,31 @@ export function resetCountdownOverlay() {
   }
   if (splitFramesContainerEl) splitFramesContainerEl.style.display = 'none';
   lastSplitFramesSig = 'hidden';
+}
+
+export function startResumeCountdown(seconds = 3.0, bannerText = 'RESUMING MATCH') {
+  const dur = Number(seconds);
+  if (!Number.isFinite(dur) || dur <= 0) return;
+  resumeTimerSec = dur;
+  resumeBannerText = bannerText || 'RESUMING MATCH';
+  lastDisplayedSec = -1;
+  goTimer = 0.75;
+  watermarkHoldTimer = Math.max(watermarkHoldTimer, dur + 0.5);
+}
+
+export function cancelResumeCountdown() {
+  if (resumeTimerSec <= 0) return;
+  resumeTimerSec = 0;
+  goTimer = 0;
+  lastDisplayedSec = -1;
+  if (overlayEl) {
+    overlayEl.style.display = 'none';
+    overlayVisible = false;
+  }
+}
+
+export function isResumeCountdownActive() {
+  return resumeTimerSec > 0;
 }
 
 function updateSplitscreenFrames(isCountingDown, delta) {
@@ -191,7 +219,9 @@ function updateSplitscreenFrames(isCountingDown, delta) {
   }
   const isVictoryVisible = Boolean(cachedVictoryOverlayEl && cachedVictoryOverlayEl.style.display === 'flex');
   const isSplitDividerActive = Boolean(cachedSplitDividerEl && cachedSplitDividerEl.style.display === 'block');
-  const isSplitscreen = gameState === 'match' && !isVictoryVisible && (isSplitDividerActive || Boolean(tuning?.camera?.splitscreen));
+  const isSplitscreen = (gameState === 'match' || gameState === 'practice')
+    && !isVictoryVisible
+    && (isSplitDividerActive || Boolean(tuning?.camera?.splitscreen));
 
   if (!isSplitscreen) {
     if (lastSplitFramesSig !== 'hidden') {
@@ -206,8 +236,12 @@ function updateSplitscreenFrames(isCountingDown, delta) {
   _humanSlots.length = 0;
   for (let i = 0; i < athletes.length; i++) {
     if (!athletes[i]?.isEnabled) continue;
-    const cfg = configs[i] || tuning?.players?.[i];
-    if (cfg?.type === 'human') _humanSlots.push(i);
+    if (gameState === 'practice') {
+      _humanSlots.push(i);
+    } else {
+      const cfg = configs[i] || tuning?.players?.[i];
+      if (cfg?.type === 'human') _humanSlots.push(i);
+    }
   }
   if (_humanSlots.length < 2) {
     _humanSlots.length = 0;
@@ -216,6 +250,28 @@ function updateSplitscreenFrames(isCountingDown, delta) {
     }
   }
   if (_humanSlots.length < 2) {
+    if (lastSplitFramesSig !== 'hidden') {
+      lastSplitFramesSig = 'hidden';
+      splitFramesContainerEl.style.display = 'none';
+    }
+    return;
+  }
+
+  const playerCameras = vb?.playerCameras || vb?.viewportManager?.playerCameras;
+  let isSharedCam = false;
+  if (Array.isArray(playerCameras) && playerCameras.length > 0) {
+    isSharedCam = true;
+    for (let i = 0; i < _humanSlots.length; i++) {
+      const mode = playerCameras[_humanSlots[i]]?.mode;
+      if (mode !== 'broadcast' && mode !== 'sports') {
+        isSharedCam = false;
+        break;
+      }
+    }
+  } else if (vb?.viewportManager && vb.viewportManager.lastIsSplitscreen === false && !isSplitDividerActive) {
+    isSharedCam = true;
+  }
+  if (isSharedCam) {
     if (lastSplitFramesSig !== 'hidden') {
       lastSplitFramesSig = 'hidden';
       splitFramesContainerEl.style.display = 'none';
@@ -269,7 +325,8 @@ function updateSplitscreenFrames(isCountingDown, delta) {
         ? (tuning?.athlete?.palette?.awayPrimary ?? 0x1d4ed8)
         : (tuning?.athlete?.palette?.homePrimary ?? 0xd90429)
     );
-    sig += `|${slot}:${team}:${rawColor}`;
+    const activeFlag = (gameState === 'practice' && !ath?.isEnabled) ? 0 : 1;
+    sig += `|${slot}:${team}:${rawColor}:${activeFlag}`;
   }
 
   if (sig === lastSplitFramesSig) return;
@@ -280,7 +337,7 @@ function updateSplitscreenFrames(isCountingDown, delta) {
   for (let i = 0; i < splitFrameEls.length; i++) {
     const item = splitFrameEls[i];
     const vp = viewports[i];
-    if (!vp) {
+    if (!vp || (gameState === 'practice' && !athletes[vp.slot]?.isEnabled)) {
       item.frame.style.display = 'none';
       continue;
     }
@@ -329,19 +386,37 @@ function updateSplitscreenFrames(isCountingDown, delta) {
  */
 export function updateCountdownOverlay(countdownSeconds, isCountingDown, delta = 0.016) {
   if (!overlayEl) return;
-  updateSplitscreenFrames(isCountingDown, delta);
+  const wasResuming = resumeTimerSec > 0;
+  if (wasResuming) {
+    resumeTimerSec = Math.max(0, resumeTimerSec - Math.max(0, delta));
+    if (resumeTimerSec === 0 && typeof window !== 'undefined') {
+      window.__soundManager?.playTone?.(780, 0.11, 'sine', 0.24);
+    }
+  }
+  const resumeActive = resumeTimerSec > 0;
+  const activeCountDown = Boolean(isCountingDown && countdownSeconds > 0) || resumeActive;
+  const displaySec = (isCountingDown && countdownSeconds > 0)
+    ? countdownSeconds
+    : (resumeActive ? Math.max(1, Math.ceil(resumeTimerSec)) : 0);
 
-  if (isCountingDown && countdownSeconds > 0) {
+  updateSplitscreenFrames(Boolean(isCountingDown) || resumeActive, delta);
+
+  if (activeCountDown && displaySec > 0) {
     if (!overlayVisible) {
       overlayEl.style.display = 'flex';
       overlayVisible = true;
     }
-    goTimer = 0.85; // queue "GO!" duration when zero hits
+    goTimer = 0.75; // queue "GO" duration when zero hits
 
-    if (countdownSeconds !== lastDisplayedSec) {
-      lastDisplayedSec = countdownSeconds;
-      numberEl.textContent = String(countdownSeconds);
-      labelEl.textContent = countdownSeconds > 3 ? 'SERVICE' : 'GET READY';
+    if (displaySec !== lastDisplayedSec) {
+      lastDisplayedSec = displaySec;
+      numberEl.textContent = String(displaySec);
+      labelEl.textContent = (isCountingDown && countdownSeconds > 0)
+        ? (displaySec > 3 ? 'SERVICE' : 'GET READY')
+        : resumeBannerText;
+      if (resumeActive && typeof window !== 'undefined') {
+        window.__soundManager?.playTone?.(displaySec === 1 ? 580 : 460, 0.06, 'sine', 0.18);
+      }
 
       // Pulse animation
       numberEl.style.transform = 'scale(1.35)';
@@ -351,23 +426,23 @@ export function updateCountdownOverlay(countdownSeconds, isCountingDown, delta =
 
       // Chromatic rainbow glow progression: 5,4 cyan glow -> 3,2 amber glow -> 1 crimson glow
       numberEl.style.color = '#ffffff';
-      if (countdownSeconds > 3) {
+      if (displaySec > 3) {
         numberEl.style.textShadow = '0 4px 24px rgba(0, 0, 0, 0.9), 0 0 30px rgba(255, 255, 255, 0.8), 0 0 45px rgba(0, 229, 255, 0.45)';
-      } else if (countdownSeconds > 1) {
+      } else if (displaySec > 1) {
         numberEl.style.textShadow = '0 4px 24px rgba(0, 0, 0, 0.9), 0 0 30px rgba(255, 255, 255, 0.8), 0 0 45px rgba(251, 180, 23, 0.45)';
       } else {
         numberEl.style.textShadow = '0 4px 24px rgba(0, 0, 0, 0.9), 0 0 35px rgba(255, 255, 255, 0.9), 0 0 50px rgba(255, 46, 85, 0.55)';
       }
     }
   } else if (goTimer > 0) {
-    // Show "PLAY!" flash
+    // Show "GO" flash
     if (!overlayVisible) {
       overlayEl.style.display = 'flex';
       overlayVisible = true;
     }
     goTimer -= delta;
     labelEl.textContent = 'VALLEYBALL';
-    numberEl.textContent = 'PLAY!';
+    numberEl.textContent = 'GO';
     numberEl.style.color = '#ffffff';
     numberEl.style.textShadow = '0 4px 24px rgba(0, 0, 0, 0.9), 0 0 40px rgba(255, 255, 255, 0.95), 0 0 60px rgba(74, 222, 128, 0.6)';
     numberEl.style.transform = 'scale(1.2)';

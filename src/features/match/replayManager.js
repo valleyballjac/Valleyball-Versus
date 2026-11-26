@@ -61,6 +61,7 @@ let playbackCameraPreset = 'broadcast';
 let playbackSeeking = false;
 let playbackFollowSlot = 0;
 let playbackCameraHeightOffset = 0;
+let replayOrbitYawOffset = 0;
 let lastPlayerCameras = null;
 
 const _playbackStatus = {
@@ -141,7 +142,7 @@ function alignFollowCameraToAthlete(slot, athletes, playerCameras, snap = false)
   if (!ath || !pc) return;
   const yaw = ath.animTarget?.yaw;
   if (!Number.isFinite(yaw)) return;
-  const targetAz = yaw + Math.PI;
+  const targetAz = yaw + Math.PI + replayOrbitYawOffset;
   if (snap || playbackCameraPreset === 'firstPerson') {
     if (snap) {
       pc.azimuth = targetAz;
@@ -283,6 +284,25 @@ export const replayManager = {
     else playbackSpeed = 0.5;
     playbackAccumulator = 0;
     return playbackSpeed;
+  },
+
+  /** Orbits the followed player's replay camera (`chase`, `thirdPerson`, `firstPerson`) via mouse drag. */
+  orbitFollowCamera(deltaYaw = 0, deltaPitch = 0, playerCameras = null) {
+    const cams = playerCameras || lastPlayerCameras;
+    const pc = cams?.[playbackFollowSlot] || cams?.[0];
+    if (!pc) return;
+    if (playbackCameraPreset === 'thirdPerson') {
+      pc.manualAzimuthOffset = (pc.manualAzimuthOffset || 0) + deltaYaw;
+      pc.manualPitchOffset = Math.max(-0.5, Math.min(0.95, (pc.manualPitchOffset || 0) + deltaPitch));
+      pc.manualIdleTimer = -3.0;
+    } else if (playbackCameraPreset === 'firstPerson') {
+      replayOrbitYawOffset += deltaYaw;
+      pc.azimuth = (pc.azimuth || 0) + deltaYaw;
+      pc.pitch = Math.max(-1.1, Math.min(1.1, (pc.pitch || 0) + deltaPitch));
+    } else {
+      pc.azimuth = (pc.azimuth || 0) + deltaYaw;
+      pc.pitch = Math.max(-0.35, Math.min(1.25, (pc.pitch ?? 0.35) + deltaPitch));
+    }
   },
 
   /** Sets vertical crane height offset (meters) for tracked replay cameras. */
@@ -450,6 +470,7 @@ export const replayManager = {
    */
   applyCameraPreset(preset, { cinematicCamera, playerCameras, spectatorCamera, athletes, syncPlayerCameraMode, applyViewportSize }) {
     const mode = this.setCameraPreset(preset);
+    replayOrbitYawOffset = 0;
     if (playerCameras) syncPlayerCameraHeightOffsets(playerCameras, playbackCameraHeightOffset);
     const slot = playbackFollowSlot;
     if (mode === 'free') {
@@ -619,7 +640,7 @@ export const replayManager = {
         if (res?.ok) savedPath = res.path;
       }
 
-      const record = { filename, bytes, byteLength: bytes.byteLength, meta: payload.meta, savedPath };
+      const record = { filename, bytes, byteLength: bytes.byteLength, meta: payload.meta, savedPath, userSaved: false };
       lastSavedReplay = record;
       recentReplays.unshift(record);
       if (recentReplays.length > MAX_MEMORY_REPLAYS) recentReplays.length = MAX_MEMORY_REPLAYS;
@@ -629,7 +650,7 @@ export const replayManager = {
       const where = savedPath ? `saved -> ${savedPath}` : 'cached in memory (call window.__vb.downloadLastReplay())';
       console.log(`[replay] v${payload.meta.version} ${filename} (${kb} KB, ${payload.meta.summary?.totalFrames || 0} ticks, ${goalCount} goals) ${where}`);
 
-      if (typeof window !== 'undefined') {
+      if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function' && typeof CustomEvent === 'function') {
         window.dispatchEvent(new CustomEvent('vb:replaysaved', { detail: { filename, byteLength: bytes.byteLength, savedPath, meta: payload.meta } }));
       }
       return record;
@@ -651,7 +672,9 @@ export const replayManager = {
 
   /** Triggers a browser file download for the currently playing or last recorded `.vbreplay`. */
   downloadLastReplay(record = currentPlaybackRecord || lastSavedReplay) {
-    if (!record?.bytes || typeof document === 'undefined' || typeof Blob === 'undefined') return false;
+    if (!record?.bytes) return false;
+    record.userSaved = true;
+    if (typeof document === 'undefined' || typeof Blob === 'undefined') return true;
     const blob = new Blob([record.bytes], { type: 'application/octet-stream' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');

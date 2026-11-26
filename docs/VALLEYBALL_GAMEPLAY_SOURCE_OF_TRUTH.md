@@ -1,6 +1,6 @@
 # VALLEYBALL: OFFICIAL GAMEPLAY SOURCE OF TRUTH & RULEBOOK
 
-**Version:** 2.1 (v0.4.2.1 Baseline, updated 2026-11-24)  
+**Version:** 2.2 (v0.4.3 Championship Baseline, updated 2026-11-26)  
 **Status:** Canonical Design & Rules Contract  
 **Audience:** Game Designers, Systems Engineers, Gameplay Programmers, Tournament Organizers, AI Agents  
 **Authoritative Location:** `docs/VALLEYBALL_GAMEPLAY_SOURCE_OF_TRUTH.md`
@@ -165,15 +165,15 @@ When `ticksRemaining` reaches `0`:
 - If one team leads, the arena buzzer sounds and the match transitions to the **Victory Screen** showing team and individual Hustle stats.
 - If the score is **tied**, physics freezes in place and opens the **Overtime Agreement Menu**.
 
-### 8.2 Overtime Agreement Menu (Shipped in v0.4.1)
-On a tied match, players choose:
+### 8.2 Overtime Agreement Menu (Updated in v0.4.3)
+On a tied match, players open the Overtime Agreement Menu and choose:
 - **Format**:
   - **Golden Goal (Official Tournament Default)**: Sudden death; next goal wins immediately.
   - **Timed Overtime**: Extra period of `1:00`, `2:00`, `3:00`, or `5:00`.
   - **Accept Draw**: Concludes the match as a tie.
-- **Positioning**:
-  - **Respawn at Defending Goals (Official Tournament Default)**: Resets athletes onto stream heads aligned with each team's current attacking/defending end and drops the ball at midfield after a countdown.
-  - **Resume Live in Place**: Unfreezes exact court positions and velocities immediately.
+- **Positioning** (both options start with a 3-second countdown):
+  - **Resume Live in Place**: Unfreezes exact court positions and velocities after a 3-second countdown.
+  - **Respawn at Defending Goals**: Resets athletes onto stream heads aligned with each team's current attacking/defending end and drops the ball at midfield after a 3-second countdown.
 
 ---
 
@@ -194,4 +194,4 @@ Performance is evaluated across 10 stats presented in a **ROYGBIV spectrum** (bo
 
 ---
 
-*This document is the canonical source of truth for Valleyball gameplay mechanics and matches the shipped v0.4.1 / v0.4.2 build.*
+*This document is the canonical source of truth for Valleyball gameplay mechanics and matches the v0.4.3 championship release.*

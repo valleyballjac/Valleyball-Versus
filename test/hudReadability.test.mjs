@@ -1,8 +1,9 @@
 /**
- * Regression tests for render performance defaults, optional OFF-by-default
- * readability HUD modules (`hudConfig`, terrain-conformal rainbow `ballDropRing`,
- * proximity-faded strike-range guide, clean broadcast reset, shared ragdoll materials,
- * and shadow-free headwear).
+ * Regression tests for render performance defaults, 3-tier HUD presets
+ * (Minimal / Clean Broadcast, Standard default, Rookie / Live Room),
+ * localStorage persistence, deterministic clean override, controlsOverlay,
+ * settingsModal, inGameMenu sync, terrain-conformal rainbow `ballDropRing`,
+ * shared ragdoll materials, and shadow-free headwear.
  *
  * Run: npm test
  */
@@ -12,11 +13,16 @@ import * as THREE from 'three';
 
 import { TUNING } from '../src/config/tuning.js';
 import {
+  CLEAN_HUD_PREFS,
+  STANDARD_HUD_PREFS,
+  ROOKIE_HUD_PREFS,
   DEFAULT_HUD_PREFS,
   getHudPrefs,
   setHudPrefs,
   setCleanBroadcastHud,
   isCleanBroadcastHud,
+  applyHudPreset,
+  getActiveHudPresetId,
   resetHudPrefs,
   subscribeHudPrefs,
 } from '../src/config/hudConfig.js';
@@ -28,45 +34,162 @@ import { createRagdollVisuals, updateAthletePalette, disposeRagdollVisuals } fro
 import { buildHeadwear } from '../src/sim/cosmeticsBuilders.js';
 import { getCourtFloorY } from '../src/ai/courtHeightmap.js';
 
-test('hudConfig defaults every optional readability overlay to OFF and supports clean broadcast reset', () => {
+function createMockDom() {
+  const byId = new Map();
+  const makeEl = (tag = 'div') => {
+    const classes = new Set();
+    const el = {
+      tagName: String(tag).toUpperCase(),
+      _id: '',
+      get id() { return this._id; },
+      set id(v) {
+        if (this._id) byId.delete(this._id);
+        this._id = String(v || '');
+        if (this._id) byId.set(this._id, this);
+      },
+      style: {},
+      dataset: {},
+      children: [],
+      options: [],
+      hidden: false,
+      textContent: '',
+      _innerHTML: '',
+      get innerHTML() { return this._innerHTML; },
+      set innerHTML(v) {
+        this._innerHTML = String(v || '');
+        this.children.length = 0;
+        this.options.length = 0;
+      },
+      value: '',
+      selectedIndex: 0,
+      className: '',
+      classList: {
+        add(c) { classes.add(c); },
+        remove(c) { classes.delete(c); },
+        toggle(c, force) {
+          if (force === undefined) {
+            if (classes.has(c)) { classes.delete(c); return false; }
+            classes.add(c);
+            return true;
+          }
+          if (force) classes.add(c);
+          else classes.delete(c);
+          return Boolean(force);
+        },
+        contains(c) { return classes.has(c); },
+      },
+      appendChild(child) {
+        this.children.push(child);
+        if (child && child.tagName === 'OPTION') {
+          this.options.push(child);
+        }
+        return child;
+      },
+      append(...nodes) {
+        for (const n of nodes) this.appendChild(n);
+      },
+      querySelector(sel) {
+        if (sel && sel.startsWith('#')) {
+          return byId.get(sel.slice(1)) || null;
+        }
+        return null;
+      },
+      scrollIntoView() {},
+      click() {
+        if (typeof this.onclick === 'function') this.onclick();
+      },
+      dispatchEvent(ev) {
+        const type = ev?.type || '';
+        if (type === 'input' && typeof this.oninput === 'function') this.oninput({ target: this });
+        if (type === 'change' && typeof this.onchange === 'function') this.onchange({ target: this });
+        return true;
+      },
+    };
+    return el;
+  };
+  const body = makeEl('body');
+  const document = {
+    body,
+    createElement: (tag) => makeEl(tag),
+    getElementById: (id) => byId.get(id) || null,
+  };
+  return { document, makeEl, byId };
+}
+
+function createMemoryStorage(initial = {}) {
+  const map = new Map(Object.entries(initial));
+  const writes = [];
+  return {
+    writes,
+    getItem(k) { return map.has(k) ? map.get(k) : null; },
+    setItem(k, v) {
+      writes.push([k, v]);
+      map.set(k, String(v));
+    },
+    removeItem(k) { map.delete(k); },
+    clear() { map.clear(); },
+  };
+}
+
+test('hudConfig ships Standard defaults, 3 presets, and clean broadcast reset preserving graphicsPreset', () => {
   resetHudPrefs();
   const prefs = getHudPrefs();
-  assert.equal(prefs.scorebugMode, 'off');
-  assert.equal(prefs.ballDropRing, false);
+  assert.equal(DEFAULT_HUD_PREFS, STANDARD_HUD_PREFS);
+  assert.equal(prefs.scorebugMode, 'splitscreen');
+  assert.equal(prefs.ballDropRing, true);
   assert.equal(prefs.strikeRangeGuide, false);
-  assert.equal(prefs.orientationCues, false);
+  assert.equal(prefs.orientationCues, true);
+  assert.equal(prefs.controlsOverlay, false);
   assert.equal(prefs.graphicsPreset, 'balanced');
-  assert.equal(isCleanBroadcastHud(), true);
+  assert.equal(getActiveHudPresetId(), 'standard');
+  assert.equal(isCleanBroadcastHud(), false);
+  assert.equal(TUNING.controlsHud.userEnabled, false);
   assert.deepEqual(DEFAULT_HUD_PREFS, {
-    scorebugMode: 'off',
-    ballDropRing: false,
+    scorebugMode: 'splitscreen',
+    ballDropRing: true,
     strikeRangeGuide: false,
-    orientationCues: false,
+    orientationCues: true,
+    controlsOverlay: false,
     graphicsPreset: 'balanced',
   });
 
   let events = 0;
   const unsub = subscribeHudPrefs(() => { events++; });
   try {
-    setHudPrefs({ scorebugMode: 'splitscreen', ballDropRing: true, strikeRangeGuide: true, graphicsPreset: 'low' });
-    assert.equal(getHudPrefs().scorebugMode, 'splitscreen');
-    assert.equal(getHudPrefs().ballDropRing, true);
-    assert.equal(getHudPrefs().strikeRangeGuide, true);
-    assert.equal(getHudPrefs().graphicsPreset, 'low');
-    assert.equal(isCleanBroadcastHud(), false);
+    // Rookie / Live Room preset turns on always scorebug, guides, and persistent controls overlay
+    applyHudPreset('rookie');
+    assert.deepEqual({ ...getHudPrefs() }, { ...ROOKIE_HUD_PREFS });
+    assert.equal(getActiveHudPresetId(), 'rookie');
+    assert.equal(TUNING.controlsHud.userEnabled, true);
     assert.equal(events, 1);
+
+    // Partial toggle moves active preset to 'custom'
+    setHudPrefs({ strikeRangeGuide: false, graphicsPreset: 'low' });
+    assert.equal(getActiveHudPresetId(), 'custom');
+    assert.equal(getHudPrefs().graphicsPreset, 'low');
+    assert.equal(events, 2);
 
     // Invalid values are ignored without mutating or notifying
-    setHudPrefs({ scorebugMode: 'invalid_mode', ballDropRing: 'yes', graphicsPreset: 'potato' });
-    assert.equal(getHudPrefs().scorebugMode, 'splitscreen');
-    assert.equal(getHudPrefs().ballDropRing, true);
+    setHudPrefs({ scorebugMode: 'invalid_mode', ballDropRing: 'yes', controlsOverlay: 'yes', graphicsPreset: 'potato' });
+    assert.equal(getHudPrefs().scorebugMode, 'always');
+    assert.equal(getHudPrefs().controlsOverlay, true);
     assert.equal(getHudPrefs().graphicsPreset, 'low');
-    assert.equal(events, 1);
+    assert.equal(events, 2);
+
+    // Minimal preset preserves graphicsPreset and clears all HUD/overlay flags
+    applyHudPreset('minimal');
+    assert.equal(getActiveHudPresetId(), 'minimal');
+    assert.equal(isCleanBroadcastHud(), true);
+    assert.equal(getHudPrefs().controlsOverlay, false);
+    assert.equal(getHudPrefs().graphicsPreset, 'low');
+    assert.equal(TUNING.controlsHud.userEnabled, false);
 
     // Clean broadcast reset turns off all overlays while keeping graphics preset intact
+    applyHudPreset('rookie');
     setCleanBroadcastHud();
     assert.equal(isCleanBroadcastHud(), true);
-    assert.equal(getHudPrefs().graphicsPreset, 'low');
+    assert.deepEqual({ ...getHudPrefs() }, { ...CLEAN_HUD_PREFS, graphicsPreset: 'low' });
+    assert.equal(TUNING.controlsHud.userEnabled, false);
   } finally {
     unsub();
     resetHudPrefs();
@@ -114,7 +237,10 @@ test('createBallDropRings conforms to terrain without clipping, stays constant o
   };
 
   try {
-    // 1. Default OFF -> stays completely hidden
+    // 1. Standard default enables ballDropRing; Minimal / Clean Broadcast hides completely
+    rings.update({ gameState: 'match', balls: [airborneBall], athletes: [nearAthlete, farAthlete] });
+    assert.equal(rings.group.visible, true);
+    setCleanBroadcastHud();
     rings.update({ gameState: 'match', balls: [airborneBall], athletes: [nearAthlete, farAthlete] });
     assert.equal(rings.group.visible, false);
 
@@ -347,4 +473,380 @@ test('mergeStaticGroupByMaterial preserves vertex color attributes (e.g. purple 
 
   merged.geometry.dispose();
   mat.dispose();
+});
+
+test('hudConfig persists explicit false booleans and controlsOverlay across reload, and handles throwing localStorage', async () => {
+  const prevWindow = globalThis.window;
+  const storage = createMemoryStorage();
+  try {
+    globalThis.window = { location: { search: '' }, localStorage: storage };
+    const mod1 = await import(`../src/config/hudConfig.js?persist1=${Date.now()}`);
+    mod1.setHudPrefs({
+      scorebugMode: 'off',
+      ballDropRing: false,
+      orientationCues: false,
+      strikeRangeGuide: false,
+      controlsOverlay: false,
+    });
+    const saved = JSON.parse(storage.getItem('valleyball_hud_prefs_v1'));
+    assert.equal(saved.ballDropRing, false);
+    assert.equal(saved.orientationCues, false);
+    assert.equal(saved.controlsOverlay, false);
+    assert.equal(saved.scorebugMode, 'off');
+
+    // Reload module with Standard defaults: saved false booleans must override Standard true defaults
+    const mod2 = await import(`../src/config/hudConfig.js?persist2=${Date.now()}`);
+    assert.equal(mod2.getHudPrefs().ballDropRing, false);
+    assert.equal(mod2.getHudPrefs().orientationCues, false);
+    assert.equal(mod2.getHudPrefs().scorebugMode, 'off');
+    assert.equal(mod2.getHudPrefs().controlsOverlay, false);
+    assert.equal(TUNING.controlsHud.userEnabled, false);
+
+    // Rookie controlsOverlay: true persists across reload and syncs TUNING.controlsHud.userEnabled
+    mod2.applyHudPreset('rookie');
+    assert.equal(JSON.parse(storage.getItem('valleyball_hud_prefs_v1')).controlsOverlay, true);
+    const mod3 = await import(`../src/config/hudConfig.js?persist3=${Date.now()}`);
+    assert.equal(mod3.getHudPrefs().controlsOverlay, true);
+    assert.equal(mod3.getActiveHudPresetId(), 'rookie');
+    assert.equal(TUNING.controlsHud.userEnabled, true);
+
+    // Sandboxed iframe where accessing window.localStorage getter throws must not crash
+    globalThis.window = {
+      location: { search: '' },
+      get localStorage() {
+        throw new Error('SecurityError');
+      },
+    };
+    const mod4 = await import(`../src/config/hudConfig.js?persist4=${Date.now()}`);
+    assert.equal(mod4.getHudPrefs().scorebugMode, 'splitscreen');
+    assert.equal(TUNING.controlsHud.userEnabled, false);
+    mod4.applyHudPreset('rookie');
+    assert.equal(mod4.getHudPrefs().controlsOverlay, true);
+  } finally {
+    if (prevWindow === undefined) delete globalThis.window;
+    else globalThis.window = prevWindow;
+    resetHudPrefs();
+  }
+});
+
+test('isDeterministicRun forces CLEAN_HUD_PREFS and blocks localStorage read/write for captureTick, fixture, and stateTrace', async () => {
+  const prevWindow = globalThis.window;
+  try {
+    for (const query of ['?captureTick=300', '?fixture=serve', '?stateTrace=1']) {
+      const storage = createMemoryStorage({
+        valleyball_hud_prefs_v1: JSON.stringify(ROOKIE_HUD_PREFS),
+      });
+      globalThis.window = { location: { search: query }, localStorage: storage };
+      const mod = await import(`../src/config/hudConfig.js?det=${encodeURIComponent(query)}_${Date.now()}`);
+      assert.equal(mod.getHudPrefs().scorebugMode, 'off', `${query} must force scorebugMode off`);
+      assert.equal(mod.getHudPrefs().ballDropRing, false, `${query} must force ballDropRing false`);
+      assert.equal(mod.getHudPrefs().orientationCues, false, `${query} must force orientationCues false`);
+      assert.equal(mod.getHudPrefs().strikeRangeGuide, false, `${query} must force strikeRangeGuide false`);
+      assert.equal(mod.getHudPrefs().controlsOverlay, false, `${query} must force controlsOverlay false`);
+      assert.equal(mod.isCleanBroadcastHud(), true, `${query} must report clean broadcast HUD`);
+      assert.equal(TUNING.controlsHud.userEnabled, false, `${query} must force controlsHud.userEnabled false`);
+
+      mod.resetHudPrefs();
+      assert.equal(mod.getHudPrefs().ballDropRing, false, `${query} resetHudPrefs stays clean`);
+      assert.equal(storage.writes.length, 0, `${query} must not write localStorage`);
+    }
+  } finally {
+    if (prevWindow === undefined) delete globalThis.window;
+    else globalThis.window = prevWindow;
+    resetHudPrefs();
+  }
+});
+
+test('controlsOverlay preserves kickoff countdown when controlsOverlay is false and stays visible under Rookie preset', async () => {
+  const prevWindow = globalThis.window;
+  const prevDocument = globalThis.document;
+  const { document, makeEl } = createMockDom();
+  const rootEl = makeEl('div');
+  rootEl.id = 'controls-overlay';
+  document.body.appendChild(rootEl);
+
+  const snapshot = [
+    { human: false, available: false, device: 'keyboard', keyset: 0, standard: true, held: 0, pulse: 0 },
+    { human: false, available: false, device: 'keyboard', keyset: 0, standard: true, held: 0, pulse: 0 },
+    { human: false, available: false, device: 'keyboard', keyset: 0, standard: true, held: 0, pulse: 0 },
+    { human: false, available: false, device: 'keyboard', keyset: 0, standard: true, held: 0, pulse: 0 },
+  ];
+
+  try {
+    globalThis.window = { location: { search: '' }, localStorage: createMemoryStorage() };
+    globalThis.document = document;
+    resetHudPrefs();
+    const overlay = await import(`../src/ui/controlsOverlay.js?test=${Date.now()}`);
+    overlay.initControlsOverlay();
+
+    // Standard preset: controlsOverlay === false, visible ONLY during kickoff countdown
+    overlay.updateControlsOverlay(snapshot, 'match', false, false, false, true, false);
+    assert.equal(rootEl.hidden, false, 'Countdown keeps controls overlay visible when controlsOverlay is false');
+
+    overlay.updateControlsOverlay(snapshot, 'match', false, false, false, false, false);
+    assert.equal(rootEl.hidden, true, 'After countdown controls overlay hides when controlsOverlay is false');
+
+    // Rookie preset enables persistent controls overlay even after countdown ends
+    applyHudPreset('rookie');
+    overlay.updateControlsOverlay(snapshot, 'match', false, false, false, false, false);
+    assert.equal(rootEl.hidden, false, 'Rookie preset keeps controls overlay visible during live match');
+
+    // Opening menu hides overlay; Minimal preset turns persistent overlay back off
+    overlay.updateControlsOverlay(snapshot, 'match', true, false, false, false, false);
+    assert.equal(rootEl.hidden, true, 'Menu open hides controls overlay');
+
+    applyHudPreset('minimal');
+    overlay.updateControlsOverlay(snapshot, 'match', false, false, false, false, false);
+    assert.equal(rootEl.hidden, true, 'Minimal preset keeps controls overlay hidden');
+  } finally {
+    if (prevWindow === undefined) delete globalThis.window;
+    else globalThis.window = prevWindow;
+    if (prevDocument === undefined) delete globalThis.document;
+    else globalThis.document = prevDocument;
+    resetHudPrefs();
+  }
+});
+
+test('settingsModal fixes controlsOverlay initial selection, Left/Right nav toggling, and 1-click 3-tier HUD presets', async () => {
+  const prevWindow = globalThis.window;
+  const prevDocument = globalThis.document;
+  const prevEvent = globalThis.Event;
+  const { document, makeEl } = createMockDom();
+  const root = makeEl('div');
+  const storage = createMemoryStorage();
+  const renderCalls = [];
+
+  try {
+    globalThis.Event = class MockEvent { constructor(type) { this.type = type; } };
+    globalThis.window = {
+      location: { search: '' },
+      localStorage: storage,
+    };
+    globalThis.document = document;
+
+    const settingsMod = await import(`../src/features/ui/mainMenu/settingsModal.js?settings=${Date.now()}`);
+
+    // Start in Rookie so controlsOverlay === true before building modal (tests :227 fix)
+    applyHudPreset('rookie');
+    const modalEl = settingsMod.buildMainMenuSettingsModal(root, [{ cameraMode: 'chase' }], {
+      onRenderSettingsChange: (s) => renderCalls.push(s),
+    });
+
+    const findOverlayButtons = () => {
+      const box = modalEl.children[0];
+      const all = [];
+      const walk = (n) => {
+        all.push(n);
+        if (n.children) n.children.forEach(walk);
+      };
+      walk(box);
+      const hiddenBtn = all.find((n) => n.tagName === 'BUTTON' && n.textContent === 'Hidden (Default)');
+      const visibleBtn = all.find((n) => n.tagName === 'BUTTON' && n.textContent === 'Visible');
+      return { hiddenBtn, visibleBtn };
+    };
+
+    const { hiddenBtn, visibleBtn } = findOverlayButtons();
+    assert.equal(visibleBtn.style.background, '#2563eb', 'Visible button must be highlighted when controlsOverlay is true');
+    assert.notEqual(hiddenBtn.style.background, '#2563eb', 'Hidden button must not be highlighted when controlsOverlay is true');
+
+    // Focus starts on hudPresetRow (index 1 on Tab 0: [tabBar, hudPresetRow, overlayRow, ...]); move down 1 step to overlayRow
+    modalEl._updateFocusUI();
+    modalEl._moveFocus(1);
+
+    // Left toggles true -> false (catches :599 bug)
+    modalEl._handleLeft();
+    assert.equal(getHudPrefs().controlsOverlay, false);
+    assert.equal(TUNING.controlsHud.userEnabled, false);
+    assert.equal(JSON.parse(storage.getItem('valleyball_hud_prefs_v1')).controlsOverlay, false);
+    assert.equal(hiddenBtn.style.background, '#2563eb');
+    assert.equal(document.getElementById('settings-hud-preset-badge').textContent, 'Custom');
+
+    // Right toggles false -> true (catches :604 bug)
+    modalEl._handleRight();
+    assert.equal(getHudPrefs().controlsOverlay, true);
+    assert.equal(TUNING.controlsHud.userEnabled, true);
+    assert.equal(visibleBtn.style.background, '#2563eb');
+
+    // Action toggles true -> false (catches :609 bug)
+    modalEl._handleAction();
+    assert.equal(getHudPrefs().controlsOverlay, false);
+    assert.equal(hiddenBtn.style.background, '#2563eb');
+
+    // 1-click Minimal & Standard preset buttons
+    document.getElementById('btn-hud-preset-minimal').click();
+    assert.equal(getActiveHudPresetId(), 'minimal');
+    assert.equal(isCleanBroadcastHud(), true);
+    assert.equal(document.getElementById('settings-hud-preset-badge').textContent, 'Minimal');
+
+    document.getElementById('btn-hud-preset-standard').click();
+    assert.equal(getActiveHudPresetId(), 'standard');
+    assert.equal(getHudPrefs().scorebugMode, 'splitscreen');
+    assert.equal(getHudPrefs().ballDropRing, true);
+    assert.equal(getHudPrefs().orientationCues, true);
+    assert.equal(getHudPrefs().controlsOverlay, false);
+    assert.equal(document.getElementById('settings-hud-preset-badge').textContent, 'Standard');
+    assert.ok(renderCalls.length >= 4);
+  } finally {
+    if (prevWindow === undefined) delete globalThis.window;
+    else globalThis.window = prevWindow;
+    if (prevDocument === undefined) delete globalThis.document;
+    else globalThis.document = prevDocument;
+    if (prevEvent === undefined) delete globalThis.Event;
+    else globalThis.Event = prevEvent;
+    resetHudPrefs();
+  }
+});
+
+test('inGameMenu is ultra-lean (starts focused on Resume, zero graphics rows) and Main Menu Graphics tab keeps Rookie overlay on DPR change', async () => {
+  const prevWindow = globalThis.window;
+  const prevDocument = globalThis.document;
+  const { document } = createMockDom();
+  const renderCalls = [];
+
+  try {
+    const storage = createMemoryStorage();
+    globalThis.window = {
+      location: { search: '' },
+      localStorage: storage,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    };
+    globalThis.document = document;
+
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    const settingsMod = await import(`../src/features/ui/mainMenu/settingsModal.js?gfxTab=${Date.now()}`);
+    const inGameMod = await import(`../src/ui/inGameMenu.js?ingame=${Date.now()}`);
+
+    applyHudPreset('rookie');
+    const settingsEl = settingsMod.buildMainMenuSettingsModal(root, [{ cameraMode: 'chase' }], {
+      onRenderSettingsChange: (s) => renderCalls.push(s),
+    });
+    inGameMod.initInGameMenu({
+      onRenderSettingsChange: (s) => renderCalls.push(s),
+    });
+
+    assert.equal(document.getElementById('ingame-hud-preset-badge').textContent, 'Rookie');
+
+    // Switch Main Menu Settings to Tab 1 (Graphics) and click 1.0x (Fast): must preserve Rookie controlsOverlay
+    document.getElementById('settings-tab-graphics').click();
+    const gfxBtns = [];
+    const walk = (n) => {
+      if (n.tagName === 'BUTTON') gfxBtns.push(n);
+      if (n.children) n.children.forEach(walk);
+    };
+    walk(settingsEl);
+    const dprBtn = gfxBtns.find((b) => b.textContent === '1.0x (Fast)');
+    assert.ok(dprBtn, '1.0x (Fast) button exists under Main Menu Settings Graphics tab');
+    dprBtn.click();
+    assert.equal(getHudPrefs().controlsOverlay, true, 'Changing DPR in Graphics tab must not disable Rookie controls overlay');
+
+    // Ultra-lean In-Game Pause Menu omits DPR/Shadow rows and starts focused on RESUME GAME
+    const overlayEl = document.getElementById('ingame-menu-overlay');
+    const inGameBtns = [];
+    const walkInGame = (n) => {
+      if (n.tagName === 'BUTTON') inGameBtns.push(n);
+      if (n.children) n.children.forEach(walkInGame);
+    };
+    walkInGame(overlayEl);
+    assert.equal(inGameBtns.some((b) => b.textContent === '1.0x (Fast)'), false, 'Graphics DPR buttons removed from inGameMenu');
+
+    // 1-click Minimal preset in-game disables controlsOverlay and updates badge
+    document.getElementById('btn-ingame-hud-preset-minimal').click();
+    assert.equal(getHudPrefs().controlsOverlay, false);
+    assert.equal(renderCalls.at(-1).showControlsOverlay, false);
+    assert.equal(document.getElementById('ingame-hud-preset-badge').textContent, 'Minimal');
+  } finally {
+    if (prevWindow === undefined) delete globalThis.window;
+    else globalThis.window = prevWindow;
+    if (prevDocument === undefined) delete globalThis.document;
+    else globalThis.document = prevDocument;
+    resetHudPrefs();
+  }
+});
+
+test('Regression Bug 3: Main Menu Settings Graphics tab syncs DPR/shadow highlights from TUNING.render and inGameMenu HUD preset clicks do not clobber them', async () => {
+  const prevWindow = globalThis.window;
+  const prevDocument = globalThis.document;
+  const prevSetInterval = globalThis.setInterval;
+  const prevClearInterval = globalThis.clearInterval;
+  const prevDpr = TUNING.render.pixelRatioPreset;
+  const prevShadow = TUNING.render.shadowQuality;
+  const { document } = createMockDom();
+  const renderCalls = [];
+
+  try {
+    globalThis.window = {
+      location: { search: '' },
+      localStorage: createMemoryStorage(),
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    };
+    globalThis.document = document;
+    globalThis.setInterval = () => 1;
+    globalThis.clearInterval = () => {};
+
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    const settingsMod = await import(`../src/features/ui/mainMenu/settingsModal.js?settingsSync=${Date.now()}`);
+    const inGameMod = await import(`../src/ui/inGameMenu.js?ingameSync=${Date.now()}`);
+    TUNING.render.pixelRatioPreset = '1.25';
+    TUNING.render.shadowQuality = 'balanced';
+    const settingsEl = settingsMod.buildMainMenuSettingsModal(root, [{ cameraMode: 'chase' }], {
+      onRenderSettingsChange: (s) => renderCalls.push(s),
+    });
+    inGameMod.initInGameMenu({
+      onRenderSettingsChange: (s) => {
+        renderCalls.push(s);
+        if (s.pixelRatioPreset) TUNING.render.pixelRatioPreset = s.pixelRatioPreset;
+        if (s.shadowQuality) TUNING.render.shadowQuality = s.shadowQuality;
+      },
+    });
+
+    // Simulate external Low (Fast): DPR 1.0 + Shadows off, then open Main Menu Settings Graphics tab
+    TUNING.render.pixelRatioPreset = '1.0';
+    TUNING.render.shadowQuality = 'off';
+    settingsMod.showMainMenuSettingsModal();
+    document.getElementById('settings-tab-graphics').click();
+
+    const gfxPanel = document.getElementById('settings-panel-graphics') || settingsEl;
+    const allBtns = [];
+    const walk = (n) => {
+      if (n.tagName === 'BUTTON') allBtns.push(n);
+      if (n.children) n.children.forEach(walk);
+    };
+    walk(gfxPanel);
+
+    const lowDprBtn = allBtns.find((b) => b.textContent === '1.0x (Fast)');
+    const balDprBtn = allBtns.find((b) => b.textContent === '1.25x (Balanced)');
+    const offShadowBtn = allBtns.find((b) => b.textContent === 'Off');
+    const balShadowBtn = allBtns.find((b) => b.textContent === 'Balanced (1 Tower)');
+
+    assert.equal(lowDprBtn.style.background, '#2563eb', 'Graphics tab highlights synced 1.0x DPR button');
+    assert.notEqual(balDprBtn.style.background, '#2563eb', 'Graphics tab clears stale 1.25x DPR highlight');
+    assert.equal(offShadowBtn.style.background, '#2563eb', 'Graphics tab highlights synced Off shadow button');
+    assert.notEqual(balShadowBtn.style.background, '#2563eb', 'Graphics tab clears stale Balanced shadow highlight');
+    settingsMod.hideMainMenuSettingsModal();
+
+    // Opening inGameMenu focuses RESUME GAME at index 0, and clicking Rookie HUD preset preserves Low DPR/Shadow
+    inGameMod.showInGameMenu();
+    const resumeBtn = document.getElementById('btn-ingame-resume');
+    assert.equal(resumeBtn.dataset.focused, 'true', 'showInGameMenu focuses RESUME GAME first');
+    document.getElementById('btn-ingame-hud-preset-rookie').click();
+    const lastCall = renderCalls.at(-1);
+    assert.deepEqual(lastCall, { showControlsOverlay: true }, 'HUD preset click only sends showControlsOverlay');
+    assert.equal(TUNING.render.pixelRatioPreset, '1.0', 'HUD preset click preserves Low 1.0 DPR');
+    assert.equal(TUNING.render.shadowQuality, 'off', 'HUD preset click preserves Off shadows');
+    inGameMod.hideInGameMenu();
+  } finally {
+    TUNING.render.pixelRatioPreset = prevDpr;
+    TUNING.render.shadowQuality = prevShadow;
+    globalThis.setInterval = prevSetInterval;
+    globalThis.clearInterval = prevClearInterval;
+    if (prevWindow === undefined) delete globalThis.window;
+    else globalThis.window = prevWindow;
+    if (prevDocument === undefined) delete globalThis.document;
+    else globalThis.document = prevDocument;
+    resetHudPrefs();
+  }
 });

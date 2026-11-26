@@ -53,7 +53,18 @@ class SoundManager {
     this.ambienceGain = null;
     this.uiGain = null;
     this.unlocked = false;
+    this._resuming = false;
     this.camera = null;
+
+    this._onResumeFulfilled = () => {
+      this._resuming = false;
+      if (this.ctx?.state !== 'running') return;
+      this._finishUnlock();
+      console.log('[audio] Web Audio context resumed and unlocked.');
+    };
+    this._onResumeRejected = () => {
+      this._resuming = false;
+    };
 
     // Sample buffer cache
     this.buffers = new Map();
@@ -80,6 +91,7 @@ class SoundManager {
   init(camera = null) {
     if (this.ctx) return;
     this.camera = camera;
+    if (typeof window === 'undefined') return;
 
     const AudioCtx = window.AudioContext || window.webkitAudioContext;
     if (!AudioCtx) {
@@ -131,30 +143,61 @@ class SoundManager {
     this.camera = camera;
   }
 
-  setupUnlockListeners() {
-    const unlock = () => {
-      if (this.ctx && this.ctx.state === 'suspended') {
-        this.ctx.resume().then(() => {
-          this.unlocked = true;
-          console.log('[audio] Web Audio context resumed and unlocked.');
-          if (!this.ambienceStarted && TUNING.audio.ambienceVolume > 0) {
-            this.startAmbience();
-          }
-        });
-      } else if (this.ctx && this.ctx.state === 'running') {
-        this.unlocked = true;
-        if (!this.ambienceStarted && TUNING.audio.ambienceVolume > 0) {
-          this.startAmbience();
+  _maybeStartAmbience() {
+    if (!this.ambienceStarted && (TUNING.audio?.ambienceVolume ?? 0) > 0) {
+      this.startAmbience();
+    }
+  }
+
+  _finishUnlock() {
+    this.unlocked = true;
+    this._maybeStartAmbience();
+  }
+
+  unlock() {
+    const ctx = this.ctx;
+    if (!ctx) return false;
+    if (ctx.state === 'suspended') {
+      if (typeof ctx.resume !== 'function') return false;
+      if (this._resuming) return false;
+      try {
+        const res = ctx.resume();
+        if (res && typeof res.then === 'function') {
+          this._resuming = true;
+          res.then(this._onResumeFulfilled, this._onResumeRejected);
+          return false;
         }
+        this._resuming = false;
+        if (this.ctx.state === 'running') {
+          this._finishUnlock();
+          return true;
+        }
+        return false;
+      } catch (_) {
+        this._resuming = false;
+        return false;
       }
-      window.removeEventListener('pointerdown', unlock);
-      window.removeEventListener('keydown', unlock);
-      window.removeEventListener('touchstart', unlock);
+    }
+    if (ctx.state === 'running') {
+      this._resuming = false;
+      this._finishUnlock();
+      return true;
+    }
+    return false;
+  }
+
+  setupUnlockListeners() {
+    if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
+    const onUserGesture = () => {
+      this.unlock();
+      window.removeEventListener('pointerdown', onUserGesture);
+      window.removeEventListener('keydown', onUserGesture);
+      window.removeEventListener('touchstart', onUserGesture);
     };
 
-    window.addEventListener('pointerdown', unlock, { passive: true });
-    window.addEventListener('keydown', unlock, { passive: true });
-    window.addEventListener('touchstart', unlock, { passive: true });
+    window.addEventListener('pointerdown', onUserGesture, { passive: true });
+    window.addEventListener('keydown', onUserGesture, { passive: true });
+    window.addEventListener('touchstart', onUserGesture, { passive: true });
   }
 
   /**
@@ -785,7 +828,14 @@ class SoundManager {
   }
 
   startAmbience() {
-    if (!this.ctx || this.ambienceStarted) return;
+    if (
+      !this.ctx ||
+      this.ambienceStarted ||
+      typeof this.ctx.createBuffer !== 'function' ||
+      typeof this.ctx.createBufferSource !== 'function'
+    ) {
+      return;
+    }
     this.ambienceStarted = true;
 
     const sampleRate = this.ctx.sampleRate;

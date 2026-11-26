@@ -9,6 +9,7 @@ import {
 } from '../../../input/inputRouter.js';
 import { createMenuPadTracker, MENU_PAD } from '../../../input/menuPads.js';
 import { hideMainMenuSettingsModal, getMainMenuSettingsModalEl } from './settingsModal.js';
+import { getFirstTimeSetupModalEl } from './firstTimeSetupModal.js';
 import { hideHowToPlayModal, getControlsModalEl } from './howToPlayModal.js';
 import { updateTitleFocusUI, updateTitleHostPrompt } from './titleScreen.js';
 
@@ -93,6 +94,71 @@ function activeMatchSlotCount() {
   return navCallbacks.playerSetup?.getActiveMatchPlayerCount?.() || 2;
 }
 
+function getSetupHostSlot() {
+  const cfgs = navCallbacks.playerSetup?.playerConfigs;
+  if (!cfgs || cfgs[0]?.type === 'human') return 0;
+  const n = activeMatchSlotCount();
+  for (let i = 0; i < n; i++) {
+    if (cfgs[i]?.type === 'human') return i;
+  }
+  return 0;
+}
+
+function isSetupHostSlot(ownerSlot) {
+  if (ownerSlot === 0) return true;
+  const cfgs = navCallbacks.playerSetup?.playerConfigs;
+  if (!cfgs || cfgs[0]?.type === 'human') return false;
+  return ownerSlot >= 0 && ownerSlot === getSetupHostSlot();
+}
+
+function resolvePage2KeyOwner(keyset) {
+  const cfgs = navCallbacks.playerSetup?.playerConfigs;
+  const n = activeMatchSlotCount();
+  const mappings = getExplicitDeviceMappings();
+  if (!mappings) {
+    const fallback = keyset < n ? keyset : -1;
+    if (fallback >= 0 && cfgs?.[fallback]?.type === 'human') return fallback;
+    if (keyset === 1) {
+      for (let s = 0; s < n; s++) {
+        if (cfgs?.[s]?.type === 'human') return s;
+      }
+    }
+    return -1;
+  }
+  let kb1Claimed = false;
+  let kb2Claimed = false;
+  let kb1Slot = -1;
+  for (let s = 0; s < n; s++) {
+    if (cfgs?.[s]?.type !== 'human') continue;
+    const m = mappings[s];
+    if (m?.type === 'keyboard') {
+      const ks = m.keyId === 'kb2' ? 1 : 0;
+      if (ks === 0) {
+        kb1Claimed = true;
+        if (kb1Slot < 0) kb1Slot = s;
+      } else {
+        kb2Claimed = true;
+      }
+      if (ks === keyset) return s;
+    }
+  }
+  const targetKeyId = keyset === 1 ? 'kb2' : 'kb1';
+  if ((keyset === 0 && kb1Claimed) || (keyset === 1 && kb2Claimed)) return -1;
+  const freeKeysets = [];
+  if (!kb1Claimed) freeKeysets.push('kb1');
+  if (!kb2Claimed) freeKeysets.push('kb2');
+  let unmappedIdx = 0;
+  for (let s = 0; s < n; s++) {
+    if (cfgs?.[s]?.type !== 'human' || mappings[s]) continue;
+    const assignedKeyId = freeKeysets[unmappedIdx++];
+    if (assignedKeyId === targetKeyId) return s;
+  }
+  if (keyset === 1 && kb1Claimed && !kb2Claimed && kb1Slot >= 0) {
+    return kb1Slot;
+  }
+  return -1;
+}
+
 function soloHumanSlot() {
   const ps = navCallbacks.playerSetup;
   const cfgs = ps.playerConfigs;
@@ -145,17 +211,18 @@ function toggleReadyFrom(ownerSlot, target) {
 
 function toggleFocusedColumn(dir = 1, ownerSlot = -1) {
   const ps = navCallbacks.playerSetup;
-  // Lock P2-P4 strictly to their own column; only P1 (ownerSlot <= 0) can cycle onto AI slots
-  if (ownerSlot >= 1) {
+  // Lock non-host guests strictly to their own column; only Setup Host can cycle onto AI slots
+  if (ownerSlot >= 0 && !isSetupHostSlot(ownerSlot)) {
     soundManager.playTone(220, 0.1, 'sawtooth', 0.15);
     return ownerSlot;
   }
+  const hostSlot = ownerSlot >= 0 ? ownerSlot : getSetupHostSlot();
   const n = activeMatchSlotCount();
   const baseOrder = n >= 4 ? [0, 2, 1, 3] : [0, 1];
-  const order = baseOrder.filter((s) => s === 0 || ps.playerConfigs?.[s]?.type === 'ai');
+  const order = baseOrder.filter((s) => s === hostSlot || ps.playerConfigs?.[s]?.type === 'ai');
   if (order.length <= 1) {
     soundManager.playTone(220, 0.1, 'sawtooth', 0.15);
-    return 0;
+    return hostSlot;
   }
   const curIdx = Math.max(0, order.indexOf(ps.focusedColumn));
   ps.focusedColumn = order[(curIdx + dir + order.length) % order.length];
@@ -176,7 +243,7 @@ function screen1Action(col, action, ownerSlot = -1) {
   const blockSelfAiWipe = row === 6 && ownerSlot >= 0 && col === ownerSlot && ps.playerConfigs?.[col]?.type === 'human';
   if (action === 'left' || action === 'right') {
     if (row === 8) {
-      if (ownerSlot >= 1) return false;
+      if (ownerSlot >= 0 && !isSetupHostSlot(ownerSlot)) return false;
       ps.screen1ActionCol = action === 'left' ? 0 : 1;
       ps.updateFocusUI();
       soundManager.playTone(400, 0.04, 'sine', 0.15);
@@ -195,8 +262,8 @@ function screen1Action(col, action, ownerSlot = -1) {
   }
   if (action === 'act') {
     if (row === 8) {
-      if (ownerSlot >= 1) {
-        // P2-P4 confirm on row 8 toggles their own Ready badge instead of hijacking room navigation
+      if (ownerSlot >= 0 && !isSetupHostSlot(ownerSlot)) {
+        // Non-host confirm on row 8 toggles their own Ready badge instead of hijacking room navigation
         toggleReadyFrom(ownerSlot, ownerSlot);
         return false;
       }
@@ -218,8 +285,8 @@ function screen1Action(col, action, ownerSlot = -1) {
 
 /**
  * Screen 2 (match rules):
- * - Only P1 (ownerSlot <= 0) can edit Match Rules (Row 0 = Ball Size, Row 1 = Match Length, Row 2 = P1 Action Bar [Back, Ready P1, Launch]).
- * - P2, P3, P4 (ownerSlot >= 1) default directly to their own Ready button and can only toggle their own Ready state.
+ * - Only Setup Host can edit Match Rules (Row 0 = Ball Size, Row 1 = Match Length, Row 2 = Action Bar).
+ * - Non-host players default directly to their own Ready button and can only toggle their own Ready state.
  */
 function rulesAction(action, ownerSlot) {
   const ps = navCallbacks.playerSetup;
@@ -237,8 +304,10 @@ function rulesAction(action, ownerSlot) {
     return true;
   };
 
-  // Non-P1 human players (P2, P3, P4): locked strictly to their own Ready toggle (never yank P1 back to Page 1)
-  if (ownerSlot >= 1) {
+  if (ownerSlot < 0) return;
+
+  // Non-host human players: locked strictly to their own Ready toggle (never yank Host back to Page 1)
+  if (!isSetupHostSlot(ownerSlot)) {
     if (action === 'act' || action === 'ready' || action === 'start') {
       toggleReadyFrom(ownerSlot, ownerSlot);
     } else if (action === 'back') {
@@ -251,8 +320,8 @@ function rulesAction(action, ownerSlot) {
     return;
   }
 
-  // P1 (ownerSlot <= 0): controls Match Rules (Row 0 = Ball Size, Row 1 = Match Length, Row 2 = [Back, P1 Ready, Launch])
-  const p1DefaultCol = ps.playerConfigs?.[0]?.type === 'human' ? 1 : 2;
+  const hostSlot = ownerSlot >= 0 ? ownerSlot : getSetupHostSlot();
+  const hostDefaultCol = ps.playerConfigs?.[hostSlot]?.type === 'human' ? 1 : 2;
   if (action === 'up' || action === 'down') {
     ps.matchRulesFocusRow = Math.max(0, Math.min(2, row + (action === 'up' ? -1 : 1)));
     ps.updateFocusUI();
@@ -262,7 +331,7 @@ function rulesAction(action, ownerSlot) {
     if (row === 0) ps.cycleMatchBall(dir);
     else if (row === 1) ps.cycleMatchDuration(dir);
     else {
-      ps.matchRulesActionCol = Math.max(0, Math.min(2, (ps.matchRulesActionCol ?? p1DefaultCol) + dir));
+      ps.matchRulesActionCol = Math.max(0, Math.min(2, (ps.matchRulesActionCol ?? hostDefaultCol) + dir));
       ps.updateFocusUI();
     }
     soundManager.playTone(440, 0.04, 'sine', 0.15);
@@ -274,15 +343,15 @@ function rulesAction(action, ownerSlot) {
       ps.updateFocusUI();
       soundManager.playTone(520, 0.035, 'sine', 0.12);
     } else {
-      const col = Math.max(0, Math.min(2, ps.matchRulesActionCol ?? p1DefaultCol));
+      const col = Math.max(0, Math.min(2, ps.matchRulesActionCol ?? hostDefaultCol));
       if (col === 0) {
         ps.btnBack?.click();
       } else if (col === 1) {
-        if (ps.playerConfigs?.[0]?.type === 'human') toggleReadyFrom(0, 0);
+        if (ps.playerConfigs?.[hostSlot]?.type === 'human') toggleReadyFrom(hostSlot, hostSlot);
         else if (!ps.btnStartMatch?.disabled) ps.btnStartMatch?.click();
       } else if (col === 2) {
         if (!ps.btnStartMatch?.disabled) ps.btnStartMatch?.click();
-        else if (ps.playerConfigs?.[0]?.type === 'human') toggleReadyFrom(0, 0);
+        else if (ps.playerConfigs?.[hostSlot]?.type === 'human') toggleReadyFrom(hostSlot, hostSlot);
       }
     }
   } else if (action === 'ready') {
@@ -293,8 +362,8 @@ function rulesAction(action, ownerSlot) {
       ps.updateReadyUI();
     } else if (isAllAI()) {
       ps.btnStartMatch?.click();
-    } else if (ps.playerConfigs?.[0]?.type === 'human') {
-      toggleReadyFrom(0, 0);
+    } else if (ps.playerConfigs?.[hostSlot]?.type === 'human') {
+      toggleReadyFrom(hostSlot, hostSlot);
     }
   } else if (action === 'back') {
     if (ps.matchCountdownActive) {
@@ -310,7 +379,7 @@ function rulesAction(action, ownerSlot) {
   } else if (action === 'start') {
     if (ps.matchCountdownActive) ps.launchMatchNow();
     else if (!ps.btnStartMatch?.disabled) ps.btnStartMatch?.click();
-    else if (ps.playerConfigs?.[0]?.type === 'human') toggleReadyFrom(0, 0);
+    else if (ps.playerConfigs?.[hostSlot]?.type === 'human') toggleReadyFrom(hostSlot, hostSlot);
   }
 }
 
@@ -324,12 +393,54 @@ export function startMenuGamepadPolling() {
       return;
     }
 
+    // 0.25 First-Time Setup Modal Open
+    const firstSetupEl = getFirstTimeSetupModalEl();
+    if (firstSetupEl && firstSetupEl.style.display === 'flex') {
+      if (e.code === 'Escape' || e.code === 'Backspace') {
+        e.preventDefault();
+        firstSetupEl._handleBack?.();
+        return;
+      }
+      if (e.code === 'ArrowUp' || e.code === 'KeyW') {
+        e.preventDefault();
+        firstSetupEl._moveFocus?.(-1);
+        return;
+      }
+      if (e.code === 'ArrowDown' || e.code === 'KeyS') {
+        e.preventDefault();
+        firstSetupEl._moveFocus?.(1);
+        return;
+      }
+      if (e.code === 'ArrowLeft' || e.code === 'KeyA') {
+        e.preventDefault();
+        firstSetupEl._handleLeft?.();
+        return;
+      }
+      if (e.code === 'ArrowRight' || e.code === 'KeyD') {
+        e.preventDefault();
+        firstSetupEl._handleRight?.();
+        return;
+      }
+      if (e.code === 'Enter' || e.code === 'Space') {
+        e.preventDefault();
+        firstSetupEl._handleAction?.();
+        return;
+      }
+      return;
+    }
+
     // 0.5 Settings Modal Open (Main Menu)
     const settingsModalEl = getMainMenuSettingsModalEl();
     if (settingsModalEl && settingsModalEl.style.display === 'flex') {
       if (e.code === 'Escape' || e.code === 'Backspace') {
         e.preventDefault();
         hideMainMenuSettingsModal();
+        return;
+      }
+      if (e.code === 'Tab' || e.code === 'KeyQ' || e.code === 'KeyE') {
+        e.preventDefault();
+        const dir = (e.code === 'KeyQ' || (e.code === 'Tab' && e.shiftKey)) ? -1 : 1;
+        settingsModalEl._cycleTab?.(dir);
         return;
       }
       if (e.code === 'ArrowUp' || e.code === 'KeyW') {
@@ -436,6 +547,11 @@ export function startMenuGamepadPolling() {
       // The keys below move the keyboard's own card. Key auto-repeat must not: a
       // held Enter from the title would otherwise join or continue on its own.
       if (e.repeat) return;
+      if (e.code === 'KeyS' || e.code === 'Tab') {
+        e.preventDefault();
+        document.getElementById('assignment-btn-swap-sides')?.click();
+        return;
+      }
       if (e.code === 'KeyB') {
         e.preventDefault();
         handleAssignmentKey('drop', 'kb1');
@@ -494,7 +610,7 @@ export function startMenuGamepadPolling() {
     // 3. Player Setup Active
     if (!navCallbacks.playerSetup.playerSetupEl || navCallbacks.playerSetup.playerSetupEl.style.display !== 'flex') return;
 
-    // --- CASE A: PRACTICE MODE (Free Sandbox: Rows 1..6 Athlete, 7 Ball Choice, 8 Action Bar) ---
+    // CASE A: PRACTICE MODE (Rows 1..6 Athlete, 7 Drill Choice, 8 Ball Choice, 9 Action Bar)
     if (navCallbacks.playerSetup.currentSetupMode === 'practice') {
       if (e.code === 'Escape') {
         e.preventDefault();
@@ -509,18 +625,20 @@ export function startMenuGamepadPolling() {
       }
       if (e.code === 'ArrowDown' || e.code === 'KeyS') {
         e.preventDefault();
-        navCallbacks.playerSetup.playerFocusRow[0] = Math.min(8, navCallbacks.playerSetup.playerFocusRow[0] + 1);
+        navCallbacks.playerSetup.playerFocusRow[0] = Math.min(9, navCallbacks.playerSetup.playerFocusRow[0] + 1);
         navCallbacks.playerSetup.updateFocusUI();
         return;
       }
       if (e.code === 'ArrowLeft' || e.code === 'KeyA') {
         e.preventDefault();
-        if (navCallbacks.playerSetup.playerFocusRow[0] === 8) {
+        if (navCallbacks.playerSetup.playerFocusRow[0] === 9) {
           navCallbacks.playerSetup.practiceActionCol = 0;
           navCallbacks.playerSetup.updateFocusUI();
           soundManager.playTone(400, 0.04, 'sine', 0.15);
-        } else if (navCallbacks.playerSetup.playerFocusRow[0] === 7) {
+        } else if (navCallbacks.playerSetup.playerFocusRow[0] === 8) {
           navCallbacks.playerSetup.cycleMatchBall(-1);
+        } else if (navCallbacks.playerSetup.playerFocusRow[0] === 7) {
+          navCallbacks.playerSetup.cyclePracticeDrill?.(-1);
         } else if (navCallbacks.playerSetup.playerFocusRow[0] >= 1 && navCallbacks.playerSetup.playerFocusRow[0] <= 6) {
           navCallbacks.playerSetup.cycleOption(0, navCallbacks.playerSetup.playerFocusRow[0], -1);
         }
@@ -528,12 +646,14 @@ export function startMenuGamepadPolling() {
       }
       if (e.code === 'ArrowRight' || e.code === 'KeyD') {
         e.preventDefault();
-        if (navCallbacks.playerSetup.playerFocusRow[0] === 8) {
+        if (navCallbacks.playerSetup.playerFocusRow[0] === 9) {
           navCallbacks.playerSetup.practiceActionCol = 1;
           navCallbacks.playerSetup.updateFocusUI();
           soundManager.playTone(400, 0.04, 'sine', 0.15);
-        } else if (navCallbacks.playerSetup.playerFocusRow[0] === 7) {
+        } else if (navCallbacks.playerSetup.playerFocusRow[0] === 8) {
           navCallbacks.playerSetup.cycleMatchBall(1);
+        } else if (navCallbacks.playerSetup.playerFocusRow[0] === 7) {
+          navCallbacks.playerSetup.cyclePracticeDrill?.(1);
         } else if (navCallbacks.playerSetup.playerFocusRow[0] >= 1 && navCallbacks.playerSetup.playerFocusRow[0] <= 6) {
           navCallbacks.playerSetup.cycleOption(0, navCallbacks.playerSetup.playerFocusRow[0], 1);
         }
@@ -541,14 +661,14 @@ export function startMenuGamepadPolling() {
       }
       if (e.code === 'Space' || e.code === 'Enter') {
         e.preventDefault();
-        if (navCallbacks.playerSetup.playerFocusRow[0] === 8) {
+        if (navCallbacks.playerSetup.playerFocusRow[0] === 9) {
           if (navCallbacks.playerSetup.practiceActionCol === 0) {
             navCallbacks.playerSetup.btnBack?.click();
           } else {
             navCallbacks.playerSetup.launchMatchNow();
           }
         } else {
-          navCallbacks.playerSetup.playerFocusRow[0] = Math.min(8, navCallbacks.playerSetup.playerFocusRow[0] + 1);
+          navCallbacks.playerSetup.playerFocusRow[0] = Math.min(9, navCallbacks.playerSetup.playerFocusRow[0] + 1);
           navCallbacks.playerSetup.updateFocusUI();
           soundManager.playTone(520, 0.035, 'sine', 0.12);
         }
@@ -571,18 +691,18 @@ export function startMenuGamepadPolling() {
     if (navCallbacks.playerSetup.setupPage === 2) {
       if (e.code === 'Escape') {
         e.preventDefault();
-        rulesAction('back', -1);
+        rulesAction('back', getSetupHostSlot());
         return;
       }
       if (e.code === 'KeyX' || e.code === 'KeyR') {
         e.preventDefault();
-        rulesAction('ready', keyOwner(0));
+        rulesAction('ready', resolvePage2KeyOwner(0));
         return;
       }
       const nav = LOBBY_KEYS[e.code];
       if (!nav) return;
       e.preventDefault();
-      rulesAction(nav[1], keyOwner(nav[0]));
+      rulesAction(nav[1], resolvePage2KeyOwner(nav[0]));
       return;
     }
 
@@ -602,9 +722,8 @@ export function startMenuGamepadPolling() {
 
     if (e.code === 'Tab') {
       e.preventDefault();
-      // Only P1 (Keyset 0 / Slot 0) can use Tab to configure AI slots; P2-P4 are locked to their own slot
-      const p1Slot = keyOwner(0);
-      toggleFocusedColumn(e.shiftKey ? -1 : 1, p1Slot > 0 ? p1Slot : 0);
+      const kbSlot = keyOwner(0);
+      toggleFocusedColumn(e.shiftKey ? -1 : 1, kbSlot >= 0 ? kbSlot : getSetupHostSlot());
       return;
     }
 
@@ -615,9 +734,10 @@ export function startMenuGamepadPolling() {
     const owner = keyOwner(nav[0]);
     const otherOwner = keyOwner(nav[0] === 0 ? 1 : 0);
     const hasTwoKeysets = owner >= 0 && otherOwner >= 0 && owner !== otherOwner;
+    const ownerIsHost = owner >= 0 && isSetupHostSlot(owner);
     const col = hasTwoKeysets
-      ? (nav[0] === 0 && focusedCfg?.type === 'ai' ? navCallbacks.playerSetup.focusedColumn : owner)
-      : (versus ? (owner >= 0 && !(owner === 0 && focusedCfg?.type === 'ai') ? owner : navCallbacks.playerSetup.focusedColumn) : (focusedCfg?.type === 'ai' || owner < 0 ? navCallbacks.playerSetup.focusedColumn : owner));
+      ? (ownerIsHost && focusedCfg?.type === 'ai' ? navCallbacks.playerSetup.focusedColumn : owner)
+      : (versus ? (owner >= 0 && !(ownerIsHost && focusedCfg?.type === 'ai') ? owner : navCallbacks.playerSetup.focusedColumn) : (focusedCfg?.type === 'ai' || owner < 0 ? navCallbacks.playerSetup.focusedColumn : owner));
     screen1Action(col, nav[1], owner);
   };
   window.addEventListener('keydown', onMenuKeyDown);
@@ -639,6 +759,36 @@ export function startMenuGamepadPolling() {
       if (raw[i] && raw[i].connected) pads.push(raw[i]);
     }
     menuPads.update(pads);
+    if (!soundManager.unlocked) {
+      for (let i = 0; i < pads.length; i++) {
+        if (pads[i] && menuPads.pressed(pads[i])) {
+          soundManager.unlock?.();
+          break;
+        }
+      }
+    }
+
+    // 0a. First-Time Setup Modal Active
+    const firstSetupEl = getFirstTimeSetupModalEl();
+    if (firstSetupEl && firstSetupEl.style.display === 'flex') {
+      for (const pad of pads) {
+        if (!pad) continue;
+        const e = menuPads.pressed(pad);
+        if (e & MENU_PAD.up) firstSetupEl._moveFocus?.(-1);
+        if (e & MENU_PAD.down) firstSetupEl._moveFocus?.(1);
+        if (e & MENU_PAD.left) firstSetupEl._handleLeft?.();
+        if (e & MENU_PAD.right) firstSetupEl._handleRight?.();
+        if (e & (MENU_PAD.a | MENU_PAD.start)) {
+          firstSetupEl._handleAction?.();
+          return;
+        }
+        if ((e & MENU_PAD.b) || (e & MENU_PAD.back)) {
+          firstSetupEl._handleBack?.();
+          return;
+        }
+      }
+      return;
+    }
 
     // 0. Settings Modal Active (Main Menu)
     const settingsModalEl = getMainMenuSettingsModalEl();
@@ -647,6 +797,8 @@ export function startMenuGamepadPolling() {
         if (!pad) continue;
         const e = menuPads.pressed(pad);
 
+        if (e & MENU_PAD.lb) settingsModalEl._cycleTab?.(-1);
+        if (e & MENU_PAD.rb) settingsModalEl._cycleTab?.(1);
         if (e & MENU_PAD.up) settingsModalEl._moveFocus?.(-1);
         if (e & MENU_PAD.down) settingsModalEl._moveFocus?.(1);
         if (e & MENU_PAD.left) settingsModalEl._handleLeft?.();
@@ -761,7 +913,7 @@ export function startMenuGamepadPolling() {
     }
 
     if (navCallbacks.playerSetup.currentSetupMode === 'practice') {
-      // Practice screen (Free Sandbox: Rows 1..6 Athlete, 7 Practice Ball, 8 Back/Start): any pad drives it.
+      // Practice screen (Rows 1..6 Athlete, 7 Drill, 8 Practice Ball, 9 Back/Start): any pad drives it.
       for (const pad of pads) {
         if (navCallbacks.playerSetup.playerSetupEl.style.display !== 'flex') return;
         const e = menuPads.pressed(pad);
@@ -771,28 +923,32 @@ export function startMenuGamepadPolling() {
           navCallbacks.playerSetup.updateFocusUI();
         }
         if (e & MENU_PAD.down) {
-          navCallbacks.playerSetup.playerFocusRow[0] = Math.min(8, navCallbacks.playerSetup.playerFocusRow[0] + 1);
+          navCallbacks.playerSetup.playerFocusRow[0] = Math.min(9, navCallbacks.playerSetup.playerFocusRow[0] + 1);
           navCallbacks.playerSetup.updateFocusUI();
         }
 
         if (e & MENU_PAD.left) {
-          if (navCallbacks.playerSetup.playerFocusRow[0] === 8) {
+          if (navCallbacks.playerSetup.playerFocusRow[0] === 9) {
             navCallbacks.playerSetup.practiceActionCol = 0;
             navCallbacks.playerSetup.updateFocusUI();
             soundManager.playTone(400, 0.04, 'sine', 0.15);
-          } else if (navCallbacks.playerSetup.playerFocusRow[0] === 7) {
+          } else if (navCallbacks.playerSetup.playerFocusRow[0] === 8) {
             navCallbacks.playerSetup.cycleMatchBall(-1);
+          } else if (navCallbacks.playerSetup.playerFocusRow[0] === 7) {
+            navCallbacks.playerSetup.cyclePracticeDrill?.(-1);
           } else if (navCallbacks.playerSetup.playerFocusRow[0] >= 1 && navCallbacks.playerSetup.playerFocusRow[0] <= 6) {
             navCallbacks.playerSetup.cycleOption(0, navCallbacks.playerSetup.playerFocusRow[0], -1);
           }
         }
         if (e & MENU_PAD.right) {
-          if (navCallbacks.playerSetup.playerFocusRow[0] === 8) {
+          if (navCallbacks.playerSetup.playerFocusRow[0] === 9) {
             navCallbacks.playerSetup.practiceActionCol = 1;
             navCallbacks.playerSetup.updateFocusUI();
             soundManager.playTone(400, 0.04, 'sine', 0.15);
-          } else if (navCallbacks.playerSetup.playerFocusRow[0] === 7) {
+          } else if (navCallbacks.playerSetup.playerFocusRow[0] === 8) {
             navCallbacks.playerSetup.cycleMatchBall(1);
+          } else if (navCallbacks.playerSetup.playerFocusRow[0] === 7) {
+            navCallbacks.playerSetup.cyclePracticeDrill?.(1);
           } else if (navCallbacks.playerSetup.playerFocusRow[0] >= 1 && navCallbacks.playerSetup.playerFocusRow[0] <= 6) {
             navCallbacks.playerSetup.cycleOption(0, navCallbacks.playerSetup.playerFocusRow[0], 1);
           }
@@ -802,7 +958,7 @@ export function startMenuGamepadPolling() {
         if (e & MENU_PAD.rb) navCallbacks.playerSetup.cycleMatchBall(1);
 
         if (e & MENU_PAD.a) {
-          if (navCallbacks.playerSetup.playerFocusRow[0] === 8) {
+          if (navCallbacks.playerSetup.playerFocusRow[0] === 9) {
             if (navCallbacks.playerSetup.practiceActionCol === 0) {
               navCallbacks.playerSetup.btnBack?.click();
             } else {
@@ -810,7 +966,7 @@ export function startMenuGamepadPolling() {
             }
           } else {
             // Keep current option unchanged and move selector down to the next row
-            navCallbacks.playerSetup.playerFocusRow[0] = Math.min(8, navCallbacks.playerSetup.playerFocusRow[0] + 1);
+            navCallbacks.playerSetup.playerFocusRow[0] = Math.min(9, navCallbacks.playerSetup.playerFocusRow[0] + 1);
             navCallbacks.playerSetup.updateFocusUI();
             soundManager.playTone(520, 0.035, 'sine', 0.12);
           }
@@ -853,8 +1009,8 @@ export function startMenuGamepadPolling() {
       const hasOpenAiSlot = Boolean(ps.playerConfigs && ps.playerConfigs.slice(0, n).some((c) => c?.type === 'ai'));
 
       // Direct Lobby Join: an unassigned controller pressing Y (or A/Start when another pad is already mapped)
-      // immediately claims the next open AI slot without backing out to Controller Assignment.
-      if (assignedSlot < 0 && hasOpenAiSlot && ((e & MENU_PAD.y) || (hasAssignedGamepad && (e & (MENU_PAD.a | MENU_PAD.start))))) {
+      // immediately claims the next open AI slot on Page 1 without backing out to Controller Assignment.
+      if (page === 1 && assignedSlot < 0 && hasOpenAiSlot && ((e & MENU_PAD.y) || (hasAssignedGamepad && (e & (MENU_PAD.a | MENU_PAD.start))))) {
         const claimed = ps.claimLobbySlotForPad ? ps.claimLobbySlotForPad(pad.index, pad.id) : -1;
         if (claimed >= 0) {
           padTargetSlot[pad.index] = claimed;
@@ -898,24 +1054,27 @@ export function startMenuGamepadPolling() {
         }
       } else {
         // Resolve this controller's independent target column on Page 1.
-        // P2-P4 (ownerSlot >= 1) are strictly locked to their own column!
-        let col = ownerSlot >= 1 ? ownerSlot : (ownerSlot === 0 ? (padTargetSlot[pad.index] ?? 0) : ps.focusedColumn);
-        if (ownerSlot === 0 && col !== 0 && ps.playerConfigs?.[col]?.type !== 'ai') {
-          col = 0;
-          padTargetSlot[pad.index] = 0;
+        // Non-host guests are strictly locked to their own column.
+        const isHost = isSetupHostSlot(ownerSlot);
+        let col = (ownerSlot >= 0 && !isHost)
+          ? ownerSlot
+          : (ownerSlot >= 0 ? (padTargetSlot[pad.index] ?? ownerSlot) : ps.focusedColumn);
+        if (isHost && ownerSlot >= 0 && col !== ownerSlot && ps.playerConfigs?.[col]?.type !== 'ai') {
+          col = ownerSlot;
+          padTargetSlot[pad.index] = ownerSlot;
         }
 
         if (e & (MENU_PAD.lb | MENU_PAD.rb)) {
           const dir = (e & MENU_PAD.lb) ? -1 : 1;
-          if (ownerSlot >= 1) {
-            // P2-P4 cannot LB/RB into other character setups
+          if (ownerSlot >= 0 && !isHost) {
+            // Non-host guests cannot LB/RB into other character setups
             col = ownerSlot;
             padTargetSlot[pad.index] = ownerSlot;
             ps.pulsePlayerCard?.(col);
             soundManager.playTone(220, 0.1, 'sawtooth', 0.15);
-          } else if (ownerSlot === 0) {
+          } else if (isHost && ownerSlot >= 0) {
             const baseOrder = n >= 4 ? [0, 2, 1, 3] : [0, 1];
-            const allowed = baseOrder.filter((s) => s === 0 || ps.playerConfigs?.[s]?.type === 'ai');
+            const allowed = baseOrder.filter((s) => s === ownerSlot || ps.playerConfigs?.[s]?.type === 'ai');
             if (allowed.length <= 1) {
               soundManager.playTone(220, 0.1, 'sawtooth', 0.15);
             } else {
@@ -926,7 +1085,7 @@ export function startMenuGamepadPolling() {
               ps.updateFocusUI();
               ps.pulsePlayerCard?.(col);
               soundManager.playTone(440, 0.06, 'sine', 0.2);
-              triggerSlotMenuHaptics(pad, 0);
+              triggerSlotMenuHaptics(pad, ownerSlot);
             }
           } else {
             col = toggleFocusedColumn(dir, -1);
@@ -936,14 +1095,14 @@ export function startMenuGamepadPolling() {
         }
 
         if (e & MENU_PAD.y) {
-          // Only Host (ownerSlot <= 0) editing an AI slot can toggle that AI slot to Human,
-          // and pass padIndex = -1 so we NEVER steal P1's own bound gamepad onto the other slot!
+          // Only Host editing an AI slot can toggle that AI slot to Human,
+          // and pass padIndex = -1 so we NEVER steal Host's own bound gamepad onto the other slot.
           // Human players never accidentally wipe themselves to AI mid-setup with Y.
-          if (ps.toggleLobbySlotHumanAi && ownerSlot <= 0 && col !== ownerSlot) {
+          if (ps.toggleLobbySlotHumanAi && (ownerSlot < 0 || isHost) && col !== ownerSlot) {
             ps.toggleLobbySlotHumanAi(col, -1, '');
             ps.pulsePlayerCard?.(col);
             soundManager.playTone(540, 0.05, 'sine', 0.18);
-            triggerSlotMenuHaptics(pad, 0);
+            triggerSlotMenuHaptics(pad, ownerSlot >= 0 ? ownerSlot : 0);
           } else {
             ps.pulsePlayerCard?.(col);
             soundManager.playTone(220, 0.08, 'sawtooth', 0.14);
@@ -980,8 +1139,8 @@ export function startMenuGamepadPolling() {
         if (e & MENU_PAD.right) step('right');
         if (e & MENU_PAD.a) step('act');
         if (e & (MENU_PAD.b | MENU_PAD.back)) {
-          if (ownerSlot >= 1) {
-            // P2-P4 pressing B on Page 1 only un-readies themselves; never kicks the whole room back!
+          if (ownerSlot >= 0 && !isHost) {
+            // Non-host pressing B on Page 1 only un-readies themselves; never kicks the whole room back
             if (ps.playerReadyState?.[ownerSlot]) {
               toggleReadyFrom(ownerSlot, ownerSlot);
             } else {
@@ -995,12 +1154,12 @@ export function startMenuGamepadPolling() {
               navCallbacks.showTitleScreen?.();
             }
             soundManager.playTone(330, 0.08, 'sine', 0.15);
-            triggerSlotMenuHaptics(pad, 0);
+            triggerSlotMenuHaptics(pad, ownerSlot >= 0 ? ownerSlot : 0);
             return;
           }
         } else if (e & MENU_PAD.start) {
-          if (ownerSlot >= 1) {
-            // P2-P4 pressing Start on Page 1 toggles their own Ready status instead of yanking P1 to Page 2
+          if (ownerSlot >= 0 && !isHost) {
+            // Non-host pressing Start on Page 1 toggles their own Ready status instead of yanking Host to Page 2
             toggleReadyFrom(ownerSlot, ownerSlot);
             ps.pulsePlayerCard?.(ownerSlot);
             triggerSlotMenuHaptics(pad, ownerSlot);
@@ -1008,7 +1167,7 @@ export function startMenuGamepadPolling() {
             ps.setupPage = 2;
             window._updateSetupPage();
             soundManager.playTone(660, 0.05, 'sine', 0.2);
-            triggerSlotMenuHaptics(pad, 0);
+            triggerSlotMenuHaptics(pad, ownerSlot >= 0 ? ownerSlot : 0);
           }
         }
       }

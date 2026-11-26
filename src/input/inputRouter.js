@@ -14,6 +14,8 @@ import { showToast, isMainMenuActive } from '../ui/mainMenu.js';
 import { isInGameMenuOpen } from '../ui/inGameMenu.js';
 import { isVictoryScreenVisible } from '../ui/victoryScreen.js';
 import { isOvertimeMenuOpen } from '../ui/overtimeMenu.js';
+import { isDisconnectModalOpen } from '../ui/controllerDisconnectModal.js';
+import { soundManager } from '../audio/soundManager.js';
 
 /**
  * Input Router for Valleyball Versus.
@@ -222,9 +224,11 @@ function updateUiSlot(index, pad, athleteCount, botSlots, mode) {
     ui.held = ui.pulse = uiKeyboardEdges[index] = 0;
     return;
   }
-  const mapping = explicitDeviceMappings && explicitDeviceMappings[index];
-  // Both human slots retain keyboard control when a mapped pad is absent.
-  ui.available = true;
+  const mapping = (mode !== 'practice' && athleteCount > 1 && explicitDeviceMappings)
+    ? explicitDeviceMappings[index]
+    : null;
+  // Mapped gamepads report unavailable when disconnected rather than falling back to keyboard.
+  ui.available = !(mapping?.type === 'gamepad' && !pad);
   ui.keyset = slotKeyset[index] >= 0 ? slotKeyset[index] : (index % 2);
   const keyboard = keyboardHeld(index, mode, pad);
   let padMask = 0;
@@ -244,13 +248,16 @@ function updateUiSlot(index, pad, athleteCount, botSlots, mode) {
     if (mode === 'practice' && padDown(pad, GAMEPAD_BUTTONS.ballReset)) padMask |= CONTROL_BITS.reset;
   }
   if (!ui.initialized) {
-    ui.device = pad && mapping?.type !== 'keyboard' ? 'gamepad' : 'keyboard';
+    ui.device = (pad && mapping?.type !== 'keyboard') || mapping?.type === 'gamepad' ? 'gamepad' : 'keyboard';
     ui.initialized = true;
   }
   if (ui.padIndex !== (pad ? pad.index : -1)) {
     ui.padIndex = pad ? pad.index : -1;
     ui.previousPadHeld = 0;
-    if (!pad) ui.device = 'keyboard';
+    if (pad && mapping?.type !== 'keyboard') ui.device = 'gamepad';
+  }
+  if (!pad) {
+    ui.device = mapping?.type === 'gamepad' ? 'gamepad' : 'keyboard';
   }
   const padEdge = padMask & ~ui.previousPadHeld;
   ui.previousPadHeld = padMask;
@@ -340,7 +347,7 @@ function isReplayPlaybackActive() {
 }
 
 function isUiBlockingGameplayInput() {
-  return !gameplayInputActive || isInGameMenuOpen() || isMainMenuActive() || isVictoryScreenVisible() || isOvertimeMenuOpen() || isReplayPlaybackActive();
+  return !gameplayInputActive || isInGameMenuOpen() || isMainMenuActive() || isVictoryScreenVisible() || isOvertimeMenuOpen() || isDisconnectModalOpen() || isReplayPlaybackActive();
 }
 
 export function clearGameplayInputQueues() {
@@ -538,11 +545,11 @@ export function initInputRouter(surface) {
   window.addEventListener('click', (e) => {
     if (isTextEntry(e.target)) return;
     if (isReplayPlaybackActive()) return;
-    if (e.target.closest && (e.target.closest('#main-menu-root') || e.target.closest('#in-game-menu-container') || e.target.closest('#overtime-menu-overlay') || e.target.closest('#replay-broadcast-dock') || e.target.closest('.how-to-play-modal') || e.target.closest('.victory-overlay'))) {
+    if (e.target.closest && (e.target.closest('#main-menu-root') || e.target.closest('#in-game-menu-container') || e.target.closest('#overtime-menu-overlay') || e.target.closest('#controller-disconnect-overlay') || e.target.closest('#replay-broadcast-dock') || e.target.closest('.how-to-play-modal') || e.target.closest('.victory-overlay'))) {
       return;
     }
     const isGameplay = window.__vb?.getGameState ? (window.__vb.getGameState() === 'match' || window.__vb.getGameState() === 'practice') : true;
-    if (isGameplay && !isInGameMenuOpen() && !isPointerLocked) {
+    if (isGameplay && !isInGameMenuOpen() && !isDisconnectModalOpen() && !isPointerLocked) {
       requestGamePointerLock();
     }
   });
@@ -551,7 +558,7 @@ export function initInputRouter(surface) {
   window.addEventListener('mousedown', (event) => {
     if (isTextEntry(event.target) || isReplayPlaybackActive()) return;
     const isGameplay = window.__vb?.getGameState ? (window.__vb.getGameState() === 'match' || window.__vb.getGameState() === 'practice') : true;
-    if (!isGameplay || isInGameMenuOpen()) return;
+    if (!isGameplay || isInGameMenuOpen() || isDisconnectModalOpen()) return;
     const s = getMouseSlot();
     if (s < 0) return;
 
@@ -585,6 +592,7 @@ export function initInputRouter(surface) {
 
   // Gamepad hotplug notifications
   window.addEventListener('gamepadconnected', (e) => {
+    soundManager.unlock();
     const pad = e.gamepad;
     const name = pad?.id ? pad.id.split('(')[0].trim() : `Gamepad ${pad?.index ?? 0}`;
     // Pad N is the browser's pad number, as on the assignment cards — not a player slot.
@@ -598,6 +606,19 @@ export function initInputRouter(surface) {
 }
 
 const _connectedGamepads = [];
+const MAX_UNCLAIMED_PADS = 8;
+const _claimedPadIndices = [-1, -1, -1, -1];
+const _disconnectedMappedSlots = [];
+const _unclaimedPadPool = Array.from({ length: MAX_UNCLAIMED_PADS }, () => ({
+  index: -1,
+  id: '',
+  name: '',
+  fightingPad: false,
+}));
+const _unclaimedConnectedPads = [];
+let _lastSampleAthleteCount = 2;
+let _lastSampleMode = 'match';
+let _lastSampleBotSlots = [];
 
 function getConnectedGamepads() {
   _connectedGamepads.length = 0;
@@ -607,6 +628,133 @@ function getConnectedGamepads() {
     if (raw[i] && raw[i].connected) _connectedGamepads.push(raw[i]);
   }
   return _connectedGamepads;
+}
+
+function hasAnyPadButtonPressed(pads) {
+  for (let i = 0; i < pads.length; i++) {
+    const btns = pads[i]?.buttons;
+    if (!btns) continue;
+    for (let b = 0; b < btns.length; b++) {
+      const btn = btns[b];
+      if (btn && (btn.pressed || btn.value > TRIGGER_THRESHOLD)) return true;
+    }
+  }
+  return false;
+}
+
+function isPadClaimed(padIndex) {
+  for (let i = 0; i < 4; i++) {
+    if (_claimedPadIndices[i] === padIndex) return true;
+  }
+  return false;
+}
+
+function isBotSlot(botSlots, slotIdx) {
+  for (let i = 0; i < botSlots.length; i++) {
+    if (botSlots[i] === slotIdx) return true;
+  }
+  return false;
+}
+
+function findUnclaimedPadById(pads, id) {
+  if (!id) return null;
+  for (let i = 0; i < pads.length; i++) {
+    const p = pads[i];
+    if (p && !isPadClaimed(p.index) && p.id === id) return p;
+  }
+  return null;
+}
+
+function populateUnclaimedPads(pads) {
+  _unclaimedConnectedPads.length = 0;
+  let k = 0;
+  for (let i = 0; i < pads.length && k < MAX_UNCLAIMED_PADS; i++) {
+    const p = pads[i];
+    if (!p || isPadClaimed(p.index)) continue;
+    const entry = _unclaimedPadPool[k++];
+    entry.index = p.index;
+    entry.id = p.id || ('Gamepad ' + (p.index + 1));
+    entry.name = 'Gamepad ' + (p.index + 1);
+    entry.fightingPad = isPadFightingMode(p);
+    _unclaimedConnectedPads.push(entry);
+  }
+}
+
+export function getDisconnectedMappedSlots() {
+  return _disconnectedMappedSlots;
+}
+
+export function getUnclaimedConnectedPads() {
+  return _unclaimedConnectedPads;
+}
+
+export function refreshDisconnectRouting() {
+  resolveDeviceRouting(getConnectedGamepads(), _lastSampleAthleteCount, _lastSampleMode, _lastSampleBotSlots);
+  return _disconnectedMappedSlots;
+}
+
+export function reassignSlotToPad(slotIdx, padIndex) {
+  if (!Number.isInteger(slotIdx) || slotIdx < 0 || slotIdx >= 4) return false;
+  if (!Number.isInteger(padIndex) || padIndex < 0) return false;
+  const pads = getConnectedGamepads();
+  const matchedPad = findPad(pads, padIndex);
+  if (!matchedPad) return false;
+  for (let s = 0; s < 4; s++) {
+    if (s === slotIdx) continue;
+    if (slotPads[s] && slotPads[s].index === padIndex) return false;
+    const m = explicitDeviceMappings && explicitDeviceMappings[s];
+    if (m && m.type === 'gamepad' && m.padIndex === padIndex && !isBotSlot(_lastSampleBotSlots, s)) {
+      return false;
+    }
+  }
+  if (!explicitDeviceMappings) explicitDeviceMappings = {};
+  explicitDeviceMappings[slotIdx] = {
+    type: 'gamepad',
+    padIndex,
+    name: `Gamepad ${padIndex + 1}`,
+    id: matchedPad.id || `Gamepad ${padIndex + 1}`,
+    fightingPad: isPadFightingMode(matchedPad),
+  };
+  latchPadPrev(slotIdx);
+  refreshDisconnectRouting();
+  return true;
+}
+
+export function reassignSlotToKeyboard(slotIdx, keyId = null) {
+  if (!Number.isInteger(slotIdx) || slotIdx < 0 || slotIdx >= 4) return false;
+  let kb1Taken = false;
+  let kb2Taken = false;
+  if (explicitDeviceMappings) {
+    for (let s = 0; s < 4; s++) {
+      if (s === slotIdx || isBotSlot(_lastSampleBotSlots, s)) continue;
+      const m = explicitDeviceMappings[s];
+      if (m && m.type === 'keyboard') {
+        if (m.keyId === 'kb2') kb2Taken = true;
+        else kb1Taken = true;
+      }
+    }
+  }
+  let chosen = null;
+  if (keyId === 'kb1' || keyId === 'kb2') {
+    if ((keyId === 'kb1' && kb1Taken) || (keyId === 'kb2' && kb2Taken)) {
+      return false;
+    }
+    chosen = keyId;
+  } else if (keyId == null) {
+    if (!kb1Taken) chosen = 'kb1';
+    else if (!kb2Taken) chosen = 'kb2';
+    else return false;
+  } else {
+    return false;
+  }
+  if (!explicitDeviceMappings) explicitDeviceMappings = {};
+  explicitDeviceMappings[slotIdx] = {
+    type: 'keyboard',
+    keyId: chosen,
+    name: KEYBOARD_NAMES[chosen] || KEYBOARD_NAMES.kb1,
+  };
+  refreshDisconnectRouting();
+  return true;
 }
 
 let explicitDeviceMappings = null;
@@ -770,7 +918,7 @@ export function getControllerAssignments(athleteCount = 2, mode = 'match') {
   }
 
   const pads = getConnectedGamepads();
-  if (mode === 'practice' || athleteCount === 1) {
+  if (athleteCount <= 1) {
     return {
       p1: pads.length > 0 ? `Gamepad 1 (${pads[0].id.slice(0, 16)}...) + Keyboard WASD` : 'Keyboard WASD',
       p2: null,
@@ -862,10 +1010,13 @@ function getCamVectors(cam, slotIdx = 0) {
 export function sampleAllInputs(cameras, athleteCount = 2, mode = 'match', botSlots = [], isGameplayActive = true) {
   currentBotSlots = botSlots;
   gameplayInputActive = Boolean(isGameplayActive);
+  _lastSampleAthleteCount = athleteCount;
+  _lastSampleMode = mode;
+  _lastSampleBotSlots = botSlots;
 
   if (isUiBlockingGameplayInput()) {
     for (let i = 0; i < athleteCount; i++) {
-      if (!botSlots.includes(i)) {
+      if (!isBotSlot(botSlots, i)) {
         const slot = slots[i];
         slot.moveX = 0;
         slot.moveZ = 0;
@@ -899,6 +1050,15 @@ export function sampleAllInputs(cameras, athleteCount = 2, mode = 'match', botSl
     for (let i = 0; i < uiSlots.length; i++) {
       uiSlots[i].held = uiSlots[i].pulse = 0;
     }
+    if (!soundManager.unlocked) {
+      const blockedPads = getConnectedGamepads();
+      if (blockedPads.length > 0 && hasAnyPadButtonPressed(blockedPads)) {
+        soundManager.unlock();
+      }
+    }
+    if (isDisconnectModalOpen()) {
+      resolveDeviceRouting(getConnectedGamepads(), _lastSampleAthleteCount, _lastSampleMode, _lastSampleBotSlots);
+    }
     // The menu/flyover owns the pads: treat every button as held, so whatever closes
     // or skips it must be released before it acts in play.
     for (let i = 0; i < 4; i++) {
@@ -922,6 +1082,9 @@ export function sampleAllInputs(cameras, athleteCount = 2, mode = 'match', botSl
   }
 
   const pads = getConnectedGamepads();
+  if (!soundManager.unlocked && pads.length > 0 && hasAnyPadButtonPressed(pads)) {
+    soundManager.unlock();
+  }
   resolveDeviceRouting(pads, athleteCount, mode, botSlots);
 
   const maxSlots = Math.min(4, Math.max(2, athleteCount));
@@ -929,9 +1092,8 @@ export function sampleAllInputs(cameras, athleteCount = 2, mode = 'match', botSl
     if (i >= athleteCount || botSlots.includes(i)) continue;
     sampleHumanSlot(i, slotPads[i], _sampledInputs[i] || _sampledInputs[0], mode);
   }
-  const activeCount = mode === 'practice' ? 1 : athleteCount;
   for (let i = 0; i < 4; i++) {
-    updateUiSlot(i, slotPads[i], activeCount, botSlots, mode);
+    updateUiSlot(i, slotPads[i], athleteCount, botSlots, mode);
   }
 }
 
@@ -955,71 +1117,118 @@ function findPad(pads, padIndex) {
 function resolveDeviceRouting(pads, athleteCount, mode, botSlots) {
   for (let s = 0; s < 4; s++) {
     slotPads[s] = null;
+    _claimedPadIndices[s] = -1;
   }
+  _disconnectedMappedSlots.length = 0;
+  _unclaimedConnectedPads.length = 0;
 
-  if (mode === 'practice' || athleteCount === 1) {
+  if (athleteCount <= 1) {
     keysetSlot[0] = 0;
     keysetSlot[1] = 1;
     for (let s = 0; s < 4; s++) slotKeyset[s] = s % 2;
-    if (!botSlots.includes(0)) slotPads[0] = pads[0] || null;
-  } else if (explicitDeviceMappings) {
-    // Explicit match assignments are the single authority: benched keyboards
-    // never bleed onto gamepad slots unless a human slot has no live pad at all.
+    if (!isBotSlot(botSlots, 0) && pads[0]) {
+      slotPads[0] = pads[0];
+      _claimedPadIndices[0] = pads[0].index;
+    }
+    populateUnclaimedPads(pads);
+  } else if (mode !== 'practice' && explicitDeviceMappings) {
+    // Explicit match assignments are the single authority: disconnected mapped pads
+    // never silently fall back to keyboard.
     keysetSlot[0] = -1;
     keysetSlot[1] = -1;
     for (let s = 0; s < 4; s++) slotKeyset[s] = -1;
 
     let anyMappedPad = false;
-    const claimedPadIndices = new Set();
-    const activeLimit = Math.min(4, athleteCount);
+    const activeLimit = athleteCount < 4 ? athleteCount : 4;
+
+    // Pass 0: Keyboard mappings
     for (let s = 0; s < activeLimit; s++) {
-      if (botSlots.includes(s)) continue;
+      if (isBotSlot(botSlots, s)) continue;
       const m = explicitDeviceMappings[s];
-      if (!m) continue;
-      if (m.type === 'gamepad' && typeof m.padIndex === 'number') {
-        const direct = findPad(pads, m.padIndex);
-        if (direct && !claimedPadIndices.has(direct.index)) {
-          slotPads[s] = direct;
-          claimedPadIndices.add(direct.index);
-        }
-        anyMappedPad = true;
-      } else if (m.type === 'keyboard') {
-        const ks = m.keyId === 'kb2' ? 1 : 0;
-        if (keysetSlot[ks] < 0) {
-          keysetSlot[ks] = s;
-          slotKeyset[s] = ks;
+      if (!m || m.type !== 'keyboard') continue;
+      const ks = m.keyId === 'kb2' ? 1 : 0;
+      if (keysetSlot[ks] < 0) {
+        keysetSlot[ks] = s;
+        slotKeyset[s] = ks;
+      }
+    }
+
+    // Pass 1a: Exact hardware id match at m.padIndex (or fixture mapping without m.id)
+    for (let s = 0; s < activeLimit; s++) {
+      if (isBotSlot(botSlots, s)) continue;
+      const m = explicitDeviceMappings[s];
+      if (!m || m.type !== 'gamepad' || typeof m.padIndex !== 'number') continue;
+      anyMappedPad = true;
+      const p = findPad(pads, m.padIndex);
+      if (p && !isPadClaimed(p.index) && (!m.id || p.id === m.id)) {
+        slotPads[s] = p;
+        _claimedPadIndices[s] = p.index;
+        if (!m.id && p.id) {
+          m.id = p.id;
+          m.fightingPad = isPadFightingMode(p);
         }
       }
     }
-    // USB-hub reconnect self-heal: if a mapped pad unplugged and returned at a
-    // different browser index, reclaim an unclaimed pad matching its hardware id.
+
+    // Pass 1b: USB-hub reconnect self-heal across shifted padIndex (matching hardware id)
     for (let s = 0; s < activeLimit; s++) {
-      if (botSlots.includes(s)) continue;
+      if (isBotSlot(botSlots, s)) continue;
       const m = explicitDeviceMappings[s];
       if (!m || m.type !== 'gamepad' || slotPads[s] || !m.id) continue;
-      const reconnected = pads.find((p) => p && !claimedPadIndices.has(p.index) && p.id === m.id);
+      const reconnected = findUnclaimedPadById(pads, m.id);
       if (reconnected) {
         m.padIndex = reconnected.index;
-        m.name = `Gamepad ${reconnected.index + 1}`;
+        m.name = 'Gamepad ' + (reconnected.index + 1);
+        m.fightingPad = isPadFightingMode(reconnected);
         slotPads[s] = reconnected;
-        claimedPadIndices.add(reconnected.index);
+        _claimedPadIndices[s] = reconnected.index;
         latchPadPrev(s);
       }
     }
-    if (!anyMappedPad && pads.length > 0) {
-      const humanSlots = [];
-      for (let s = 0; s < activeLimit; s++) {
-        if (!botSlots.includes(s)) humanSlots.push(s);
-      }
-      if (humanSlots.length === 1) {
-        slotPads[humanSlots[0]] = pads[0];
+
+    // Pass 2: Spare-pad hot-swap at m.padIndex when p.id !== m.id
+    for (let s = 0; s < activeLimit; s++) {
+      if (isBotSlot(botSlots, s)) continue;
+      const m = explicitDeviceMappings[s];
+      if (!m || m.type !== 'gamepad' || slotPads[s] || typeof m.padIndex !== 'number') continue;
+      const p = findPad(pads, m.padIndex);
+      if (p && !isPadClaimed(p.index)) {
+        m.id = p.id || ('Gamepad ' + (p.index + 1));
+        m.name = 'Gamepad ' + (p.index + 1);
+        m.fightingPad = isPadFightingMode(p);
+        slotPads[s] = p;
+        _claimedPadIndices[s] = p.index;
+        latchPadPrev(s);
       }
     }
-    // Safety fallback: if a human slot has neither a live pad nor an assigned keyset
-    // (e.g. controller disconnected mid-match), fall back to an unclaimed keyboard keyset
-    // without touching any slot that already owns a live gamepad or keyboard.
+
+    // Pass 3: Track disconnected mapped gamepad slots and unmapped solo/keyboard slots
     for (let s = 0; s < activeLimit; s++) {
-      if (botSlots.includes(s) || slotPads[s] || slotKeyset[s] >= 0) continue;
+      if (isBotSlot(botSlots, s)) continue;
+      const m = explicitDeviceMappings[s];
+      if (m && m.type === 'gamepad' && !slotPads[s]) {
+        _disconnectedMappedSlots.push(s);
+      }
+    }
+
+    if (!anyMappedPad && pads.length > 0) {
+      let humanCount = 0;
+      let onlyHuman = -1;
+      for (let s = 0; s < activeLimit; s++) {
+        if (!isBotSlot(botSlots, s)) {
+          humanCount++;
+          onlyHuman = s;
+        }
+      }
+      if (humanCount === 1 && onlyHuman >= 0 && !explicitDeviceMappings[onlyHuman]) {
+        slotPads[onlyHuman] = pads[0];
+        _claimedPadIndices[onlyHuman] = pads[0].index;
+      }
+    }
+
+    // Only assign unclaimed keyboard keysets to truly unmapped human slots (never to disconnected pads)
+    for (let s = 0; s < activeLimit; s++) {
+      if (isBotSlot(botSlots, s) || explicitDeviceMappings[s] || slotPads[s] || slotKeyset[s] >= 0) continue;
       const pref = s % 2;
       const alt = 1 - pref;
       if (keysetSlot[pref] < 0) {
@@ -1030,23 +1239,31 @@ function resolveDeviceRouting(pads, athleteCount, mode, botSlots) {
         slotKeyset[s] = alt;
       }
     }
+
+    populateUnclaimedPads(pads);
   } else {
     keysetSlot[0] = 0;
     keysetSlot[1] = 1;
     for (let s = 0; s < 4; s++) slotKeyset[s] = s % 2;
     // Route gamepads to humans in order
     let padIdx = 0;
-    for (let s = 0; s < Math.min(4, athleteCount); s++) {
-      if (!botSlots.includes(s) && padIdx < pads.length) slotPads[s] = pads[padIdx++];
+    const activeLimit = athleteCount < 4 ? athleteCount : 4;
+    for (let s = 0; s < activeLimit; s++) {
+      if (!isBotSlot(botSlots, s) && padIdx < pads.length) {
+        const p = pads[padIdx++];
+        slotPads[s] = p;
+        if (p) _claimedPadIndices[s] = p.index;
+      }
     }
+    populateUnclaimedPads(pads);
   }
 
   // Arrow-key look goes to a pad-less IJKL player; otherwise to a pad-less WASD player.
   const ijkl = keysetSlot[1];
   const wasd = keysetSlot[0];
   arrowLookSlot = -1;
-  if (mode !== 'practice' && athleteCount > 1 && ijkl >= 0 && !botSlots.includes(ijkl) && !slotPads[ijkl]) arrowLookSlot = ijkl;
-  else if (wasd >= 0 && !botSlots.includes(wasd) && !slotPads[wasd]) arrowLookSlot = wasd;
+  if (athleteCount > 1 && ijkl >= 0 && !isBotSlot(botSlots, ijkl) && !slotPads[ijkl]) arrowLookSlot = ijkl;
+  else if (wasd >= 0 && !isBotSlot(botSlots, wasd) && !slotPads[wasd]) arrowLookSlot = wasd;
 }
 
 function sampleHumanSlot(i, pad, camData, mode) {
@@ -1070,7 +1287,7 @@ function sampleHumanSlot(i, pad, camData, mode) {
   }
 
   if (pad) {
-    const fightMode = isPadFightingMode(pad) || Boolean(explicitDeviceMappings?.[i]?.fightingPad);
+    const fightMode = isPadFightingMode(pad) || Boolean(mode !== 'practice' && explicitDeviceMappings?.[i]?.fightingPad);
     const stick = applyDeadzone(pad.axes[0] || 0, pad.axes[1] || 0, TUNING.motor.stickDeadzone);
     if (stick.x !== 0 || stick.y !== 0) {
       x = stick.x;
@@ -1188,7 +1405,7 @@ export function getCameraCycleHint(slotIdx) {
   const parts = [];
   const pad = slotPads[slotIdx];
   if (pad) {
-    const fightMode = isPadFightingMode(pad) || Boolean(explicitDeviceMappings?.[slotIdx]?.fightingPad);
+    const fightMode = isPadFightingMode(pad) || Boolean(_lastSampleMode !== 'practice' && explicitDeviceMappings?.[slotIdx]?.fightingPad);
     parts.push(fightMode ? 'SELECT' : 'D-PAD');
   }
   if (keysetSlot[0] === slotIdx) parts.push('TAB');
@@ -1305,7 +1522,7 @@ export function triggerHaptic(slotIndex = 0, { weakMagnitude = 0.3, strongMagnit
   if (TUNING.input && TUNING.input.vibrationEnabled === false) return;
   const pads = getConnectedGamepads();
   if (!pads || pads.length === 0) return;
-  const pad = explicitDeviceMappings
+  const pad = (explicitDeviceMappings && _lastSampleMode !== 'practice')
     ? slotPads[slotIndex]
     : (slotPads[slotIndex] || pads[slotIndex] || (slotIndex === 0 ? pads[0] : null));
   if (!pad || !pad.vibrationActuator) return;

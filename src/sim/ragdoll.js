@@ -137,20 +137,24 @@ function createSolidAthletePart(item, sharedMats) {
   }
 
   // 2. CLUB HANDS (handL, handR)
+  // DO NOT REMOVE: INVARIANT [NATURAL-LIMB-ALIGNMENT]
+  // Keep >= 18 radial segments on the club capsule and strictly inset wrist collar (< 0.88x radius)
+  // so dark graphite cuff vertices never poke through low-poly club facets as unintended studs.
   if (key === 'handL' || key === 'handR') {
-    // Heavy striking club head in Team Primary color - bold oversized striking mallet / club head
+    // Heavy striking club head in Team Primary color: smooth capsule silhouette so inner
+    // wrist cuff vertices never poke through flat facets as dark studs.
     const clubRadius = radius * 2.3;
     const clubHeight = halfHeight * 2.6;
-    const clubGeo = new THREE.CapsuleGeometry(clubRadius, clubHeight, 5, 10);
+    const clubGeo = new THREE.CapsuleGeometry(clubRadius, clubHeight, 8, 18);
     const clubMesh = new THREE.Mesh(clubGeo, sharedMats.clubPrimary);
     clubMesh.castShadow = true;
     clubMesh.receiveShadow = false;
     solidGroup.add(clubMesh);
 
-    // Wrist cuff accent in dark matte graphite (enclosed by club silhouette; skip shadow pass)
-    const cuffGeo = new THREE.CylinderGeometry(clubRadius * 0.96, clubRadius * 0.96, radius * 0.40, 10);
+    // Inset dark matte graphite wrist collar seated cleanly at the wrist base
+    const cuffGeo = new THREE.CylinderGeometry(clubRadius * 0.86, clubRadius * 0.86, radius * 0.36, 18);
     const cuff = new THREE.Mesh(cuffGeo, sharedMats.joint);
-    cuff.position.set(0, halfHeight * 0.85, 0);
+    cuff.position.set(0, halfHeight * 1.24, 0);
     cuff.castShadow = false;
     cuff.receiveShadow = false;
     solidGroup.add(cuff);
